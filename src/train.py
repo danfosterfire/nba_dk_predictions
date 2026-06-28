@@ -1,17 +1,18 @@
 """Training loop for LSTM / Transformer models."""
 
+import pickle
 import random
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, random_split
+from sklearn.preprocessing import StandardScaler
+from torch.utils.data import DataLoader, Subset
 import yaml
-import pandas as pd
 
-from src.data.dataset import PlayerSequenceDataset
-from src.features.encode import load_artifacts, TARGET_COLS
+from src.data.dataset import SeasonBoundaryDataset
 from src.models.lstm import PlayerLSTM
 from src.models.transformer import PlayerTransformer
 
@@ -45,6 +46,24 @@ def build_model(cfg: dict, input_size: int, num_targets: int) -> nn.Module:
         raise ValueError(f"Unknown model type: {model_cfg['type']}")
 
 
+def _season_split(all_seasons: list[str]) -> tuple[set, set, set]:
+    """Return (train_predict, val_predict, test_predict) season sets.
+
+    Prediction season S requires data from season S-1 as input, so we need
+    at least 2 seasons total to produce any samples.
+
+    With N total seasons we get N-1 prediction seasons; the last two are
+    held out for val and test, the rest form the training set.
+    """
+    predict = all_seasons[1:]
+    if len(predict) < 2:
+        raise ValueError(
+            f"Need ≥3 seasons to produce a train/val/test split; got {all_seasons}. "
+            "Add more seasons to data.seasons in configs/default.yaml."
+        )
+    return set(predict[:-2]), {predict[-2]}, {predict[-1]}
+
+
 def train(cfg_path: str = "configs/default.yaml") -> None:
     cfg = yaml.safe_load(open(cfg_path))
     set_seed(cfg["training"]["seed"])
@@ -52,28 +71,48 @@ def train(cfg_path: str = "configs/default.yaml") -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
-    features_dir = Path(cfg["data"]["features_dir"])
-    df = pd.read_parquet(features_dir / "features.parquet")
-    scaler, feature_cols = load_artifacts(features_dir)
-    target_cols = cfg["features"]["target_stats"]
+    df = pd.read_parquet(Path(cfg["data"]["processed_dir"]) / "game_logs.parquet")
 
-    dataset = PlayerSequenceDataset(
-        df,
-        feature_cols=feature_cols,
-        target_cols=target_cols,
-        seq_len=cfg["features"]["sequence_length"],
-    )
-    print(f"Dataset: {len(dataset):,} samples, {len(feature_cols)} features, {len(target_cols)} targets")
+    all_seasons = sorted(df["season"].unique())
+    train_seasons, val_seasons, test_seasons = _season_split(all_seasons)
 
-    val_size = int(len(dataset) * cfg["training"]["val_split"])
-    test_size = int(len(dataset) * cfg["training"]["test_split"])
-    train_size = len(dataset) - val_size - test_size
-    train_ds, val_ds, test_ds = random_split(dataset, [train_size, val_size, test_size])
+    print(f"All seasons:  {all_seasons}")
+    print(f"Train target seasons: {sorted(train_seasons)}")
+    print(f"Val   target season:  {sorted(val_seasons)}")
+    print(f"Test  target season:  {sorted(test_seasons)}")
+
+    # Fit scaler only on the prior seasons used as input for training
+    train_input_seasons = {
+        all_seasons[all_seasons.index(s) - 1]
+        for s in train_seasons
+    }
+    feat_cols = SeasonBoundaryDataset.FEATURE_COLS
+    feat_cols = [c for c in feat_cols if c in df.columns]
+
+    scaler = StandardScaler()
+    scaler.fit(df[df["season"].isin(train_input_seasons)][feat_cols].fillna(0))
+
+    df = df.copy()
+    df[feat_cols] = scaler.transform(df[feat_cols].fillna(0))
+
+    dataset = SeasonBoundaryDataset(df, seq_len=cfg["features"]["sequence_length"])
+    print(f"Dataset: {len(dataset):,} total samples")
+
+    seasons = dataset.sample_seasons
+    train_idx = [i for i, s in enumerate(seasons) if s in train_seasons]
+    val_idx   = [i for i, s in enumerate(seasons) if s in val_seasons]
+    test_idx  = [i for i, s in enumerate(seasons) if s in test_seasons]
+
+    train_ds = Subset(dataset, train_idx)
+    val_ds   = Subset(dataset, val_idx)
+    test_ds  = Subset(dataset, test_idx)
+    print(f"Train: {len(train_ds):,}  Val: {len(val_ds):,}  Test: {len(test_ds):,}")
 
     train_loader = DataLoader(train_ds, batch_size=cfg["training"]["batch_size"], shuffle=True, num_workers=2)
-    val_loader = DataLoader(val_ds, batch_size=cfg["training"]["batch_size"], shuffle=False, num_workers=2)
+    val_loader   = DataLoader(val_ds,   batch_size=cfg["training"]["batch_size"], shuffle=False, num_workers=2)
 
-    model = build_model(cfg, input_size=len(feature_cols), num_targets=len(target_cols)).to(device)
+    num_targets = len(cfg["features"]["target_stats"])
+    model = build_model(cfg, input_size=len(feat_cols), num_targets=num_targets).to(device)
     print(f"Model params: {sum(p.numel() for p in model.parameters()):,}")
 
     optimizer = torch.optim.Adam(
@@ -122,6 +161,14 @@ def train(cfg_path: str = "configs/default.yaml") -> None:
             if patience_counter >= cfg["training"]["early_stopping_patience"]:
                 print(f"Early stopping at epoch {epoch}")
                 break
+
+    # Persist scaler and feature column list for inference
+    features_dir = Path(cfg["data"]["features_dir"])
+    features_dir.mkdir(parents=True, exist_ok=True)
+    with open(features_dir / "scaler.pkl", "wb") as f:
+        pickle.dump(scaler, f)
+    with open(features_dir / "feature_cols.pkl", "wb") as f:
+        pickle.dump(feat_cols, f)
 
     print(f"Best val loss: {best_val_loss:.4f}")
 

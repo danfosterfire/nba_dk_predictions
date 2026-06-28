@@ -1,5 +1,6 @@
-"""Run inference for upcoming games given recent player game logs."""
+"""Inference: given a player's prior-season game logs, predict dk_pts per game."""
 
+import pickle
 from pathlib import Path
 
 import numpy as np
@@ -7,64 +8,80 @@ import pandas as pd
 import torch
 import yaml
 
-from src.data.dataset import PlayerSequenceDataset
-from src.features.encode import build_feature_matrix, load_artifacts
+from src.data.dataset import SeasonBoundaryDataset
 from src.train import build_model, set_seed
 
 
-def predict_from_logs(
-    recent_logs: pd.DataFrame,
+def predict_from_prior_season(
+    prior_season_logs: pd.DataFrame,
     cfg_path: str = "configs/default.yaml",
 ) -> pd.DataFrame:
-    """Predict the next game stats for each player in recent_logs.
+    """Predict dk_pts for each player based on their prior-season game logs.
 
     Args:
-        recent_logs: DataFrame of recent game logs (same schema as processed data).
-                     Must contain at least seq_len games per player.
-        cfg_path:    Path to config YAML.
+        prior_season_logs: Processed game logs for the PRIOR season (same schema
+                           as game_logs.parquet — must include all columns in
+                           SeasonBoundaryDataset.FEATURE_COLS).
+        cfg_path:          Path to config YAML.
 
     Returns:
-        DataFrame with columns [player_id, player_name] + target_cols.
+        DataFrame with columns [player_id, player_name, predicted_dk_pts].
     """
     cfg = yaml.safe_load(open(cfg_path))
     set_seed(cfg["training"]["seed"])
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     features_dir = Path(cfg["data"]["features_dir"])
-    scaler, feature_cols = load_artifacts(features_dir)
-    target_cols = cfg["features"]["target_stats"]
+    with open(features_dir / "scaler.pkl", "rb") as f:
+        scaler = pickle.load(f)
+    with open(features_dir / "feature_cols.pkl", "rb") as f:
+        feat_cols = pickle.load(f)
+
     seq_len = cfg["features"]["sequence_length"]
+    num_targets = len(cfg["features"]["target_stats"])
 
-    df = build_feature_matrix(recent_logs, windows=cfg["features"]["rolling_windows"])
-    df[feature_cols] = scaler.transform(df[feature_cols].fillna(0))
-
-    model = build_model(cfg, input_size=len(feature_cols), num_targets=len(target_cols)).to(device)
-    model.load_state_dict(torch.load(Path(cfg["training"]["checkpoint_dir"]) / "best_model.pt", map_location=device))
+    model = build_model(cfg, input_size=len(feat_cols), num_targets=num_targets).to(device)
+    model.load_state_dict(
+        torch.load(Path(cfg["training"]["checkpoint_dir"]) / "best_model.pt", map_location=device)
+    )
     model.eval()
 
+    df = prior_season_logs.copy()
+    df[feat_cols] = scaler.transform(df[feat_cols].fillna(0))
+
     records = []
-    for player_id, player_df in df.groupby("player_id", sort=False):
-        player_df = player_df.sort_values("game_date")
-        if len(player_df) < seq_len:
+    for player_id, pdf in df.groupby("player_id", sort=False):
+        pdf = pdf.sort_values("game_date")
+        if len(pdf) == 0:
             continue
-        seq = player_df[feature_cols].to_numpy(dtype=np.float32)[-seq_len:]
+        prior_feats = pdf[feat_cols].to_numpy(dtype=np.float32)
+        seq = prior_feats[-seq_len:]
+        if len(seq) < seq_len:
+            pad = np.zeros((seq_len - len(seq), len(feat_cols)), dtype=np.float32)
+            seq = np.concatenate([pad, seq], axis=0)
         x = torch.from_numpy(seq).unsqueeze(0).to(device)
         with torch.no_grad():
-            pred = model(x).cpu().numpy()[0]
-        row = {"player_id": player_id, "player_name": player_df["player_name"].iloc[-1]}
-        row.update(dict(zip(target_cols, pred)))
-        records.append(row)
+            pred_dk = model(x).cpu().numpy()[0, 0]
+        records.append({
+            "player_id": player_id,
+            "player_name": pdf["player_name"].iloc[-1],
+            "predicted_dk_pts": float(pred_dk),
+        })
 
-    return pd.DataFrame(records)
+    return pd.DataFrame(records).sort_values("predicted_dk_pts", ascending=False).reset_index(drop=True)
 
 
 if __name__ == "__main__":
-    # Quick smoke test using the processed data
     cfg = yaml.safe_load(open("configs/default.yaml"))
+    # Use the most recent season in processed data as the "prior season" for inference
     df = pd.read_parquet(Path(cfg["data"]["processed_dir"]) / "game_logs.parquet")
-    preds = predict_from_logs(df)
-    print(preds.head(10).to_string(index=False))
+    latest_season = sorted(df["season"].unique())[-1]
+    prior_logs = df[df["season"] == latest_season]
 
-    out = Path(cfg["evaluation"]["predictions_dir"]) / "next_game_predictions.csv"
-    preds.to_csv(out, index=False)
-    print(f"Saved predictions → {out}")
+    preds = predict_from_prior_season(prior_logs)
+    print(preds.head(20).to_string(index=False))
+
+    out = Path(cfg["evaluation"]["predictions_dir"])
+    out.mkdir(parents=True, exist_ok=True)
+    preds.to_csv(out / "next_season_predictions.csv", index=False)
+    print(f"Saved predictions → {out / 'next_season_predictions.csv'}")

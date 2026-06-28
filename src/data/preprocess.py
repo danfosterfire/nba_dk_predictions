@@ -35,7 +35,13 @@ RENAME = {c: c.lower() for c in KEEP_COLS}
 
 def load_raw(raw_dir: str | Path) -> pd.DataFrame:
     raw_dir = Path(raw_dir)
-    frames = [pd.read_csv(f) for f in sorted(raw_dir.glob("game_logs_*.csv"))]
+    frames = []
+    for f in sorted(raw_dir.glob("game_logs_*.csv")):
+        df = pd.read_csv(f)
+        # filename: game_logs_2021_22.csv -> season "2021-22"
+        slug = f.stem.replace("game_logs_", "")
+        df["season"] = slug.replace("_", "-")
+        frames.append(df)
     if not frames:
         raise FileNotFoundError(f"No game log CSVs found in {raw_dir}")
     return pd.concat(frames, ignore_index=True)
@@ -58,9 +64,10 @@ def compute_dk_pts(df: pd.DataFrame) -> pd.Series:
 
 
 def clean(df: pd.DataFrame, min_games: int = 20) -> pd.DataFrame:
-    # Keep only the columns we care about (drop silently if absent)
+    # Keep only the columns we care about (drop silently if absent); preserve season
     cols = [c for c in KEEP_COLS if c in df.columns]
-    df = df[cols].rename(columns=RENAME).copy()
+    extra = ["season"] if "season" in df.columns else []
+    df = df[cols + extra].rename(columns=RENAME).copy()
 
     df["game_date"] = pd.to_datetime(df["game_date"])
     df["home"] = df["matchup"].str.contains("vs\\.").astype(int)
