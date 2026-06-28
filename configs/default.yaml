@@ -1,0 +1,40 @@
+data:
+  raw_dir: data/raw
+  processed_dir: data/processed
+  features_dir: data/features
+  seasons:
+    - "2021-22"
+    - "2022-23"
+    - "2023-24"
+    - "2024-25"
+  # Minimum games played to include a player
+  min_games: 20
+
+features:
+  # Number of recent games to use as the input sequence
+  sequence_length: 10
+  # Rolling window sizes for aggregate features
+  rolling_windows: [5, 10, 15]
+  target_stats:
+    - dk_pts
+
+model:
+  type: lstm          # lstm | transformer | baseline
+  hidden_size: 128
+  num_layers: 2
+  dropout: 0.2
+  input_size: 32      # updated automatically at runtime from feature count
+
+training:
+  epochs: 100
+  batch_size: 64
+  learning_rate: 0.001
+  weight_decay: 1.0e-5
+  early_stopping_patience: 10
+  val_split: 0.15
+  test_split: 0.10
+  seed: 42
+  checkpoint_dir: outputs/checkpoints
+
+evaluation:
+  predictions_dir: outputs/predictions

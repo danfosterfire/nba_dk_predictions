@@ -1,0 +1,11 @@
+.venv/
+data/raw/
+data/processed/
+data/features/
+outputs/
+__pycache__/
+*.py[cod]
+.env
+*.egg-info/
+dist/
+.ipynb_checkpoints/
