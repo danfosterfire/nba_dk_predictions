@@ -1,0 +1,16 @@
+# Project-level Streamlit config for `make dashboard`.
+#
+# headless = true is the load-bearing line: without it Streamlit's first run on a
+# machine stops at an interactive "Email:" onboarding prompt, and `make dashboard`
+# exits 255 instead of serving.
+#
+# The chart surfaces are *not* set here on purpose. dashboard/app.py pins its plot
+# surfaces to the exact values the colour palette was validated against and offers
+# its own light/dark toggle, so Streamlit's page chrome is left to follow the
+# viewer's own theme setting.
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false

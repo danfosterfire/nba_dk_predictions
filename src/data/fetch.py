@@ -34,9 +34,25 @@ PT_MEASURE_TYPES = [
     "PaintTouch",     # paint touches
 ]
 
-# Measure types for LeagueDashPlayerStats and LeagueDashTeamStats
-PLAYER_STAT_MEASURES = ["Base", "Advanced", "Defense", "Four Factors", "Misc", "Scoring", "Usage"]
+# Measure types for LeagueDashPlayerStats and LeagueDashTeamStats.
+# "Four Factors" is omitted for players: the endpoint returns a response with the
+# LeagueDashPlayerStats result set missing entirely under every per_mode. Its stats
+# (EFG_PCT, TM_TOV_PCT, OREB_PCT, FTA_RATE) are all carried by Advanced anyway.
+# Team four-factors works fine and stays.
+PLAYER_STAT_MEASURES = ["Base", "Advanced", "Defense", "Misc", "Scoring", "Usage"]
 TEAM_STAT_MEASURES = ["Base", "Advanced", "Defense", "Four Factors", "Misc", "Scoring", "Opponent"]
+
+# per_mode values cycled when a LeagueDashPlayerStats query comes back empty.
+# The API caches negative results keyed on the full query string, so an empty
+# response is not a rate limit and backoff does not clear it — changing any
+# parameter (per_mode is the only one that is safe to vary) misses the poisoned
+# cache entry and reaches the backend. Empty responses return in ~0.1s; real
+# ones take ~2s.
+PLAYER_STAT_PER_MODES = ["PerGame", "Totals", "Per100Possessions", "PerMinute"]
+
+# Records which per_mode each player_stats file was actually fetched with, so
+# downstream loaders can normalize counting stats to a common basis.
+MANIFEST_NAME = "_fetch_manifest.csv"
 
 # Earliest start-year for endpoints that weren't always available.
 # Seasons before these years are skipped rather than attempted and errored.
@@ -65,16 +81,57 @@ def _season_start_year(season: str) -> int:
 def _save(df: pd.DataFrame, dest: Path) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(dest, index=False)
-    print(f"  Saved {len(df):,} rows → {dest}")
+    if len(df) == 0:
+        print(f"  WARNING: saved 0 rows → {dest} (empty API response; file will be re-fetched next run)")
+    else:
+        print(f"  Saved {len(df):,} rows → {dest}")
     return dest
 
 
-def _skip_or_fetch(dest: Path, label: str):
+def _has_data_rows(dest: Path, header_rows: int = 1) -> bool:
+    """True if `dest` holds at least one data row beyond its header.
+
+    Reads only the first few lines rather than parsing the file — the raw
+    directory holds hundreds of MB of CSVs and this runs once per file per run.
+    """
+    if dest.stat().st_size == 0:
+        return False
+    with open(dest) as f:
+        for _ in range(header_rows):
+            if not f.readline():
+                return False
+        return bool(f.readline().strip())
+
+
+def _skip_or_fetch(dest: Path, label: str, header_rows: int = 1) -> bool:
+    """True if `dest` is already populated and the fetch can be skipped.
+
+    A file with a header but no data rows counts as *not* fetched, so empty
+    responses that reached disk self-heal on the next run instead of being
+    skipped forever.
+    """
     if dest.exists():
-        print(f"Already fetched {label}, skipping.")
-        return True
+        if _has_data_rows(dest, header_rows):
+            print(f"Already fetched {label}, skipping.")
+            return True
+        print(f"Re-fetching {label} (existing file has no data rows)...")
+        return False
     print(f"Fetching {label}...")
     return False
+
+
+def _record_fetch(output_dir: Path, family: str, season: str, per_mode: str, rows: int) -> None:
+    """Upsert one (family, season) row into data/raw/_fetch_manifest.csv."""
+    dest = output_dir / MANIFEST_NAME
+    row = {"family": family, "season": season, "per_mode": per_mode, "rows": rows}
+    if dest.exists():
+        manifest = pd.read_csv(dest)
+        manifest = manifest[~((manifest["family"] == family) & (manifest["season"] == season))]
+        manifest = pd.concat([manifest, pd.DataFrame([row])], ignore_index=True)
+    else:
+        manifest = pd.DataFrame([row])
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.sort_values(["family", "season"]).to_csv(dest, index=False)
 
 
 # ── Players static ────────────────────────────────────────────────────────────
@@ -105,18 +162,35 @@ def fetch_season_game_logs(season: str, output_dir: str | Path = "data/raw") -> 
 def fetch_player_stats(season: str, output_dir: Path, measure_type: str = "Base") -> Path:
     """LeagueDashPlayerStats — season averages across multiple measure types.
 
-    measure_type options: Base, Advanced, Defense, Four Factors, Misc, Scoring, Usage
+    measure_type options: Base, Advanced, Defense, Misc, Scoring, Usage
+
+    On an empty response, cycles per_mode (see PLAYER_STAT_PER_MODES) to sidestep
+    the cached negative result, and records the winning mode in the fetch manifest
+    so downstream loaders can normalize the file to a common basis.
     """
     slug = measure_type.lower().replace(" ", "_")
-    dest = output_dir / f"player_stats_{slug}_{_slug(season)}.csv"
+    family = f"player_stats_{slug}"
+    dest = output_dir / f"{family}_{_slug(season)}.csv"
     if _skip_or_fetch(dest, f"player_stats/{measure_type} {season}"):
         return dest
-    df = leaguedashplayerstats.LeagueDashPlayerStats(
-        season=season,
-        season_type_all_star="Regular Season",
-        measure_type_detailed_defense=measure_type,
-        per_mode_detailed="PerGame",
-    ).get_data_frames()[0]
+
+    df = pd.DataFrame()
+    per_mode = PLAYER_STAT_PER_MODES[0]
+    for i, per_mode in enumerate(PLAYER_STAT_PER_MODES):
+        df = leaguedashplayerstats.LeagueDashPlayerStats(
+            season=season,
+            season_type_all_star="Regular Season",
+            measure_type_detailed_defense=measure_type,
+            per_mode_detailed=per_mode,
+        ).get_data_frames()[0]
+        if len(df) > 0:
+            break
+        remaining = PLAYER_STAT_PER_MODES[i + 1:]
+        if remaining:
+            print(f"  Empty response at per_mode={per_mode}; retrying as {remaining[0]}")
+            time.sleep(DELAY)
+
+    _record_fetch(output_dir, family, season, per_mode, len(df))
     return _save(df, dest)
 
 
@@ -136,7 +210,8 @@ def fetch_player_bio_stats(season: str, output_dir: Path) -> Path:
 def fetch_player_shot_locations(season: str, output_dir: Path) -> Path:
     """LeagueDashPlayerShotLocations — FGA/FGM by zone (RA, paint, mid-range, corners, above break)."""
     dest = output_dir / f"player_shot_locations_{_slug(season)}.csv"
-    if _skip_or_fetch(dest, f"player_shot_locations {season}"):
+    # This family alone writes a two-row (MultiIndex) header.
+    if _skip_or_fetch(dest, f"player_shot_locations {season}", header_rows=2):
         return dest
     df = leaguedashplayershotlocations.LeagueDashPlayerShotLocations(
         season=season,
