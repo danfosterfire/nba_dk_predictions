@@ -33,17 +33,58 @@ KEEP_COLS = [
 RENAME = {c: c.lower() for c in KEEP_COLS}
 
 
-def load_raw(raw_dir: str | Path) -> pd.DataFrame:
+REGULAR_SEASON = "regular"
+PLAYOFFS = "playoffs"
+ALL_SEASON_TYPES = "all"
+
+
+def _parse_log_filename(stem: str) -> tuple[str, str]:
+    """`game_logs_2021_22` -> ("regular", "2021-22");
+    `game_logs_playoffs_2021_22` -> ("playoffs", "2021-22").
+
+    Both season types share the same `season` label. Deriving the season from the slug
+    without stripping the prefix produced the pseudo-season `playoffs-2021-22`, which
+    silently doubled the season count for every downstream
+    `groupby(["player_id", "season"])`.
+    """
+    slug = stem.replace("game_logs_", "")
+    if slug.startswith("playoffs_"):
+        return PLAYOFFS, slug.replace("playoffs_", "").replace("_", "-")
+    return REGULAR_SEASON, slug.replace("_", "-")
+
+
+def load_raw(raw_dir: str | Path, season_type: str = REGULAR_SEASON,
+             columns: list[str] | None = None) -> pd.DataFrame:
+    """Raw player-game rows, tagged with `season` and `season_type`.
+
+    **Defaults to regular season only, and that is the modelling decision, not a
+    convenience.** `game_logs_*.csv` also matches the 30 `game_logs_playoffs_*.csv`
+    files, so this used to pull playoff rows in unannounced. Playoff games are excluded
+    from every fitting frame because the DK best-ball contest ends 4/4 — before the
+    playoffs begin — and because playoff minutes are a *role interaction with a sign
+    change*, not a level shift (see `CLAUDE.md`). The playoff logs stay on disk and stay
+    useful as **prior-season workload features**, which is a different role entirely.
+
+    `season_type` is one of "regular", "playoffs" or "all". Anything else raises rather
+    than silently returning an empty frame.
+    """
+    if season_type not in (REGULAR_SEASON, PLAYOFFS, ALL_SEASON_TYPES):
+        raise ValueError(
+            f"season_type must be one of 'regular', 'playoffs', 'all'; got {season_type!r}")
+
     raw_dir = Path(raw_dir)
     frames = []
     for f in sorted(raw_dir.glob("game_logs_*.csv")):
-        df = pd.read_csv(f)
-        # filename: game_logs_2021_22.csv -> season "2021-22"
-        slug = f.stem.replace("game_logs_", "")
-        df["season"] = slug.replace("_", "-")
+        kind, season = _parse_log_filename(f.stem)
+        if season_type != ALL_SEASON_TYPES and kind != season_type:
+            continue
+        df = pd.read_csv(f, usecols=columns, low_memory=False)
+        df["season"] = season
+        df["season_type"] = kind
         frames.append(df)
     if not frames:
-        raise FileNotFoundError(f"No game log CSVs found in {raw_dir}")
+        raise FileNotFoundError(
+            f"No {season_type} game log CSVs found in {raw_dir}")
     return pd.concat(frames, ignore_index=True)
 
 
@@ -66,7 +107,7 @@ def compute_dk_pts(df: pd.DataFrame) -> pd.Series:
 def clean(df: pd.DataFrame, min_games: int = 20) -> pd.DataFrame:
     # Keep only the columns we care about (drop silently if absent); preserve season
     cols = [c for c in KEEP_COLS if c in df.columns]
-    extra = ["season"] if "season" in df.columns else []
+    extra = [c for c in ("season", "season_type") if c in df.columns]
     df = df[cols + extra].rename(columns=RENAME).copy()
 
     df["game_date"] = pd.to_datetime(df["game_date"])

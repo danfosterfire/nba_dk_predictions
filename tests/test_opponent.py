@@ -5,12 +5,14 @@ from src.features.opponent import (
     BilinearMatchup,
     _cell_share,
     _is_team_rate,
+    cross_component_cancellation,
     fit_bilinear,
     is_home,
     lag_profiles,
     minutes_weights,
     nxt_map,
     opponent_abbreviation,
+    opponent_effect_sd,
     profile_cols,
     standardize_within_season,
     to_per100,
@@ -210,3 +212,87 @@ def test_fit_bilinear_respects_sample_weights():
     w = np.concatenate([np.ones(1000), np.zeros(1000)])
     fit = fit_bilinear(S, O, corrupt, rank=1, ridge=1e-6, seed=0, w=w)
     assert np.allclose(np.outer(fit.U[0], fit.V[0]), np.outer(u, v), atol=0.1)
+
+
+# ── Opponent effect size, and the cross-component cancellation ───────────────
+
+def _opponent_games(n_seasons: int = 4, n_opponents: int = 10, per_cell: int = 60,
+                    effect: float = 1.0, noise: float = 3.0,
+                    seed: int = 0) -> pd.DataFrame:
+    """Player-games whose outcome carries a planted, season-stable opponent effect.
+
+    `effect` scales a fixed per-opponent offset, so the recoverable sd is known: the
+    offsets are centred and unit-sd by construction, making the true opponent sd `effect`.
+    """
+    rng = np.random.default_rng(seed)
+    offsets = np.arange(n_opponents, dtype=float)
+    offsets = (offsets - offsets.mean()) / offsets.std(ddof=1)
+    rows = []
+    for s in range(n_seasons):
+        for o in range(n_opponents):
+            y = effect * offsets[o] + rng.normal(0.0, noise, per_cell)
+            for v in y:
+                rows.append({"season": f"200{s}-0{s + 1}", "opponent_team_id": o,
+                             "dk_pts": float(v), "reb_per36": float(v), "min": 30.0})
+    return pd.DataFrame(rows)
+
+
+def test_opponent_effect_sd_recovers_a_planted_effect():
+    games = _opponent_games(effect=2.0, noise=2.0, per_cell=200)
+    got = opponent_effect_sd(games, "dk_pts", noise_corrected=True)
+    assert abs(got - 2.0) < 0.3
+
+
+def test_opponent_effect_sd_is_near_zero_when_the_opponent_does_not_matter():
+    games = _opponent_games(effect=0.0, noise=4.0, per_cell=200)
+    assert opponent_effect_sd(games, "dk_pts", noise_corrected=True) < 0.4
+
+
+def test_the_noise_correction_only_ever_lowers_the_figure():
+    games = _opponent_games(effect=1.0, noise=5.0, per_cell=40)
+    raw = opponent_effect_sd(games, "dk_pts")
+    corrected = opponent_effect_sd(games, "dk_pts", noise_corrected=True)
+    assert corrected <= raw
+
+
+def test_an_uncorrected_sd_of_cell_means_reads_high_on_pure_noise():
+    """Why the correction exists: sampling error in the cell means is not an effect."""
+    games = _opponent_games(effect=0.0, noise=6.0, per_cell=30)
+    raw = opponent_effect_sd(games, "dk_pts")
+    corrected = opponent_effect_sd(games, "dk_pts", noise_corrected=True)
+    assert raw > 0.3
+    assert corrected < raw / 2
+
+
+def test_cancellation_uses_absolute_weights_so_turnovers_add_to_gross():
+    table = pd.DataFrame({
+        "outcome": ["dk_pts", "reb_per36", "tov_per36"],
+        "opponent_sd_corrected": [1.0, 0.4, 0.4],
+        "dk_abs_weight": [1.0, 1.25, 0.5],
+    })
+    got = cross_component_cancellation(table)
+    assert abs(got["gross_dk_movement"] - (0.4 * 1.25 + 0.4 * 0.5)) < 1e-12
+    assert got["net_dk_movement"] == 1.0
+    assert abs(got["cancellation_ratio"] - 0.7) < 1e-12
+
+
+def test_cancellation_reads_one_when_a_single_component_is_the_aggregate():
+    table = pd.DataFrame({
+        "outcome": ["dk_pts", "reb_per36"],
+        "opponent_sd_corrected": [0.5, 0.5],
+        "dk_abs_weight": [1.0, 1.0],
+    })
+    assert abs(cross_component_cancellation(table)["cancellation_ratio"] - 1.0) < 1e-12
+
+
+def test_cancellation_takes_gross_and_net_from_the_same_column():
+    """Mixing two bases is how the superseded 1.105-against-0.785 pair arose."""
+    table = pd.DataFrame({
+        "outcome": ["dk_pts", "reb_per36"],
+        "opponent_sd": [1.0, 0.8],
+        "opponent_sd_corrected": [0.5, 0.4],
+        "dk_abs_weight": [1.0, 1.0],
+    })
+    raw = cross_component_cancellation(table, sd_col="opponent_sd")
+    corrected = cross_component_cancellation(table, sd_col="opponent_sd_corrected")
+    assert abs(raw["cancellation_ratio"] - corrected["cancellation_ratio"]) < 1e-12

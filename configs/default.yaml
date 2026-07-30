@@ -36,6 +36,62 @@ data:
   # Minimum games played to include a player
   min_games: 20
 
+  injury_reports:
+    dir: data/raw/injury_reports
+    # The league-mandated 5:00 PM ET deadline report. Reports are published every 30
+    # minutes; the full grid is ~8,000 requests a season against ~170 for this one, and
+    # a single daily snapshot is all the preseason feature needs.
+    time_key: "05_00PM"
+    # Retention is ~7 months and rolling — a date that ages out returns 403 forever and
+    # cannot be recovered. This is how far back a sweep reaches; anything older is gone.
+    retention_days: 210
+    # Deliberately slower than the nba_api delay: this CDN throttles.
+    delay: 3.0
+
+  injuries:
+    dir: data/raw/injuries
+    # A daily cadence. The ESPN feed is current-status only, so it builds history going
+    # forward and can never acquire any retroactively — one snapshot a day is the whole
+    # archive, and re-running inside the window is a no-op rather than a duplicate.
+    min_hours_between_snapshots: 20
+
+  adp:
+    draftkings:
+      # Manually downloaded from the DK draft lobby — login-gated, zero Wayback presence,
+      # live only while contests are open. NOT scrapable and NOT backfillable; a board
+      # that is not captured while the lobby is open is gone. See docs/adp-plan.md.
+      dir: data/raw/dk_draft_rankings
+      # A board captured in this month or later is drafting for the season starting that
+      # year. Verified on both anchors: Jul 2026 -> 2026-27, Oct 2025 -> 2025-26.
+      season_month_cutoff: 6
+    fantasypros:
+      dir: data/raw/adp/fantasypros
+      # robots.txt permits /nba/adp/ at Crawl-delay 5; /api/, /json/ and /nba/ranker/ are
+      # disallowed, so the rendered table is parsed rather than the JSON behind it.
+      crawl_delay: 5.0
+      # The Wayback host 503s well before the crawl delay, so it gets a longer one.
+      wayback_delay: 6.0
+      # At or above this share of identical AVG values the board has not moved since the
+      # previous snapshot, and inherits its season. Measured: frozen pairs score exactly
+      # 1.0000 against a non-frozen maximum of 0.3360, so 0.5 sits in a wide empty gap.
+      # This does NOT detect a season flip — flips (0.0055-0.0871) and within-window
+      # drift (0.0667-0.2273) overlap and are not separable by identity.
+      frozen_threshold: 0.5
+      # Below this overlap two boards cannot be compared; treated as "not frozen".
+      min_overlap: 40
+
+  boxscore_status:
+    # InactivePlayers returns 0 rows before 2006-07 — probed directly, not assumed. This
+    # is a third coverage boundary alongside Tier A (30 seasons) and Tier B (13).
+    first_season: "2006-07"
+    # BoxScoreTraditionalV2 returns 0 rows from this season on; V3 works and carries the
+    # same field as lower-case `comment`.
+    v3_from_season: "2025-26"
+    delay: 0.6
+    # Games between manifest/CSV flushes. The full backfill is ~24,600 games and 8-14 h,
+    # so it has to survive being killed; smaller is safer, larger is faster.
+    flush_every: 25
+
 features:
   # Number of recent games to use as the input sequence
   sequence_length: 10
@@ -58,7 +114,32 @@ features:
     rank: 2
     style_dims: 8
     defense_dims: 5
+
+  availability:
+    # A spell of this many missed games is a "major" absence. 36.6% of all missed
+    # games sit in spells at least this long against 47.6% of spells being a single
+    # game — season-ending injury and a rest day are different processes and want
+    # different models.
+    long_spell_games: 10
+    # Team games the season-edge measures are read over: did his season END with him
+    # unavailable, and did he START the next one that way.
+    season_edge_games: 10
+    season_open_games: 20
+
+    # ── src/models/availability.py ──
+    # Trailing target seasons held out for the walk-forward evaluation.
+    test_seasons: 2
+    # Ridge penalty on the (strongly collinear by construction) lag block.
     ridge: 100.0
+    # L2 on the beta-binomial GLM's coefficients. Small against a log-likelihood summed
+    # over ~10,000 rows — insurance against a flat direction, not real shrinkage.
+    glm_l2: 1.0
+    # Pseudo-observations pulling each age's mean toward the league mean in the
+    # league/age baseline. The README's "shrink hard" instruction, made a number.
+    age_shrinkage: 50.0
+    # Refits of the GBM against a permuted target, for its chance level.
+    n_shuffles: 5
+    seed: 42
 
 model:
   type: lstm          # lstm | transformer | baseline
@@ -80,6 +161,44 @@ training:
 
 evaluation:
   predictions_dir: outputs/predictions
+
+# ── Stan heads (src/stan/*.stan, src/models/stan_*.py) ────────────────────────
+# The generative chain is availability -> min | available -> counts | min -> makes |
+# attempts. With distinct parameter blocks and independent priors the joint posterior
+# factorizes EXACTLY, so the heads are fitted separately and recover the identical
+# posterior a joint model would. Correlation for the simulator comes from a shared `min`
+# draw plus a residual copula, not from joint fitting. See CLAUDE.md.
+stan:
+  chains: 4
+  warmup: 1000
+  samples: 1000
+  seed: 42
+  # Posterior draws pushed through the predictive. Each costs one (rows x games+1)
+  # beta-binomial evaluation, so this trades wall clock against Monte Carlo error in the
+  # predictive distribution rather than against posterior accuracy.
+  predictive_draws: 400
+  # Shorter chains for the variant-selection sweeps, which fit the same model many times
+  # on a validation split. Selection needs the ordering of a handful of variants, not
+  # three-decimal posterior means; the selected variant is then refitted at full length.
+  select_warmup: 500
+  select_samples: 500
+
+  minutes:
+    # Prior-season total minutes required before a row is fitted. Matches the component
+    # heads' qualification threshold, where reliability is already ~0.75.
+    min_prior_minutes: 200
+    # Games played in the target season required before its minutes total is a usable
+    # observation of a rate.
+    min_games: 10
+    spline_knots: 5
+
+  components:
+    # Every head gets a spline variant and the winner is picked on a VALIDATION split,
+    # rather than hard-coding "splines on fg3a and blk only". `make component-rates`
+    # measured that pattern (+0.030 R^2 on fg3a, +0.041 on blk, <= +0.003 elsewhere) under
+    # a different likelihood, so re-deriving it is the check; baking it in as config would
+    # make the sweep unable to disagree.
+    spline_knots: 5
 
 eda:
   # Qualification filter for the season matrix. MIN is per-game, so this reads
@@ -143,6 +262,15 @@ eda:
     collinearity_threshold: 0.95
     # Conventional VIF alarm level; reported, not enforced.
     vif_flag: 10.0
+
+  availability:
+    # "Established rotation player" — last season's regulars. The overdispersion
+    # figure is quoted on this population because it is the one a naive model would
+    # call reliably available, which is what makes the spread worth reporting.
+    rotation_min_mpg: 20.0
+    rotation_min_gp_share: 0.70
+    # Width of the games-played histogram bins in the profile output.
+    gp_histogram_bin_width: 8
     # A category with fewer rows than this is a cold-start risk for target encoding.
     min_category_n: 50
     # 5 is not enough for the cell-mean null: its per-draw sd is ~0.024pp and the
@@ -153,8 +281,22 @@ eda:
     # helper must reproduce it here, or the generalization disagrees with the one-off
     # it was built from.
     null_window: ["2014-15", "2023-24"]
+    # Share of a player-season's games that must carry a real box-score status before the
+    # reason decomposition is measured on it. Both sides of a season pair must clear it,
+    # otherwise the split measures how far `make boxscore-status` has run.
+    min_status_coverage: 0.9
+    # Below this many usable pairs the decomposition reports "insufficient coverage"
+    # rather than a number — no measurement, which is not the same as no effect.
+    min_decomposition_pairs: 200
     sequence:
       # Trailing seasons held out for the sequence-vs-aggregate ablation.
       test_seasons: 2
       # Length of the "recent form" tail feature.
       recent_games: 10
+
+  report_calibration:
+    # Minimum rows in a (designation x stated reason) cell before its P(play) is
+    # reported. Below this the estimate is mostly the denominator: the reason
+    # vocabulary has a long tail ("Trade Pending", "Concussion Protocol") where a
+    # handful of rows would otherwise print as a confident 0.000 or 1.000.
+    min_reason_cell: 30

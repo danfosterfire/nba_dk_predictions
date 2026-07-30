@@ -111,10 +111,35 @@ def dk_scoring_from_shot_classes(df: pd.DataFrame) -> pd.Series:
 
 # ── Expected bonus ────────────────────────────────────────────────────────────
 
-# Calibrated against 11,627 player-seasons of realized bonus (2014-15 → 2025-26):
-# independent sampling is 23% too low (0.098 vs 0.127 dk_pts/game realized), and this
-# value brings the mean bias to +0.001 with good fit across minutes buckets.
+# Variance of the shared per-game frailty `g` in `expected_bonus` — NOT a dispersion of
+# dk_pts, and not fitted by any head. It does two jobs at once: it makes each category's
+# marginal negative binomial (`var = mu + overdispersion*mu^2`), and because `g` is shared
+# across the five categories it induces the positive dependence the bonus needs.
+#
+# **This value is calibrated at the player-SEASON unit** — expected counts are a
+# player-season's mean per-game counts — where it must also stand in for the minutes
+# variation that a season mean hides. Re-run with `make component-targets`
+# (`bonus_calibration` → `outputs/eda/bonus_calibration.csv`), which reproduces the two
+# recorded facts on 11,938 qualifying player-seasons: aggregate bias **+0.0009** dk_pts/game
+# and independent sampling **22.7%** too low.
+#
+# Two things that artifact adds, and the second is a correction:
+#   - Fitted exactly, the season-unit optimum is **0.0968**, i.e. 0.10 to two figures.
+#   - The aggregate fit is good but the **per-mpg-bucket fit is not** — at 0.10 the bias
+#     runs -0.014 at 12-18 mpg against +0.029 at 30-48, a 0.043 spread that cancels to
+#     +0.001. One scalar frailty cannot absorb minutes variation whose *relative* size
+#     differs by bucket.
+# **The simulator draws per game and must therefore use ~0.025, not this value** — see
+# `BONUS_GAME_OVERDISPERSION`.
 BONUS_OVERDISPERSION = 0.10
+
+# The same quantity for per-GAME expected counts (per-36 rate x that game's actual minutes),
+# which is how `expected_dk_pts` is called and how the simulator will draw. Minutes are no
+# longer hidden inside the frailty, so the residual overdispersion is ~4x smaller — and at
+# this value the fit holds across every minutes bucket (bias -0.0004 to +0.0007 dk_pts/game)
+# rather than only in aggregate. Using 0.10 per game over-predicts the bonus by +0.036
+# dk_pts/game for 30+ minute players, who are exactly the ones the bonus is worth most for.
+BONUS_GAME_OVERDISPERSION = 0.025
 
 
 def expected_bonus(expected_counts: np.ndarray, overdispersion: float = BONUS_OVERDISPERSION,
@@ -148,6 +173,175 @@ def expected_bonus(expected_counts: np.ndarray, overdispersion: float = BONUS_OV
         cats = (draws >= BONUS_THRESHOLD).sum(axis=-1)
         out[start:start + chunk] = payout[cats].mean(axis=0)
     return out
+
+
+# ── Bonus calibration ─────────────────────────────────────────────────────────
+#
+# `BONUS_OVERDISPERSION` above is the one constant in this project that `CLAUDE.md`
+# forbids changing without re-running a calibration — and until this section existed there
+# was no target that re-ran it. Two units, because they do not agree and the gap is the
+# finding:
+#
+#   player_season   expected counts are the player-season's mean per-game counts. This is
+#                   the unit the shipped 0.10 was fitted on, and the frailty absorbs both
+#                   game-to-game count overdispersion *and* the minutes variation the
+#                   season mean hides.
+#   player_game     expected counts are the player-season per-36 rate x that game's actual
+#                   minutes — the way `expected_dk_pts` is actually called. Minutes are no
+#                   longer hidden, so there is less for the frailty to absorb and the same
+#                   0.10 over-predicts.
+#
+# Both are reported at every grid point, with an mpg / minutes bucket break, because "it
+# holds across buckets" is a claim and not a courtesy.
+
+# Season minutes a player-season needs before its per-game rate is a meaningful prediction.
+# The project's standing qualification threshold — reliability ~0.75 (`CLAUDE.md`), and the
+# same value `models.component_rates.MIN_PRIOR_MINUTES` and the Stan minutes head use.
+BONUS_MIN_SEASON_MINUTES = 200
+
+BONUS_MPG_BUCKETS = [0.0, 12.0, 18.0, 24.0, 30.0, 48.0]
+BONUS_OVERDISPERSION_GRID = [0.0, 0.025, 0.05, 0.075, 0.10, 0.125, 0.15, 0.20, 0.30]
+
+# The per-game arm is ~60x the rows, so it gets three points rather than the whole grid:
+# independent sampling, its own calibrated value, and the season-unit value — which is the
+# comparison that shows why the two must not be interchanged.
+BONUS_GAME_GRID = [0.0, BONUS_GAME_OVERDISPERSION, BONUS_OVERDISPERSION]
+
+# Monte-Carlo draws for the per-game arm. The quantity is a mean over ~700k rows, so the
+# per-row MC sd of ~0.6/sqrt(256) averages down to ~4e-5 — four orders below the +/-0.001
+# bias the calibration is judged on. Halving the shipped default halves a 65-second pass.
+BONUS_CALIBRATION_SAMPLES = 256
+
+# |bias| above which `run` warns. The recorded calibration lands at +0.001.
+BONUS_BIAS_TOLERANCE = 0.005
+
+
+def _buckets(values: pd.Series, edges: list[float]) -> pd.Series:
+    """Half-open `lo-hi` labels, top edge inclusive — mirrors `eda.target.bucket_labels`.
+
+    Written here rather than imported because `src/eda` depends on `src/features`, never
+    the other way round.
+    """
+    idx = np.clip(np.digitize(pd.to_numeric(values, errors="coerce"), edges[1:-1]),
+                  0, len(edges) - 2)
+    labels = [f"{edges[i]:g}-{edges[i + 1]:g}" for i in range(len(edges) - 1)]
+    return pd.Series([labels[i] for i in idx], index=values.index, dtype=object)
+
+
+def bonus_frames(targets: pd.DataFrame,
+                 min_season_minutes: float = BONUS_MIN_SEASON_MINUTES
+                 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """(player-season, player-game) calibration frames over the same qualifying seasons.
+
+    Both carry `expected_*` columns for the five bonus categories and a `realized` bonus,
+    so the two units differ only in what the expected counts are conditioned on. Scoped to
+    played games: a DNP scores zero on both sides and would only dilute the bias.
+    """
+    played = targets[targets["min"] > 0]
+    season = played.groupby(["player_id", "season"], as_index=False).agg(
+        **{c: (c, "sum") for c in BONUS_CATEGORIES},
+        total_minutes=("min", "sum"), games=("min", "size"),
+        realized=("dk_bonus", "mean"))
+    season = season[season["total_minutes"] >= min_season_minutes].reset_index(drop=True)
+    season["mpg"] = season["total_minutes"] / season["games"]
+    for c in BONUS_CATEGORIES:
+        season[f"rate_{c}"] = season[c] / season["total_minutes"] * EXPOSURE_MINUTES
+        season[f"expected_{c}"] = season[f"rate_{c}"] * season["mpg"] / EXPOSURE_MINUTES
+
+    rate_cols = ["player_id", "season"] + [f"rate_{c}" for c in BONUS_CATEGORIES]
+    game = played.merge(season[rate_cols], on=["player_id", "season"], how="inner")
+    for c in BONUS_CATEGORIES:
+        game[f"expected_{c}"] = game[f"rate_{c}"] * game["min"] / EXPOSURE_MINUTES
+    game = game.rename(columns={"dk_bonus": "realized"})
+    return season, game
+
+
+def _expected_columns(frame: pd.DataFrame) -> np.ndarray:
+    return np.column_stack([frame[f"expected_{c}"].to_numpy(dtype=float)
+                            for c in BONUS_CATEGORIES])
+
+
+def _calibration_row(unit: str, bucket: str, overdispersion: float,
+                     realized: np.ndarray, predicted: np.ndarray) -> dict:
+    r, p = float(np.mean(realized)), float(np.mean(predicted))
+    return {"analysis": "calibration", "unit": unit, "bucket": bucket,
+            "overdispersion": overdispersion, "n": int(len(realized)),
+            "realized_mean_bonus": r, "expected_mean_bonus": p, "bias": p - r,
+            "relative_bias": (p - r) / r if r > 0 else np.nan,
+            "is_shipped": overdispersion == BONUS_OVERDISPERSION,
+            "is_independent": overdispersion == 0.0}
+
+
+def calibration_rows(frame: pd.DataFrame, unit: str, bucket_col: str,
+                     edges: list[float], overdispersion: float,
+                     n_samples: int = BONUS_CALIBRATION_SAMPLES, seed: int = 42) -> list[dict]:
+    """One `all` row plus one row per bucket, from a single Monte-Carlo pass.
+
+    `expected_bonus` returns a per-row expectation, so the bucket break costs nothing
+    beyond the grouping — which is why every grid point can afford to carry it.
+    """
+    predicted = expected_bonus(_expected_columns(frame), overdispersion=overdispersion,
+                               n_samples=n_samples, seed=seed)
+    realized = frame["realized"].to_numpy(dtype=float)
+    rows = [_calibration_row(unit, "all", overdispersion, realized, predicted)]
+    labels = _buckets(frame[bucket_col], edges)
+    for bucket in labels.dropna().unique():
+        m = (labels == bucket).to_numpy()
+        rows.append(_calibration_row(unit, str(bucket), overdispersion,
+                                     realized[m], predicted[m]))
+    return rows
+
+
+def zero_bias_overdispersion(rows: list[dict], unit: str) -> dict | None:
+    """Interpolate the grid's `all` rows to the overdispersion that zeroes the bias.
+
+    E[bonus] rises monotonically in the frailty variance, so a sign change between two grid
+    points brackets the optimum and a linear interpolation between them is enough — the
+    grid spacing (0.025) is already finer than the calibration's own tolerance.
+    """
+    pts = sorted(((r["overdispersion"], r["bias"], r) for r in rows
+                  if r["unit"] == unit and r["bucket"] == "all"), key=lambda t: t[0])
+    for (od_lo, b_lo, lo), (od_hi, b_hi, _) in zip(pts, pts[1:]):
+        if b_lo <= 0 <= b_hi and b_hi != b_lo:
+            od = od_lo + (od_hi - od_lo) * (-b_lo) / (b_hi - b_lo)
+            return {"analysis": "fitted", "unit": unit, "bucket": "all",
+                    "overdispersion": od, "n": lo["n"],
+                    "realized_mean_bonus": lo["realized_mean_bonus"],
+                    "expected_mean_bonus": np.nan, "bias": 0.0, "relative_bias": 0.0,
+                    "is_shipped": False, "is_independent": False}
+    return None
+
+
+def bonus_calibration(targets: pd.DataFrame,
+                      min_season_minutes: float = BONUS_MIN_SEASON_MINUTES,
+                      grid: list[float] = None, game_grid: list[float] = None,
+                      n_samples: int = BONUS_CALIBRATION_SAMPLES,
+                      seed: int = 42) -> pd.DataFrame:
+    """The whole calibration record: both units, the grid, the buckets, the fitted value.
+
+    The player-season arm sweeps the full grid (a few seconds a point). The player-game arm
+    is ~60x more rows, so it gets `game_grid` — independent sampling, the shipped value, and
+    one point near its own optimum, which is enough to bracket the fit and to show what the
+    bucket biases do between the two.
+    """
+    grid = list(BONUS_OVERDISPERSION_GRID if grid is None else grid)
+    if BONUS_OVERDISPERSION not in grid:
+        grid = sorted(grid + [BONUS_OVERDISPERSION])
+    game_grid = list(BONUS_GAME_GRID if game_grid is None else game_grid)
+    season, game = bonus_frames(targets, min_season_minutes)
+
+    rows = []
+    for od in grid:
+        rows += calibration_rows(season, "player_season", "mpg", BONUS_MPG_BUCKETS,
+                                 od, n_samples, seed)
+    for od in game_grid:
+        rows += calibration_rows(game, "player_game", "min", BONUS_MPG_BUCKETS,
+                                 od, n_samples, seed)
+    for unit in ("player_season", "player_game"):
+        fitted = zero_bias_overdispersion(rows, unit)
+        if fitted is not None:
+            rows.append(fitted)
+    return pd.DataFrame(rows)
 
 
 def expected_dk_pts(minutes: np.ndarray, rates_per36: pd.DataFrame,
@@ -222,6 +416,77 @@ def run(cfg: dict) -> Path:
     print(f"  recombination error vs compute_dk_pts: {check:.2e}")
     print(f"  bonus share of total dk_pts: "
           f"{targets['dk_bonus'].sum() / targets['dk_pts'].sum():.2%}")
+
+    # ── the bonus calibration, re-run rather than asserted ───────────────────
+    b_cfg = cfg.get("features", {}).get("bonus_calibration", {})
+    cal = bonus_calibration(
+        targets,
+        b_cfg.get("min_season_minutes", BONUS_MIN_SEASON_MINUTES),
+        b_cfg.get("overdispersion_grid", BONUS_OVERDISPERSION_GRID),
+        b_cfg.get("game_overdispersion_grid", BONUS_GAME_GRID),
+        b_cfg.get("n_samples", BONUS_CALIBRATION_SAMPLES),
+        b_cfg.get("seed", 42))
+    eda_dir = Path(cfg["eda"]["output_dir"])
+    eda_dir.mkdir(parents=True, exist_ok=True)
+    cal_dest = eda_dir / "bonus_calibration.csv"
+    cal.to_csv(cal_dest, index=False)
+
+    show = ["unit", "bucket", "overdispersion", "n", "realized_mean_bonus",
+            "expected_mean_bonus", "bias", "relative_bias"]
+    allrows = cal[(cal["analysis"] == "calibration") & (cal["bucket"] == "all")]
+    print(f"\nBonus calibration — E[bonus] against realized, dk_pts/game "
+          f"(player-seasons with >= "
+          f"{b_cfg.get('min_season_minutes', BONUS_MIN_SEASON_MINUTES):g} season minutes):")
+    print(allrows[show].round(4).to_string(index=False))
+
+    for unit in ("player_season", "player_game"):
+        ship = allrows[(allrows["unit"] == unit) & allrows["is_shipped"]]
+        indep = allrows[(allrows["unit"] == unit) & allrows["is_independent"]]
+        if ship.empty or indep.empty:
+            continue
+        bias = float(ship["bias"].iloc[0])
+        print(f"\n  {unit}: shipped overdispersion {BONUS_OVERDISPERSION:g} biases "
+              f"{bias:+.4f} dk_pts/game; independent sampling reads "
+              f"{indep['relative_bias'].iloc[0]:+.1%}")
+        tol = b_cfg.get("bias_tolerance", BONUS_BIAS_TOLERANCE)
+        if unit == "player_season" and abs(bias) > tol:
+            print(f"  ⚠️  |bias| {abs(bias):.4f} exceeds {tol:g} at the unit the shipped "
+                  "value was fitted on.\n      BONUS_OVERDISPERSION needs re-fitting — see "
+                  "the `fitted` rows for where it now lands.")
+
+    # The aggregate bias is a *sum* over buckets, so it can be ~0 while every bucket is
+    # wrong in an ordered way. That is exactly what happens, which is why the bucket break
+    # is printed rather than filed.
+    buckets = cal[(cal["analysis"] == "calibration") & (cal["bucket"] != "all")]
+    order = [f"{BONUS_MPG_BUCKETS[i]:g}-{BONUS_MPG_BUCKETS[i + 1]:g}"
+             for i in range(len(BONUS_MPG_BUCKETS) - 1)]
+    for unit in ("player_season", "player_game"):
+        sub = buckets[buckets["unit"] == unit]
+        if sub.empty:
+            continue
+        piv = sub.pivot_table(index="bucket", columns="overdispersion", values="bias")
+        piv = piv.reindex([o for o in order if o in piv.index])
+        label = "mpg" if unit == "player_season" else "minutes played"
+        print(f"\n  {unit} — bias by {label} bucket, by overdispersion:")
+        print(piv.round(4).to_string())
+    ship_buckets = buckets[buckets["is_shipped"] & (buckets["unit"] == "player_season")]
+    if len(ship_buckets):
+        spread = float(ship_buckets["bias"].max() - ship_buckets["bias"].min())
+        print(f"\n  Across mpg buckets the shipped value's bias spans {spread:.4f} "
+              f"dk_pts/game even though the\n  aggregate is "
+              f"{float(allrows[allrows['is_shipped'] & (allrows['unit'] == 'player_season')]['bias'].iloc[0]):+.4f}"
+              " — the bucket errors cancel rather than being small.\n  One scalar frailty "
+              "cannot absorb minutes variation whose RELATIVE size differs by bucket.")
+
+    fitted = cal[cal["analysis"] == "fitted"]
+    if len(fitted):
+        print("\n  zero-bias overdispersion by unit: " + ", ".join(
+            f"{r.unit} {r.overdispersion:.3f}" for r in fitted.itertuples()))
+        print("  The two units disagree by design, and the simulator draws per GAME: an "
+              "overdispersion\n  fitted on season-mean counts is also standing in for the "
+              "minutes variation that\n  per-game counts already carry. Do not reuse one "
+              "for the other.")
+    print(f"\nBonus calibration: {len(cal):,} rows → {cal_dest}")
     return dest
 
 

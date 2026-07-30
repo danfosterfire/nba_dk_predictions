@@ -61,6 +61,10 @@ MINUTES_BUCKETS = [0, 5, 12, 18, 24, 30, 48]
 USAGE_BUCKETS = [0.0, 0.15, 0.20, 0.25, 0.30, 1.0]
 FIRST_K_GAMES = [5, 10, 20, 41, 60]
 
+# Games a player-season needs before its per-game rate is stable enough to decompose the
+# season total against. See `season_total_decomposition` — the figures reverse without it.
+SEASON_TOTAL_MIN_GAMES = 10
+
 KEYS = ["player_id", "season"]
 
 
@@ -203,6 +207,57 @@ def first_k_predictiveness(totals: pd.DataFrame, ks: list[int] = FIRST_K_GAMES) 
     return pd.DataFrame(rows)
 
 
+def season_total_decomposition(totals: pd.DataFrame,
+                               min_games: int = SEASON_TOTAL_MIN_GAMES) -> pd.DataFrame:
+    """The season total's two factors, on the log scale where they are exactly additive.
+
+    `total = rate x games`, so `log(total) = log(rate) + log(games)` is an identity and the
+    two factors' shares are the honest way to say which half of the deliverable is which.
+    Measured on player-seasons of at least `min_games` games: **84.5%** of `log(total)` is
+    explained by `log(rate)` alone and **73.4%** by `log(games)` alone.
+
+    They sum to well over 1 because the two are positively correlated — a player who is good
+    also plays — so these are overlapping shares, not a partition. The correlation row says
+    by how much, and the `log_rate_and_games` row is an internal check: fitting both must
+    return R² = 1 exactly, because it is the identity.
+
+    The games floor is the whole reason the figures are quotable. `preprocess.clean` filters
+    on a player's *career* games, not his season, so the unfiltered frame carries
+    one-and-two-game seasons whose per-game rate is noise: it reads 78.5% / 81.7% and
+    reverses which factor dominates.
+    """
+    d = totals[(totals["games"] >= min_games) & (totals["dk_pts_total"] > 0)]
+    if len(d) < 30:
+        return pd.DataFrame()
+    games = d["games"].to_numpy(dtype=float)
+    rate = d["dk_pts_total"].to_numpy(dtype=float) / games
+    log_total = np.log(d["dk_pts_total"].to_numpy(dtype=float))
+    log_rate, log_games = np.log(rate), np.log(games)
+
+    def _r2(*predictors: np.ndarray) -> float:
+        A = np.column_stack([np.ones(len(log_total)), *predictors])
+        beta, *_ = np.linalg.lstsq(A, log_total, rcond=None)
+        resid = log_total - A @ beta
+        tss = float(((log_total - log_total.mean()) ** 2).sum())
+        return 1.0 - float((resid ** 2).sum()) / tss if tss > 0 else np.nan
+
+    def _row(bucket: str, **extra) -> dict:
+        return {"analysis": "season_total_decomposition", "metric": "dk_pts",
+                "bucket_kind": "log_factor", "bucket": bucket, "n": int(len(d)), **extra}
+
+    return pd.DataFrame([
+        _row("log_rate", r2=_r2(log_rate)),
+        _row("log_games", r2=_r2(log_games)),
+        _row("log_rate_and_games", r2=_r2(log_rate, log_games)),
+        _row("log_rate_vs_log_games", r=float(np.corrcoef(log_rate, log_games)[0, 1])),
+        {"analysis": "season_total_decomposition", "metric": "games",
+         "bucket_kind": "spread", "bucket": f"games_ge_{min_games}", "n": int(len(d)),
+         "mean": float(games.mean()), "sd": float(games.std(ddof=1)),
+         "p10": float(np.quantile(games, 0.10)), "p90": float(np.quantile(games, 0.90)),
+         "max": float(games.max())},
+    ])
+
+
 def trajectories(games: pd.DataFrame, n_deciles: int = 10,
                  max_games: int = 82) -> pd.DataFrame:
     """Mean cumulative dk_pts by game index, split by final-total decile.
@@ -268,9 +323,11 @@ def run(cfg: dict) -> Path:
     dist = profile(games, minutes_buckets=minutes_buckets, usage_buckets=usage_buckets)
     totals = season_totals(games, ks)
     pred = first_k_predictiveness(totals, ks)
+    decomp = season_total_decomposition(
+        totals, t_cfg.get("season_total_min_games", SEASON_TOTAL_MIN_GAMES))
     traj = trajectories(games)
 
-    out = pd.concat([dist, pred], ignore_index=True)
+    out = pd.concat([dist, pred, decomp], ignore_index=True)
     dest = out_dir / "target_profile.csv"
     out.to_csv(dest, index=False)
 
@@ -301,6 +358,25 @@ def run(cfg: dict) -> Path:
           f"({len(totals):,} player-seasons):")
     print(pred[["bucket", "n", "r", "r2_extrapolated", "mae", "mean"]]
           .round(3).to_string(index=False))
+
+    if not decomp.empty:
+        factors = decomp[decomp["bucket_kind"] == "log_factor"].set_index("bucket")
+        spread = decomp[decomp["bucket_kind"] == "spread"].iloc[0]
+        print(f"\nThe season total's two factors — log(total) = log(rate) + log(games), "
+              f"exactly ({int(spread['n']):,} player-seasons\n"
+              f"with >= {t_cfg.get('season_total_min_games', SEASON_TOTAL_MIN_GAMES)} "
+              "games; shares OVERLAP rather than partitioning):")
+        for bucket in ("log_rate", "log_games", "log_rate_and_games"):
+            if bucket in factors.index:
+                print(f"  R² of log(total) on {bucket:<20} "
+                      f"{factors.loc[bucket, 'r2']:.4f}")
+        if "log_rate_vs_log_games" in factors.index:
+            print(f"  the two factors correlate at "
+                  f"{factors.loc['log_rate_vs_log_games', 'r']:+.3f} — which is why the "
+                  "shares sum past 1")
+        print(f"  games played: mean {spread['mean']:.1f}, sd {spread['sd']:.1f}, "
+              f"p10 {spread['p10']:.0f}, p90 {spread['p90']:.0f} — the spread the "
+              "availability head\n  is up against")
 
     print(f"\n→ {dest}")
     print(f"→ {totals_dest}  ({len(totals):,} player-seasons)")

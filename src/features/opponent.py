@@ -43,7 +43,7 @@ from sklearn.decomposition import PCA
 
 from src.data.fetch import _slug
 from src.data.preprocess import compute_dk_pts
-from src.features.targets import COMPONENTS
+from src.features.targets import COMPONENTS, DK_WEIGHTS
 
 TEAM_KEYS = ["team_id", "season"]
 
@@ -428,6 +428,77 @@ def evaluate_matchup(S_tr, O_tr, y_tr, S_te, O_te, y_te, rank: int = 2,
     }
 
 
+def opponent_effect_sd(games: pd.DataFrame, outcome: str,
+                       weights: np.ndarray | None = None,
+                       noise_corrected: bool = False) -> float:
+    """Spread of the opponent effect on `outcome`, in the outcome's own units.
+
+    Within each season, the (optionally minutes-weighted) mean residual is taken per
+    opponent and the sd across the 30 opponents recorded; the seasons are then averaged.
+    Season is absorbed by construction, which matters over 30 seasons of era drift.
+
+    This is the effect size behind the variance shares. `opponent x season` is 0.69% of the
+    within-player residual, which is easy to dismiss; the same fact as an sd of ~0.9 dk_pts
+    against a residual sd of 9.4 is easier to size correctly.
+
+    **`noise_corrected` matters and defaults off only so both numbers are visible.** An sd of
+    cell means is upward-biased by the sampling error of those means: ~600 player-games per
+    opponent-season against a residual sd of 9.4 gives each cell mean an se of ~0.38, which
+    is ~15% of the raw variance. Subtracting the mean cell sampling variance removes it. The
+    correction can only lower the figure, so the uncorrected column is the pessimistic one
+    for any argument that wants the opponent effect to be *large*.
+    """
+    y = games[outcome].to_numpy(dtype=float)
+    w = np.ones(len(games)) if weights is None else np.asarray(weights, dtype=float)
+    df = pd.DataFrame({"season": games["season"].to_numpy(),
+                       "opponent": games["opponent_team_id"].to_numpy(),
+                       "y": y, "w": w})
+    df = df[np.isfinite(df["y"]) & np.isfinite(df["w"])]
+    if df.empty:
+        return np.nan
+
+    per_season = []
+    for _, block in df.groupby("season"):
+        cells = block.groupby("opponent")
+        means = cells.apply(lambda b: np.average(b["y"], weights=b["w"])
+                            if b["w"].sum() > 0 else np.nan, include_groups=False)
+        var = float(means.var(ddof=1))
+        if noise_corrected:
+            se2 = cells.apply(
+                lambda b: float((b["w"] ** 2 * (b["y"] - np.average(b["y"], weights=b["w"]))
+                                 ** 2).sum() / max(b["w"].sum() ** 2, 1e-12))
+                if b["w"].sum() > 0 else np.nan, include_groups=False)
+            var = max(var - float(se2.mean()), 0.0)
+        per_season.append(np.sqrt(var))
+    return float(np.nanmean(per_season))
+
+
+def cross_component_cancellation(table: pd.DataFrame, aggregate: str = "dk_pts",
+                                 sd_col: str = "opponent_sd_corrected") -> dict:
+    """DK-weighted sum of the per-component opponent sds, against the aggregate's own.
+
+    The opponent half of the cancellation argument. Each component's opponent sd is a
+    positive number, so DK-weighting and summing them gives the movement the component heads
+    can see; measuring the same thing on dk_pts directly gives what a single head sees, and
+    the shortfall is the components cancelling against each other inside the DK sum.
+
+    Uses `|w|` deliberately. Turnovers carry a negative coefficient, and a *spread* has no
+    sign — so signing the weight would subtract a real source of movement.
+
+    **Gross and net must come from the same `sd_col`.** The ratio is robust to the choice —
+    2.01x raw, 1.98x noise-corrected, 2.11x pooled over seasons, 1.84x from a ridge fit on
+    the opponent's prior-season profile — but only because each is internally consistent.
+    Mixing two bases is how the superseded 1.105-against-0.785 pair (a 1.41x ratio that no
+    single construction reproduces) came about.
+    """
+    per_component = table[table["outcome"] != aggregate]
+    gross = float((per_component[sd_col] * per_component["dk_abs_weight"]).sum())
+    net_row = table[table["outcome"] == aggregate]
+    net = float(net_row[sd_col].iloc[0]) if len(net_row) else np.nan
+    return {"gross_dk_movement": gross, "net_dk_movement": net,
+            "cancellation_ratio": gross / net if net else np.nan}
+
+
 def _cell_share(y: np.ndarray, key: np.ndarray) -> float:
     """In-sample share of variance explained by cell means — a plain one-way ANOVA."""
     df = pd.DataFrame({"y": np.asarray(y, dtype=float), "g": np.asarray(key)})
@@ -595,6 +666,26 @@ def run(cfg: dict, tier: str = "A") -> Path:
                      "interaction_above_null": res["r2_with_interaction"] - res["r2_shuffled_null"]})
 
     table = pd.DataFrame(rows)
+
+    # ── the opponent half of the cross-component cancellation argument ───────
+    # Measured on the whole panel rather than the held-out split: this is an effect *size*,
+    # not a prediction, so there is nothing to hold out from.
+    w_all = minutes_weights(games["min"].to_numpy(float))
+    abs_weights = {f"{c}_per36": abs(w) for c, w in DK_WEIGHTS.items()}
+    table["dk_abs_weight"] = [abs_weights.get(o, 1.0) for o in table["outcome"]]
+    for col, corrected in (("opponent_sd", False), ("opponent_sd_corrected", True)):
+        table[col] = [
+            opponent_effect_sd(games, o, w_all if o != "dk_pts" else None,
+                               noise_corrected=corrected)
+            for o in table["outcome"]]
+    table["dk_weighted_opponent_sd"] = (table["opponent_sd_corrected"]
+                                        * table["dk_abs_weight"])
+    cancel = cross_component_cancellation(table)
+    # Carried on the aggregate's row only: they are properties of the whole table, and
+    # repeating a table-level scalar on every row invites it being read per component.
+    for col, value in cancel.items():
+        table[col] = np.where(table["outcome"] == "dk_pts", value, np.nan)
+
     dest = out_dir / f"opponent_matchup_tier{tier}.csv"
     table.to_csv(dest, index=False)
     save_artifacts(pca, prof_cols, matchups, features_dir, tier)
@@ -616,6 +707,18 @@ def run(cfg: dict, tier: str = "A") -> Path:
     print(f"\nHeld-out ({len(te):,} player-games in {sorted(test_seasons)}), "
           f"% of within-player-season residual variance:")
     print((table[show].set_index("outcome") * 100).round(3).to_string())
+
+    print("\nOpponent effect SIZE, season-absorbed, in each outcome's own units "
+          "(minutes-weighted\nfor the per-36 rates, unweighted for per-game dk_pts). "
+          "`_corrected` removes the sampling\nvariance of the cell means, which inflates a "
+          "raw sd of cell means by ~15% here:")
+    print(table[["outcome", "opponent_sd", "opponent_sd_corrected", "dk_abs_weight",
+                 "dk_weighted_opponent_sd"]].round(4).to_string(index=False))
+    print(f"  DK-weighted sum over the components: {cancel['gross_dk_movement']:.3f} "
+          f"dk_pts against {cancel['net_dk_movement']:.3f} measured on dk_pts directly "
+          f"— a {cancel['cancellation_ratio']:.2f}x\n  cancellation. The components move "
+          "more than their sum does, which is the opponent half of\n  the argument for "
+          "component heads. |w| is used because a spread has no sign.")
 
     # Rank is a design choice with a budget attached, so show the evidence for it.
     print("\nRank sweep (held-out % of residual variance, above the shuffled null):")

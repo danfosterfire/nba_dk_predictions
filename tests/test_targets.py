@@ -8,6 +8,8 @@ from src.features.targets import (
     DK_WEIGHTS,
     SHOT_CLASSES,
     add_shot_classes,
+    bonus_calibration,
+    bonus_frames,
     bonus_part,
     build_component_targets,
     dk_from_components,
@@ -17,6 +19,7 @@ from src.features.targets import (
     linear_part,
     pts_from_shot_classes,
     season_totals,
+    zero_bias_overdispersion,
 )
 
 
@@ -147,6 +150,98 @@ def test_expected_bonus_chunking_does_not_change_results():
     b = expected_bonus(lam, n_samples=512, seed=5, chunk=7)
     # different chunkings consume the RNG differently, so compare in aggregate
     assert abs(a.mean() - b.mean()) < 0.05
+
+
+# ── Bonus calibration ────────────────────────────────────────────────────────
+
+def _calibration_games(n_players: int = 40, games: int = 60, seed: int = 0,
+                       frailty: float = 0.10) -> pd.DataFrame:
+    """Player-games drawn from the very model `expected_bonus` assumes.
+
+    Counts are Poisson at `rate x minutes / 36` under a shared per-game Gamma frailty of
+    variance `frailty`, so the calibration has a *known* right answer: recovering `frailty`
+    from the realized bonus is the whole check, and it cannot be passed by accident.
+    """
+    rng = np.random.default_rng(seed)
+    rows = []
+    for p in range(n_players):
+        mpg = rng.uniform(14.0, 36.0)
+        base = np.array([mpg * 0.60, mpg * 0.22, mpg * 0.14, mpg * 0.035, mpg * 0.02])
+        g = rng.gamma(1.0 / frailty, frailty, size=games)
+        draws = rng.poisson(base[None, :] * g[:, None])
+        for i in range(games):
+            rows.append({"player_id": p, "season": "2021-22", "game_id": i,
+                         "min": mpg, "fg3m": 1.0,
+                         **dict(zip(BONUS_CATEGORIES, draws[i].astype(float)))})
+    df = pd.DataFrame(rows)
+    df["tov"] = 2.0
+    df["dk_bonus"] = bonus_part(df)
+    return df
+
+
+def test_bonus_frames_share_a_population_and_carry_expected_counts():
+    df = _calibration_games(n_players=6, games=40)
+    season, game = bonus_frames(df, min_season_minutes=200)
+    assert len(season) == 6
+    assert set(game["player_id"]) == set(season["player_id"])
+    for c in BONUS_CATEGORIES:
+        assert f"expected_{c}" in season.columns and f"expected_{c}" in game.columns
+    # At constant minutes the two units agree row-for-row on the expected counts.
+    merged = game.merge(season[["player_id", "expected_pts"]], on="player_id",
+                        suffixes=("_game", "_season"))
+    assert np.allclose(merged["expected_pts_game"], merged["expected_pts_season"])
+
+
+def test_the_season_minutes_filter_drops_thin_player_seasons():
+    df = _calibration_games(n_players=4, games=6)      # ~150 minutes each
+    season, game = bonus_frames(df, min_season_minutes=200)
+    assert season.empty and game.empty
+    season, _ = bonus_frames(df, min_season_minutes=1)
+    assert len(season) == 4
+
+
+def test_calibration_recovers_the_overdispersion_it_was_generated_with():
+    """The check that makes `BONUS_OVERDISPERSION` a measurement, not an instruction."""
+    df = _calibration_games(n_players=60, games=70, frailty=0.10, seed=3)
+    cal = bonus_calibration(df, min_season_minutes=200,
+                            grid=[0.0, 0.05, 0.10, 0.15, 0.20],
+                            game_grid=[0.10], n_samples=400)
+    fitted = cal[(cal["analysis"] == "fitted") & (cal["unit"] == "player_season")]
+    assert len(fitted) == 1
+    assert abs(float(fitted["overdispersion"].iloc[0]) - 0.10) < 0.04
+
+
+def test_independent_sampling_reads_low_and_the_bias_rises_with_overdispersion():
+    df = _calibration_games(n_players=40, games=60, frailty=0.10, seed=5)
+    cal = bonus_calibration(df, min_season_minutes=200, grid=[0.0, 0.10, 0.30],
+                            game_grid=[0.10], n_samples=400)
+    allrows = cal[(cal["analysis"] == "calibration") & (cal["bucket"] == "all")
+                  & (cal["unit"] == "player_season")].sort_values("overdispersion")
+    assert allrows["is_independent"].sum() == 1
+    assert allrows["is_shipped"].sum() == 1
+    assert float(allrows["bias"].iloc[0]) < 0            # independent reads low
+    assert list(allrows["bias"]) == sorted(allrows["bias"])
+
+
+def test_calibration_carries_a_bucket_break_alongside_the_aggregate():
+    df = _calibration_games(n_players=30, games=50)
+    cal = bonus_calibration(df, min_season_minutes=200, grid=[0.10],
+                            game_grid=[0.10], n_samples=200)
+    rows = cal[cal["analysis"] == "calibration"]
+    assert (rows["bucket"] == "all").sum() == 2          # one per unit
+    assert (rows["bucket"] != "all").sum() > 0
+    # Buckets must partition their unit exactly — no row counted twice or dropped.
+    for unit in ("player_season", "player_game"):
+        sub = rows[(rows["unit"] == unit) & (rows["overdispersion"] == 0.10)]
+        total = int(sub[sub["bucket"] == "all"]["n"].iloc[0])
+        assert int(sub[sub["bucket"] != "all"]["n"].sum()) == total
+
+
+def test_zero_bias_overdispersion_returns_none_without_a_sign_change():
+    rows = [{"unit": "player_season", "bucket": "all", "overdispersion": od,
+             "bias": 0.01, "n": 10, "realized_mean_bonus": 0.1}
+            for od in (0.0, 0.1, 0.2)]
+    assert zero_bias_overdispersion(rows, "player_season") is None
 
 
 # ── Full expectation ─────────────────────────────────────────────────────────

@@ -68,13 +68,24 @@ Measured on 254,187 player-games across 2014-15 → 2023-24. Within-player-seaso
 sd is **9.4 dk_pts** — this is the per-game noise a model must predict around a player's
 own season mean.
 
+Reproduce the whole table with **`make variance-budget`** →
+`outputs/eda/variance_budget.csv`.
+
 | Source | Share of variance |
 |---|---|
 | Player-season identity (of total per-game variance) | **58.0%** |
-| Own minutes played (of within-player residual) | **18.6%** — *not knowable in advance* |
+| Own minutes played (of within-player residual) | **46.4%** — *not knowable in advance* |
 | Opponent × season | 0.69% |
 | Opponent × player-archetype × season, above a shuffled null | +0.31% to +0.97% |
 | Home / away | 0.03% |
+
+> ⚠️ **The own-minutes row read 18.6% until 2026-07-29 and that figure was wrong.** It
+> conditioned the within-player-season residual on the raw minutes *level*, pooled across
+> players, which cancels: a 30-minute game is below average for a 34-mpg starter and far above
+> it for an 18-mpg reserve. Conditioning on the minutes *deviation* — the contrast the residual
+> is defined by — gives 46.4%. The artifact still ships the old construction as
+> `own_minutes_raw_level` (18.650%) so the correction stays legible. See
+> `docs/provenance-plan.md`.
 
 > The last two rows are **in-sample ANOVAs using contemporaneous opponent identity** —
 > ceilings, not achievable gains. The interaction row is quoted as a range because it
@@ -93,9 +104,12 @@ is worth building, but it is not where the bulk of the accuracy lives.
 Two refinements that change *how* to encode opponent:
 
 - **Opponent effects partially cancel in the dk_pts sum.** Summing the per-component
-  weighted opponent sd gives 1.105 dk_pts; measuring on dk_pts directly gives 0.785. A
-  slow, stingy defense suppresses points while a fast one concedes rebound chances, so a
-  single dk_pts head sees ~40% less opponent signal than the components do.
+  DK-weighted opponent sd gives **1.803** dk_pts; measuring on dk_pts directly gives
+  **0.911**. A slow, stingy defense suppresses points while a fast one concedes rebound
+  chances, so a single dk_pts head sees **half** the opponent signal the components do.
+  `make opponent` writes both, per outcome. (The 1.105-against-0.785 pair quoted here until
+  2026-07-29 mixed two measurement bases; every internally consistent construction gives
+  1.84–2.11×, so the argument is stronger than it read. See `docs/provenance-plan.md`.)
 - **The matchup interaction earns its place per component, not on the aggregate.** Held
   out, it adds +0.203% on blocks — nearly doubling the main effect there — against +0.022%
   on dk_pts. An earlier version of this document claimed the interaction beat the main
@@ -106,6 +120,53 @@ Two refinements that change *how* to encode opponent:
 
 ## Modeling design
 
+### The component contract — twelve quantities, and dk_pts falls out
+
+**`dk_pts` is deterministic given the components and is never predicted directly.** Settled
+2026-07-29 and specified in full in `CLAUDE.md` / `docs/predictions-plan.md`:
+
+| Component | Distribution | Exposure / trials |
+|---|---|---|
+| `min` (given availability) | successes / trials | trials = **game length**: 48, or 53/58/63/68 in OT |
+| `fg2a`, `fg3a` | count — Poisson or NB | `min` |
+| `fta` | count, **arrives in pairs** — model *trips* and double | `min` |
+| `fg2m`, `fg3m`, `ftm` | successes / trials | `fg2a`, `fg3a`, `fta` |
+| `reb`, `ast`, `stl`, `blk`, `tov` | count | `min` |
+
+Only **eight** reach the scoring function (`fg2m`, `fg3m`, `ftm`, `reb`, `ast`, `stl`, `blk`,
+`tov`); `min` and the three attempt counts matter solely as the exposure and trials they supply.
+Because the bonus is a simultaneous threshold, **the deliverable is a joint draw, not twelve
+marginals**.
+
+**Minutes is not a count — and its denominator is recoverable exactly.** `make game-length`
+(`data/features/game_length.parquet`) derives every game's length from summed team minutes ÷ 5,
+since five players are on the court at all times and the logs carry minutes to the second.
+Across all **37,986 games** (1996-97 → 2025-26, regular + playoffs): **0 games where the two
+teams disagree** — two independent estimates from disjoint player sets, which is the validation —
+worst rounding residual 0.617 min against a 2.5-min decision boundary, and **5.93% of games go to
+overtime**. Joining it to `component_targets.parquet` covers 100.0% of 731,906 player-games with
+**zero** rows where `min > game_length`, so `min ~ Binomial(game_length, ·)` is well posed
+everywhere. Truncating at 48 instead — as the prior attempt did — discards ~6% of games and
+censors 1,650 player-games above 48 minutes.
+
+### Scope: regular season only
+
+**Every fitting frame is regular season only**, enforced by `preprocess.load_raw`'s
+`season_type="regular"` default. The decisive reason is the product: the DK best-ball contest's
+final round ends **4/4**, before the playoffs begin. The statistics agree and say something
+sharper — playoff minutes are a **role interaction whose sign flips**: median playoff-to-regular
+MPG ratio is **0.505** for bench (<12 mpg), 0.761 for rotation, and **1.054** for starters, with
+66% of starters playing *more*. Appearance rates shift too (**0.711 / 0.905 / 0.958**). A pooled
+playoff indicator would fit one coefficient to a −50% and a +5% effect at once, dragged toward
+compression by the numerous bench players — the wrong direction for exactly the players a draft
+is decided by. Both are reproduced by `make availability-profile`
+(`measurement == "playoff_scope"`); the appearance rates quoted here until 2026-07-29
+(0.664 / 0.838 / 0.922) used a per-(player, team) denominator that counted a player traded away
+from a playoff team as having "not appeared" for it.
+
+Playoff logs remain valuable as **prior-season workload features** — a feature of season S-1,
+never a row to fit.
+
 ### Predict components, not dk_pts directly
 
 Because `dk_pts` is a linear sum, predict the parts and combine:
@@ -115,9 +176,9 @@ dk_pts ≈ [ P(play) · minutes ] × Σ wᵢ · rateᵢ  +  E[bonus]
 ```
 
 - **Availability head** — `P(play)` and expected minutes. Minutes is the dominant common
-  factor (18.6% of within-player residual), and the schedule features (rest,
-  back-to-backs) act on it directly. For the *season total*, predicting **games played**
-  is the single largest lever: 82 vs 60 games is a 27% swing.
+  factor (**46.4%** of within-player residual — see the correction above), and the schedule
+  features (rest, back-to-backs) act on it directly. For the *season total*, predicting
+  **games played** is the single largest lever: 82 vs 60 games is a 27% swing.
 
   > **And it is the least predictable input in the project.** Year over year, with season
   > absorbed and minutes-weighted, **games played persists at r = 0.316** — against 0.779
@@ -128,18 +189,84 @@ dk_pts ≈ [ P(play) · minutes ] × Σ wᵢ · rateᵢ  +  E[bonus]
   > Reproduce from `src/eda/persistence.py`'s helpers over
   > `season_matrix_roster_tierA.parquet`; `min`/`gp` are held out of `persistence.csv` as
   > volume columns.
+  >
+  > **`docs/availability-plan.md` is the dedicated plan for this head**, and
+  > `make availability && make availability-profile` →
+  > `outputs/eda/availability_profile.csv` is its runnable source. Three results change the
+  > design: the in-sample ceiling from data already on disk is **R² ≈ 0.24**; season GP is
+  > **~20× overdispersed** against a binomial (22.7× full window, 19.8× appearance), with
+  > 26.7% of established rotation players falling below 60 games, so a point estimate is
+  > close to useless and the head must emit a **distribution**; and there is **no durability
+  > latent** — a 3-year availability average does not beat one year (r 0.392 vs 0.398), and
+  > longest absence spell persists at r = 0.090. Improvement has to come from *state* (who is
+  > hurt at the prediction date) and *role*, not from injury history. Note also that prior
+  > **MPG predicts next-season GP as well as prior GP does** (R² 0.159 vs 0.159) while
+  > persisting at 0.779 — much of what looks like availability is rotation status.
+  >
+  > ⚠️ **Minutes weighting is not the right default for this head**, unlike everywhere else
+  > in the project. It exists to suppress per-36 rates measured over a handful of garbage-time
+  > minutes — real measurement error. Games played has none: "he played 12 games" is exact, so
+  > weighting down-weights precisely the injured seasons the head predicts. It halves the
+  > ceiling (0.236 → 0.116). `availability_profile.csv` reports both.
+  >
+  > 🔬 **Absence *reasons* are real signal — settled, and against expectation.**
+  > The box-score backfill (`make boxscore-status`) completed on 2026-07-28 — 25,706 of
+  > 25,709 games, 2006-07 → 2025-26 — giving every panel row a measured status. Splitting
+  > missed games by reason beats the aggregate on **7,673 season pairs** (in-sample,
+  > season-absorbed): R² goes 0.2353 → 0.2365 with `missed_games` → **0.2648** with the
+  > 8-way split, against a shuffled-row null of 0.2363 (sd 0.00041) — **+0.0285 above
+  > chance, ≈69 sd**. The aggregate is worth +0.0012; the split is essentially the whole
+  > effect. The reasons that carry it are
+  > `missed_scratch` (−0.353), `missed_inactive` (−0.233) and `missed_not_rostered`
+  > (−0.164); **`missed_injury` is +0.034**, i.e. no signal. And `missed_scratch` persists
+  > at **0.469** — better than games played itself (0.317). Rotation status predicts
+  > availability; the injury flag does not — the same conclusion the durability nulls reach,
+  > now on labels that can tell them apart, at 8× the earlier sample.
+  >
+  > ✅ **Built, and the answer is a simple model.** `src/models/availability.py`
+  > (`make availability-model`) fits the four baselines the plan specifies — league/age,
+  > ridge, beta-binomial GLM, GBM — each emitting a **beta-binomial over `gp` out of
+  > `team_games`**, held out on 2024-25 and 2025-26 (10,361 train / 911 test). Scored by
+  > CRPS in games, the **beta-binomial GLM wins at 10.795**, against GBM 10.888, ridge
+  > 10.896 and the league/age baseline 13.614. The gradient boosting arm does **not** beat a
+  > 19-feature GLM, so per the plan's own decision rule the spell simulator is **not
+  > built**. Two checks say the distribution is the part that works: the fitted dispersion
+  > lands at 20–30× implied overdispersion, recovering the ~20× measured independently in
+  > `availability_profile.csv`, and the PIT histograms are near-uniform (KS 0.08–0.10)
+  > where the league/age baseline reads 0.17. On the left tail that matters, the GLM
+  > predicts 15.0% / 34.8% of established rotation players below 41 / 60 games against
+  > 11.8% / 36.9% observed; the league/age baseline reads 24.8% / 45.0%. Its held-out R²
+  > (0.283) is **not** comparable to the 0.236 ceiling above — that one is in-sample and
+  > season-absorbed.
+  >
+  > 🔬 **Playoff workload helps, but by selection rather than fatigue.** Adding
+  > `playoff_games` / `playoff_mpg` / `playoff_minutes_share` / `career_minutes` (from the
+  > playoff game logs, a feature of season S-1 — playoff games are never *fit*, see
+  > "Scope" in `CLAUDE.md`) moves held-out CRPS **10.914 → 10.795** and season-total MAE
+  > **441.3 → 435.1**. But every single-season playoff column predicts *better* next-season
+  > availability, not worse: playoff minutes mark a good player on a good team, and that
+  > beats any fatigue effect. Only `career_minutes` points the fatigue way (−0.067 partial).
+  > And `total_minutes_incl_playoffs` — the "corrected" mileage total — is a measured
+  > **null**, worse than the regular-season figure it was meant to fix.
 - **Per-36 rate heads** — one per component (`pts, fg3m, reb, ast, stl, blk, tov`). Rates
   are markedly more stable across seasons than per-game totals. Use count-appropriate
   likelihoods: `stl` (~1/game) and `blk` (~0.5/game) are low counts and are misspecified
   under plain MSE.
 - **Bonus** — `E[bonus] ≠ bonus(E[components])`. The double-double bonus is a threshold on
   five components at ≥10, so it needs the *joint* predictive distribution. A single dk_pts
-  regression cannot represent it at all. Two implementations, both calibrated against
-  11,627 player-seasons of realized bonus (mean 0.1268 dk_pts/game):
+  regression cannot represent it at all. Two implementations, the first re-calibrated by
+  **`make component-targets`** → `outputs/eda/bonus_calibration.csv`:
   - `src/features/targets.py::expected_bonus` — Monte Carlo with a shared per-game
-    Gamma frailty inducing the positive correlation between components. Independent
-    sampling is **23% too low** (0.098); `overdispersion=0.10` is unbiased (+0.001) and
-    calibrates across minutes buckets.
+    Gamma frailty inducing the positive correlation between components. On 11,938
+    player-seasons with ≥200 season minutes (realized 0.1231 dk_pts/game), independent
+    sampling is **22.7% too low** (0.0951) and `overdispersion=0.10` is unbiased
+    (**+0.0009**, against a fitted optimum of 0.0968).
+    > ⚠️ **It does *not* calibrate across minutes buckets, and the simulator needs a
+    > different value.** At 0.10 the per-mpg bias runs −0.014 at 12–18 mpg against +0.029 at
+    > 30–48 — a spread that cancels to +0.001 rather than being small. And at the
+    > *player-game* unit the fitted value is **0.025**, where every bucket does line up;
+    > using 0.10 per game over-predicts the bonus by +0.036 dk_pts/game for 30+ minute
+    > players. Hence `BONUS_GAME_OVERDISPERSION`. See `docs/provenance-plan.md`.
   - `src/models/multihead.py::expected_bonus_analytic` — differentiable Poisson-binomial
     over the five categories, for use inside the loss. Correlates 0.9999 with the
     independent Monte Carlo; being independent it inherits the same downward bias.
@@ -151,7 +278,8 @@ mean and gains on the bonus, the diagnostics, and the recovered opponent signal.
 Team-context features move the components hard and in opposite directions, then almost
 entirely cancel in the DK-weighted sum: `teammate_assist_supply` shifts 2.11 dk_pts of
 gross per-36 component movement into 0.25 net (8.3×), and the same holds for the opponent
-main effect (1.105 gross vs 0.785 net). A single dk_pts head is fitting the residue.
+main effect (1.803 gross vs 0.911 net, 1.98×). A single dk_pts head is fitting the residue.
+Both are reproduced by `make context-value` and `make opponent`.
 
 An earlier version of this document argued instead that team context acts with *opposite
 signs on rates and minutes*, so they cancel in per-game dk_pts. That was an artifact of
@@ -241,8 +369,12 @@ Four findings, three of which overturn what was previously recorded here:
   coefficient, it shifts **2.11 dk_pts of gross component movement into 0.25 net — an 8.3×
   cancellation**. `role_crowding` cancels 8.2×, `teammate_spacing` 5.0×, `team_pace` 4.7×.
   A single dk_pts head sees a small fraction of what the components see. This is the same
-  structure already established for opponent effects (1.105 gross vs 0.785 net) and it is
-  the surviving empirical case for the decomposition.
+  structure already established for opponent effects (1.803 gross vs 0.911 net) and it is
+  the surviving empirical case for the decomposition. `make context-value` now writes
+  `gross_dk_movement` / `net_dk_movement` / `cancellation_ratio` per feature, plus the
+  per-sd effect in each component's own units — note that the -0.361 / +0.218 / +0.191
+  figures quoted for `teammate_assist_supply` elsewhere are partial *correlations*, which
+  cannot be DK-weighted; the movements are -0.681 / +0.503 / +0.115.
 - **`teammate_usage_load` is created entirely by the correction.** Measured on the
   superseded S-1 roster it is nothing (r = +0.0006 vs per-36 pts, ΔR² = +0.0001); on the
   season-S roster it is the strongest own-team feature in the project (ΔR² = +0.0066 alone,
@@ -286,12 +418,21 @@ aggregate is failing to describe, and the only honest denominator, since weighti
 S-1 minutes the aggregate actually uses would show a rookie contributing zero and every
 roster looking fully covered:
 
+Reproduce with **`make context-value`** → `outputs/eda/roster_coverage_profile_tier{A,B}.csv`.
+The shares below are on the **season-start** roster — the one `team_context` actually
+aggregates, and the only one knowable before the season:
+
 | Population | Share of roster minutes | Share of roster head count |
 |---|---|---|
-| True rookies | 9.4% | 17.1% |
-| Sub-threshold (played in S-1, failed `GP≥20 & MIN≥10`) | 5.4% | 12.6% |
-| Returnees (played before, not in S-1) | 1.1% | 3.1% |
-| **Total undescribed** | **15.9%** | **32.8%** |
+| True rookies | 8.7% | 14.1% |
+| Sub-threshold (played in S-1, failed `GP≥20 & MIN≥10`) | 5.1% | 10.6% |
+| Returnees (played before, not in S-1) | 0.9% | 1.8% |
+| **Total undescribed** | **14.7%** | **26.6%** |
+
+> ⚠️ The 15.9% / 9.4% / 5.4% / 1.1% split quoted here until 2026-07-29 is the
+> **whole-season** roster (measured: 15.79 / 9.16 / 5.52 / 1.11), which includes mid-season
+> arrivals the model cannot know about. Rookies and returnees arrive late, so widening the
+> window pulls in disproportionately many of them. Both windows are emitted.
 
 Across 863 team-seasons the uncovered share has p50 = 14.1%, p90 = 32.9% and a maximum of
 54.1% (PHI 2014-15, mid-Process). The README's prediction that the bias would be worst on
@@ -427,8 +568,12 @@ Rank barely matters: on dk_pts the above-null gain is +0.018% / +0.022% / +0.025
 structure is effectively rank 1. Rank 2 is kept as the configured default; anything richer
 is fitting noise against an effective support of 892 team-seasons.
 
-The reproductions of the ceiling figures live in `variance_ceiling()`, so the numbers
-quoted in the variance-budget table above have a runnable source.
+The reproductions of the ceiling figures live in `variance_ceiling()`, but that covers the
+**opponent rows only** and it was print-only until 2026-07-29. **`make variance-budget`** now
+writes the whole table — including the player-season identity, own-minutes and home/away
+rows, which had no runnable source at all — and runs both `variance_ceiling` and
+`feature_diagnostics.cell_importance` on identical rows with the gap between them as its own
+row, so the one-off and its generalization cannot drift apart.
 
 ### Which prior-season features are worth feeding
 
@@ -523,10 +668,76 @@ almost immediately:
 | 20 | 11,533 | 0.972 | 0.942 | 148 |
 | 41 | 9,113 | 0.988 | 0.974 | 94 |
 
-And the total splits cleanly into its two factors: `log(season total)` is **84.5%** explained
+And the total splits into its two factors: `log(season total)` is **84.5%** explained
 by `log(per-game rate)` alone and **73.4%** by `log(games played)` alone, with games played
 carrying sd 20.8 on a mean of 56 (p10 23, p90 80). Both halves are large; the games half is
-the one that barely persists (r = 0.316, above).
+the one that barely persists (r = 0.316, above). Reproduce with **`make target-profile`**
+(`analysis == "season_total_decomposition"`), measured on the 12,996 player-seasons of at
+least 10 games — the floor matters, because one- and two-game seasons carry a noise rate and
+flip which factor dominates.
+
+The two shares **overlap rather than partitioning**, which is why they sum past 1: the factors
+correlate at +0.585, since a player who is good also plays. Fitting both returns R² exactly
+1.0000, because `log(total) = log(rate) + log(games)` is arithmetic — a free check that the
+decomposition is of the right identity.
+
+### The rate side is nearly saturated, and every head needs a floor
+
+`make component-rates` (`src/models/component_rates.py`), season-collapsed Poisson/NB and
+binomial/beta-binomial heads on 10,194 player-seasons, held out on 2024-25/2025-26.
+
+**`carry_forward` — prior per-36 rate × actual minutes / 36, with no fitting at all — scores
+held-out R² 0.82–0.94**, and the best of seven fitted variants beats it by only **+0.0019 to
++0.0228**:
+
+| head | no-fit floor | linear | log(own) | best fitted | best vs floor |
+|---|---|---|---|---|---|
+| `reb` | 0.9424 | 0.9278 | 0.9441 | 0.9442 | +0.0019 |
+| `fg2a` | 0.9194 | 0.9089 | 0.9245 | 0.9260 | +0.0066 |
+| `ast` | 0.9197 | 0.8601 | 0.9229 | 0.9262 | +0.0065 |
+| `fg3a` | 0.9036 | 0.5197 | 0.8791 | 0.9109 | +0.0072 |
+| `blk` | 0.8407 | 0.6375 | 0.8204 | 0.8636 | +0.0228 |
+
+Three findings, each of which changes the build:
+
+- **The specification is *scale*, not curvature.** A log link wants a multiplicative predictor:
+  `log E[rate] = β·log(prior rate)`. Linear-in-raw-rate inside `exp()` is misspecified —
+  catastrophically for the zero-heavy skewed heads — and `log1p(own)` fixes nearly all of it in
+  one term. Splines add +0.030 (`fg3a`) and +0.041 (`blk`) and ≤ +0.003 elsewhere; `age × own`
+  and `mpg × own` interactions are a **null**.
+- **Walk-forward PCA of the 156-column season matrix is a null too.** Refitted per target season
+  on S-1 and earlier only — a pooled basis leaks the future invisibly — it lands within ±0.003 of
+  the raw spec on every head. The style and tracking families add nothing once you have the
+  player's own prior rate and his minutes.
+- **The floor being this strong is the real result.** With `oracle_gp` 221.3 against
+  `oracle_rate` 302.7 on the season total, the evidence now points consistently at **availability
+  and the joint/correlation structure** as where remaining value lives, not at richer rate
+  features.
+
+> ⚠️ **The first version of this measurement was an artifact, and the trap generalizes.**
+> `sklearn`'s `PoissonRegressor` averages the deviance by the weight sum, so fitting a rate with
+> `sample_weight = minutes` (Σw ≈ 1e7) makes `alpha=1.0` an enormous penalty that crushes every
+> coefficient — *silently*, because the fit converges and a flexible basis partially compensates.
+> `reb` read R² 0.662 at `alpha=1.0` against 0.928 at `alpha ≤ 0.01`. `LogisticRegression` scales
+> the opposite way. The no-fit floor is what exposed it, which is why it is now a mandatory row in
+> every output table rather than an optional comparison.
+
+### Is there a hot streak? — no, and the answer splits attempts from conversion
+
+`make serial-correlation` (`src/eda/serial_correlation.py`), 592,796 player-games, Pearson
+residuals against each player-season's own rate with minutes as exposure, against a null that
+shuffles game order *within* player-season.
+
+**There is no shooting hot hand.** Both field-goal conversion heads are nulls — `fg3m|fg3a`
+excess −0.002, `fg2m|fg2a` +0.002, block-variance inflation 1.01× and 1.03×. What *is*
+autocorrelated is the **exposure** side: `min` at **2.43×** 10-game block variance inflation and
+shot volume at ~1.46× *on top of* minutes. Decay is slower than AR(1), and removing a within-
+season linear trend drops lag-1 from 0.279 to 0.196 — so roughly a third is slow role drift and
+two-thirds a 3–5 game shock. Rotation churn and injury ramps, not shooting form.
+
+**So the sequential model goes on minutes, beside the availability spell process, and the other
+eleven heads stay collapsed** to player-season totals — which is exact, not approximate, for both
+the Poisson counts and the binomial conversions.
 
 ### Where age acts
 
@@ -677,7 +888,17 @@ Staged so each step is inspectable. Stages 0–2 are complete.
 | **7** | `src/features/opponent.py` — team defensive profile + low-rank matchup | ✅ done |
 | **4** | `src/eda/persistence.py`, `aging.py`, `target.py`, `feature_diagnostics.py` | ✅ done |
 | **3** | `dashboard/app.py` — 9-tab Streamlit explorer over every artifact above | ✅ done |
-| **7** | Wire the multi-head model into `train.py` / `evaluate.py` | planned |
+| **8** | `src/data/injury_reports.py`, `boxscore_status.py` — availability data capture | ✅ done |
+| **8** | `src/models/availability.py` — GP distribution, baselines beaten by a GLM | ✅ done |
+| **8** | `src/models/season_total.py` — the downstream metric; head worth −211 dk_pts MAE | ✅ done |
+| **9** | `src/features/game_length.py` — the trials denominator for minutes | ✅ done |
+| **9** | `src/eda/serial_correlation.py` — hot-hand / AR structure per component | ✅ done |
+| **9** | `src/models/component_rates.py` — component heads vs a mandatory no-fit floor | ✅ done |
+| **10** | `src/stan/*.stan` + `src/models/stan_availability.py` — the point MLE ported and verified (21/21 coefficients inside the 95% interval) | ✅ done |
+| **10** | `src/models/stan_minutes.py` — `min \| available`, trials = real game length | ✅ done |
+| **10** | `src/models/stan_components.py` — 8 NB counts + 3 beta-binomial conversions, **fitted separately** | ✅ done |
+| **10** | Spell simulator + residual copula over a shared `min` draw | next |
+| **7** | Wire the multi-head model into `train.py` / `evaluate.py` | deprioritized |
 
 Stage 4's `persistence.py` was the most load-bearing for modeling, and its expected outcome
 held: usage/rebound/assist rates are sticky (0.79–0.94) while `FG3_PCT` (0.500) and
@@ -685,11 +906,30 @@ held: usage/rebound/assist rates are sticky (0.79–0.94) while `FG3_PCT` (0.500
 the share/conversion split, the noise families, and games played at r = 0.316 — is in
 "Which prior-season features are worth feeding" above.
 
-With Stage 4 and the dashboard landed, the remaining work is fitting: wire the multi-head
-model into `train.py`/`evaluate.py`, then the GLM and GBM arms of the ensemble against the
-same component targets. 242 tests pass (`.venv/bin/pytest tests/`).
+With the diagnostics landed, the remaining work is **fitting the Bayesian heads**. The
+architecture is settled: **separate Stan models per head, not one joint model** — the chain
+availability → `min | available` → counts `| min` → makes `| attempts` factorizes the joint
+posterior exactly when parameter blocks are distinct, so separate fits recover the identical
+posterior. The prior attempt's `megamodel.stan` shared no parameter between any two heads, so its
+joint fit bought nothing and forced `sample_frac(0.01)`. Correlation for the simulator comes from
+a **shared `min` draw** plus, if needed, a residual copula — measured cross-component
+off-diagonals average **+0.013** (max 0.157) once minutes are conditioned out. 447 tests pass
+(`.venv/bin/pytest tests/`).
 
-See `docs/eda-plan.md` for the detailed EDA specification.
+See `docs/eda-plan.md` for the detailed EDA specification, and
+`docs/availability-plan.md` for the games-played / minutes head — what data exists for it,
+what has to be gathered, and how to model it.
+
+> ⏰ **The deadline item in the availability plan is done, and now needs a cron entry.**
+> The NBA's official injury-report PDFs carry per-player Out/Doubtful/Questionable status
+> and reasons at a fully predictable URL, but retention is **~7 months, rolling** (probed
+> 2026-07-27: `2025-12-20` gone, `2025-12-27` live), so they cannot be backfilled.
+> `src/data/injury_reports.py` (`make injury-reports`) captured **everything still
+> retained** — 175 reports, 2025-12-29 → 2026-07-19, 13,759 player-report rows — and
+> `src/data/injuries.py` now carries the same daily discipline for the ESPN feed.
+> **`make daily-capture` has to be scheduled to keep it going**; the crontab line is in
+> the `Makefile` next to the target. Everything from here is only as complete as that
+> schedule.
 
 ---
 
@@ -706,6 +946,8 @@ families plus per-game logs.
 | `season_matrix_roster_tierB.parquet` | 6,942 player-seasons | 287 |
 | `team_composition_tierA.parquet` | 892 team-seasons | 9 archetype shares + aggregates |
 | `team_context_tierA.parquet` | 11,928 player-seasons | 8 LOO own-team features |
+| `availability_panel.parquet` | 1,314,238 player-games | played / in-window flags, 30 seasons |
+| `availability_features.parquet` | 29,138 player-season-windows | 14,569 player-seasons × 2 roster windows |
 
 The `season_matrix_roster_*` frames are the unfiltered twins of the qualified matrices —
 same columns, every player who took the floor. The qualified frames serve the PCA; the
@@ -721,6 +963,7 @@ consumes go to `data/features/`):
 | `target_profile.csv` | 185 | Per component × minutes/usage bucket: var/mean, dispersion, zero share, skew — plus first-k-games → season total |
 | `target_season_totals.parquet` | 13,895 | Per player-season: realized total and each first-k prefix mean |
 | `feature_diagnostics.csv` | 449 | VIF, strongest-correlate and cluster per column; cardinality per categorical; null reproduction; sequence ablation |
+| `availability_profile.csv` | 154 | Per measurement × roster window: the two-window bracket, availability persistence, the predictor-R² ceiling, the durability null, spell distribution, carryover, GP overdispersion |
 | `feature_correlation_tier*.parquet` | 149 / 285 | The full within-season z-scored correlation matrices |
 | `archetype_sweep_tier*.csv` | 11 | Silhouette and BIC over k = 4..14 |
 | `team_context_value_tier*.csv` | 8 | Per own-team feature: ΔR² and partial *r* against every component |
@@ -741,7 +984,8 @@ Not blocking, but each one costs some accuracy. Logged here so they don't get re
 
 ### 1. Roster members with no usable prior-season stats — ✅ measured and handled
 
-Quantified at **15.9% of roster minutes** and addressed in `src/features/team_context.py`;
+Quantified at **14.7% of season-start roster minutes** (`make context-value`) and addressed
+in `src/features/team_context.py`;
 see "Roster members with no usable S-1 row" above for the numbers and the treatment
 (inclusive roster frame, minutes-proportional shrinkage, stale fallback, draft-slot rookie
 prior, `roster_coverage`).

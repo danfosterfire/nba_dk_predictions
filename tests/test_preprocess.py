@@ -1,6 +1,13 @@
 import pandas as pd
 import pytest
-from src.data.preprocess import clean
+from src.data.preprocess import (
+    ALL_SEASON_TYPES,
+    PLAYOFFS,
+    REGULAR_SEASON,
+    _parse_log_filename,
+    clean,
+    load_raw,
+)
 
 
 def _make_df(n_games: int = 30, player_id: int = 1) -> pd.DataFrame:
@@ -49,3 +56,67 @@ def test_clean_parses_home_flag():
     df["MATCHUP"] = ["LAL vs. GSW"] * 15 + ["LAL @ GSW"] * 15
     result = clean(df, min_games=1)
     assert result["home"].isin([0, 1]).all()
+
+
+# ── Season type: playoff logs must not become pseudo-seasons ──────────────────
+
+def _write_logs(tmp_path, n_games: int = 30):
+    """A regular-season and a playoff log for the same season, as fetch writes them."""
+    for name in ("game_logs_2021_22.csv", "game_logs_playoffs_2021_22.csv"):
+        _make_df(n_games=n_games).to_csv(tmp_path / name, index=False)
+
+
+def test_filename_parsing_strips_the_playoffs_prefix():
+    assert _parse_log_filename("game_logs_2021_22") == (REGULAR_SEASON, "2021-22")
+    assert _parse_log_filename("game_logs_playoffs_2021_22") == (PLAYOFFS, "2021-22")
+
+
+def test_load_raw_defaults_to_regular_season_only(tmp_path):
+    """The default must not pull playoff rows in unannounced — that is the bug."""
+    _write_logs(tmp_path)
+    df = load_raw(tmp_path)
+    assert set(df["season"]) == {"2021-22"}
+    assert set(df["season_type"]) == {REGULAR_SEASON}
+    assert len(df) == 30
+
+
+def test_playoff_rows_never_become_a_pseudo_season(tmp_path):
+    """`playoffs-2021-22` doubled the season count for every groupby on season."""
+    _write_logs(tmp_path)
+    df = load_raw(tmp_path, season_type=ALL_SEASON_TYPES)
+    assert set(df["season"]) == {"2021-22"}
+    assert not any("playoff" in s for s in df["season"])
+    assert df["season_type"].value_counts().to_dict() == {REGULAR_SEASON: 30, PLAYOFFS: 30}
+
+
+def test_playoffs_are_reachable_explicitly_for_workload_features(tmp_path):
+    _write_logs(tmp_path)
+    df = load_raw(tmp_path, season_type=PLAYOFFS)
+    assert set(df["season_type"]) == {PLAYOFFS}
+    assert set(df["season"]) == {"2021-22"}
+
+
+def test_unknown_season_type_raises_rather_than_returning_nothing(tmp_path):
+    _write_logs(tmp_path)
+    with pytest.raises(ValueError, match="season_type"):
+        load_raw(tmp_path, season_type="preseason")
+
+
+def test_missing_files_for_a_valid_season_type_raise(tmp_path):
+    _make_df().to_csv(tmp_path / "game_logs_2021_22.csv", index=False)
+    with pytest.raises(FileNotFoundError, match="playoffs"):
+        load_raw(tmp_path, season_type=PLAYOFFS)
+
+
+def test_columns_argument_narrows_the_read(tmp_path):
+    _write_logs(tmp_path)
+    df = load_raw(tmp_path, columns=["GAME_ID", "TEAM_ABBREVIATION", "MIN"])
+    assert set(df.columns) == {"GAME_ID", "TEAM_ABBREVIATION", "MIN",
+                               "season", "season_type"}
+
+
+def test_clean_carries_season_type_through(tmp_path):
+    _write_logs(tmp_path)
+    out = clean(load_raw(tmp_path, season_type=ALL_SEASON_TYPES), min_games=10)
+    assert "season_type" in out.columns
+    assert set(out["season_type"]) == {REGULAR_SEASON, PLAYOFFS}

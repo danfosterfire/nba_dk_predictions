@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 from nba_api.stats.endpoints import (
+    commonteamroster,
     leaguedashplayerbiostats,
     leaguedashplayerclutch,
     leaguedashplayerptshot,
@@ -144,17 +145,66 @@ def fetch_all_players(active_only: bool = True) -> pd.DataFrame:
 
 # ── Game logs ─────────────────────────────────────────────────────────────────
 
-def fetch_season_game_logs(season: str, output_dir: str | Path = "data/raw") -> Path:
-    """Download all player game logs for a season (Regular Season)."""
+def fetch_season_game_logs(season: str, output_dir: str | Path = "data/raw",
+                           season_type: str = "Regular Season") -> Path:
+    """Download all player game logs for a season.
+
+    Playoff logs land in their own file rather than being mixed into the regular-season
+    one: every downstream consumer treats `game_logs_{season}.csv` as the regular season,
+    and a deep run would otherwise silently inflate games played. As prior-season
+    *workload* they matter — ~20 extra high-intensity games that are invisible today.
+    """
     output_dir = Path(output_dir)
-    dest = output_dir / f"game_logs_{_slug(season)}.csv"
-    if _skip_or_fetch(dest, f"game_logs {season}"):
+    suffix = "" if season_type == "Regular Season" else f"_{_slug(season_type.lower())}"
+    dest = output_dir / f"game_logs{suffix}_{_slug(season)}.csv"
+    if _skip_or_fetch(dest, f"game_logs/{season_type} {season}"):
         return dest
     df = playergamelogs.PlayerGameLogs(
         season_nullable=season,
-        season_type_nullable="Regular Season",
+        season_type_nullable=season_type,
     ).get_data_frames()[0]
     return _save(df, dest)
+
+
+def fetch_team_rosters(season: str, output_dir: str | Path = "data/raw",
+                       delay: float = DELAY) -> Path:
+    """CommonTeamRoster for every team that played in `season`, as one file.
+
+    Official roster membership *with experience*, which the availability panel otherwise
+    has to infer from appearances — the bias documented in
+    `src/features/availability.py`. Teams come off the season's own game log rather than
+    the static team list, so relocated and defunct franchises resolve to the ids that
+    actually played that year, and everything stays keyed on `team_id`.
+    """
+    output_dir = Path(output_dir)
+    dest = output_dir / f"team_rosters_{_slug(season)}.csv"
+    if _skip_or_fetch(dest, f"team_rosters {season}"):
+        return dest
+
+    log_path = output_dir / f"game_logs_{_slug(season)}.csv"
+    if not log_path.exists():
+        print(f"  Skipping team_rosters for {season} (no game log to read teams from)")
+        return dest
+    team_ids = sorted(pd.read_csv(log_path, usecols=["TEAM_ID"],
+                                  low_memory=False)["TEAM_ID"].dropna().unique())
+
+    frames = []
+    for i, team_id in enumerate(team_ids):
+        try:
+            df = commonteamroster.CommonTeamRoster(
+                team_id=int(team_id), season=season).get_data_frames()[0]
+        except Exception as exc:
+            print(f"  ERROR fetching roster for team {team_id} in {season}: {exc}")
+            continue
+        # The endpoint's own SEASON is the start year ("2023"); overwrite it with the
+        # project's season key so this file joins to everything else in data/raw.
+        df["SEASON"] = season
+        frames.append(df)
+        if i < len(team_ids) - 1:
+            time.sleep(delay)
+
+    rosters = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    return _save(rosters, dest)
 
 
 # ── Season-level player stats ─────────────────────────────────────────────────
@@ -334,8 +384,13 @@ def fetch_all_for_season(season: str, output_dir: str | Path = "data/raw", delay
     year = _season_start_year(season)
     tasks: list[tuple[str, callable]] = []
 
-    # Game logs (per-game box score)
+    # Game logs (per-game box score), regular season and playoffs
     tasks.append(("game_logs", lambda: fetch_season_game_logs(season, output_dir)))
+    tasks.append(("game_logs/Playoffs",
+                  lambda: fetch_season_game_logs(season, output_dir, "Playoffs")))
+
+    # Official rosters — 30 calls, so it goes last in the per-season block below
+    tasks.append(("team_rosters", lambda: fetch_team_rosters(season, output_dir, delay)))
 
     # Player stats by measure type
     for m in PLAYER_STAT_MEASURES:

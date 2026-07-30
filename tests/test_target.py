@@ -7,6 +7,7 @@ from src.eda.target import (
     first_k_predictiveness,
     game_index,
     profile,
+    season_total_decomposition,
     season_totals,
     trajectories,
 )
@@ -131,6 +132,79 @@ def test_first_k_excludes_seasons_barely_longer_than_the_prefix():
         rows += [{"player_id": p, "season": "s", "dk_pts": float(p)} for _ in range(n)]
     totals = season_totals(_games(rows), ks=[5])
     assert first_k_predictiveness(totals, ks=[5]).iloc[0]["n"] == 30
+
+
+# ── The season total's two log factors ────────────────────────────────────────
+
+def _totals(spec: list[tuple[int, float]]) -> pd.DataFrame:
+    """`season_totals` over player-seasons given as (games, dk_pts per game)."""
+    rows = []
+    for p, (n, rate) in enumerate(spec):
+        rows += [{"player_id": p, "season": "s", "dk_pts": rate} for _ in range(n)]
+    return season_totals(_games(rows), ks=[5])
+
+
+def test_the_two_log_factors_together_reproduce_the_identity_exactly():
+    """log(total) = log(rate) + log(games) is arithmetic, so both together must give R²=1."""
+    rng = np.random.default_rng(0)
+    spec = [(int(rng.integers(10, 82)), float(rng.uniform(3.0, 45.0))) for _ in range(300)]
+    out = season_total_decomposition(_totals(spec), min_games=10)
+    both = out[out["bucket"] == "log_rate_and_games"]["r2"].iloc[0]
+    assert abs(both - 1.0) < 1e-9
+
+
+def test_a_fixed_games_count_hands_the_whole_total_to_the_rate():
+    """With games constant, log(games) has no variance and explains nothing."""
+    rng = np.random.default_rng(1)
+    spec = [(50, float(rng.uniform(3.0, 45.0))) for _ in range(200)]
+    out = season_total_decomposition(_totals(spec), min_games=10).set_index("bucket")
+    assert out.loc["log_rate", "r2"] > 0.9999
+    assert abs(out.loc["log_games", "r2"]) < 1e-9
+
+
+def test_a_fixed_rate_hands_the_whole_total_to_games_played():
+    rng = np.random.default_rng(2)
+    spec = [(int(rng.integers(10, 82)), 20.0) for _ in range(200)]
+    out = season_total_decomposition(_totals(spec), min_games=10).set_index("bucket")
+    assert out.loc["log_games", "r2"] > 0.9999
+    assert abs(out.loc["log_rate", "r2"]) < 1e-9
+
+
+def test_the_games_floor_changes_the_answer_which_is_why_it_is_reported():
+    """Two-game seasons carry a noisy rate; the floor is load-bearing, not cosmetic."""
+    rng = np.random.default_rng(3)
+    spec = [(int(rng.integers(10, 82)), float(rng.uniform(10.0, 40.0))) for _ in range(200)]
+    spec += [(2, float(rng.uniform(0.5, 60.0))) for _ in range(200)]
+    totals = _totals(spec)
+    floored = season_total_decomposition(totals, min_games=10).set_index("bucket")
+    unfiltered = season_total_decomposition(totals, min_games=1).set_index("bucket")
+    assert floored.loc["log_rate", "r2"] != unfiltered.loc["log_rate", "r2"]
+    assert int(floored[floored.index == "log_rate"]["n"].iloc[0]) == 200
+
+
+def test_the_spread_row_carries_games_in_games_not_as_a_share():
+    spec = [(n, 20.0) for n in ([20] * 50 + [60] * 50)]
+    out = season_total_decomposition(_totals(spec), min_games=10)
+    spread = out[out["bucket_kind"] == "spread"].iloc[0]
+    assert spread["metric"] == "games"
+    assert abs(spread["mean"] - 40.0) < 1e-9
+    assert spread["p10"] == 20.0 and spread["p90"] == 60.0
+
+
+def test_decomposition_rows_are_additive_and_do_not_disturb_the_existing_sections():
+    """The extension must ADD rows, never rewrite the schema the other sections use."""
+    spec = [(40, 20.0), (60, 25.0)] * 30
+    totals = _totals(spec)
+    pred = first_k_predictiveness(totals, ks=[5])
+    decomp = season_total_decomposition(totals, min_games=10)
+    combined = pd.concat([pred, decomp], ignore_index=True)
+    assert set(pred.columns) <= set(combined.columns)
+    assert (combined["analysis"] == "season_total").sum() == len(pred)
+    assert (combined["analysis"] == "season_total_decomposition").sum() == len(decomp)
+
+
+def test_decomposition_returns_empty_rather_than_nonsense_on_a_thin_frame():
+    assert season_total_decomposition(_totals([(40, 20.0)]), min_games=10).empty
 
 
 def test_trajectories_are_cumulative_and_increase_with_the_final_decile():

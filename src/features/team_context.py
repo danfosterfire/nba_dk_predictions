@@ -431,20 +431,29 @@ def build_team_context(described: pd.DataFrame, weight: str = "prior_minutes",
     return out
 
 
-def coverage_report(described: pd.DataFrame) -> pd.DataFrame:
+STATS_SOURCES = ("prior", "stale", "rookie")
+
+
+def coverage_report(described: pd.DataFrame,
+                    sources: tuple[str, ...] = STATS_SOURCES) -> pd.DataFrame:
     """Per team-season share of roster minutes by prior-data source.
 
     Weighted by *realized* season-S minutes where available, because that is the
     exposure the aggregate is failing to describe. Weighting by the S-1 minutes the
     aggregate actually uses would be circular: a rookie has zero of them, so every
     roster would look fully covered.
+
+    `sources` is a parameter because `stats_source`'s three-way split is not the split the
+    15.9% figure is quoted on: that one separates a *sub-threshold* prior season from a
+    qualified one, which is a fact about the qualified matrix rather than about this frame.
+    See `src/eda/context_value.py::description_source`.
     """
     df = described.copy()
     w = "season_minutes" if "season_minutes" in df else "prior_minutes"
     tot = df.groupby(TEAM_KEYS)[w].sum().rename("total")
     by = df.groupby(TEAM_KEYS + ["stats_source"])[w].sum().unstack("stats_source").fillna(0.0)
     by = by.join(tot)
-    for c in ("prior", "stale", "rookie"):
+    for c in sources:
         if c not in by:
             by[c] = 0.0
         by[f"share_{c}"] = (by[c] / by["total"]).where(by["total"] > 0)

@@ -3,7 +3,13 @@ PIP    := .venv/bin/pip
 
 .PHONY: venv install fetch preprocess features train evaluate predict test clean \
         season-matrix pca archetypes eda team-context component-targets context-value \
-        opponent persistence aging target-profile feature-diagnostics dashboard
+        opponent persistence aging target-profile feature-diagnostics dashboard \
+        availability availability-profile injury-reports injuries daily-capture \
+        boxscore-status availability-model capture-status report-calibration \
+        season-total adp adp-draftkings adp-fantasypros adp-panel adp-profile \
+        adp-status game-length serial-correlation component-rates \
+        variance-budget residual-correlation \
+        stan stan-availability stan-minutes stan-components
 
 venv:
 	/opt/homebrew/bin/python3.14 -m venv .venv
@@ -17,6 +23,64 @@ fetch:
 
 preprocess:
 	$(PYTHON) -m src.data.preprocess
+
+# ── Daily capture ─────────────────────────────────────────────────────────────
+# Both sources are current-status only and CANNOT be backfilled: the NBA report PDFs
+# age out of the CDN after ~7 months, and the ESPN feed has no history at all. Every
+# day `daily-capture` does not run is a day permanently lost. Schedule it:
+#
+#   crontab -e
+#   30 18 * * *  cd /path/to/nba_deep_learning && make daily-capture >> data/raw/daily_capture.log 2>&1
+#
+# 6:30 PM local is after the 5:00 PM ET report is published. Re-running the same day is
+# a no-op, so a missed day self-heals on the next run for anything still retained.
+injury-reports:
+	$(PYTHON) -m src.data.injury_reports
+
+injuries:
+	$(PYTHON) -m src.data.injuries --daily
+
+daily-capture: injury-reports injuries
+
+# Which days were captured, which had no report to capture, and which were MISSED.
+# The PDF gaps are recoverable until they age out; the ESPN gaps never are.
+capture-status:
+	$(PYTHON) -m src.data.injury_reports --status
+	@echo
+	$(PYTHON) -m src.data.injuries --status
+
+# The 2006-07 → 2025-26 inactive-list and DNP-reason backfill. ~24,600 games, 8-14 h.
+# Resumable per game — kill it and re-run.
+boxscore-status:
+	$(PYTHON) -m src.data.boxscore_status
+
+# ── ADP ───────────────────────────────────────────────────────────────────────
+# The DK board is login-gated, has ZERO Wayback presence, and is live only while
+# contests are open (~Oct). It CANNOT be scraped or backfilled: download the CSV by hand
+# from the draft lobby into data/raw/dk_draft_rankings/ and let `adp-draftkings` ingest
+# it. See docs/adp-plan.md. FantasyPros is backfillable and has ~11 months of slack,
+# because its board freezes between draft seasons.
+adp-draftkings:
+	$(PYTHON) -m src.data.adp_draftkings
+
+# Live capture. Add --backfill for the 12-season Wayback sweep (slow, rate-limited),
+# or --reparse to rebuild from the archive offline.
+adp-fantasypros:
+	$(PYTHON) -m src.data.adp_fantasypros
+
+adp-panel:
+	$(PYTHON) -m src.features.adp
+
+adp-profile:
+	$(PYTHON) -m src.eda.adp_profile
+
+# Ingest both sources, build the panel, measure the transfer function.
+adp: adp-draftkings adp-fantasypros adp-panel adp-profile
+
+adp-status:
+	$(PYTHON) -m src.data.adp_draftkings --status
+	@echo
+	$(PYTHON) -m src.data.adp_fantasypros --status
 
 features:
 	$(PYTHON) -m src.features.encode
@@ -36,6 +100,9 @@ team-context:
 component-targets:
 	$(PYTHON) -m src.features.targets
 
+game-length:
+	$(PYTHON) -m src.features.game_length
+
 context-value:
 	$(PYTHON) -m src.eda.context_value
 
@@ -54,9 +121,64 @@ target-profile:
 feature-diagnostics:
 	$(PYTHON) -m src.eda.feature_diagnostics
 
+serial-correlation:
+	$(PYTHON) -m src.eda.serial_correlation
+
+# ── Provenance: figures that were prose-only until docs/provenance-plan.md ────
+# The variance budget needs the archetypes (for the interaction's lagged style label) and
+# the raw game logs; the residual correlation needs component_targets. Both sit after
+# `component-targets` and `opponent` in `make eda`.
+variance-budget:
+	$(PYTHON) -m src.eda.variance_budget
+
+# The conditional cross-component correlation matrix — a simulator INPUT, not a summary.
+residual-correlation:
+	$(PYTHON) -m src.eda.residual_correlation
+
+availability:
+	$(PYTHON) -m src.features.availability
+
+availability-profile:
+	$(PYTHON) -m src.eda.availability
+
+season-total:
+	$(PYTHON) -m src.models.season_total
+
+component-rates:
+	$(PYTHON) -m src.models.component_rates
+
+availability-model:
+	$(PYTHON) -m src.models.availability
+
+# ── Stan heads ────────────────────────────────────────────────────────────────
+# Fitted SEPARATELY, one model per head, because the chain availability -> min |
+# available -> counts | min -> makes | attempts factorizes the joint posterior exactly
+# when the parameter blocks are distinct. Sources are in src/stan/; cmdstanpy compiles
+# them into outputs/stan/, which .gitignore already covers, so no binary is committed.
+#
+# Requires cmdstanpy plus a CmdStan toolchain:
+#   .venv/bin/python -c "import cmdstanpy; cmdstanpy.install_cmdstan()"
+stan-availability:
+	$(PYTHON) -m src.models.stan_availability
+
+stan-minutes:
+	$(PYTHON) -m src.models.stan_minutes
+
+stan-components:
+	$(PYTHON) -m src.models.stan_components
+
+stan: stan-availability stan-minutes stan-components
+
+report-calibration:
+	$(PYTHON) -m src.eda.report_calibration
+
 # Full EDA sweep, in dependency order
 eda: season-matrix pca archetypes team-context context-value opponent \
-     component-targets persistence aging target-profile feature-diagnostics
+     component-targets game-length variance-budget residual-correlation \
+     persistence aging target-profile \
+     feature-diagnostics serial-correlation \
+     availability availability-profile report-calibration \
+     adp-panel adp-profile
 
 dashboard:
 	.venv/bin/streamlit run dashboard/app.py
