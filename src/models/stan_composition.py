@@ -90,8 +90,15 @@ OFFSET_CLIP = (0.02, 0.93)
 # offset finite for end-of-bench players; the upper mirrors RHO_MAX-style guard rails.
 SHARE_CLIP = (EPS, 0.95)
 
-FITTED_VARIANTS = ("binomial", "betabinom", "betabinom_ot")
+FITTED_VARIANTS = ("binomial", "betabinom", "betabinom_ot", "betabinom_ot_graded")
 GROUP_KEYS = ["game_id", "team_id"]
+
+# The dispersion is graded over bins of this column — the prior-season minutes share
+# that already orders the sequence and sets the offset. Bins rather than a functional
+# form because the pilot measured the *pattern* (variance ratio 1.59 fringe -> 0.70
+# star) and not a shape, and because a bin count is one honest knob.
+RHO_BIN_COL = "w_share"
+RHO_BINS = 4
 
 # The simulator redraws a step that lands below the feasibility bound; past this many
 # attempts it clamps to the bound and counts it. The bound binds only in
@@ -378,8 +385,32 @@ def composition_frame(cfg: dict) -> pd.DataFrame:
 
 # ── Feature variants ──────────────────────────────────────────────────────────
 
-def variants(train: pd.DataFrame, test: pd.DataFrame
-             ) -> dict[str, tuple[pd.DataFrame, pd.DataFrame, list[str], int]]:
+def rho_bin_edges(train: pd.DataFrame, n_bins: int = RHO_BINS) -> np.ndarray:
+    """Interior quantile edges of the prior-share column, from **train** only.
+
+    The same rule as the scaler and the spline knots: reading the held-out
+    distribution to place the bins would leak it into the design, invisibly.
+    """
+    qs = np.linspace(0.0, 1.0, n_bins + 1)[1:-1]
+    return np.quantile(train[RHO_BIN_COL].to_numpy(dtype=float), qs)
+
+
+def assign_rho_bins(frames: list[pd.DataFrame], edges: np.ndarray
+                    ) -> list[pd.DataFrame]:
+    """1-based bin index per row. Values outside the training range land in the end
+    bins rather than raising — a rookie share below every training quantile is a
+    fringe player, which is what bin 1 means."""
+    out = []
+    for frame in frames:
+        copy = frame.copy()
+        values = copy[RHO_BIN_COL].to_numpy(dtype=float)
+        copy["rho_bin"] = np.searchsorted(edges, values, side="right") + 1
+        out.append(copy)
+    return out
+
+
+def variants(train: pd.DataFrame, test: pd.DataFrame, n_bins: int = RHO_BINS
+             ) -> dict[str, tuple[pd.DataFrame, pd.DataFrame, list[str], int, int]]:
     """The ladder from `docs/minutes-composition-plan.md`.
 
     `binomial` is the pure stick-breaking decomposition (the demo's model, with the
@@ -387,6 +418,11 @@ def variants(train: pd.DataFrame, test: pd.DataFrame
     dispersion is 4.65x binomial. `betabinom` is the expected winner. `betabinom_ot`
     adds the per-game covariates: n_overtimes and its interaction with the own share,
     because OT minutes should tilt toward the players already playing most.
+
+    `betabinom_ot_graded` differs from `betabinom_ot` in the dispersion ALONE — same
+    features, same mean function, `n_rho` bins instead of one shared rho. That makes
+    the pair a clean read on the pilot's one measured miscalibration (variance ratio
+    1.59 fringe against 0.70 star) rather than a confounded comparison.
     """
     base = [c for c in FEATURE_COLS if c != "minutes_per_game_lag1"] + [OWN]
     tr, te = train.copy(), test.copy()
@@ -399,13 +435,20 @@ def variants(train: pd.DataFrame, test: pd.DataFrame
     tr, te, _ = impute(tr, te, base)
     feats = base + ["design_missing", "no_prior", "share_stale", "offset_clipped"]
 
-    out = {"binomial": (tr, te, list(feats), 0),
-           "betabinom": (tr, te, list(feats), 1)}
+    # Bin edges from train only; every arm carries the column so the shared-rho arms
+    # are the n_rho = 1 special case of the same code path rather than a separate one.
+    edges = rho_bin_edges(tr, n_bins)
+    tr, te = assign_rho_bins([tr, te], edges)
+
+    out = {"binomial": (tr, te, list(feats), 0, 1),
+           "betabinom": (tr, te, list(feats), 1, 1)}
 
     to, eo = tr.copy(), te.copy()
     for frame in (to, eo):
         frame["ot_x_own"] = frame["n_overtimes"].to_numpy(float) * frame[OWN].to_numpy(float)
-    out["betabinom_ot"] = (to, eo, list(feats) + ["n_overtimes", "ot_x_own"], 1)
+    ot_feats = list(feats) + ["n_overtimes", "ot_x_own"]
+    out["betabinom_ot"] = (to, eo, ot_feats, 1, 1)
+    out["betabinom_ot_graded"] = (to, eo, list(ot_feats), 1, n_bins)
     return out
 
 
@@ -435,10 +478,12 @@ def simulate_minutes(frame: pd.DataFrame, eta_base: np.ndarray,
 
     `eta_base` is (rows x draws): the linear predictor *without* the stick-breaking
     offset, which is recomputed here per draw because it depends on the running
-    remainder. `rho = None` is the binomial arm. Beta-binomial steps are drawn as
-    `p ~ Beta(a, b)` then `Binomial(m, p)` — exact, and orders of magnitude faster
-    than a pmf grid at this shape. A step below the feasibility bound is redrawn and,
-    past MAX_REDRAWS, clamped and counted loudly.
+    remainder. `rho = None` is the binomial arm; otherwise it is (draws x n_rho) and
+    each row takes the dispersion of its `rho_bin` — a frame without that column is
+    treated as one shared bin, so the floor and the shared-rho arms need no special
+    case. Beta-binomial steps are drawn as `p ~ Beta(a, b)` then `Binomial(m, p)` —
+    exact, and orders of magnitude faster than a pmf grid at this shape. A step below
+    the feasibility bound is redrawn and, past MAX_REDRAWS, clamped and counted loudly.
     """
     arrays = ragged_arrays(frame)
     starts, lens = arrays["starts"], arrays["lens"]
@@ -450,6 +495,13 @@ def simulate_minutes(frame: pd.DataFrame, eta_base: np.ndarray,
     for k in range(max_len):
         teams = np.flatnonzero(lens > k)
         by_position.append((teams, starts[teams] + k))
+
+    if rho is not None:
+        rho = np.atleast_2d(np.asarray(rho, dtype=float))
+        if rho.shape[0] != n_draws:      # a single shared value broadcast per draw
+            rho = rho.reshape(n_draws, -1)
+    bins = (frame["rho_bin"].to_numpy(dtype=int) - 1 if "rho_bin" in frame.columns
+            else np.zeros(n_rows, dtype=int))
 
     rng = np.random.default_rng(seed)
     out = np.zeros((n_draws, n_rows), dtype=np.int64)
@@ -468,19 +520,20 @@ def simulate_minutes(frame: pd.DataFrame, eta_base: np.ndarray,
             eta = np.log(p_carry / (1 - p_carry)) + eta_base[rows, d]
             mu = 1.0 / (1.0 + np.exp(-np.clip(eta, -30, 30)))
 
-            if rho is None:
+            rho_k = None if rho is None else rho[d][bins[rows]]
+            if rho_k is None:
                 y_k = rng.binomial(m, mu)
             else:
-                a, b = beta_shapes(mu, np.full_like(mu, rho[d]))
+                a, b = beta_shapes(mu, rho_k)
                 y_k = rng.binomial(m, rng.beta(a, b))
 
             need = ~last & (y_k < lower)
             tries = 0
             while need.any() and tries < MAX_REDRAWS:
-                if rho is None:
+                if rho_k is None:
                     y_k[need] = rng.binomial(m[need], mu[need])
                 else:
-                    a, b = beta_shapes(mu[need], np.full(int(need.sum()), rho[d]))
+                    a, b = beta_shapes(mu[need], rho_k[need])
                     y_k[need] = rng.binomial(m[need], rng.beta(a, b))
                 need = ~last & (y_k < lower)
                 tries += 1
@@ -509,11 +562,12 @@ def simulate_minutes(frame: pd.DataFrame, eta_base: np.ndarray,
 class StanComposition:
     """The composition head. `dispersed = 0` is the pure stick-break binomial arm."""
 
-    def __init__(self, features: list[str], dispersed: int, l2: float = GLM_L2,
-                 name: str = "stan", chains: int = 4, warmup: int = 1000,
-                 samples: int = 1000, seed: int = 42,
+    def __init__(self, features: list[str], dispersed: int, n_rho: int = 1,
+                 l2: float = GLM_L2, name: str = "stan", chains: int = 4,
+                 warmup: int = 1000, samples: int = 1000, seed: int = 42,
                  predictive_samples: int = PREDICTIVE_SAMPLES):
         self.features, self.dispersed, self.l2, self.name = features, dispersed, l2, name
+        self.n_rho = int(n_rho)
         self.chains, self.warmup, self.samples, self.seed = chains, warmup, samples, seed
         self.predictive_samples = predictive_samples
 
@@ -534,6 +588,9 @@ class StanComposition:
             "U": arrays["caps"].tolist(),
             "logit_prior": train["logit_prior"].to_numpy(dtype=float).tolist(),
             "X": X, "dispersed": int(self.dispersed),
+            "n_rho": self.n_rho,
+            "rho_bin": (train["rho_bin"].to_numpy(dtype=int).tolist()
+                        if self.n_rho > 1 else [1] * len(train)),
             "beta_scale": prior_sd_for_l2(self.l2),
             "intercept_scale": INTERCEPT_SCALE,
         }
@@ -545,7 +602,7 @@ class StanComposition:
         # every other head.
         inits = {"alpha": 0.0, "beta": np.zeros(data["K"]).tolist()}
         if self.dispersed:
-            inits["rho"] = [RHO_INIT]
+            inits["rho"] = [RHO_INIT] * self.n_rho
 
         model = compile_model(MODEL)
         # dense_e, not the default diagonal metric: measured on the one-season probe,
@@ -562,10 +619,14 @@ class StanComposition:
         self.alpha_draws = draws["alpha"].reshape(-1)
         self.beta_draws = draws["beta"].reshape(len(self.alpha_draws), -1)
         if self.dispersed:
-            self.rho_draws = posterior(fit, ["rho"])["rho"].reshape(-1)
-            self.rho = float(self.rho_draws.mean())
+            # (draws x n_rho) even when n_rho = 1, so the graded and shared arms take
+            # the same downstream path.
+            self.rho_draws = posterior(fit, ["rho"])["rho"].reshape(
+                len(self.alpha_draws), -1)
+            self.rho_by_bin = self.rho_draws.mean(axis=0)
+            self.rho = float(self.rho_by_bin.mean())
         else:
-            self.rho_draws, self.rho = None, 0.0
+            self.rho_draws, self.rho_by_bin, self.rho = None, None, 0.0
         return self
 
     def _design(self, df: pd.DataFrame) -> np.ndarray:
@@ -582,9 +643,18 @@ class StanComposition:
         eta, rho = self._eta_base(df)
         return simulate_minutes(df, eta, rho, seed)
 
-    def plug_in(self) -> tuple[float, np.ndarray, float]:
-        return (float(self.alpha_draws.mean()), self.beta_draws.mean(axis=0),
-                float(self.rho))
+    def plug_in(self) -> tuple[float, np.ndarray, np.ndarray]:
+        """Posterior means: intercept, coefficients, and rho **per bin**."""
+        rho = (self.rho_by_bin if self.dispersed
+               else np.full(1, max(self.rho, RHO_MIN)))
+        return float(self.alpha_draws.mean()), self.beta_draws.mean(axis=0), rho
+
+    def rho_row(self, df: pd.DataFrame) -> np.ndarray:
+        """Posterior-mean dispersion for each row of `df`, by its bin."""
+        _, _, rho = self.plug_in()
+        if len(rho) == 1 or "rho_bin" not in df.columns:
+            return np.full(len(df), float(rho[0]))
+        return rho[df["rho_bin"].to_numpy(dtype=int) - 1]
 
 
 class FloorComposition:
@@ -608,7 +678,10 @@ class FloorComposition:
 
     def predict_samples(self, df: pd.DataFrame, seed: int = 0) -> np.ndarray:
         eta = np.zeros((len(df), self.predictive_samples))
-        rho = np.full(self.predictive_samples, self.rho)
+        # One shared rho, deliberately: the floor answers "is the MEAN function worth
+        # anything", so grading its dispersion too would blur the contrast the graded
+        # arm is meant to isolate.
+        rho = np.full((self.predictive_samples, 1), self.rho)
         return simulate_minutes(df, eta, rho, seed)
 
 
@@ -740,15 +813,15 @@ def sweep(train: pd.DataFrame, val: pd.DataFrame, test: pd.DataFrame,
     val_variants = variants(train, val)
     test_variants = variants(full_train, test)
     for label in val_variants:
-        v_tr, v_te, v_feats, dispersed = val_variants[label]
-        v_model = StanComposition(v_feats, dispersed, name=f"{label}/val",
+        v_tr, v_te, v_feats, dispersed, n_rho = val_variants[label]
+        v_model = StanComposition(v_feats, dispersed, n_rho, name=f"{label}/val",
                                   chains=chains, seed=seed, predictive_samples=keep,
                                   **_iters(cfg_stan, True)).fit(v_tr)
         diagnostics.append(v_model.diagnostics)
         v = score_samples(v_model.predict_samples(v_te, seed), v_te, label, seed)
 
-        t_tr, t_te, t_feats, dispersed = test_variants[label]
-        t_model = StanComposition(t_feats, dispersed, name=f"{label}/test",
+        t_tr, t_te, t_feats, dispersed, n_rho = test_variants[label]
+        t_model = StanComposition(t_feats, dispersed, n_rho, name=f"{label}/test",
                                   chains=chains, seed=seed, predictive_samples=keep,
                                   **_iters(cfg_stan, False)).fit(t_tr)
         diagnostics.append(t_model.diagnostics)
@@ -790,8 +863,8 @@ def probe_timing(train: pd.DataFrame, full_train: pd.DataFrame, cfg_stan: dict,
     last = sorted(train["season"].unique())[-1]
     probe_frame = train[train["season"] == last]
     v = variants(probe_frame, probe_frame)
-    tr, _, feats, dispersed = v["betabinom"]
-    model = StanComposition(feats, dispersed, name="probe/one-season",
+    tr, _, feats, dispersed, n_rho = v["betabinom"]
+    model = StanComposition(feats, dispersed, n_rho, name="probe/one-season",
                             chains=int(cfg_stan.get("chains", 4)),
                             seed=int(cfg_stan.get("seed", 42)),
                             **_iters(cfg_stan, True)).fit(tr)
@@ -877,7 +950,7 @@ def joint_nll_table(models: dict, selected: str, comparator: dict,
     for split in ("val", "test"):
         frame = frames[split]
         model = models[selected][split]
-        alpha, beta, rho = model.plug_in()
+        alpha, beta, _ = model.plug_in()
         eta = (model._design(frame) @ beta + alpha
                + frame["logit_prior"].to_numpy(float))
         mu = 1.0 / (1.0 + np.exp(-np.clip(eta, -30, 30)))
@@ -886,8 +959,7 @@ def joint_nll_table(models: dict, selected: str, comparator: dict,
         lo = frame["lo"].to_numpy(int)
         live = frame["is_last"].to_numpy(int) == 0
 
-        rho_eff = max(rho, RHO_MIN)
-        a, b = beta_shapes(mu, np.full_like(mu, rho_eff))
+        a, b = beta_shapes(mu, np.maximum(model.rho_row(frame), RHO_MIN))
         nll = np.zeros(len(frame))
         nll[live] = -betabinom.logpmf(y[live], m[live], a[live], b[live])
         bound = live & (lo > 0)
@@ -1027,10 +1099,27 @@ def run(cfg: dict) -> dict[str, Path]:
         print("  /!\\  The selected variant does NOT clear the no-fit floor. Per "
               "CLAUDE.md that is not a model.")
 
-    test_samples = models[selected]["test"].predict_samples(
-        models[selected]["test_frame"], seed)
-    checks = ppc(models[selected]["test_frame"], test_samples,
-                 comparator["samples"]["test"], selected)
+    graded = models.get("betabinom_ot_graded")
+    if graded is not None and graded["test"].rho_by_bin is not None:
+        shared = models["betabinom_ot"]["test"].rho
+        bins = graded["test"].rho_by_bin
+        print(f"\nFitted dispersion by prior-share bin (fringe -> star): "
+              f"{', '.join(f'{r:.4f}' for r in bins)}")
+        print(f"  against a single shared rho of {shared:.4f} — the graded arm differs "
+              f"from `betabinom_ot`\n  in the dispersion ALONE, so the contrast is the "
+              f"pilot's 1.59-to-0.70 variance ratio\n  and nothing else.")
+
+    # PPC on the selected variant AND its shared-rho twin where both were fitted:
+    # "did grading fix the tier miscalibration" is the whole question, and it is a
+    # comparison, so both rows have to be on disk rather than one inferred from the
+    # other.
+    ppc_arms = [selected] + [a for a in ("betabinom_ot", "betabinom_ot_graded")
+                             if a in models and a != selected]
+    checks = pd.concat(
+        [ppc(models[a]["test_frame"],
+             models[a]["test"].predict_samples(models[a]["test_frame"], seed),
+             comparator["samples"]["test"], a) for a in ppc_arms],
+        ignore_index=True)
     print("\nPosterior predictive checks (test split):")
     print(checks.round(4).to_string(index=False))
 
@@ -1060,11 +1149,21 @@ def run(cfg: dict) -> dict[str, Path]:
     ot_frame = pd.concat([pd.DataFrame([{**tail, "class": "params",
                                          "observed": np.nan, "predicted": np.nan}]),
                           tail_check], ignore_index=True)
+    rho_rows = []
+    for label, holder in models.items():
+        model = holder["test"]
+        if model.rho_by_bin is None:
+            continue
+        for b, value in enumerate(model.rho_by_bin, start=1):
+            rho_rows.append({"variant": label, "n_rho": model.n_rho, "bin": b,
+                             "rho": float(value)})
     artifacts = {
         "metrics": (table.assign(probe_hours=probe["extrapolated_hours"]),
                     out_dir / "stan_composition_metrics.csv"),
         "diagnostics": (diag, out_dir / "stan_composition_diagnostics.csv"),
         "ppc": (checks, out_dir / "stan_composition_ppc.csv"),
+        "dispersion": (pd.DataFrame(rho_rows),
+                       out_dir / "stan_composition_dispersion.csv"),
         "joint_nll": (joint, out_dir / "stan_composition_joint_nll.csv"),
         "ot_tail": (ot_frame, out_dir / "stan_composition_ot_tail.csv"),
     }

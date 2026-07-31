@@ -83,12 +83,20 @@ data {
   vector[P] logit_prior;                // stick-breaking carry-forward offset
   matrix[P, K] X;                       // standardized on TRAIN only
   int<lower=0, upper=1> dispersed;      // 0 = binomial steps, 1 = beta-binomial
+  // Dispersion bins over prior minutes share. n_rho = 1 with rho_bin all-ones is
+  // EXACTLY the shared-rho model, so the graded variant nests it and the two are
+  // one code path. Measured on the pilot, one shared rho is too tight for fringe
+  // players (realized/simulated variance ratio 1.59) and too wide for stars (0.70)
+  // — a 34-mpg starter's allocation step is genuinely steadier than a reserve's.
+  int<lower=1> n_rho;
+  array[P] int<lower=1, upper=n_rho> rho_bin;   // bin edges from TRAIN quantiles only
   real<lower=0> beta_scale;             // 1/sqrt(2*l2) reproduces an L2 penalty of l2
   real<lower=0> intercept_scale;
 }
 transformed data {
   // One deterministic last row per team-game, so P - G rows carry likelihood.
   int n_lik = P - G;
+  int n_rho_par = dispersed ? n_rho : 0;   // no dispersion parameter on the binomial arm
   int n_bound = 0;
   for (r in 1:P) {
     if (!is_last[r] && lo[r] > 0) n_bound += 1;
@@ -127,12 +135,14 @@ transformed data {
   }
 }
 parameters {
+  // Zero-size when dispersed = 0, so one file serves both arms and the binomial arm
+  // is exactly the rho -> 0 limit. Length n_rho when dispersed: one dispersion per
+  // prior-minutes bin, and n_rho = 1 is the shared-rho model exactly. Bounds mirror
+  // RHO_MIN / RHO_MAX in src/models/availability.py; no prior on rho, so the mode is
+  // the penalized MLE, and each bin carries thousands of rows.
+  vector<lower=1e-6, upper=0.95>[n_rho_par] rho;
   real alpha;
   vector[K] beta;
-  // Zero-size when dispersed = 0, so one file serves both arms and the binomial arm
-  // is exactly the rho -> 0 limit. Bounds mirror RHO_MIN / RHO_MAX in
-  // src/models/availability.py; no prior, so the mode is the penalized MLE.
-  array[dispersed] real<lower=1e-6, upper=0.95> rho;
 }
 model {
   vector[P] eta = logit_prior + alpha + X * beta;
@@ -141,18 +151,21 @@ model {
   beta ~ normal(0, beta_scale);
 
   if (dispersed) {
-    real s = (1 - rho[1]) / rho[1];
+    // Per-row dispersion by bin, still one vectorized beta_binomial call: multiple
+    // indexing (`rho[rho_bin[lik]]`) gathers the right rho for every row at once.
+    vector[n_lik] s = (1 - rho[rho_bin[lik]]) ./ rho[rho_bin[lik]];
     // `s * inv_logit(-eta)` rather than `s * (1 - inv_logit(eta))`: inv_logit
     // saturates to exactly 1.0 by eta ~ 37 and the subtraction makes a beta shape
     // parameter exactly 0, rejecting the whole target. Same convention as
     // betabinomial_glm.stan, pinned by a test.
-    target += beta_binomial_lupmf(y[lik] | m[lik], s * inv_logit(eta[lik]),
-                                  s * inv_logit(-eta[lik]));
+    target += beta_binomial_lupmf(y[lik] | m[lik], s .* inv_logit(eta[lik]),
+                                  s .* inv_logit(-eta[lik]));
     for (i in 1:n_bound) {
       int r = bound[i];
+      real s_r = (1 - rho[rho_bin[r]]) / rho[rho_bin[r]];
       // Normalize over the feasible support [lo, m]: divide by P(Y >= lo).
-      target += -beta_binomial_log_tail_mass(lo[r], m[r], s * inv_logit(eta[r]),
-                                             s * inv_logit(-eta[r]));
+      target += -beta_binomial_log_tail_mass(lo[r], m[r], s_r * inv_logit(eta[r]),
+                                             s_r * inv_logit(-eta[r]));
     }
   } else {
     target += binomial_logit_lupmf(y[lik] | m[lik], eta[lik]);

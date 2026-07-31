@@ -294,6 +294,93 @@ def test_rookie_share_prior_is_point_in_time_and_skips_the_degenerate_first_seas
     assert abs(p2020["rookie_share_prior"] - 0.3) < 1e-12
 
 
+def test_rho_bin_edges_come_from_train_only():
+    """Same rule as the scaler and the spline knots. Reading the held-out
+    distribution to place the bins would leak it into the design, invisibly — and
+    here it would be especially quiet, because rho only affects the spread."""
+    from src.models.stan_composition import RHO_BIN_COL, rho_bin_edges
+
+    train = pd.DataFrame({RHO_BIN_COL: [0.1, 0.2, 0.3, 0.4]})
+    test = pd.DataFrame({RHO_BIN_COL: [10.0, 20.0, 30.0, 40.0]})
+    edges = rho_bin_edges(train, n_bins=2)
+    pooled = rho_bin_edges(pd.concat([train, test]), n_bins=2)
+    assert edges.tolist() == [0.25]
+    assert edges.tolist() != pooled.tolist()
+
+
+def test_rho_bins_are_one_based_and_clamp_outside_the_training_range():
+    """A rookie whose imputed share sits below every training quantile is a fringe
+    player — bin 1 — not an error and not a NaN, because the composition cannot drop
+    a row without breaking the team sum."""
+    from src.models.stan_composition import RHO_BIN_COL, assign_rho_bins
+
+    frame = pd.DataFrame({RHO_BIN_COL: [-5.0, 0.15, 0.35, 99.0]})
+    (out,) = assign_rho_bins([frame], np.array([0.2, 0.3]))
+    assert out["rho_bin"].tolist() == [1, 1, 3, 3]
+    assert out["rho_bin"].min() >= 1
+
+
+def test_the_graded_variant_differs_from_its_twin_in_dispersion_alone():
+    """`betabinom_ot_graded` exists to isolate the pilot's one measured
+    miscalibration (variance ratio 1.59 fringe against 0.70 star). If it also
+    differed in features, the contrast would be confounded and the answer
+    uninterpretable."""
+    from src.models.availability import FEATURE_COLS
+    from src.models.stan_composition import OWN, RHO_BINS, variants
+
+    frame = _sequenced([_team_rows([40, 38, 36, 34, 30, 25, 20, 17], game_id=g)
+                        for g in range(1, 6)])
+    for col in list(FEATURE_COLS) + [OWN]:
+        frame[col] = 1.0
+    v = variants(frame, frame)
+    shared_tr, _, shared_feats, shared_disp, shared_rho = v["betabinom_ot"]
+    graded_tr, _, graded_feats, graded_disp, graded_rho = v["betabinom_ot_graded"]
+
+    assert shared_feats == graded_feats
+    assert shared_disp == graded_disp == 1
+    assert (shared_rho, graded_rho) == (1, RHO_BINS)
+    assert shared_tr["logit_prior"].equals(graded_tr["logit_prior"])
+
+
+def test_a_single_rho_bin_reproduces_the_shared_rho_simulation_exactly():
+    """n_rho = 1 must be the shared-rho model exactly, not approximately — that is
+    what makes the graded arm a strict generalization and lets one code path serve
+    both. Checked on the simulator, where a silent divergence would surface only as
+    a slightly wrong spread."""
+    from src.models.stan_composition import simulate_minutes
+
+    frame = _sequenced([_team_rows([40, 38, 36, 34, 30, 25, 20, 17], game_id=g)
+                        for g in range(1, 21)])
+    eta = np.zeros((len(frame), 30))
+
+    no_bins = simulate_minutes(frame, eta, np.full((30, 1), 0.08), seed=3)
+    binned = frame.copy()
+    binned["rho_bin"] = 1
+    one_bin = simulate_minutes(binned, eta, np.full((30, 1), 0.08), seed=3)
+    assert np.array_equal(no_bins, one_bin)
+
+
+def test_graded_rho_widens_only_the_bin_it_grades():
+    """The mechanism itself: raising rho in one bin must move that bin's spread and
+    leave the others alone, or the per-row gather is wrong."""
+    from src.models.stan_composition import simulate_minutes
+
+    frame = _sequenced([_team_rows([40, 38, 36, 34, 30, 25, 20, 17], game_id=g)
+                        for g in range(1, 61)])
+    frame["rho_bin"] = np.where(frame["position"] < 4, 1, 2)
+    eta = np.zeros((len(frame), 120))
+
+    flat = simulate_minutes(frame, eta, np.tile([0.02, 0.02], (120, 1)), seed=5)
+    tilted = simulate_minutes(frame, eta, np.tile([0.02, 0.20], (120, 1)), seed=5)
+
+    bin1 = (frame["rho_bin"] == 1).to_numpy()
+    bin2 = (frame["rho_bin"] == 2).to_numpy()
+    # Bin 2 is much wider; bin 1 moves only through the sequential coupling, which is
+    # small relative to a tenfold dispersion change.
+    assert tilted[:, bin2].std(axis=0).mean() > 1.5 * flat[:, bin2].std(axis=0).mean()
+    assert tilted[:, bin1].std(axis=0).mean() < 1.2 * flat[:, bin1].std(axis=0).mean()
+
+
 def test_log_tail_mass_recurrence_matches_scipy_and_survives_tiny_tails():
     """The Stan file computes log P(Y >= lo) by an upward log-space pmf recurrence.
     Two failure modes force that exact shape: beta_binomial_lcdf's grad_F32 autodiff
@@ -354,7 +441,7 @@ def test_variants_carry_no_duplicate_feature_columns():
     frame["no_prior"] = (frame["position"] < 2).astype(float)
     frame["share_stale"] = (frame["position"] == 5).astype(float)
 
-    tr, te, feats, _ = variants(frame, frame)["betabinom"]
+    tr, te, feats, _, _ = variants(frame, frame)["betabinom"]
     assert "design_missing" in feats
     X = tr[feats].to_numpy(dtype=float)
     dup = sum(np.allclose(X[:, i], X[:, j])
@@ -375,6 +462,16 @@ def test_composition_source_uses_the_numerically_safe_complement():
     code = _stan_code()
     assert "inv_logit(-eta" in code
     assert "1 - inv_logit" not in code
+
+
+def test_composition_source_grades_rho_by_bin_with_a_vectorized_gather():
+    """The graded dispersion must stay inside ONE vectorized beta_binomial call —
+    a per-row loop over ~100k rows would undo the sampling-cost work. Multiple
+    indexing (`rho[rho_bin[lik]]`) is what keeps it vectorized."""
+    code = _stan_code()
+    assert "rho[rho_bin[lik]]" in code
+    assert "vector<lower=1e-6, upper=0.95>[n_rho_par] rho;" in code
+    assert "beta_binomial_lupmf(y[lik] | m[lik], s .* inv_logit(eta[lik])" in code
 
 
 def test_composition_source_enforces_the_sum_and_cap_as_rejects():
