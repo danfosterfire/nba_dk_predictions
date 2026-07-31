@@ -54,7 +54,11 @@ configs/       default.yaml — all hyperparams and paths
 data/          raw → processed → features pipeline
 outputs/       checkpoints, prediction CSVs, eda reports, stan/ (compiled binaries,
                gitignored — cmdstanpy builds them from a copy of src/stan/)
-dashboard/     Streamlit explorer over the precomputed artifacts
+dashboard/     nine-tab project walkthrough over the precomputed artifacts.
+               app/theme/charts/layout/artifacts + decisions (the registry),
+               economics (tournament derivations), audit (make dashboard-audit),
+               tabs/ (one render(ctx) each). decisions/economics/audit import no
+               streamlit; nothing in the package imports src/ — see dashboard/README.md
 docs/          eda-plan (season-level EDA spec), availability-plan (games played /
                minutes), adp-plan (market proxy, sourcing + where ADP belongs),
                predictions-plan, simulations-plan, dk_best_ball_rules,
@@ -97,18 +101,61 @@ make variance-budget  # → outputs/eda/variance_budget.csv
 make residual-correlation # → outputs/eda/residual_correlation.csv
                       #    the 11x11 conditional matrix the simulator's copula takes as
                       #    an INPUT, in long form, plus the raw basis for contrast
+make season-effects   # → outputs/eda/season_effects_{league_rates,summary,
+                      #    carry_forward_bias}.csv — per quantity, is the league's era
+                      #    movement an extrapolable TREND or an unforecastable SHOCK, and
+                      #    what does ignoring it cost? No head carries a season term today.
 make availability     # → availability_{panel,features}.parquet  (both roster windows,
                       #    plus the three-way status and the missed-reason split)
 make availability-profile # → outputs/eda/availability_profile.csv
 make report-calibration   # → report_transfer.parquet + outputs/eda/report_calibration.csv
                           #    P(play | injury-report designation, reason)
 make eda              # all of the above, in dependency order
-make dashboard        # Streamlit explorer (9 tabs over the precomputed artifacts)
+make dashboard        # nine-tab project walkthrough over the precomputed artifacts
+make dashboard-audit  # registry drift report — a report, not a gate; exits 0 with findings
+make docs-audit       # every quoted figure in the plan docs vs its artifact — a GATE
 ```
 
-The dashboard reads artifacts only — it never refits. `.streamlit/config.toml` sets
-`headless = true`, without which Streamlit's first-run email prompt makes
-`make dashboard` exit 255 instead of serving.
+**`make docs-audit` is the guard against prose drifting away from its artifact**, which has
+happened twice, both times silently and both times in a table that was *partially* refreshed:
+the season-total R² column, and the report-calibration block. `src/docs_audit.py` holds one
+`Claim` per quoted figure and runs three checks — the figure equals its artifact **to the
+precision it is quoted at** (`22.7` to ±0.05, `0.0635` to ±0.00005); the quoted string still
+appears in the doc, so a claim cannot rot into describing nothing; and coverage, so "how much
+of this doc is audited" is a number. Unlike `dashboard-audit` this one **exits non-zero** —
+a doc contradicting its artifact is a defect, not a preference — and it is also a `pytest`
+test. Missing artifacts are *skipped*, so a fresh checkout without `make eda` is clean.
+**Rebuilding an artifact will fail it until the docs are updated. That is the point.**
+It guards the artifact→prose direction tightly and the prose→artifact direction loosely;
+see the module docstring for exactly what it cannot catch.
+
+**The dashboard reads artifacts and nothing else — that is an invariant, not a
+convention.** It never refits, and there is **no import from `src/`** anywhere in the
+package; a test walks it with `ast` and fails if one appears. The nine tabs follow the
+project end to end rather than mirroring `src/eda/`: problem · data collection · EDA ·
+availability · minutes · components · simulations · drafting · decision log.
+`.streamlit/config.toml` sets `headless = true`, without which Streamlit's first-run email
+prompt makes `make dashboard` exit 255 instead of serving.
+
+**Every figure on the dashboard is read from an artifact a `make` target produced.** Where
+none exists, the panel renders `layout.pending_marker(...)` naming the target rather than a
+typed number, and `make dashboard-audit` counts the markers. It is **0** today, because all
+ten items in `docs/provenance-plan.md` landed first. The only exception to the rule is an
+`incident` entry, which carries a date and a doc reference instead of a number.
+
+`make dashboard-audit` runs four checks — every cited artifact exists (also a `pytest`
+test), no source doc has a git commit newer than an entry's `reviewed` date, no artifact on
+disk goes unreferenced by both tabs and registry, and no pending markers remain. A weekly
+launchd job (`com.nba-deep-learning.dashboard-audit`, Mondays 09:00) appends it to
+`outputs/dashboard_audit.log`. **The orphan check is the one that earns its keep**: nine
+artifact families had accumulated unreachable from the dashboard purely because nothing was
+looking, and removing a tab silently re-creates that — so bring it back to zero deliberately,
+either by rendering the family or by naming it in a registry entry with its make target.
+
+**Verify dashboard changes with Streamlit's `AppTest`, not with `curl`.** A request to port
+8501 returns 200 from the HTML shell even when the script raises on every tab; `AppTest`
+executes `app.py` for real, and because `st.tabs` renders all its children, an exception in
+any tab surfaces.
 
 ### Availability data capture
 
@@ -485,6 +532,30 @@ effort accordingly, and do not expect team composition to carry the model.
   composition: n=**892 team-seasons** — reduce hard, 2–4 dims per side.
 - **Own-team features must be leave-one-out**, else they encode P's own style.
 - **Never use same-game teammate stats** — contemporaneous with the outcome.
+- **⏰ NO head carries a season term, and the league moves — open TODO with a scoped session
+  prompt in `docs/predictions-plan.md`.** `make season-effects`
+  (`src/eda/season_effects.py`). A season *fixed* effect is unusable at prediction time —
+  there is no dummy for a season that has not happened — so the two candidates are a
+  **year-on-year trend** and a **year-level random effect**, and they are complementary
+  rather than alternatives: **subtracting a linear trend shifts the *mean* of the
+  year-over-year changes and leaves their *variance* exactly unchanged**, since
+  `diff(a + b·x)` is the constant `b`. A trend fixes bias; only a year effect addresses
+  spread. Pinned by a test.
+  - **`fg3a` is the only quantity where a trend is worth extrapolating** — trend R² **0.93**
+    at **+4.07%/season**, against `stl` at R² **0.03**. Everything else is shock.
+  - **`fta` is the sharpest shock case and it is refereeing**: a 1.21× band, 4.3% yoy sd,
+    past ±5% in 9 of 29 transitions — **+7.6% in 2004-05** (hand-checking crackdown) and
+    **+8.6% in 2025-26**. `fg3a`'s worst year is −24.4%, the 1997-98 three-point line moving
+    back.
+  - **The cost is measured on the no-fit floor**, which lags any league move by exactly one
+    season: **`fta` −7.0%** across the held-out seasons (**−10.7%** in 2025-26), `blk`
+    **+6.2%** in *both*. No fitted head corrects it.
+  - **This outranks the shared-β correlation the Stan work was built for.** A league shift is
+    perfectly correlated across every player, so it does not diversify: −7% on free throws is
+    −7% on a whole roster's free-throw points, against **+0.2%** for shared-β on a 15-man
+    roster. It is currently modelled as exactly zero.
+  - **Rule changes are announced in the summer**, so a manual league-level override is
+    legitimate point-in-time information — unlike anything drawn from inside the season.
 - **ALWAYS absorb season when regressing on 30 pooled seasons.** This has already produced
   one false finding. Pooled, `teammate_spacing` correlates +0.315 with next-season per-36
   points and `team_pace` +0.336; with season fixed effects they are +0.035 and +0.091.
@@ -634,12 +705,26 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
 
   | GP treatment | MAE | RMSE | R² | bias | CRPS |
   |---|---|---|---|---|---|
-  | full season (naive) | 646.3 | 831.2 | 0.10 | **+541.9** | — |
-  | prior GP carried forward | 475.0 | 638.5 | 0.47 | +41.9 | — |
-  | league/age baseline | 476.0 | 595.8 | 0.55 | +23.2 | 340.8 |
-  | **beta-binomial head** | **435.1** | **570.8** | **0.59** | **+6.1** | **316.9** |
-  | *oracle rate* | *302.7* | *427.7* | *0.78* | *+5.3* | — |
-  | *oracle GP* | *221.3* | *304.2* | *0.88* | *−33.2* | — |
+  | full season (naive) | 646.3 | 831.2 | 0.141 | **+541.9** | — |
+  | prior GP carried forward | 475.0 | 638.5 | 0.493 | +41.9 | — |
+  | league/age baseline | 476.0 | 595.8 | 0.559 | +23.2 | 340.8 |
+  | **beta-binomial head** | **435.1** | **570.8** | **0.595** | **+6.1** | **316.9** |
+  | *oracle rate* | *302.7* | *427.7* | *0.773* | *+5.3* | — |
+  | *oracle GP* | *221.3* | *304.2* | *0.885* | *−33.2* | — |
+
+  ⚠️ **The R² column was corrected 2026-07-30** — it read 0.10 / 0.47 / 0.55 / 0.59 / 0.78 /
+  0.88 and no single construction reproduces that set. **It is not a pre-playoff-workload
+  leftover**, which was the obvious hypothesis and is falsified: `full_season`, `prior_gp` and
+  `oracle_gp` never touch the availability head (they are the schedule length, prior
+  `gp_share` × schedule, and realized `gp_played`), so no change to that head can move their
+  R² — yet `full_season` was the most wrong, by 0.041. Every other figure in this block is
+  exact, including MAE, RMSE, bias and CRPS on all six rows, so the *predictions* behind the
+  old table were these predictions. Since `r2 = 1 − SSE/ss_tot` and equal RMSE pins SSE, only
+  `ss_tot` could differ — and solving per row gives six mutually inconsistent denominators
+  (0.954× to 1.033× the actual). So the column was hand-typed and never refreshed when the
+  rest of the table was, rather than being a coherent earlier measurement. Reproduced by
+  recomputing R² straight from `season_total_predictions.csv`, which matches
+  `season_total_metrics.csv` exactly on all six rows.
 
   −211.1 MAE (−32.7%) against assuming a full season and −39.9 against carrying prior GP
   forward. **The oracles settle which half dominates**: perfect games played gives 221.3
@@ -880,7 +965,7 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     on 10,361 train / 911 test: held-out CRPS **10.7947** (Stan plug-in) / **10.7953**
     (posterior) against the MLE's **10.7952**, ρ **0.2759** vs **0.2757**, max coefficient gap
     **0.0127**, largest gap **0.095 posterior sd**, and the MLE inside the 95% credible
-    interval for **21/21** terms. R̂ **1.0025**, min ESS 2,402, **0 divergences**, 219 s
+    interval for **21/21** terms. R̂ **1.0025**, min ESS 2,402, **0 divergences**, 254 s
     wall clock over 4 chains.
   - **Do not argue for the posterior on marginal CRPS — it is a wash by construction and the
     argument is the joint.** At ~10^4 rows against 20 parameters the posterior is sharp.
@@ -969,7 +1054,69 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     season: the floor is unbiased because it does not shrink. It costs nothing on R², MAE or
     CRPS here, but it is a real calibration defect and it would compound through the eleven
     component heads, which take these minutes as exposure. Worth a bias correction before the
-    simulator consumes it.
+    simulator consumes it — and a candidate cause is now on record, since
+    `docs/availability-plan.md` finds a large role-graded era trend that a flat 30-season
+    pool cannot represent.
+- **✅ The eleven component heads are built in Stan — `make stan-components`, 74 fits, 0
+  divergences, 208.6 min. Two results overturn what `make component-rates` measured with
+  sklearn, and one settles a standing recommendation.** 10,194 player-seasons, 9,403 train /
+  791 test, validation split 8,630 / 773 on 2022-23 and 2023-24. Held-out R² on the season
+  total:
+
+  | head | no-fit floor | linear | `log(own)` | `log(own)` + spline | selected |
+  |---|---|---|---|---|---|
+  | `reb` | 0.9424 | 0.9095 | **0.9439** | 0.9428 | `log_own` |
+  | `fg2a` | 0.9194 | 0.9018 | **0.9241** | 0.9241 | `log_own` |
+  | `ast` | 0.9197 | 0.6615 | 0.9223 | **0.9240** | spline |
+  | `fg3a` | 0.9036 | **−19.00** | **0.3719** | **0.9046** | spline |
+  | `tov` | 0.8845 | 0.8823 | **0.8929** | 0.8926 | `log_own` |
+  | `blk` | 0.8407 | **−1.393** | **0.6794** | **0.8579** | spline |
+  | `fta` | **0.8673** | 0.8171 | 0.8649 | 0.8648 | *none clears* |
+  | `stl` | 0.8194 | 0.8113 | 0.8390 | **0.8413** | spline |
+
+  - **⚠️ `log(own)` alone is NOT sufficient under a negative binomial, and that contradicts
+    the Poisson result.** `make component-rates` has `log_own` at 0.8204 (`blk`) and 0.8791
+    (`fg3a`); under NB the same spec collapses to **0.6794** and **0.3719**, both far below
+    their floors, and only the spline recovers them. The mechanism is the likelihood, not the
+    data: NB2's `var = μ + μ²/φ` down-weights large counts relative to Poisson, so the fit is
+    driven by the low-count mass — exactly where the log-scale relation is most curved. **The
+    "splines are worth ≤ +0.003 outside `fg3a`/`blk`" guidance is Poisson-specific.** Under NB
+    the validation split picks the spline for **four** heads (`fg3a`, `blk`, `ast`, `stl`),
+    and for `fg3a`/`blk` it is not a refinement but the difference between a model and a
+    failure.
+  - **`linear` is catastrophic, far beyond what the Poisson fit showed** — `fg3a` **−19.00**
+    and `blk` **−1.393** held-out R², against 0.520/0.638 under sklearn. Linear-in-raw-rate
+    inside `exp()` is not merely misspecified, it is unusable. The strongest available
+    statement of "the specification is scale, not curvature."
+  - **`fta` now joins `ftm|fta` below the floor, so the whole free-throw family fails.** Best
+    fitted 0.8649 against a floor of 0.8673; `make component-rates` had it barely clearing at
+    0.8708. Free-throw *volume* looks as resistant to context as free-throw *percentage* —
+    worth a second look rather than acceptance, since unlike `ftm|fta` there is no
+    "pure player skill" argument for trips to the line.
+  - Conversion heads, held-out beta-binomial NLL per row (lower better), all three selecting
+    `logit(own)` + spline: `fg2m|fg2a` **3.7249** vs floor 3.7770 (**+0.0521**), `fg3m|fg3a`
+    **3.2407** vs 3.2614 (+0.0208), `ftm|fta` 3.1313 vs **3.0822** (−0.0491, fails as
+    predicted). Same ordering as the sklearn run, slightly smaller gains.
+- **✅ The 3PA/2PA reparameterization is now MEASURED, and it wins decisively.** Modelling
+  `fga` as the count and `fg3a | fga` as a binomial *share* beats two independent count heads
+  by **−0.771 nats** on validation and **−0.793** on test, per player-season, on the joint
+  density of `(fg2a, fg3a)`: 10.797 → 10.026 and 10.784 → 9.991. It replicates on both splits.
+  The comparison is legitimate because `(fg2a, fg3a) ↔ (fga, fg3a)` is a **bijection with unit
+  Jacobian on the integers** — the same point in different coordinates — so the two joint
+  log-densities are directly comparable. This converts a recommendation into a result: model
+  the substitution by reparameterizing into the chain, never by coupling two Poissons.
+  `stan_components.substitution_arm`.
+- **Sampler cost is concentrated entirely in the spline variants.** 16 of 74 fits saturated
+  treedepth, *all* of them spline arms; the slowest fit is 19.8 min (`fg2m|fg2a` spline)
+  against 1–3 min for a linear count head. 73/74 cleared every convergence bar; the one
+  exception (`fg2m|fg2a/logit_own_spline/val`, R̂ 1.0118 against a 1.01 bar, ESS 450, **0
+  divergences**) is a *selection* fit, and the variant it chose won by 0.017 NLL — far outside
+  the sampling noise — while its test-side twin converged cleanly at R̂ 1.0031.
+- **`time.perf_counter()` does NOT advance while macOS is asleep, so the timings survive a
+  suspended run.** Worth recording because the opposite was assumed during this build: the
+  components run spanned a ~7 h machine sleep (10 h 11 m elapsed) and reported **208.6 min**
+  of compute with a maximum single fit of 19.8 min — no inflated row anywhere.
+  `stan_utils.diagnostics` needs no sleep-correction.
 - **Availability is strongly autocorrelated but that is NOT where the overdispersion comes
   from.** `serial_structure` on 942,597 transitions (appearance window):
   `P(play|played) = 0.905`, `P(play|missed) = 0.308`, so lag-1 ρ = **0.597** and a 2-state
@@ -1329,3 +1476,9 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
   classes pickle as `__main__.Foo` and cannot be loaded from any other process.
 - Tests use plain `assert` with synthetic builders, no fixtures or classes (mirroring
   `tests/test_preprocess.py`).
+- **When a load-bearing decision is taken, reversed, or measured, add or update its entry in
+  `dashboard/decisions.py`** alongside the `CLAUDE.md` / plan-doc edit. The registry is what
+  the dashboard's decision log renders, and it carries `source` and `reviewed` so
+  `make dashboard-audit` can flag entries whose source doc has moved since. Statuses come
+  from a closed vocabulary — a reversal becomes `withdrawn` and keeps its entry rather than
+  being deleted, because the reversals are the most useful thing on that page.

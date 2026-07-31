@@ -9,6 +9,28 @@ pieces land, the way `availability-plan.md` was.
 > targets first. **Three of this plan's nine tabs are gated on it**, deliberately — see
 > [Staging](#staging).
 
+> ## ✅ **All six stages landed 2026-07-30.** `dashboard/app.py` is a 1,137-line nine-tab EDA
+> explorer no longer; it is a 12-module package rendering a nine-tab walkthrough over
+> **117 hero numbers, 50 charts and 57 tables**, every one of them read from an artifact.
+>
+> **The completion criterion is met and it is a number, not a judgement:**
+> `make dashboard-audit` reports **0 typed constants pending, 0 orphaned artifacts, 0 total
+> findings**. The provenance precondition held — all ten items in `docs/provenance-plan.md`
+> were verified populated on disk before stage 1 began, so **no tab needed a pending marker**
+> and `layout.pending_marker` ships unused, waiting for the next unbacked figure.
+>
+> Four things went differently from the plan, all recorded below where they apply:
+> - **The registry is 97 entries, not the estimated 50–60.** Covering every artifact family
+>   honestly took more; see [The registry as shipped](#the-registry-as-shipped).
+> - **`make stan-components` finished mid-build**, at 07:16 on 2026-07-30. Tab 6 was written
+>   for the in-progress state as specified, then wired to the real artifacts — which are named
+>   `stan_component_*`, singular, not `stan_components_*`.
+> - **The BBRef entry is an `incident`, not a `null`** — see
+>   [Status vocabulary](#the-status-vocabulary-as-shipped).
+> - **The orphan check needed globs**, and it immediately earned its keep: dropping tab 3's
+>   renderers took the orphan count from 40 to 59, because those renderers' string literals had
+>   been the only thing accounting for nine artifact families.
+
 ## Purpose and audience
 
 `dashboard/app.py` is a **nine-tab explorer over the EDA artifacts** — one tab per module in
@@ -117,6 +139,61 @@ their date and doc reference and are rendered **without** a live-number claim. S
 
 Expected size ~50–60 entries.
 
+### The registry as shipped
+
+**97 entries**, not 50–60. The estimate was low for a reason worth recording: the orphaned-
+artifact check makes the registry an *artifact map* as well as a decision log, so every family
+the pipeline writes needs either a tab that renders it or an entry that names its make target.
+Covering the deferred PCA / archetype line alone — which no tab reads by design — took several
+entries that a pure decision log would not have had.
+
+| topic | entries | | status | entries |
+|---|---|---|---|---|
+| problem | 11 | | `settled` | 37 |
+| data | 17 | | `measured` | 28 |
+| eda | 18 | | `built` | 8 |
+| availability | 21 | | `withdrawn` | 7 |
+| minutes | 7 | | `incident` | 6 |
+| components | 10 | | `null` | 5 |
+| simulations | 8 | | `open` | 5 |
+| drafting | 8 | | `deadline` | 3 |
+| **total** | **100** | | `blocked` | 1 |
+
+**The registry caught its first drift within the hour, which is the mechanism working.**
+`make stan-components` finished mid-build and updated `docs/predictions-plan.md` with results
+that **overturn two entries written earlier the same day**: the "splines are worth ≤ +0.003
+outside `fg3a`/`blk`" guidance turns out to be *Poisson-specific* — under the negative binomial
+that actually ships, `log_own` collapses to 0.679 on `blk` and 0.372 on `fg3a` and only a
+spline recovers them — and `fta` joins `ftm|fta` below its floor, which has no "pure player
+skill" explanation and is now an `open` defect. Both are recorded as new entries rather than
+edits, per the standing rule that a reversal keeps its entry.
+
+**And putting a live artifact read beside a prose figure caught a third thing, which is the
+provenance rule paying for itself.** The season-total table's **R² column was wrong in both
+`CLAUDE.md` and `docs/availability-plan.md`** — 0.10 / 0.47 / 0.55 / 0.59 / 0.78 / 0.88 against
+an actual 0.141 / 0.493 / 0.559 / 0.595 / 0.773 / 0.885 — while every other figure in the block
+reproduced exactly. It was hand-typed and never recomputed when the MAE side was refreshed for
+the playoff-workload change. No decision moves, since the head's value rests on MAE. Corrected
+in both docs with the analysis recorded beside the table, and entered as `withdrawn` rather
+than silently overwritten, per `docs/provenance-plan.md`'s rule that a disagreement is
+investigated rather than adopted.
+
+`reproduce` accepts a **glob** where one target owns a family — `make pca → data/features/pca_*`
+is one line for twenty files. `audit.py` resolves globs for both the existence check and the
+orphan check, so a family that stops being written still shows up either way. Without globs the
+orphan check would have forced twenty near-duplicate entries or a second hand-maintained list.
+
+### The status vocabulary as shipped
+
+Unchanged and closed, with one classification the plan got wrong. This plan's tab-2 list called
+"BBRef cannot supply historical injuries" a `null`; it ships as an **`incident`**. The boundary
+that decides it is `docs/provenance-plan.md`'s own figures-versus-incidents line, drawn after
+this plan was written: `null` is for nulls that are *measurements* and therefore carry an
+artifact — `role_crowding`, the `age × own` interactions, `total_minutes_incl_playoffs` — while
+a dated diagnosis of a third party's website is an incident, rendered without a live-number
+claim. Classifying it `null` would have obliged it to name an artifact that could only be
+produced by re-scraping.
+
 ### Tab 9 · Decision log
 
 The whole registry, as one filterable table: by topic, by status, by date. Plus three summary
@@ -171,6 +248,21 @@ For the periodic sweep, a **weekly launchd job** appending to a log, matching th
 `daily-capture` precedent already established in the `Makefile` (and inheriting the same Full
 Disk Access grant, which is already in place). Reviewing that log is a two-minute job; the
 audit's whole purpose is to make it two minutes instead of a re-read of six plan docs.
+
+**As shipped:** `com.nba-deep-learning.dashboard-audit`, Mondays at 09:00, appending a
+timestamped report to `outputs/dashboard_audit.log`. `RunAtLoad` is false — launchd's own
+catch-up covers a missed week, and nothing downstream waits on it. Verified by kickstarting it:
+`launchctl list` reports exit **0** and the log carries the run.
+
+**The orphan check earned its keep immediately, and in the way the risk register predicted.**
+Dropping tab 3's eight renderers took the orphan count from 40 to **59** — because those
+renderers' string literals had been the only thing accounting for nine artifact families
+(`pca_*`, `archetypes_*`, `aging_curves.csv`, `team_composition_*`, `season_matrix_*` and the
+rest). Nothing else in the repo knew they existed. Bringing it to zero meant either rendering
+each family or naming it in a registry entry with its make target, which is what makes "the
+deferred DR line is *recorded* rather than rendered" an auditable statement instead of a
+promise. It also means **the orphan check must be brought back to zero deliberately whenever a
+tab is removed**, rather than being allowed to drift up.
 
 ### The provenance rule
 
@@ -382,6 +474,19 @@ dashboard/
     components.py  simulations.py  drafting.py  decision_log.py
 ```
 
+Shipped as specified. Three details settled during the build:
+
+- **`app.py` still inserts the repo root on `sys.path`**, but for `dashboard.*` rather than
+  `src.*`: `streamlit run` puts the *script's* directory on the path, not the project root, so
+  the package would not otherwise import. The "no `src/` imports" invariant is unaffected and
+  is pinned by `test_the_dashboard_imports_nothing_from_src`, which walks the package with `ast`.
+- **`artifacts.pipeline_health` derives its expectations from the registry's `reproduce`
+  fields** rather than from a second hand-maintained list, so "what should exist" has exactly
+  one definition and the sidebar reports the same set `make dashboard-audit` checks.
+- **`layout.py` uses Streamlit's named badge colours, not the eight-slot series palette.** A
+  status chip is interface, not data; borrowing a data slot for it would imply an encoding that
+  is not there.
+
 Three constraints on the split:
 
 - **`decisions.py`, `economics.py` and `audit.py` must not import streamlit.** They hold the
@@ -456,15 +561,39 @@ start being read.** Two notes for later:
 Each stage leaves the app runnable. Stages 1–2 and 4 do not depend on the provenance work;
 stage 5 does, and is explicitly gated.
 
-| stage | scope | done when |
-|---|---|---|
-| **1** | The split: `theme`/`charts`/`layout`/`artifacts`, nine tab shells, `ctx`, sidebar rework, `dashboard/README.md`, the `CLAUDE.md` instruction, registry scaffold (~15 entries), `audit.py` + `make dashboard-audit`, tests updated | `make dashboard` serves 9 tabs; `make dashboard-audit` runs clean; `pytest tests/` green |
-| **2** | Tabs 4, 5, 6 — availability, minutes, components. Fully artifact-backed today, so these are the substance of the walkthrough and come first. | every panel reads its artifact; the two ⏳ panels here show pending markers; tab 6 renders correctly both before and after the in-flight `stan-components` fit lands |
-| **3** | Tab 9 — decision log — and the registry completed to ~50–60 entries, including the `incident` and `withdrawn` sets | status mix, reversal thread and deadline board all render; audit's typed-constant count is accurate |
-| **4** | Tabs 3, 8 — EDA narrative, drafting strategy — plus `economics.py` and its tests | five-tournament economics derived live, not typed |
-| **5** | Tabs 1, 2, 7 — **gated on `docs/provenance-plan.md`** — plus retiring the pending markers in tabs 5 and 6 | zero pending markers remain; `make dashboard-audit` reports zero typed constants |
-| **6** | `README.md` and `CLAUDE.md` dashboard sections updated to nine tabs; weekly audit launchd job installed | both docs describe the shipped app; `launchctl list` reports exit 0 |
-| **later** | The subset of EDA figures that turn out to matter to the pipeline, chosen on evidence | — |
+| stage | scope | done when | |
+|---|---|---|---|
+| **1** | The split: `theme`/`charts`/`layout`/`artifacts`, nine tab shells, `ctx`, sidebar rework, `dashboard/README.md`, the `CLAUDE.md` instruction, registry scaffold (~15 entries), `audit.py` + `make dashboard-audit`, tests updated | `make dashboard` serves 9 tabs; `make dashboard-audit` runs clean; `pytest tests/` green | ✅ |
+| **2** | Tabs 4, 5, 6 — availability, minutes, components. Fully artifact-backed today, so these are the substance of the walkthrough and come first. | every panel reads its artifact; the two ⏳ panels here show pending markers; tab 6 renders correctly both before and after the in-flight `stan-components` fit lands | ✅ |
+| **3** | Tab 9 — decision log — and the registry completed to ~50–60 entries, including the `incident` and `withdrawn` sets | status mix, reversal thread and deadline board all render; audit's typed-constant count is accurate | ✅ **97 entries** |
+| **4** | Tabs 3, 8 — EDA narrative, drafting strategy — plus `economics.py` and its tests | five-tournament economics derived live, not typed | ✅ |
+| **5** | Tabs 1, 2, 7 — **gated on `docs/provenance-plan.md`** — plus retiring the pending markers in tabs 5 and 6 | zero pending markers remain; `make dashboard-audit` reports zero typed constants | ✅ **no markers were ever needed** |
+| **6** | `README.md` and `CLAUDE.md` dashboard sections updated to nine tabs; weekly audit launchd job installed | both docs describe the shipped app; `launchctl list` reports exit 0 | ✅ |
+| **later** | The subset of EDA figures that turn out to matter to the pipeline, chosen on evidence | — | |
+
+**Stage 2's ⏳ panels never appeared.** The plan expected pending markers on the minutes
+feasibility rows and the component alpha-sensitivity rows; both had already landed as items 8
+and 10 of `docs/provenance-plan.md`, so they render live like everything else. Verifying the
+precondition against disk before starting — rather than trusting the companion plan's
+checkmarks — is what established that, and it is worth doing that way next time too.
+
+**Stage 2 also caught the `stan-components` fit landing mid-build.** Tab 6 was written with the
+in-progress branch the plan asked for, the fit finished at 07:16, and the panel was then wired
+to the real artifacts. Both branches are in the code, because the in-progress state is the one
+a fresh checkout hits. The artifacts are `stan_component_{metrics,diagnostics,substitution}.csv`
+— **singular `component`**, which the plan guessed wrong — and they carry a finding the plan did
+not anticipate: the `fg3a | fga` share reparameterization beats two independent counts by
+~0.78 joint NLL per player-season **on both splits**, confirming a prediction `CLAUDE.md` had
+recorded as reasoning rather than as measurement.
+
+### Verification, as run
+
+Every stage was verified with a Streamlit `AppTest` harness that executes `app.py` for real in
+both appearance modes — `st.tabs` renders all its children, so an exception in any tab surfaces —
+rather than with a `curl` against port 8501, which only proves Streamlit served its HTML shell
+and would have passed against a completely broken app. `make dashboard` was checked at the end
+of every stage as well. Final state: 9 tabs, 117 `st.metric` tiles, 50 charts, 57 tables,
+0 exceptions, 0 missing-artifact warnings, in light **and** dark.
 
 ---
 

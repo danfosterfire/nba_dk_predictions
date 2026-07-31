@@ -4,11 +4,12 @@ PIP    := .venv/bin/pip
 .PHONY: venv install fetch preprocess features train evaluate predict test clean \
         season-matrix pca archetypes eda team-context component-targets context-value \
         opponent persistence aging target-profile feature-diagnostics dashboard \
+        dashboard-audit docs-audit \
         availability availability-profile injury-reports injuries daily-capture \
         boxscore-status availability-model capture-status report-calibration \
         season-total adp adp-draftkings adp-fantasypros adp-panel adp-profile \
         adp-status game-length serial-correlation component-rates \
-        variance-budget residual-correlation \
+        variance-budget residual-correlation season-effects \
         stan stan-availability stan-minutes stan-components
 
 venv:
@@ -124,6 +125,11 @@ feature-diagnostics:
 serial-correlation:
 	$(PYTHON) -m src.eda.serial_correlation
 
+# League-level season effects: is each quantity's era movement an extrapolable TREND or an
+# unforecastable SHOCK, and what does ignoring it cost? No head carries a season term today.
+season-effects:
+	$(PYTHON) -m src.eda.season_effects
+
 # ── Provenance: figures that were prose-only until docs/provenance-plan.md ────
 # The variance budget needs the archetypes (for the interaction's lagged style label) and
 # the raw game logs; the residual correlation needs component_targets. Both sit after
@@ -177,11 +183,37 @@ eda: season-matrix pca archetypes team-context context-value opponent \
      component-targets game-length variance-budget residual-correlation \
      persistence aging target-profile \
      feature-diagnostics serial-correlation \
-     availability availability-profile report-calibration \
+     availability availability-profile season-effects report-calibration \
      adp-panel adp-profile
 
 dashboard:
 	.venv/bin/streamlit run dashboard/app.py
+
+# Registry drift report — see dashboard/README.md. A report, not a gate: it exits 0
+# with findings on purpose, because failing on a doc edit trains people to ignore it.
+# `python -m dashboard.audit` rather than `src.<module>`: the audit is about the
+# dashboard, not the data pipeline.
+#
+# Runs weekly under launchd, appending to outputs/dashboard_audit.log:
+#
+#   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.nba-deep-learning.dashboard-audit.plist
+#   launchctl kickstart -p gui/$(id -u)/com.nba-deep-learning.dashboard-audit   # run now
+#
+# Weekly rather than daily because nothing here has a deadline — unlike daily-capture,
+# whose sources cannot be backfilled. Reviewing the log is a two-minute job, which is
+# the whole point: the alternative is a re-read of six plan docs.
+dashboard-audit:
+	$(PYTHON) -m dashboard.audit
+
+# Every quoted figure in the plan docs, checked against the artifact behind it. Unlike
+# dashboard-audit this one is a GATE — it exits non-zero on a disagreement, because a doc
+# contradicting its artifact is an unambiguous defect. Missing artifacts are skipped, so a
+# fresh checkout without `make eda` does not report a wall of red.
+#
+# Rebuilding an artifact with new data will make this fail until the docs are updated.
+# That is the intended behaviour: it is the alarm that has been missing twice.
+docs-audit:
+	$(PYTHON) -m src.docs_audit
 
 train:
 	$(PYTHON) -m src.train

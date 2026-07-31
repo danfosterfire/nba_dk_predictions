@@ -887,7 +887,7 @@ Staged so each step is inspectable. Stages 0–2 are complete.
 | **5** | `src/eda/context_value.py` — what own-team context is worth | ✅ done |
 | **7** | `src/features/opponent.py` — team defensive profile + low-rank matchup | ✅ done |
 | **4** | `src/eda/persistence.py`, `aging.py`, `target.py`, `feature_diagnostics.py` | ✅ done |
-| **3** | `dashboard/app.py` — 9-tab Streamlit explorer over every artifact above | ✅ done |
+| **3** | `dashboard/` — 9-tab project walkthrough; every figure read from an artifact, `make dashboard-audit` at 0 findings | ✅ done |
 | **8** | `src/data/injury_reports.py`, `boxscore_status.py` — availability data capture | ✅ done |
 | **8** | `src/models/availability.py` — GP distribution, baselines beaten by a GLM | ✅ done |
 | **8** | `src/models/season_total.py` — the downstream metric; head worth −211 dk_pts MAE | ✅ done |
@@ -1030,7 +1030,8 @@ Always use `.venv` — never the system Python. See `CLAUDE.md` for conventions.
 
 ## Running the dashboard locally
 
-A nine-tab Streamlit explorer over everything the EDA pipeline produces.
+A **nine-tab walkthrough of the project**, following the build end to end — not an EDA
+explorer. Its audience is someone who wants a birds-eye view of the decisions.
 
 ```bash
 make dashboard
@@ -1049,38 +1050,78 @@ Streamlit accepts works too:
 ### Before the first run
 
 The dashboard **only reads precomputed artifacts** — it never fetches, fits a PCA, or
-trains anything, so it starts in about a second. That also means the artifacts have to
-exist first:
+trains anything, and there is no import from `src/` anywhere in the package, so it starts
+in about a second. That also means the artifacts have to exist first:
 
 ```bash
 make install    # once
 make fetch      # once, and slow — pulls ~284 MB from nba_api
-make eda        # builds data/features/ and outputs/eda/  (~2 minutes)
+make eda        # builds data/features/ and outputs/eda/  (~9 minutes)
 make dashboard
 ```
 
-If an artifact is missing the affected tab says which `make` target produces it and the
-rest of the app still works, so a partial pipeline is browsable rather than broken.
+If an artifact is missing the affected panel says which `make` target produces it and the
+rest of the app still works, so a partial pipeline is browsable rather than broken. The
+sidebar's **pipeline health** panel summarizes what is present and what is not.
 
 ### The tabs
 
 | Tab | What it answers |
 |---|---|
-| **Coverage** | Which raw families exist per season; the share of each roster described by real prior-season data |
-| **PCA** | Scree, biplot with player hover, loadings, a single player's career through style space |
-| **Archetypes** | Cluster profiles, representative rosters, team composition by season |
-| **Persistence** | What survives a year — pooled vs season-absorbed *r*, the *t* vs *t+1* scatter, fitted reliability curves |
-| **Aging** | Delta-method age curves against the cross-sectional curve, so survivorship bias is visible |
-| **Target** | Per-component mean-variance by minutes (which likelihood each head needs), and the running season total |
-| **Team context** | What own-team context is worth above a player's own prior season |
-| **Opponent** | Defensive-profile axes, teams plotted in that space, the held-out matchup table |
-| **Feature diagnostics** | Collinearity, cold-start cardinality, the shuffled-null check, sequence-vs-aggregate ablation |
+| **Problem** | What is being scored, what is knowable before the season, the variance budget as *ceilings*, the twelve-component output contract, and the honest caveat that five current-season games settle 86% of the season total |
+| **Data collection** | What was gathered and what cannot be re-obtained: four capture programs, the 20-season box-score backfill, the four coverage boundaries, roster description coverage, and the name-join discipline card |
+| **EDA** | Narrative in this pass — the findings that changed the build, as decision cards. The figure sections are deliberately deferred, not lost |
+| **Availability** | The richest tab: GP persistence, ~20× overdispersion, the ceiling ladder, the CRPS baseline ladder, what the head is worth on the season total, both ablations, absence reasons, the Stan port, and the injury-report transfer function |
+| **Minutes** | Why game length is the trials denominator and never 48, the variant ladder against the no-fit floor, where the curvature actually is, and the **three** dispersion numbers the simulator needs |
+| **Components** | The no-fit floor that is nearly the whole model, scale-not-curvature, the `sklearn` alpha trap as a permanent ablation, dispersion by minutes and usage, and the eleven Stan heads |
+| **Simulations** | Not built — the specification, pinned by measurements: the residual copula input, block variance inflation, the bonus calibration, and the falsified spell chain |
+| **Drafting** | The five real tournaments with rake as a break-even *edge hurdle*, the zero-consolation knockout, payout convexity, and ADP as a benchmark rather than a feature |
+| **Decision log** | The whole registry — status mix, the reversal thread, the deadline board, and a filterable browser |
 
-**Sidebar controls** scope every tab at once: **Tier** (A = 30 seasons box-score, B = 13
-seasons with tracking), **Era mode** (`within_season` is era-neutral and feeds modeling;
-`pooled` makes era a visible axis), and **Appearance** (light/dark — chart colours are
-selected per mode, not flipped). Every chart has a table-view twin in an expander beneath
-it, so no value is reachable by colour alone.
+**Every figure on the page is read from an artifact a `make` target produced.** Nothing is
+typed in; `make dashboard-audit` counts any exceptions and reports **0**.
+
+**Sidebar controls**: **Appearance** (light/dark — chart colours are selected per mode, not
+flipped) is global. **Tier** and **Era mode** sit under *Data scope* and scope only the
+coverage panels on **Data collection** and **EDA**, because the heads are each fitted on one
+frame and have no tier. Every chart has a table-view twin in an expander beneath it, so no
+value is reachable by colour alone.
+
+### `make dashboard-audit`
+
+The registry in `dashboard/decisions.py` is a distillation of `CLAUDE.md` and the
+`docs/*-plan.md` files, so it can drift from them. Four checks guard that:
+
+```bash
+make dashboard-audit
+```
+
+It verifies every cited artifact exists, flags entries whose source doc has a newer git
+commit than their `reviewed` date, lists artifacts no tab reads and no entry names, and
+counts pending provenance markers. It is a **report, not a gate** — it exits 0 with
+findings, because failing the suite when someone edits a doc trains people to ignore the
+suite. Only the first check is also a `pytest` test. A weekly launchd job appends it to
+`outputs/dashboard_audit.log`. See `dashboard/README.md`.
+
+### `make docs-audit`
+
+The companion guard, for the plan docs rather than the dashboard:
+
+```bash
+make docs-audit
+```
+
+It re-derives every quoted figure in `docs/*-plan.md` from the artifact behind it and
+checks three things — that the figure matches **to the precision it is quoted at**, that
+its text still appears in the doc (so a claim cannot rot into describing nothing), and how
+many of the doc's measured figures are covered at all. Unlike `dashboard-audit` this one
+**exits non-zero on a disagreement**, because a doc contradicting its artifact is an
+unambiguous defect. Missing artifacts are skipped, so it is clean on a fresh checkout.
+
+It exists because prose drifted away from its artifact twice without anyone noticing — the
+season-total R² column and the report-calibration block, both tables that had been
+*partially* refreshed. A stale number looks exactly like a fresh one, which is why this
+needed to be a number rather than a habit.
 
 ### Troubleshooting
 
@@ -1089,5 +1130,5 @@ it, so no value is reachable by colour alone.
   suppress it; make sure you are running from the repo root so that file is picked up.
 - **Port already in use** — an earlier instance is still running. `pkill -f "streamlit
   run"`, or use `--server.port` to pick another.
-- **A tab warns that a file is missing** — run the `make` target it names. `make eda`
+- **A panel warns that a file is missing** — run the `make` target it names. `make eda`
   rebuilds everything.

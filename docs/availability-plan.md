@@ -9,6 +9,32 @@ This plan covers what data can inform an availability forecast, what has to be g
 and how to model it. Every number below was measured during planning; the reproduction
 command is given with each block.
 
+> ## ✅ Audited against the artifacts 2026-07-30 — and now audited **automatically**
+>
+> Every artifact-backed number in this document was recomputed from its artifact. **42
+> disagreed** and are corrected in place, each with a note beside the figure. They fall into
+> four groups:
+>
+> - **The season-total R² column** — six values, none reproducible by any construction.
+>   Hand-typed and never recomputed when the MAE side was refreshed. Analysis at the table.
+> - **The report-calibration block** — the archive is unchanged (12,406 rows, 142 dates, 532
+>   players all still match) but the box-score backfill closed 331 previously `uncovered`
+>   rows, moving every cell slightly. A clean, explainable refresh.
+> - **Playoff appearance rates** (0.664 / 0.838 / 0.922 → 0.711 / 0.905 / 0.958) — the
+>   superseded per-(player, team) denominator, already corrected in `CLAUDE.md` and
+>   `README.md` and missed here and in `docs/predictions-plan.md`.
+> - **Scratch-panel leftovers and last-digit rounding** — the simulator calibration targets
+>   (20.1× / 32.6% / 10.6%) still carried 7-season values and **contradicted this document's
+>   own overdispersion section**; the "47.6% single-game" figure likewise contradicted its
+>   own spell table at 48.3%.
+>
+> **No conclusion in this plan changes.** Every ordering, stopping rule and decision
+> survives — the corrections move figures, not findings.
+>
+> This is now enforced rather than remembered: **`make docs-audit`** re-derives every quoted
+> figure below from its artifact and exits non-zero on a disagreement. See
+> `src/docs_audit.py`.
+
 ---
 
 ## The constraint (as amended)
@@ -34,7 +60,7 @@ provided the snapshot is reconstructed from sources dated *at or before D* — s
 ## What I measured before planning
 
 Everything in this section is a runnable report: **`make availability` then
-`make availability-profile`** → `outputs/eda/availability_profile.csv` (154 rows), over 30
+`make availability-profile`** → `outputs/eda/availability_profile.csv` (260 rows), over 30
 seasons and 1,314,238 player-games. Figures that differ from this plan's first draft were
 recomputed from a 7-season scratch panel onto the full 30; the values here supersede it.
 
@@ -52,7 +78,7 @@ front.
 | **prior MPG alone** | **0.159** | 0.057 |
 | GP lags 1–3 | 0.184 | 0.092 |
 | GP + MPG (lag 1) | 0.214 | 0.104 |
-| GP + MPG lags 1–3 | 0.223 | 0.111 |
+| GP + MPG lags 1–3 | 0.222 | 0.111 |
 | + age, age², career year | **0.236** | 0.116 |
 
 **Minutes weighting is not the settled question here that it is for per-36 rates**, and both
@@ -156,7 +182,7 @@ seasons — the gradient is monotone here where the 7-season draft was noisy):
 |---|---|---|---|
 | 0 | 7,697 | 0.647 | 0.714 |
 | 1–2 | 1,454 | 0.629 | 0.681 |
-| 3–5 | 507 | 0.573 | 0.635 |
+| 3–5 | 507 | 0.573 | 0.634 |
 | 6–10 | 458 | 0.573 | 0.625 |
 | 11–20 | 440 | 0.530 | 0.592 |
 | **21+** | **716** | **0.457** | **0.516** |
@@ -406,8 +432,9 @@ settled null rather than leaving it open.
 
 > ### ✅ Settled on the full backfill, and it is **not** the expected null
 >
-> `make boxscore-status` completed **2026-07-28** — 25,624 games, 2006-07 → 2025-26, mean
-> `status_coverage` 0.694 and ≥99.6% for every season from 2006-07 on. Re-measured over
+> `make boxscore-status` completed **2026-07-28** — 25,706 games of 25,709 attempted,
+> 2006-07 → 2025-26, mean `status_coverage` 0.696 and ≥99.6% for every season from
+> 2006-07 on. Re-measured over
 > **7,673 usable season pairs** (full window, in-sample, season-absorbed, unweighted),
 > against 464 in the first read:
 >
@@ -429,11 +456,11 @@ settled null rather than leaving it open.
 >
 > | reason (season S-1) | r vs season-S `gp_share` | persistence of the column |
 > |---|---|---|
-> | `missed_scratch` (DNP - Coach's Decision) | **−0.353** | **0.470** |
+> | `missed_scratch` (DNP - Coach's Decision) | **−0.353** | **0.469** |
 > | `missed_inactive` | −0.233 | 0.208 |
 > | `missed_not_rostered` | −0.164 | 0.136 |
 > | `missed_personal` / `missed_suspension` / `missed_other` / `missed_gleague` | ≈ 0 | ≤ 0.05 |
-> | **`missed_injury`** | **+0.034** | 0.167 |
+> | **`missed_injury`** | **+0.034** | 0.168 |
 > | *(`missed_games`, for comparison)* | *−0.339* | *0.233* |
 >
 > The *rotation* reasons predict next-season availability and the *injury* reason does
@@ -445,7 +472,7 @@ settled null rather than leaving it open.
 > partly marks "was a rotation player" rather than "was hurt".
 >
 > **The headline number of this whole plan may be the persistence column.**
-> `missed_scratch` persists at **0.470** — higher than games played itself (0.317),
+> `missed_scratch` persists at **0.469** — higher than games played itself (0.317),
 > higher than `missed_games` (0.233), and higher than every other availability measure
 > except minutes per game. Being benched is a far more stable property of a player than
 > being hurt. That is the durability null stated positively.
@@ -464,7 +491,7 @@ settled null rather than leaving it open.
 > Among heavy-minute players `missed_scratch` has nearly disappeared as a label (≈1.0–1.6
 > games in 2011–2016 to 0.03–0.07 by 2022-25) while `missed_inactive` roughly doubled: modern
 > teams deactivate a rested star rather than dressing him DNP-Coach's Decision. So the column
-> carrying the 0.470 persistence is not the column carrying the signal in the seasons being
+> carrying the 0.469 persistence is not the column carrying the signal in the seasons being
 > forecast. See "Load management" under Modeling approach before wiring these in.
 > **`src/models/availability.py::FEATURE_COLS` consumes none of them today** — it is 15
 > lag/age columns with no reason split at all. That is the one outstanding feature change
@@ -491,18 +518,25 @@ between the PDF archive and the box-score backfill, which already exists inside 
 `make report-calibration` (`src/eda/report_calibration.py`) measures it, so the October
 unblock is a measurement rather than an invention.
 
-**12,007 of 12,406 report rows joined to a realized outcome — 96.8%, and 0.0% unmatched
-names.** 142 game dates, 532 players. The 3.2% dropped are `uncovered`: Summer League (the
-archive runs to July, those games have no NBA box score) and the 85 missing 2025-26 playoff
-games noted above.
+**12,338 of 12,406 report rows joined to a realized outcome — 99.5%, and 0.0% unmatched
+names.** 142 game dates, 532 players. The 0.55% dropped are `uncovered`: Summer League (the
+archive runs to July, those games have no NBA box score).
 
 | designation | n | P(play) | P(dnp) | P(inactive) | P(absent) | min if played |
 |---|---|---|---|---|---|---|
-| Out | 8,400 | **0.002** | 0.095 | 0.897 | 0.006 | 11.0 |
-| Doubtful | 480 | 0.027 | 0.231 | 0.742 | 0.000 | 14.0 |
-| Questionable | 1,681 | **0.500** | 0.200 | 0.299 | 0.001 | 23.6 |
-| Probable | 579 | **0.914** | 0.067 | 0.019 | 0.000 | 24.6 |
-| Available | 867 | **0.852** | 0.122 | 0.025 | 0.000 | 23.4 |
+| Out | 8,539 | **0.002** | 0.094 | 0.898 | 0.006 | 11.0 |
+| Doubtful | 499 | 0.030 | 0.222 | 0.747 | 0.000 | 16.7 |
+| Questionable | 1,788 | **0.498** | 0.199 | 0.303 | 0.001 | 23.5 |
+| Probable | 602 | **0.914** | 0.066 | 0.020 | 0.000 | 24.7 |
+| Available | 910 | **0.855** | 0.118 | 0.024 | 0.003 | 23.8 |
+
+> ⚠️ **This block was refreshed 2026-07-30.** It previously read 12,007 of 12,406 (96.8%)
+> with n = 8,400 / 480 / 1,681 / 579 / 867. The **archive is unchanged** — 12,406 report
+> rows, 142 dates, 532 players all still match — so this is not the PDF capture moving.
+> What moved is the **box-score side**: 331 rows went from `uncovered` to scored as the
+> backfill closed the missing 2025-26 games the earlier text called out. Every conclusion
+> below survives; the `Doubtful` minutes figure moved most (14.0 → 16.7) on the smallest
+> cell, 15 players who dressed.
 
 Four findings, three of which change how the snapshot should be consumed:
 
@@ -515,12 +549,12 @@ Four findings, three of which change how the snapshot should be consumed:
 - **`Out` is near-deterministic and sticky** — 0.002 play rate, and **98.5% unchanged** in
   the next day's report. This is the designation a preseason snapshot mostly carries, and it
   is the one that behaves.
-- **A stale `Questionable` is worth about what a fresh one is** — p_play 0.477 at lead 1
-  against 0.500 at lead 0, though it is revised 62.5% of the time. Encouraging for a
+- **A stale `Questionable` is worth about what a fresh one is** — p_play 0.475 at lead 1
+  against 0.498 pooled, though it is revised 61.1% of the time. Encouraging for a
   snapshot read weeks ahead, and the only handle the archive has on horizon decay, since
   reports only ever lead a game by 0 or 1 days.
-- **There is no minutes haircut to model.** A Questionable who plays gets 23.6 minutes
-  against a Probable's 24.6. The designation acts on the play/not-play margin, not on
+- **There is no minutes haircut to model.** A Questionable who plays gets 23.5 minutes
+  against a Probable's 24.7. The designation acts on the play/not-play margin, not on
   workload — so it belongs in the availability head and not in the MPG head.
 
 > **This also retires a Tier-3 dependency.** The plan wanted Basketball-Reference transaction
@@ -538,7 +572,9 @@ Four findings, three of which change how the snapshot should be consumed:
 > and recorded in `CLAUDE.md`: every fitting frame is regular season only, because the DK
 > contest ends 4/4 and because playoff minutes are a role interaction whose sign flips
 > (median MPG ratio 0.505 bench / 0.761 rotation / **1.054** starter) with availability
-> shifting alongside it (appearance rates 0.664 / 0.838 / 0.922). Pooling them would
+> shifting alongside it (appearance rates 0.711 / 0.905 / 0.958 — corrected 2026-07-30
+> from 0.664 / 0.838 / 0.922, a per-(player, team) denominator that double-counts a traded
+> player and records him as absent from the team he left). Pooling them would
 > corrupt both heads this plan builds. The workload features below are exactly the right
 > use of the playoff logs — and the only one. `preprocess.load_raw` defaults to
 > `season_type="regular"`; ask for `"playoffs"` explicitly when building these.
@@ -595,7 +631,7 @@ This is the persistent half of availability and it reuses machinery that already
 
 **Schedule** — for the per-game head: rest days, back-to-back flag
 (`matchup.py::add_back_to_back_flag` exists), games in the last 7 days, road-trip position.
-Back-to-backs drive the one-game-absence process that is 47.6% of all spells.
+Back-to-backs drive the one-game-absence process that is 48.3% of all spells.
 
 ---
 
@@ -639,7 +675,7 @@ correlation explains roughly a *sixth* of it and the rest is **between-player
 heterogeneity** — which an AR process cannot generate and which the beta-binomial head
 already models. An autoregressive binomial is therefore a **complement** to the current
 head, not a replacement for it, and on the GP marginal alone it should not be expected to
-win: that marginal is already calibrated (PIT KS 0.097, tail 15.2%/34.9% predicted against
+win: that marginal is already calibrated (PIT KS 0.096, tail 15.0%/34.8% predicted against
 11.8%/36.9% observed).
 
 **2. The simple chain is wrong in a specific, falsifiable way.** A constant hazard implies
@@ -678,7 +714,7 @@ independent sampling gets the mean roughly right and the shape badly wrong.
    injured with a forecast return distribution centred on the stated timeline.
 2. **Availability process** — alternating spells. A per-game injury *onset* hazard, and a
    *duration* draw when a spell starts. Fit onset and duration separately, since the measured
-   spell distribution is clearly a mixture (47.6% single-game, a tail to 26+).
+   spell distribution is clearly a mixture (48.3% single-game, a tail to 26+).
 3. **Rotation process** — conditional on being available, `P(dressed and played)` from the
    role features. This is the persistent half and should carry most of the between-player
    spread.
@@ -689,9 +725,9 @@ Aggregate across simulated seasons to get the GP distribution and, composed with
 heads, the season-total distribution.
 
 **Calibrate the clustering parameter against realized GP dispersion**, exactly as
-`targets.py::expected_bonus` calibrates `overdispersion=0.10` against 11,627 player-seasons.
-The target to hit is the 20.1× figure and the left-tail shares (32.6% below 60 games, 10.6%
-below 41) among established rotation players. A simulator that reproduces the mean but not
+`targets.py::expected_bonus` calibrates `overdispersion=0.10` against 11,938 player-seasons.
+The target to hit is the **22.7×** figure and the left-tail shares (**26.7%** below 60
+games, **9.6%** below 41) among established rotation players. A simulator that reproduces the mean but not
 the tail has failed at the thing that matters.
 
 ### ✅ Decided 2026-07-29, and ✅ **built the same day** — `make stan-availability`
@@ -713,7 +749,7 @@ the tail has failed at the thing that matters.
 >
 > Max coefficient gap **0.0127**, largest gap **0.095 posterior sd**, and the MLE sits inside
 > the 95% credible interval for **21/21** terms. R̂ **1.0025**, min ESS 2,402, **0
-> divergences**, 219 s over 4 chains. Both `evaluate` and `crps` are imported from the MLE
+> divergences**, 254 s over 4 chains. Both `evaluate` and `crps` are imported from the MLE
 > module rather than reimplemented, so a metric difference could not have been a
 > metric-implementation difference.
 >
@@ -858,7 +894,7 @@ season rehabbing — which is exactly the population the preseason snapshot iden
 > from the counts to this head, and the two answers should not be pooled into one rule.
 >
 > **Two dispersions, and the simulator needs the one this fit does not estimate.**
-> Season-level ρ = **0.0496**; game-level ρ measured against each player-season's own mean
+> Season-level ρ = **0.0495**; game-level ρ measured against each player-season's own mean
 > over 713,947 player-games = **0.0776**, i.e. **4.65× binomial** at a 48-minute game. A
 > season total cannot separate a per-game random effect from a per-season one. Drawing
 > per-game minutes from the season-level ρ would make every simulated game far too close to
@@ -915,7 +951,7 @@ of the minutes distribution being shaved — not players being pulled earlier.
 2021-22 and 2024-25/2025-26) while `missed_scratch` **collapsed** (≈1.0–1.6 games in 2011–2016
 to **0.03–0.07** by 2022-25). Modern teams *deactivate* a rested star rather than dressing him
 as DNP-Coach's Decision. This complicates the plan's headline finding above: `missed_scratch`
-persists at 0.470 **pooled over 2006–2025**, but it has nearly vanished as a label in the
+persists at 0.469 **pooled over 2006–2025**, but it has nearly vanished as a label in the
 seasons the model is actually forecasting. Check whether that is a behaviour change or a
 change in how the `comment` field is populated before building on it.
 
@@ -945,11 +981,31 @@ an era effect would leave. **But the naive direction does not match** — MPG wi
 flat or slightly falling, which would produce over-prediction, and the head under-predicts. So
 treat this as a hypothesis with an obvious test, not as a diagnosis.
 
-> ⚠️ **Everything above is a first look, not a measurement report.** The buckets condition on
-> the *same* season's MPG, which is endogenous to availability, and the full window counts
-> waived and traded players as rostered all year. Reproduce properly through
-> `src/eda/availability.py` with the role bucket taken from **S-1** before quoting any of these
-> numbers as findings.
+> ⚠️ **The buckets condition on the *same* season's MPG, which is endogenous to
+> availability, and the full window counts waived and traded players as rostered all year.**
+> Re-derive with the role bucket taken from **S-1** before treating the role gradient as
+> settled.
+
+**✅ Now reproducible — `make season-effects`** (`src/eda/season_effects.py` →
+`outputs/eda/season_effects_{league_rates,summary,carry_forward_bias}.csv`). The
+role-bucketed `gp_share` series above is `availability_rates`, and it sits alongside the
+same decomposition for all eleven components and for minutes. What it adds:
+
+- **`gp_share` is shock, not drift, at every role level.** Trend R² runs 0.45–0.74 with
+  year-over-year sd of **2.8% (30+ mpg)** to **9.0% (<12 mpg)** — so even the star bucket,
+  where the era story is strongest, is not a clean trend a fixed effect could extrapolate.
+- **`minutes_share` is the steadiest quantity in the whole project** — 1.09× range, 0.92%
+  yoy sd. That is a second, independent confirmation of the finding above that the era
+  effect is in *availability* rather than in minutes-given-role.
+- A **trend fixed effect and a year-level random effect do different jobs** and neither
+  substitutes for the other: detrending shifts the mean of the year-over-year changes and
+  leaves their variance exactly unchanged. For availability, that means a trend term could
+  correct the systematic drift but only a year effect can represent the ±3–9% a season can
+  move.
+
+**⏰ This is an open TODO with a scoped session prompt** — see "TODO — season effects" in
+`docs/predictions-plan.md`. For availability specifically the candidate is a **season × role
+interaction**, not a level shift, because the decline is graded by minutes played.
 
 ## Validation
 
@@ -1112,7 +1168,7 @@ not built.** Held out on 2024-25 and 2025-26 (10,361 train / 911 test), CRPS in 
 | **beta-binomial GLM** | **10.795** | 15.39 | 0.283 | 0.096 | 23.3× |
 | GBM | 10.888 | 15.41 | 0.262 | 0.079 | 19.9× |
 | ridge | 10.896 | 15.39 | 0.275 | 0.103 | 22.7× |
-| league/age baseline | 13.614 | 18.94 | −0.084 | 0.175 | 29.5× |
+| league/age baseline | 13.614 | 18.94 | −0.084 | 0.174 | 29.5× |
 
 > Updated 2026-07-29 with the playoff/mileage workload block (19 features, was 15). The
 > pre-block figures were GLM 10.914 / ridge 10.98 / GBM 11.04. The GBM gained slightly more
@@ -1125,7 +1181,7 @@ overdispersion finding predicted:
 
 - The dispersion fitted purely by maximum likelihood lands at **20–30× implied
   overdispersion**, recovering the ~20× measured separately in `availability_profile.csv`.
-- On the left tail, the GLM predicts **15.2% / 34.9%** of established rotation players below
+- On the left tail, the GLM predicts **15.0% / 34.8%** of established rotation players below
   41 / 60 games against **11.8% / 36.9%** observed. The league/age baseline reads 24.8% /
   45.0% — it produces the tail by being vague about everyone.
 
@@ -1148,12 +1204,24 @@ difference below is the availability head and nothing else. Held out on 2024-25 
 
 | GP treatment | MAE | RMSE | R² | bias | CRPS |
 |---|---|---|---|---|---|
-| full season (the naive case) | 646.3 | 831.2 | 0.10 | **+541.9** | — |
-| prior GP carried forward | 475.0 | 638.5 | 0.47 | +41.9 | — |
-| league/age baseline | 476.0 | 595.8 | 0.55 | +23.2 | 340.8 |
-| **beta-binomial head** | **435.1** | **570.8** | **0.59** | **+6.1** | **316.9** |
-| *oracle rate* (predicted GP, true rate) | *302.7* | *427.7* | *0.78* | *+5.3* | — |
-| *oracle GP* (true GP, predicted rate) | *221.3* | *304.2* | *0.88* | *−33.2* | — |
+| full season (the naive case) | 646.3 | 831.2 | 0.141 | **+541.9** | — |
+| prior GP carried forward | 475.0 | 638.5 | 0.493 | +41.9 | — |
+| league/age baseline | 476.0 | 595.8 | 0.559 | +23.2 | 340.8 |
+| **beta-binomial head** | **435.1** | **570.8** | **0.595** | **+6.1** | **316.9** |
+| *oracle rate* (predicted GP, true rate) | *302.7* | *427.7* | *0.773* | *+5.3* | — |
+| *oracle GP* (true GP, predicted rate) | *221.3* | *304.2* | *0.885* | *−33.2* | — |
+
+> ⚠️ **The R² column was corrected 2026-07-30**, from 0.10 / 0.47 / 0.55 / 0.59 / 0.78 /
+> 0.88. The partial-refresh note further down this list — "figures updated 2026-07-29 from
+> 441.3 / −205.0 / 508.9" — is the direct evidence: the MAE side of this table was refreshed
+> for the playoff-workload change and the R² column was not. But **it is not simply a
+> pre-workload snapshot either**, which was the obvious reading and is falsified:
+> `full_season`, `prior_gp` and `oracle_gp` never touch the availability head, so the
+> workload change cannot move their R², and `full_season` was the most wrong of the six (by
+> 0.041). Since equal RMSE pins SSE, only `ss_tot` could differ, and solving per row gives
+> six mutually inconsistent denominators. The column was hand-typed and never recomputed.
+> Reproduce by recomputing R² from `outputs/predictions/season_total_predictions.csv`,
+> which matches `season_total_metrics.csv` exactly on all six rows.
 
 - **The head is worth −211.1 dk_pts of season-total MAE (−32.7%)** against assuming a full
   season, and −39.9 against carrying prior games forward. On established rotation players

@@ -25,7 +25,9 @@ an indicator variable could absorb — they are a **role interaction whose sign 
 Median playoff-to-regular MPG ratio over 5,762 player-seasons with ≥20 regular-season games
 and a playoff appearance: **bench (<12 mpg) 0.505, rotation (12–24) 0.761, starter (24+)
 1.054**, with 66% of starters playing *more*. Availability moves too — appearance rates of
-0.664 / 0.838 / 0.922 across the same buckets, because rotations shorten. Pooling would fit
+0.711 / 0.905 / 0.958 across the same buckets, because rotations shorten (corrected
+2026-07-30 from 0.664 / 0.838 / 0.922, a per-(player, team) denominator that double-counts a
+traded player and records him as absent from the team he left). Pooling would fit
 one coefficient to a −50% and a +5% effect simultaneously, and the bench population is
 large enough to pull it toward compression, which is precisely the wrong direction for the
 players a draft cares about.
@@ -436,6 +438,159 @@ season posterior driven by the measured ρ_game (4.65× binomial) and 2.43× blo
 scored on held-out season-total CRPS and on whether simulated bonus rates match realized ones.
 The comparator costs an afternoon; the per-game fit costs days.
 
+### ⏰ TODO — season effects: no head carries one, and the league moves. Measured 2026-07-30
+
+**Reproduce with `make season-effects`** (`src/eda/season_effects.py`) →
+`outputs/eda/season_effects_{league_rates,summary,carry_forward_bias}.csv`. Every figure
+below comes from those three artifacts; do not re-derive them by hand.
+
+Every head in this project — availability, minutes, all eleven components — is fitted on 30
+pooled seasons with **no season term**. That sits against the repo's own standing rule
+("ALWAYS absorb season when regressing on 30 pooled seasons"), and the reason it was never
+applied is the prediction-time constraint: **a season fixed effect for season S does not
+exist when forecasting S.** So the real question is which of two *usable* forms each
+quantity needs.
+
+**They are complementary, not alternatives, and that is an identity rather than a finding.**
+Subtracting a linear trend shifts the **mean** of the year-over-year changes and leaves
+their **variance** exactly unchanged, because `diff(a + b·x)` is the constant `b`. Therefore:
+
+- a **year-on-year trend fixed effect** removes `yoy_mean_pct` — the drift that biases a
+  carry-forward predictor in the *same direction every single year*;
+- a **year-level random effect** is the only thing that touches `yoy_sd_pct`, the
+  irreducible year-to-year spread.
+
+Neither substitutes for the other. Pinned by
+`tests/test_season_effects.py::test_a_trend_removes_the_yoy_MEAN_and_leaves_the_yoy_SD_untouched`.
+
+| quantity | max/min | trend %/season | trend R² | yoy sd % | verdict |
+|---|---|---|---|---|---|
+| **`fg3a`** | **2.97×** | **+4.07** | **0.93** | 6.96 | **trend + year effect** |
+| `fta` | 1.21× | −0.55 | 0.63 | 4.34 | year effect only |
+| `blk` | 1.14× | −0.14 | 0.12 | 3.69 | year effect only |
+| `ast` | 1.30× | +0.73 | 0.64 | 3.05 | year effect only |
+| `stl` | 1.18× | −0.08 | **0.03** | 3.03 | year effect only |
+| `tov` | 1.16× | −0.33 | 0.59 | 2.89 | year effect only |
+| `fg2a` | 1.32× | −0.87 | 0.86 | 2.42 | year effect only |
+| `fg3m_pct` | 1.08× | +0.11 | 0.27 | 2.06 | year effect only |
+| `reb` | 1.10× | +0.25 | 0.59 | 1.48 | year effect only |
+| `fg2m_pct` | 1.20× | +0.61 | 0.84 | 1.46 | year effect only |
+| `ftm_pct` | 1.08× | +0.19 | 0.77 | 1.06 | year effect only |
+| **`minutes_share`** | 1.09× | −0.25 | 0.81 | **0.92** | year effect only |
+| `gp_share` [<12 mpg] | 1.48× | −0.71 | 0.48 | **9.04** | year effect only |
+| `gp_share` [12–24] | 1.30× | −0.54 | 0.64 | 4.21 | year effect only |
+| `gp_share` [24–30] | 1.25× | −0.39 | 0.45 | 3.85 | year effect only |
+| `gp_share` [all] | 1.24× | −0.51 | 0.71 | 2.86 | year effect only |
+| `gp_share` [30+ mpg] | 1.21× | −0.49 | 0.74 | 2.84 | year effect only |
+
+**`fg3a` is the only quantity where a trend is worth extrapolating** (R² 0.93 at +4.07%/season)
+— and note its worst single year is −24.4%, the 1997-98 three-point line being moved back
+after three shortened seasons. **Everything else is shock**, `fta` and `stl` most starkly:
+`stl` has a trend R² of **0.03**, i.e. essentially no drift at all and 3% of pure
+year-to-year noise.
+
+**`fta` is the case that prompted this**, and it behaves exactly as refereeing would
+predict — a 1.21× band with 4.3% yoy sd and swings past ±5% in 9 of 29 transitions:
+**+7.6% in 2004-05** (hand-checking crackdown), −7.8% 2011-12, −6.0% 2017-18, +7.3%
+2022-23, −7.5% 2023-24, **+8.6% in 2025-26**. There is no trend to extrapolate.
+
+**What ignoring it costs — the no-fit floor's bias on the held-out seasons.** Carry-forward
+lags any league move by exactly one season, so its bias *is* the season effect measured on
+the scale the heads are scored on. No fitted head corrects it, because none has a season
+term:
+
+| component | 2024-25 | 2025-26 | both |
+|---|---|---|---|
+| **`fta`** | −3.1% | **−10.7%** | **−7.0%** |
+| `stl` | −10.0% | +0.7% | −4.6% |
+| `fg3a` | −7.0% | −1.3% | −4.2% |
+| `tov` | −4.6% | −1.8% | −3.2% |
+| `ast` | −1.1% | −4.8% | −2.9% |
+| `blk` | +6.5% | +6.0% | **+6.2%** |
+
+`fta`'s −10.7% in 2025-26 is the +8.6% league jump arriving one year late. `blk` is biased
++6% in *both* seasons, which is drift, not noise.
+
+> **Why this outranks the shared-β correlation the Stan work was built for.** A league shift
+> is **perfectly correlated across every player**, so it does not diversify away: a −7% error
+> on free throws is −7% on a whole roster's free-throw points. The shared-β parameter
+> uncertainty measured in `stan_availability.board_correlation` is worth **+0.2%** on a
+> 15-man roster. Season effects are the larger non-diversifiable risk by an order of
+> magnitude, and they are currently modelled as exactly zero.
+
+**One piece is genuinely knowable at prediction time and should not be lumped in with the
+rest.** Rule changes and points of emphasis are announced in the summer, before opening
+night — the 2021-22 non-basketball-moves emphasis was public in advance. A manual
+league-level override is therefore legitimate under the point-in-time discipline, unlike
+anything drawn from within the season.
+
+**⏰ TODO — assess a year-level random effect and a year-on-year trend fixed effect across
+every head**: the eleven dk components, availability, and minutes. This is scoped as its own
+session; the prompt is below. Delete this TODO once the ablation has run and its verdict is
+recorded here.
+
+<details>
+<summary><b>Prompt for a new session</b></summary>
+
+```
+Assess whether the heads in this repo need a season term, and which kind. Read CLAUDE.md,
+docs/predictions-plan.md (the "TODO — season effects" section) and docs/availability-plan.md
+(the "Load management" section) first — the measurement already exists, reproducible with
+`make season-effects` → outputs/eda/season_effects_*.csv. Do not re-derive it; build on it.
+
+The established facts you are starting from:
+- No head carries a season term today: not availability, not minutes, not any of the eleven
+  components.
+- A season FIXED effect is unusable at prediction time — there is no dummy for a season that
+  has not happened. The two usable forms are a year-on-year TREND extrapolated one season
+  forward, and a YEAR-LEVEL RANDOM EFFECT.
+- These are complementary, not alternatives: detrending shifts the mean of the year-over-year
+  changes and leaves their variance exactly unchanged. A trend fixes bias; only a year effect
+  addresses spread.
+- `fg3a` is the ONLY quantity where a trend is worth extrapolating (R² 0.93, +4.07%/season).
+  Everything else is shock — `stl` has a trend R² of 0.03.
+- The cost is measured: the no-fit floor carries −7.0% bias on `fta` (−10.7% in 2025-26) and
+  +6.2% on `blk` across the held-out seasons.
+- `docs/availability-plan.md` separately finds the availability era effect is ROLE-GRADED:
+  heavy-minute players lost −0.101 of games-played share from 2004-2010 to 2023-2025 against
+  −0.037 for fringe players. So for availability the candidate is a season × role
+  interaction, not a level shift.
+
+What to build:
+1. A trend variant and a year-random-effect variant for each head, on top of the existing
+   Stan specs in src/models/stan_{availability,minutes,components}.py. The year effect is a
+   hierarchical term over season with a fitted sd; at prediction time it contributes mean 0
+   and its variance, which is the entire point — it widens the predictive rather than
+   shifting it.
+2. For availability, test the season × role interaction specifically, not just a level term.
+3. Quote every variant against its no-fit floor (mandatory — see CLAUDE.md) and select on a
+   VALIDATION split, never on test. This repo has already shipped one false positive whose
+   paired bootstrap on test read [-0.079, -0.015] with P(Δ<0) = 99.7% and did not replicate.
+
+How to judge it, and this is the part that matters:
+- A year random effect should NOT improve held-out point accuracy — it is mean-zero by
+  construction. If R²/MAE moves much, something is wrong. Judge it on CALIBRATION: CRPS, PIT
+  uniformity, and whether simulated season-total intervals achieve nominal coverage.
+- A trend term SHOULD improve point accuracy and bias, and only on `fg3a` per the measurement
+  above. If it helps everywhere, suspect overfitting to the last two seasons.
+- The decisive downstream metric is season-total dk_pts and bonus-threshold calibration, not
+  per-component R².
+
+Two traps specific to this question:
+- Two confounds sit inside the window: 2019-20 and 2020-21 are a COVID health-protocol
+  regime, and the NBA's Player Participation Policy arrived in 2023-24. A smooth trend
+  extrapolated across a policy discontinuity is actively wrong. Test for a break.
+- Rule changes are ANNOUNCED before the season, so a manual league-level override is
+  legitimate point-in-time information. Keep that path open rather than forcing everything
+  through a fitted trend.
+
+Conventions: python -m src.<module>, a matching Makefile target in .PHONY, cfg =
+yaml.safe_load(open("configs/default.yaml")) in __main__, plain-assert tests with synthetic
+builders. Stan sources in src/stan/, compiled binaries stay out of git.
+```
+
+</details>
+
 ### The rate side is nearly saturated — measured, with a mandatory floor
 
 `make component-rates` (`src/models/component_rates.py`), season-collapsed heads on 10,194
@@ -481,7 +636,7 @@ player-seasons, held out on 2024-25/2025-26. Three results bind on everything be
 > against 10.7952, ρ 0.2759 against 0.2757, and the MLE inside the 95% credible interval for
 > **21/21** coefficients. The prior is set to `normal(0, 1/sqrt(2·l2))` precisely so the
 > posterior *mode* is the penalized MLE, making that a defined check. R̂ 1.0025, 0
-> divergences, 219 s. What the posterior adds is `Var_θ(Σ_i E[Y_i|θ])` — exactly 0 for any
+> divergences, 254 s. What the posterior adds is `Var_θ(Σ_i E[Y_i|θ])` — exactly 0 for any
 > point estimate — but **its size depends on the portfolio**, and this plan's framing
 > oversold it. The independent term grows as sqrt(N) and the shared-β term as N, so measured
 > on the held-out board the spread inflation is **+0.2% on a 15-player roster** and **+6.4%
@@ -496,6 +651,33 @@ player-seasons, held out on 2024-25/2025-26. Three results bind on everything be
 > **game-level** dispersion (4.65× binomial) separately from the season-level ρ the collapse
 > estimates, because the simulator needs the former and the fit only sees the latter.
 >
+> **The eleven component heads** are built too — 74 fits, **0 divergences**, max R̂ 1.0118,
+> 208.6 min of compute. 10,194 player-seasons, 9,403 train / 791 test, validation on 2022-23
+> and 2023-24. Three findings, two of which **overturn what the sklearn run above measured**:
+>
+> - **`log(own)` alone is not sufficient under a negative binomial.** The Poisson fit has
+>   `log_own` at 0.8204 (`blk`) and 0.8791 (`fg3a`); under NB the identical spec collapses to
+>   **0.6794** and **0.3719**, both far below their floors, and only a spline recovers them
+>   (0.8579, 0.9046). NB2's `var = μ + μ²/φ` down-weights large counts, so the fit is driven
+>   by the low-count mass — exactly where the log-scale relation is most curved. **The
+>   "splines are worth ≤ +0.003 outside `fg3a`/`blk`" guidance above is Poisson-specific**;
+>   under NB the validation split picks a spline for **four** heads (`fg3a`, `blk`, `ast`,
+>   `stl`), and on two of them it is the difference between a model and a failure.
+> - **`linear` is worse than the sklearn run suggested** — held-out R² **−19.00** on `fg3a`
+>   and **−1.393** on `blk`, against 0.520/0.638. Linear-in-raw-rate inside `exp()` is not
+>   merely misspecified, it is unusable.
+> - **`fta` now joins `ftm|fta` below its floor** (best fitted 0.8649 against 0.8673), so the
+>   whole free-throw family fails. Unlike `ftm|fta` there is no "pure player skill" argument
+>   for trips to the line, so this deserves a second look rather than acceptance.
+>
+> **✅ The 3PA/2PA reparameterization is settled, and it wins decisively.** `fga` as a count ×
+> `fg3a | fga` as a binomial share beats two independent count heads by **−0.771 nats on
+> validation and −0.793 on test**, per player-season, on the joint density of `(fg2a, fg3a)`
+> (10.797 → 10.026; 10.784 → 9.991), replicating on both splits. The comparison is legitimate
+> because `(fg2a, fg3a) ↔ (fga, fg3a)` is a **bijection with unit Jacobian on the integers**,
+> so the two joint log-densities are directly comparable. The recommendation below is now a
+> measurement.
+>
 > Every head is quoted against `carry_forward`, and every variant is selected on a
 > validation split with the test column reported for confirmation only.
 
@@ -507,7 +689,8 @@ data. Correlation for the simulator comes from (1) a shared `min` draw, then (2)
 copula if needed — measured off-diagonals average **+0.013**, max 0.157. Go joint only for a
 correlated multivariate player effect, and only after measuring it is worth it (the player random
 effect on rates was largely in-sample leakage). Reparameterize the 3PA/2PA substitution as
-`fga` count × `fg3a | fga` share rather than coupling two Poissons.
+`fga` count × `fg3a | fga` share rather than coupling two Poissons — ✅ **measured 2026-07-30
+and worth −0.79 nats per player-season**, see the built-block above.
 
 ## New model surface area
 
@@ -595,7 +778,7 @@ before shipping; given this repo's record on ceilings, a settled null is the lik
 - ADP sourcing is unresolved (above).
 - ~~A hierarchical Stan/PyMC fit at this scale may carry real compute/engineering cost — worth a
   small-scale timing check~~ — ✅ **answered by building it.** Season-collapsed, the whole
-  surface is cheap: the availability head is 219 s and the eight count heads are ~1–3 min each
+  surface is cheap: the availability head is 254 s and the eight count heads are ~1–3 min each
   on 4 chains. The cost wall is **not** the hierarchy, it is abandoning the collapse — see the
   per-game minutes subsection, where the same head goes from 9,048 rows to 731,863.
 - **Whether minutes should be fitted per-game at all is open and deliberately deferred**
