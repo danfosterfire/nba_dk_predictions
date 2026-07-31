@@ -13,6 +13,15 @@ it feeds the prediction layer or stays downstream in the strategy layer.
 Every number below was measured during planning on 2026-07-28. Where a measurement came from a
 scratch script rather than a `make` target, that is stated; Stage A turns them into targets.
 
+> **Two populations, both correct — do not reconcile them.** "What I measured before planning"
+> and "The short version" quote the scratch run on the **218** pairs a looser join produced;
+> "[What implementing it changed](#what-implementing-it-changed--measured-not-planned)" quotes
+> `outputs/eda/adp_profile.csv` on the **226** pairs the guarded cascade recovers. Only the
+> second set is reproducible, and `make docs-audit` audits only that set — the planning figures
+> are registered as `historical`, so they are checked for *deletion* rather than for agreement.
+> Correcting them to the artifact would erase the record of what implementing the plan changed,
+> which is the point of keeping both.
+
 ---
 
 ## The short version
@@ -91,8 +100,8 @@ data/raw/dk_draft_rankings/DkPreDraftRankings_July28_2026.csv   # 2026-27 board
 Columns are `ID, Name, Position, ADP, Team` plus a stray blank column and an `Instructions`
 column. The July file is unambiguously a **2026-27** board: the 2026 draft class carries ADP
 (AJ Dybantsa 41.8, Cameron Boozer 47.2, Darryn Peterson 53.2) and **178 of 667 returning players
-changed teams** (Giannis → MIA, LeBron → PHI, Harden → CLE). The 31st team code needs
-investigating before the panel is built — most likely an `FA` pseudo-team.
+changed teams** (Giannis → MIA, LeBron → PHI, Harden → CLE). The 31st team code is **`NO`**, a stray variant of `NOP` rather than the `FA` pseudo-team the
+plan guessed; stage A's alias map collapses it, so `adp_draftkings.parquet` carries 30.
 
 Facts that shape everything else:
 
@@ -516,8 +525,8 @@ read as model edge when it is a scoring-system artifact.
 
 ### The exception: ADP as a prior where the model is provably blind
 
-The prediction-time constraint says **15.9% of roster minutes have no usable prior-season row** —
-9.4% true rookies, 5.4% sub-threshold, 1.1% returnees. For those players the model is imputing
+The prediction-time constraint says **14.7% of roster minutes have no usable prior-season row** —
+8.7% true rookies, 5.1% sub-threshold, 0.9% returnees. For those players the model is imputing
 from `bio_draft_number`, while the market has seen summer league, training camp and coach
 quotes. That is a real information advantage, and it is the one place ADP is not redundant.
 
@@ -548,13 +557,13 @@ lines, plain-`assert` tests with synthetic builders.
 | **A0** | — (manual) | — | ✅ **Standing routine, owned by the user**: pull the DK pre-draft rankings CSV from the lobby through the 2026-27 preseason. Drop files in `data/raw/dk_draft_rankings/` as `DkPreDraftRankings_<Mon><D>_<YYYY>.csv`. Two boards captured so far. |
 | **A** | `src/data/adp_draftkings.py` | `adp-draftkings` | ✅ **done** — ingest, team aliases, censoring flag, `id_stability` check, and the one-time DK `ID` → `player_id` map (**0 unmatched of 811 matchable**). |
 | **A** | `src/data/adp_fantasypros.py` | `adp-fantasypros` | ✅ **done** — Wayback backfill + live capture + offline `--reparse`, gzip sniffing, per-snapshot source detection, the freeze rule, and `--status`. |
-| **B** | `src/features/adp.py` | `adp-panel` | ✅ **done** — `adp_panel.parquet`, the match cascade (**0.45% unmatched**), `attach_dating` / `training_rows` / `assert_point_in_time`. |
+| **B** | `src/features/adp.py` | `adp-panel` | ✅ **done** — `adp_panel.parquet`, the match cascade (**0.50% unmatched**), `attach_dating` / `training_rows` / `assert_point_in_time`. |
 | **C** | `src/eda/adp_profile.py` | `adp-profile` | ✅ **done** — `adp_transfer.parquet` + `outputs/eda/adp_profile.csv`, carrying `n_anchors` and a loud warning while it is 1. |
 | **D** | — | — | Wire the recalibrated ADP into the draft simulator's opponent model (`docs/simulations-plan.md`). Blocked on the simulator, not on data. |
 | **E** | — | — | The thin-data ADP-prior ablation (above). Blocked on the Bayesian rate head. |
 
 `make adp` runs A→C in order; `make adp-status` reports coverage for both sources without
-making a request. 27 tests in `tests/test_adp.py`; 361 pass overall.
+making a request. 40 tests in `tests/test_adp.py`.
 
 > ⏳ **The Wayback backfill has not been run yet, and that is the one outstanding task.**
 > 23 snapshots are archived (8 seasons) against the 259 the CDX index lists. Live capture
@@ -584,7 +593,7 @@ running the code against the real archive:
   `player_id` because they have never played an NBA game — the entire 2026 draft class among
   them. Reported as `no_nba_history`, not `unmatched`, for the same reason
   `report_calibration.py` keeps `absent` apart from `unmatched`. The residual genuine
-  unmatched is **0.45%**: four players (Wang Zhelin, Rade Zagorac, Marcus Zegarowski,
+  unmatched is **0.50%**: four players (Wang Zhelin, Rade Zagorac, Marcus Zegarowski,
   Patric Young) who appear on fantasy boards and never played in the NBA.
 - **The injury-status token is an open vocabulary and cannot be enumerated.** The observed
   set across 12 years is `DTD`, `OUT`, `FA`, `O`, `G-League`, `NWT`, `RET`, `TWO-WAY`,

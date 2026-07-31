@@ -693,6 +693,28 @@ pipeline, mid-season churn is explicitly out of scope, and the per-column reliab
 `persistence.csv` already supersede the global one. They are listed so the count is a number
 rather than an impression, and so a future sweep starts from a list instead of a re-read.
 
+### Eight more, found by extending `make docs-audit` to the other three docs (2026-07-31)
+
+Registering a claim per quoted figure across `docs/predictions-plan.md`, `docs/adp-plan.md` and
+`CLAUDE.md` forces the question "which artifact is this from?" on every number, and eight came
+back with no answer. Same character as the six above — none is load-bearing, and every one is
+either a costing estimate or an alternative construction quoted beside a shipped one.
+
+| figure | where it is asserted | why it has no target |
+|---|---|---|
+| The three unshipped opponent-cancellation ratios — **2.01×** raw per-season sd, **2.11×** pooled, **1.84×** ridge on the prior profile | `CLAUDE.md`, cross-component cancellation | `opponent.py` emits only the shipped `_corrected` construction (1.98×). The other three were measured once to show the ratio is robust to the choice. |
+| The **1.665×** AR(1)-implied block inflation, and the **46% / 51% / 30%** shares derived from it | `docs/predictions-plan.md`, "Why not just an explicit lagged term?" | A comparator computed from `serial_correlation.csv`'s `lag1`, not stored. Cheap to promote if the residual serial process is built. |
+| Per-game minutes costing — **731,863** rows, **81×** the season head, **6–16 h**, **~500,000** latent variables | `docs/predictions-plan.md`, the deferred per-game question | Estimates, not measurements. |
+| Composition costing — **71,092** team-game rows, **35,546** games, **~10.3** players each | `docs/predictions-plan.md`, the composition alternative | Superseded in substance by `stan_composition_metrics.csv`, which reports the realized 52,957 / 4,920 held-out split. |
+| The DK carry-forward ladder — **30.29** raw / **26.71** isotonic CV MAE, ρ **0.743**, on 175 players | `docs/adp-plan.md`, "What the second DK board does and does not buy" | `adp_profile.csv`'s ladder predicts DK from *consensus*; the carry-forward arm predicts DK from *prior-year DK* and is a separate fit. Worth promoting — it is the measurement that justifies the FantasyPros pipeline's existence. |
+| The freeze-rule identical-`AVG` shares — **33.8% / 100.0% / 0.9%**, and the flip thresholds **0.0055–0.0871** against **0.0667–0.2273** | `docs/adp-plan.md`, the freeze rule | The rule is implemented in `adp_fantasypros.py`; the shares that established it are not written out. |
+| Load management — heavy-minute players lost **−0.101** of games-played share against **−0.037** for fringe, MPG given role flat | `docs/availability-plan.md`, "Load management" | Explicitly labelled a *first look*. `season_effects_summary.csv` carries the `gp_share` role buckets, so this is a small extension rather than a new module. |
+| The sequence-feature ablation — **0.7599** aggregates / **0.7657** plus order features / **0.7584** shuffled | `CLAUDE.md`, the LSTM/Transformer decision | Measured once. It is the evidence for a *settled* decision not to build the sequence trunk, so re-deriving it has low value — but it is the one prose-only figure a decision actually rests on. |
+
+The first two are the ones to promote if any are: the opponent ratios because `CLAUDE.md`
+quotes four numbers where the artifact holds one, and the DK carry-forward ladder because it is
+the load-bearing argument for a whole data pipeline.
+
 `make dashboard-audit` does not exist yet (it is stage 1 of `docs/dashboard-plan.md`), so the
 "zero provenance-marked typed constants" completion criterion cannot be evaluated from this side
 — but there is now an artifact behind every figure the three gated tabs need.

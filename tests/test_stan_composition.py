@@ -346,7 +346,13 @@ def test_a_single_rho_bin_reproduces_the_shared_rho_simulation_exactly():
     """n_rho = 1 must be the shared-rho model exactly, not approximately — that is
     what makes the graded arm a strict generalization and lets one code path serve
     both. Checked on the simulator, where a silent divergence would surface only as
-    a slightly wrong spread."""
+    a slightly wrong spread.
+
+    The frame carries a MULTI-valued `rho_bin`, because in the sweep it does: every
+    variant gets bins assigned and only the model's `n_rho` says whether they are
+    used. A shared-rho model handed that frame must ignore the column rather than
+    index past its length-1 rho, which is a live bug this pins.
+    """
     from src.models.stan_composition import simulate_minutes
 
     frame = _sequenced([_team_rows([40, 38, 36, 34, 30, 25, 20, 17], game_id=g)
@@ -355,7 +361,7 @@ def test_a_single_rho_bin_reproduces_the_shared_rho_simulation_exactly():
 
     no_bins = simulate_minutes(frame, eta, np.full((30, 1), 0.08), seed=3)
     binned = frame.copy()
-    binned["rho_bin"] = 1
+    binned["rho_bin"] = 1 + (binned["position"] % 4)
     one_bin = simulate_minutes(binned, eta, np.full((30, 1), 0.08), seed=3)
     assert np.array_equal(no_bins, one_bin)
 

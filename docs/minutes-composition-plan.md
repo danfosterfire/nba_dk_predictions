@@ -286,40 +286,79 @@ val 52,295 / 4,920 (2022-23 + 2023-24), test 52,957 / 4,920 (2024-25 + 2025-26).
 |---|---|---|---|---|---|
 | `carry_forward` (floor) | 4.6331 | 4.8194 | 0.3679 | 0.0178 | |
 | `binomial` | 4.9345 | 4.9429 | 0.4307 | **0.1942** | fails the floor |
-| `betabinom` | 4.5107 | 4.5360 | 0.4306 | 0.0201 | |
-| **`betabinom_ot`** | **4.5101** | **4.5322** | 0.4310 | 0.0199 | **✓** |
+| `betabinom` | 4.5109 | 4.5361 | 0.4307 | 0.0205 | |
+| `betabinom_ot` | 4.5099 | 4.5353 | 0.4306 | 0.0202 | |
+| **`betabinom_ot_graded`** | **4.4561** | **4.5078** | 0.4295 | 0.0221 | **✓** |
 | `independent_comparator` | 4.7842 | 4.9140 | 0.3301 | 0.0769 | (incumbent) |
 
-- **Gate A** — probe fit of 26,039 rows in 141 s → sweep extrapolated to **1.8** h;
-  the actual sampler total came in at **116.0** min over 9 fits.
-- **Gate B** — max R̂ **1.0093** (a comparator spline fit; every composition fit is at
-  or below 1.0053), **0** divergences anywhere, 0 treedepth-saturated draws on the
-  composition fits.
-- **Gate C** — the selected variant beats the floor by **−0.287** minutes of test CRPS
-  (−6.0%), replicating validation (−0.123). And the `binomial` arm is **worse than the
+- **Gate A** — probe fit of 26,039 rows in 155 s → sweep extrapolated to **2.576** h;
+  the actual sampler total came in at **171.6** min over 11 fits.
+- **Gate B** — max R̂ **1.0093** (a comparator spline fit), **0** divergences anywhere,
+  0 treedepth-saturated draws on the composition fits.
+- **Gate C** — the selected variant beats the floor by **−0.312** minutes of test CRPS
+  (−6.5%), replicating validation (−0.177). And the `binomial` arm is **worse than the
   floor** (4.9429 against 4.8194) with PIT KS 0.1942 against the floor's 0.0178: the
   pure stick-breaking decomposition is far too tight, exactly as ρ_game = 4.65×
   binomial predicted. The dispersion is not an optional refinement — it is the
   difference between a model and a failure, the NB-vs-Poisson lesson again.
-- **Gate D** — **−0.382** minutes of test CRPS against the incumbent (4.5322 vs
-  4.9140, −7.8%) — not the expected wash, an outright win on the incumbent's own
+- **Gate D** — **−0.406** minutes of test CRPS against the incumbent (4.5078 vs
+  4.9140, −8.3%) — not the expected wash, an outright win on the incumbent's own
   marginal metric — plus the capability gap: the comparator's mean absolute team-sum
   error is **36.87** minutes per team-game against the composition's exact **0** on
   every draw of every game.
-- The OT interaction is real but tiny: `betabinom_ot` won validation by 0.0006 CRPS.
+- The OT interaction is real but tiny: `betabinom_ot` won validation by 0.001 CRPS.
   Treat it as a refinement, not a driver.
+
+### The graded dispersion — added 2026-07-31, and it replicates
+
+`betabinom_ot_graded` differs from `betabinom_ot` in the **dispersion alone**: one ρ
+per quartile of prior minutes share (edges from train quantiles only) instead of one
+shared. Same features, same mean function, so the contrast is clean. It is now the
+selected variant.
+
+**Fitted ρ is monotone in role and spans 2.41×**: **0.1480** (fringe) / 0.1125 /
+0.0874 / **0.0613** (star), against a single shared **0.0970**. A 34-mpg starter's
+allocation step really is steadier than a reserve's, by more than a factor of two —
+the mechanism the pilot's tier ratios implied, now a fitted parameter.
+
+Worth **−0.054** minutes of validation CRPS and **−0.028** of test CRPS against its
+shared-ρ twin. Small, and it moves the same way on both splits, which is the bar this
+repo sets after the nonlinearity false positive.
+
+**The calibration fix is the real result.** Realized-over-simulated variance ratio by
+prior-share tier, both arms on the same rows:
+
+| tier | shared ρ | graded ρ |
+|---|---|---|
+| q1 fringe | **1.5900** | **1.2093** |
+| q2 | 0.9656 | 0.8405 |
+| q3 | 0.8961 | 0.9587 |
+| q4 star | **0.7000** | **0.9880** |
+| mean \|ratio − 1\| | **0.2571** | **0.1055** |
+
+Mean absolute miscalibration falls by **59%**, and the star tier goes from 30% too
+wide to essentially exact (0.988).
+
+- ⚠️ **q2 gets *worse* — 0.966 to 0.841 — and that is structural, not noise.** The
+  fitted ρ is the dispersion of a **sequential step**; the variance ratio is measured
+  on a player's **marginal** minutes, and those are not the same quantity. Because the
+  order is prior-share *descending*, a low-share player breaks his stick last and his
+  marginal spread inherits the accumulated variation in the remainder from everyone
+  ahead of him. So grading the step dispersion does not map one-to-one onto marginal
+  variance by tier, and a tier can be pushed off a mark it happened to hit. Fixing q2
+  specifically would mean grading against marginal variance, which is not what the
+  likelihood parameterizes.
+- Two small costs, both quoted so the win is not oversold: PIT KS is marginally worse
+  (0.0221 against 0.0202) and test R² marginally lower (0.4295 against 0.4306). CRPS
+  is the selection metric and a proper scoring rule; these are inside noise.
 
 **Posterior predictive checks** (test split, selected variant):
 
 - **Starter share in OT** — observed: top-5 ordered players take **0.5882** of team
   minutes in regulation and **0.6314** in OT (+4.3 pp). The composition simulates
-  **0.6001** → **0.6411** — it reproduces the shift (+4.1 pp) with a +1.2 pp level
+  **0.6034** → **0.6446** — it reproduces the shift (+4.1 pp) with a +1.5 pp level
   overshoot; the independent comparator compresses the shift (0.5973 → 0.6346).
-- **Dispersion by prior-share tier** — realized-over-simulated variance ratio runs
-  **1.59** (q1 fringe) / 0.96 / 0.89 / **0.70** (q4 stars): one shared ρ is too tight
-  for fringe players and too wide for stars, precisely the limitation named before
-  the run. A share-graded ρ is the first candidate improvement.
-- **Joint per-team-game NLL** (plug-in, non-bijection caveat) — composition **33.64**
+- **Joint per-team-game NLL** (plug-in, non-bijection caveat) — composition **33.51**
   against independent **38.83** on test. Contrast, not a headline.
 
 **OT tail** — fit on 30,626 regular-season training games: p_any = **0.0608**,
@@ -329,9 +368,20 @@ two-parameter form holds but overpredicts OT by ~16% on recent seasons, a mild e
 decline in OT rate. Fine for a game-length draw; one more entry for the season-effects
 ledger in `docs/predictions-plan.md`.
 
-**Gate E (full window) is open but not taken.** Measured cost is 5.41 ms/row at
-select iters, which extrapolates the 736k-row full-window sweep to ~8–10 h — inside
-the 6–16 h envelope `docs/predictions-plan.md` costed. Recommended order: the
-share-graded ρ variant first (it addresses the one measured miscalibration), Gate E
-second, then wiring `sample_game_length` + the composition simulator into the season
-simulator when that exists.
+**Gate E (full window) is open but not taken.** Measured cost is 5.96 ms/row at
+select iters, which extrapolates the 736k-row full-window sweep to ~10–12 h — inside
+the 6–16 h envelope `docs/predictions-plan.md` costed. Recommended order now that the
+graded ρ has landed: Gate E next, then wiring `sample_game_length` + the composition
+simulator into the season simulator when that exists.
+
+Still open after the graded arm:
+
+- **q1 fringe remains 1.21 — under-dispersed at the bottom**, and q2 is now 0.84.
+  The step-vs-marginal distinction above says a finer or differently-placed binning
+  will not straightforwardly fix this; the honest next probe is whether the *ordering*
+  should put low-share players first, since sequence position and dispersion are
+  entangled by construction.
+- **One ρ per bin is still constant within a bin.** A smooth function of prior share
+  (or of position in the stick) is the obvious generalization, and cheap — but bins
+  were chosen deliberately because the pilot measured a pattern, not a shape, and
+  4 bins × ~6,450 rows is a lot of data per parameter.

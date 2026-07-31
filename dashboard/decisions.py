@@ -1074,7 +1074,7 @@ REGISTRY: tuple[Decision, ...] = (
         topic="availability",
         claim="Games played is the least persistent quantity in the project — and "
               "there is no durability latent to extract.",
-        because="r = 0.316 season-absorbed and minutes-weighted, against `min` per "
+        because="r = 0.317 season-absorbed and minutes-weighted, against `min` per "
                 "game 0.779 and `dk_pts` per game 0.869. GP is ~20× overdispersed "
                 "against a binomial, so the head must emit a *distribution*. Two "
                 "nulls: a 3-year availability average does not beat 1 year (0.392 vs "
@@ -1594,19 +1594,52 @@ REGISTRY: tuple[Decision, ...] = (
     Decision(
         id="composition-shared-rho-is-role-graded",
         topic="minutes",
-        claim="One shared ρ across the roster is measurably wrong at both ends — too "
-              "tight for fringe players, too wide for stars.",
-        because="Realized-over-simulated variance ratio by prior-share quartile runs "
-                "**1.59** (fringe) / 0.96 / 0.89 / **0.70** (stars) on the held-out "
-                "split. The direction was predicted before the run — a 34-mpg starter's "
-                "allocation step is steadier than a fringe player's — and it is the "
-                "first candidate improvement, ahead of the full-window fit.",
-        status="open",
+        claim="The allocation dispersion is **role-graded**: ρ per prior-share quartile "
+              "runs 0.1480 fringe to 0.0613 star, a 2.41× spread that one shared ρ of "
+              "0.0970 was splitting the difference on.",
+        because="A 34-mpg starter's allocation step is genuinely steadier than a "
+                "reserve's, and the direction was predicted from the shared-ρ arm's "
+                "variance ratios (1.59 fringe to 0.70 star) before it was fitted. "
+                "`betabinom_ot_graded` differs from its twin in the **dispersion "
+                "alone** — same features, same mean function — so the contrast is "
+                "clean. Worth −0.054 validation and −0.028 test CRPS, moving the same "
+                "way on both splits. **The calibration fix is the point**: mean "
+                "|variance ratio − 1| falls **0.2571 → 0.1055** and the star tier "
+                "lands at 0.9880. `n_rho = 1` is the shared model exactly, so the "
+                "graded arm strictly generalizes it; bin edges come from **train** "
+                "quantiles only, since leakage in ρ never touches the mean and would "
+                "be invisible.",
+        status="built",
+        reproduce="make stan-composition → "
+                  "outputs/predictions/stan_composition_dispersion.csv, "
+                  "outputs/predictions/stan_composition_ppc.csv",
+        source="docs/minutes-composition-plan.md",
+        reviewed="2026-07-31",
+        date="2026-07-31",
+        tags=("specification",),
+    ),
+    Decision(
+        id="step-dispersion-is-not-marginal-variance",
+        topic="minutes",
+        claim="Grading a **step** dispersion does not map one-to-one onto **marginal** "
+              "variance by tier — q2's calibration got *worse* while the two extremes "
+              "got much better.",
+        because="Realized/simulated variance ratio by tier went 1.5900 / 0.9656 / "
+                "0.8961 / 0.7000 shared to 1.2093 / **0.8405** / 0.9587 / 0.9880 "
+                "graded: the star tier is essentially fixed, the fringe tier much "
+                "improved, and q2 pushed off a mark it happened to hit. The fitted ρ "
+                "is the dispersion of a sequential step, while the ratio is measured "
+                "on a player's marginal minutes — and because the order is prior-share "
+                "*descending*, a low-share player breaks his stick last and inherits "
+                "the accumulated remainder variation from everyone ahead of him. So a "
+                "finer binning will not straightforwardly fix the fringe tier; the "
+                "entanglement is between sequence position and dispersion.",
+        status="measured",
         reproduce="make stan-composition → outputs/predictions/stan_composition_ppc.csv",
         source="docs/minutes-composition-plan.md",
         reviewed="2026-07-31",
         date="2026-07-31",
-        tags=("next", "defect"),
+        tags=("next", "methodology"),
     ),
     Decision(
         id="composition-joint-nll-is-not-a-bijection",
@@ -1691,6 +1724,39 @@ REGISTRY: tuple[Decision, ...] = (
         reviewed="2026-07-30",
         date="2026-07-29",
         tags=("performance",),
+    ),
+    Decision(
+        id="no-head-carries-a-season-term",
+        topic="components",
+        claim="No head carries a season term, and the league moves — the two usable "
+              "forms are a year-on-year **trend** and a year-level **random effect**, "
+              "and they are complementary rather than alternatives.",
+        because="A season *fixed* effect does not exist at prediction time. "
+                "Subtracting a linear trend shifts the **mean** of the year-over-year "
+                "changes and leaves their **variance** exactly unchanged, since "
+                "`diff(a + b·x)` is the constant `b` — so a trend fixes bias and only a "
+                "year effect addresses spread. `fg3a` is the only quantity worth "
+                "extrapolating a trend for (R² 0.93 at +4.07%/season); everything else "
+                "is shock, `stl` most starkly at trend R² 0.03. `fta` is the sharpest "
+                "case and it is refereeing — a 1.21× band, 4.4% yoy sd, past ±5% in 9 "
+                "of 29 transitions. The cost is measured on the no-fit floor, which "
+                "lags any league move by exactly one season: `fta` −7.0% across the "
+                "held-out seasons (−10.7% in 2025-26) and `blk` +6.2% in both. This "
+                "outranks the shared-β correlation the Stan work was built for, "
+                "because a league shift is perfectly correlated across every player "
+                "and so does not diversify — against +0.2% for shared-β on a 15-man "
+                "roster. **The measurement is done and the decision is not**: the "
+                "scoped ablation in `docs/predictions-plan.md` — a trend variant and a "
+                "year-random-effect variant per head, selected on a validation split "
+                "and judged on calibration rather than point accuracy — has not run.",
+        status="measured",
+        reproduce="make season-effects → outputs/eda/season_effects_summary.csv, "
+                  "outputs/eda/season_effects_league_rates.csv, "
+                  "outputs/eda/season_effects_carry_forward_bias.csv",
+        source="docs/predictions-plan.md",
+        reviewed="2026-07-31",
+        date="2026-07-30",
+        tags=("method", "era"),
     ),
     Decision(
         id="no-shooting-hot-hand",
@@ -2185,16 +2251,20 @@ REGISTRY: tuple[Decision, ...] = (
         claim="Recalibrating FantasyPros consensus onto the DK board is worth a large "
               "share of the raw gap — but it rests on **one** anchor.",
         because="Raw 24.38 → monotone 17.32 picks of mean absolute error, with the "
-                "position offset adding only −0.3 on top. Centers sit at +13.88 and the "
+                "position offset adding a further −2.0. Centers sit at +13.88 and the "
                 "rounds-9+ tier gap at 32.31, which is where 9 of 16 picks are made. "
                 "`n_anchors = 1` is the caveat that has to be rendered loudly: a single "
                 "timing-matched board pair is one observation of the mapping, not a "
-                "fitted transfer function.",
+                "fitted transfer function. The offset figure read −0.3 until 2026-07-31 "
+                "— the planning-session value on 218 pairs, mixed into an entry whose "
+                "other numbers came from the 226-pair artifact. It weakens 'one anchor "
+                "identifies a shape' without overturning it: the offset is 11.6% of the "
+                "recalibrated error against the monotone step's own −7.1 picks.",
         status="measured",
         reproduce="make adp-profile → outputs/eda/adp_profile.csv, "
                   "data/features/adp_transfer.parquet",
         source="docs/adp-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-07-31",
         date="2026-07-28",
         tags=("market",),
     ),

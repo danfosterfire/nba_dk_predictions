@@ -79,7 +79,7 @@ a different reason, and the two should be satisfied by one mechanism.
 
 - dk_pts decomposed into shot classes and counting components (`CLAUDE.md`, `make target-profile`).
 - Availability is a beta-binomial GLM head; it beats ridge/GBM/league-age baseline on CRPS and
-  is worth ~205 dk_pts of season-total MAE (`src/models/availability.py`, `docs/availability-plan.md`).
+  is worth **211.1** dk_pts of season-total MAE (`src/models/availability.py`, `docs/availability-plan.md`).
 - `season_total = gp × rate` composition (`src/models/season_total.py`).
 - **The LSTM/Transformer trunk is deprioritized — decision, not just a finding.** See
   `CLAUDE.md`: prior-game-order features add ~+0.6pp R² over four season aggregates, which the
@@ -221,30 +221,38 @@ as binomial on those attempts. Fit collapsed, simulate expanded.
 
 | component | lag-1 ρ | shuffled null | excess | 10-game block variance inflation |
 |---|---|---|---|---|
-| **`min`** | 0.279 | −0.017 | **+0.297** | **2.43×** |
-| `fg3a` | 0.061 | −0.016 | +0.077 | 1.46× |
-| `fg2a` | 0.058 | −0.016 | +0.074 | 1.45× |
-| `ast` | 0.023 | −0.017 | +0.040 | 1.22× |
-| `fta` | 0.013 | −0.017 | +0.029 | 1.18× |
-| `reb` | 0.012 | −0.017 | +0.028 | 1.16× |
-| `blk` | 0.007 | −0.017 | +0.024 | 1.13× |
-| `stl` | −0.003 | −0.017 | +0.014 | 1.08× |
-| `tov` | −0.007 | −0.016 | +0.009 | 1.07× |
-| **`ftm\|fta`** | −0.008 | −0.023 | +0.015 | 1.11× |
-| **`fg2m\|fg2a`** | −0.016 | −0.017 | **+0.001** | **1.03×** |
-| **`fg3m\|fg3a`** | −0.019 | −0.019 | **−0.001** | **1.01×** |
+| **`min`** | 0.278 | −0.016 | **+0.294** | **2.43×** |
+| `fg3a` | 0.065 | −0.015 | +0.080 | 1.48× |
+| `fg2a` | 0.062 | −0.015 | +0.077 | 1.46× |
+| `ast` | 0.024 | −0.016 | +0.039 | 1.22× |
+| `fta` | 0.015 | −0.016 | +0.031 | 1.18× |
+| `reb` | 0.014 | −0.015 | +0.030 | 1.17× |
+| `blk` | 0.007 | −0.016 | +0.023 | 1.13× |
+| `stl` | −0.003 | −0.016 | +0.013 | 1.08× |
+| `tov` | −0.006 | −0.014 | +0.008 | 1.07× |
+| **`ftm\|fta`** | −0.014 | −0.026 | +0.012 | 1.10× |
+| **`fg2m\|fg2a`** | −0.015 | −0.018 | **+0.002** | **1.03×** |
+| **`fg3m\|fg3a`** | −0.019 | −0.017 | **−0.002** | **1.01×** |
+
+> ⚠️ **The whole table was refreshed 2026-07-31 against `serial_correlation.csv`, having
+> been partially stale.** It previously read `min` excess **+0.297** against a null of
+> **−0.017**, `fg3a` **0.061 / +0.077 / 1.46×** and `ftm|fta` **−0.008 / −0.023 / +0.015 /
+> 1.11×**. `CLAUDE.md`'s copy of the same table had already been refreshed and this one had
+> not, which is the exact failure mode `make docs-audit` exists to catch — and it caught it.
+> Every cell moved by ≤ 0.006 and no sign, ordering or conclusion changes. The z column moved
+> more, because it is a ratio of two small numbers.
 
 **There is no shooting hot hand, and the answer splits exactly along the attempts/conversion
 line the season-level persistence work already found.** Conversion percentages are serially
-independent — `fg3m|fg3a` excess is −0.001 (z = −0.5) and `fg2m|fg2a` is +0.001 (z = 0.8), both
-dead nulls on ~600k pairs. So **the specific thing worried about — the successes/trials heads —
-is the one place collapsing costs nothing**, because constant-`θ`-within-season is what the data
-actually looks like.
+independent — `fg3m|fg3a` excess is −0.002 (z = −1.3) and `fg2m|fg2a` is +0.002 (z = 1.9),
+both dead nulls on ~600k pairs. So **the specific thing worried about — the successes/trials
+heads — is the one place collapsing costs nothing**, because constant-`θ`-within-season is
+what the data actually looks like.
 
 What *is* autocorrelated is the **exposure** side: minutes at 2.43× block-variance inflation,
-and shot volume at ~1.45× *on top of* minutes (the count residuals already condition on actual
+and shot volume at ~1.46× *on top of* minutes (the count residuals already condition on actual
 minutes, so this is volume persistence beyond playing time). Decay is slower than AR(1) —
-minutes reads 0.279 / 0.212 / 0.170 / 0.113 at lags 1/2/3/5, where AR(1) would give 0.279 /
+minutes reads 0.278 / 0.212 / 0.170 / 0.113 at lags 1/2/3/5, where AR(1) would give 0.278 /
 0.078 / 0.022. Removing a within-season linear trend drops lag-1 to 0.196 and speeds the decay,
 so roughly **a third of it is slow role drift and two-thirds a shock with a 3–5 game
 e-folding** — rotation changes, injury ramps, blowout clusters. This is role dynamics, not
@@ -340,7 +348,7 @@ explicit lagged-observation term, **not** a free latent per game.
 > binomial trials** with the per-player cap carried in the **trials** (`m_k = min(U, R_k)`,
 > the remaining capacity) rather than as a truncation. That gets **both** constraints:
 > the individual cap by construction, the team total by the deterministic last step.
-> Held out on 2024-25/2025-26, the selected variant scores **4.5322** minutes of CRPS
+> Held out on 2024-25/2025-26, the selected variant scores **4.5078** minutes of CRPS
 > against the no-fit floor's 4.8194 and the independent per-player draw's **4.9140** —
 > so it beats the incumbent on the incumbent's own marginal metric, which this plan
 > expected to be a wash, *and* the independent draw's mean team-sum error is **36.87**
@@ -353,8 +361,13 @@ explicit lagged-observation term, **not** a free latent per game.
 > and `β` fits deviations from it — which makes "who absorbs the minutes when a starter
 > sits" a fitted quantity, the thing the redistribution section below wants.
 >
-> Still open: one shared ρ is too tight for fringe players (variance ratio 1.59) and too
-> wide for stars (0.70), and the full-window fit (~8–10 h) has not been run. This is
+> The dispersion is now **graded by prior-share quartile** (fitted 0.1480 fringe to
+> 0.0613 star, a 2.41× spread against one shared 0.0970), which cuts mean |variance
+> ratio − 1| by 59% and lands the star tier at 0.99. Still open: the fringe tier
+> remains **1.21** and q2 is now 0.84 — grading a *step* dispersion does not map
+> one-to-one onto *marginal* variance, because a low-share player breaks his stick
+> last and inherits the remainder variation ahead of him. The full-window fit
+> (~10–12 h) has not been run. This is
 > **iid across games** and therefore does *not* address the 2.43× block inflation — the
 > residual serial process below is unaffected by it.
 
@@ -494,15 +507,15 @@ Neither substitutes for the other. Pinned by
 
 | quantity | max/min | trend %/season | trend R² | yoy sd % | verdict |
 |---|---|---|---|---|---|
-| **`fg3a`** | **2.97×** | **+4.07** | **0.93** | 6.96 | **trend + year effect** |
-| `fta` | 1.21× | −0.55 | 0.63 | 4.34 | year effect only |
-| `blk` | 1.14× | −0.14 | 0.12 | 3.69 | year effect only |
-| `ast` | 1.30× | +0.73 | 0.64 | 3.05 | year effect only |
+| **`fg3a`** | **2.97×** | **+4.07** | **0.93** | 6.53 | **trend + year effect** |
+| `fta` | 1.21× | −0.55 | 0.63 | 4.36 | year effect only |
+| `blk` | 1.14× | −0.14 | 0.12 | 3.70 | year effect only |
+| `ast` | 1.30× | +0.73 | 0.64 | 3.08 | year effect only |
 | `stl` | 1.18× | −0.08 | **0.03** | 3.03 | year effect only |
 | `tov` | 1.16× | −0.33 | 0.59 | 2.89 | year effect only |
 | `fg2a` | 1.32× | −0.87 | 0.86 | 2.42 | year effect only |
-| `fg3m_pct` | 1.08× | +0.11 | 0.27 | 2.06 | year effect only |
-| `reb` | 1.10× | +0.25 | 0.59 | 1.48 | year effect only |
+| `fg3m_pct` | 1.08× | +0.10 | 0.27 | 2.06 | year effect only |
+| `reb` | 1.11× | +0.25 | 0.59 | 1.48 | year effect only |
 | `fg2m_pct` | 1.20× | +0.61 | 0.84 | 1.46 | year effect only |
 | `ftm_pct` | 1.08× | +0.19 | 0.77 | 1.06 | year effect only |
 | **`minutes_share`** | 1.09× | −0.25 | 0.81 | **0.92** | year effect only |
@@ -519,7 +532,7 @@ after three shortened seasons. **Everything else is shock**, `fta` and `stl` mos
 year-to-year noise.
 
 **`fta` is the case that prompted this**, and it behaves exactly as refereeing would
-predict — a 1.21× band with 4.3% yoy sd and swings past ±5% in 9 of 29 transitions:
+predict — a 1.21× band with 4.4% yoy sd and swings past ±5% in 9 of 29 transitions:
 **+7.6% in 2004-05** (hand-checking crackdown), −7.8% 2011-12, −6.0% 2017-18, +7.3%
 2022-23, −7.5% 2023-24, **+8.6% in 2025-26**. There is no trend to extrapolate.
 
@@ -632,8 +645,8 @@ player-seasons, held out on 2024-25/2025-26. Three results bind on everything be
   remaining value is in **availability and the joint structure**, not in richer rate features.
 - **The specification is scale, not curvature**: `log E[rate] = β·log(prior rate)`. Linear-in-
   raw-rate inside `exp()` is misspecified, catastrophically for the zero-heavy heads (`fg3a`
-  0.520, `blk` 0.638 against 0.879 / 0.820 on the log scale). Splines add +0.030 (`fg3a`) and
-  +0.041 (`blk`) and ≤ +0.003 elsewhere; `age × own` and `mpg × own` interactions are a null.
+  0.520, `blk` 0.637 against 0.879 / 0.820 on the log scale). Splines add +0.030 (`fg3a`) and
+  +0.040 (`blk`) and ≤ +0.003 elsewhere; `age × own` and `mpg × own` interactions are a null.
 - **Walk-forward PCA of the 156-column season matrix is a null.** Refitted per target season on
   S-1 and earlier only (a pooled basis leaks the future invisibly), 10 components replacing the
   raw context columns: within ±0.003 of the raw spec on every head. The style and tracking
@@ -715,7 +728,7 @@ when parameter blocks are distinct, so separate fits are not an approximation �
 identical posterior. Full argument in `CLAUDE.md`; the short version is that `megamodel.stan`
 shared no parameter between any two heads, so its joint fit bought nothing and cost 99% of the
 data. Correlation for the simulator comes from (1) a shared `min` draw, then (2) a residual
-copula if needed — measured off-diagonals average **+0.013**, max 0.157. Go joint only for a
+copula if needed — measured off-diagonals average **+0.0121** across the eight counts, max **+0.1422**. Go joint only for a
 correlated multivariate player effect, and only after measuring it is worth it (the player random
 effect on rates was largely in-sample leakage). Reparameterize the 3PA/2PA substitution as
 `fga` count × `fg3a | fga` share rather than coupling two Poissons — ✅ **measured 2026-07-30
@@ -774,8 +787,8 @@ knockout payout the edge *is* model-minus-market, so a model fit on ADP reproduc
 it is meant to be measured against. Coverage seals it: ADP exists for ~250 players over 12
 seasons against the component heads' 10,900 player-seasons over 30.
 
-**The one exception, and it is worth measuring.** 15.9% of roster minutes have no usable
-prior-season row (9.4% true rookies, 5.4% sub-threshold, 1.1% returnees), where the model imputes
+**The one exception, and it is worth measuring.** 14.7% of roster minutes have no usable
+prior-season row (8.7% true rookies, 5.1% sub-threshold, 0.9% returnees), where the model imputes
 from `bio_draft_number` while the market has seen summer league and camp. For those rows only, use
 ADP to set the **prior mean on the rate head**, with prior weight tied to the existing
 `0.924 · m/(m+66)` reliability curve so it decays to zero as prior minutes accumulate. Established
@@ -792,9 +805,19 @@ before shipping; given this repo's record on ceilings, a settled null is the lik
   season — and it **does** carry CBS in several years, contrary to the "Yahoo + ESPN only"
   assumption recorded here previously.
 - The two-option fork above is **resolved, and to neither option**: a one-dimensional monotone
-  recalibration of consensus onto DK's scale is worth **24.0 → 17.0 picks** of cross-validated
-  error, while a position offset — the obvious next term — adds only −0.3. One anchor identifies a
-  shape, not a model.
+  recalibration of consensus onto DK's scale is worth **24.4 → 17.3 picks** of cross-validated
+  error, while a position offset — the obvious next term — adds a further −2.0. One anchor
+  identifies a shape, not a model.
+  - ⚠️ **The offset figure was −0.3 until 2026-07-31, and the correction is not a rounding.**
+    Both numbers are right for their own population: −0.29 is the planning-session measurement
+    on 218 pairs, preserved in `docs/adp-plan.md`, and −2.01 is `adp_profile.csv` on the 226
+    pairs the improved matching cascade recovered. The eight extra pairs are names the surname
+    guards let through, and they land disproportionately in the late rounds where the position
+    effect is largest. **This weakens the "one anchor identifies a shape" argument without
+    overturning it** — the offset is now 11.6% of the recalibrated error rather than 1.7%,
+    against the monotone step's own −7.1 picks, so the ordering of the two terms is unchanged
+    and the decision to keep the offset "for interpretability rather than accuracy" is worth
+    revisiting when the second anchor lands in October 2026.
 
 ## Validation
 
@@ -819,7 +842,7 @@ before shipping; given this repo's record on ceilings, a settled null is the lik
 - ~~**Whether minutes should be fitted per-game at all is open and deliberately deferred**~~
   — **partly answered 2026-07-31.** Of the three options costed under "Fitting strategy",
   the **team-game composition model is built and wins** (`make stan-composition`,
-  `docs/minutes-composition-plan.md`): −0.382 minutes of held-out CRPS against the
+  `docs/minutes-composition-plan.md`): −0.406 minutes of held-out CRPS against the
   independent per-player draw, and both the individual cap and the team total exact by
   construction. It was an afternoon rather than days, because the season collapse was never
   what made it expensive — the numerics were.
@@ -827,7 +850,9 @@ before shipping; given this repo's record on ceilings, a settled null is the lik
     nothing about the 2.43× ten-game block inflation. **The residual serial process remains
     the recommended next move** on that axis, and it now sits *on top of* the composition
     rather than beside a per-player marginal.
-  - Also open: one shared ρ across the roster (measured too tight for fringe players at
-    1.59 and too wide for stars at 0.70), and the full-window fit at ~8–10 h.
+  - ~~Also open: one shared ρ across the roster~~ — **✅ graded 2026-07-31** by
+    prior-share quartile, cutting mean |variance ratio − 1| by 59% and fixing the star
+    tier outright. What remains is the fringe tier at 1.21 and the full-window fit at
+    ~10–12 h.
   - The two retired premises stand: the 48-minute bound is not a reason to go per-game, and
     a single lagged-observation term reproduces only **46%** of the block-variance excess.

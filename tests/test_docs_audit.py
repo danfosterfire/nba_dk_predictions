@@ -18,9 +18,11 @@ ROOT = Path(__file__).resolve().parent.parent
 # ── Synthetic builders ────────────────────────────────────────────────────────
 
 def _claim(quoted: str, value: float, doc: str = "docs/fake.md",
-           artifact: str = "outputs/eda/fake.csv") -> A.Claim:
+           artifact: str = "outputs/eda/fake.csv",
+           historical: bool = False) -> A.Claim:
     return A.Claim(doc=doc, quoted=quoted, artifact=artifact,
-                   actual=lambda: value, label=f"synthetic {quoted}")
+                   actual=lambda: value, label=f"synthetic {quoted}",
+                   historical=historical)
 
 
 def _doc(tmp_path: Path, name: str, text: str) -> Path:
@@ -94,6 +96,45 @@ def test_a_lookup_that_finds_no_row_is_skipped_not_failed(tmp_path):
     bad, skipped = A.check_values((_claim("0.317", float("nan")),), tmp_path)
     assert bad == []
     assert len(skipped) == 1 and skipped[0].check == "no-such-row"
+
+
+# ── Historical claims ─────────────────────────────────────────────────────────
+
+def test_a_superseded_figure_is_not_held_to_the_artifact(tmp_path):
+    """The whole point: a preserved correction MUST disagree and must not fail.
+
+    `docs/adp-plan.md` quotes ρ 0.8704 on 218 pairs beside 0.8675 on 226. Holding the
+    first to the artifact would delete the record of what implementing the plan changed.
+    """
+    _doc(tmp_path, "docs/fake.md", "corrected from 0.664 to 0.711")
+    (tmp_path / "outputs/eda").mkdir(parents=True)
+    (tmp_path / "outputs/eda/fake.csv").write_text("a\n1\n")
+    bad, skipped = A.check_values((_claim("0.664", 0.7109, historical=True),),
+                                  tmp_path)
+    assert bad == []
+    assert len(skipped) == 1 and skipped[0].check == "superseded"
+
+
+def test_a_superseded_figure_is_still_presence_checked(tmp_path):
+    """The failure mode for a historical claim is deletion, not drift — so the one check
+    that still applies is the one that catches somebody tidying the reversal away."""
+    _doc(tmp_path, "docs/fake.md", "the rate is 0.711")
+    stale = A.check_presence((_claim("0.664", 0.7109, historical=True),), tmp_path)
+    assert len(stale) == 1 and stale[0].check == "stale-claim"
+
+
+def test_historical_claims_are_counted_separately_in_coverage():
+    for doc in (A.ADP, A.PRED):
+        cov = A.coverage(doc)
+        assert cov["historical"] > 0, doc
+        assert cov["historical"] < cov["claims"], doc
+
+
+def test_the_adp_plan_registers_both_populations_of_the_same_quantity():
+    """218-pair and 226-pair Spearman are both claimed, one historical and one not."""
+    quoted = {(c.quoted, c.historical) for c in A.CLAIMS if c.doc == A.ADP}
+    assert ("0.8704", True) in quoted        # planning session, 218 pairs
+    assert ("0.8675", False) in quoted       # adp_profile.csv, 226 pairs
 
 
 # ── The presence check ────────────────────────────────────────────────────────
@@ -176,8 +217,35 @@ def test_the_registry_covers_every_head_the_plan_documents():
     artifacts = {c.artifact for c in A.CLAIMS}
     for required in (A.PROFILE, A.METRICS, A.ABLATION, A.MIN_NONLIN,
                      A.STAN_MIN_M, A.STAN_MIN_D, A.STAN_AV_M, A.STAN_AV_D,
-                     A.SEASON_TOTAL, A.REPORT_CAL):
+                     A.SEASON_TOTAL, A.REPORT_CAL, A.SERIAL, A.RESID, A.RATES,
+                     A.STAN_C_M, A.STAN_C_S, A.SEASON_EFF, A.SEASON_BIAS,
+                     A.ROSTER_A, A.VARIANCE, A.PERSIST, A.TARGET, A.AGING,
+                     A.GAME_LEN, A.BONUS, A.ADP_PROFILE, A.ADP_AUDIT):
         assert required in artifacts, required
+
+
+def test_every_audited_doc_has_its_own_builder():
+    """The registry is split per doc so a section's claims stay findable."""
+    for build, doc in [(A._availability, A.AVAIL), (A._composition, A.COMP),
+                       (A._predictions, A.PRED), (A._adp, A.ADP),
+                       (A._claude, A.CLAUDE)]:
+        claims = build()
+        assert claims, doc
+        assert {c.doc for c in claims} == {doc}, doc
+
+
+def test_the_poisson_and_negative_binomial_runs_are_claimed_separately():
+    """`docs/predictions-plan.md` quotes both runs of the same eleven heads and says the
+    NB one overturns the Poisson one, so a claim must never straddle the two artifacts."""
+    by_artifact = {}
+    for c in A.CLAIMS:
+        if c.doc == A.PRED and c.artifact in (A.RATES, A.STAN_C_M):
+            by_artifact.setdefault(c.artifact, set()).add(c.quoted)
+    assert by_artifact[A.RATES] and by_artifact[A.STAN_C_M]
+    # `blk` under log(own) is 0.8204 (Poisson) and 0.6794 (NB) — the headline
+    # contradiction. Both are registered, each against its own run.
+    assert "0.8204" in by_artifact[A.RATES]
+    assert "0.6794" in by_artifact[A.STAN_C_M]
 
 
 def test_no_claim_text_has_drifted_out_of_its_doc():

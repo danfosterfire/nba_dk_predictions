@@ -502,6 +502,11 @@ def simulate_minutes(frame: pd.DataFrame, eta_base: np.ndarray,
             rho = rho.reshape(n_draws, -1)
     bins = (frame["rho_bin"].to_numpy(dtype=int) - 1 if "rho_bin" in frame.columns
             else np.zeros(n_rows, dtype=int))
+    # A shared-rho model is handed the SAME frames as the graded one — every variant
+    # carries `rho_bin` — so the width of `rho`, not the frame, decides whether the
+    # bins are used. Without this the shared arms index past a length-1 rho.
+    if rho is not None and rho.shape[1] == 1:
+        bins = np.zeros(n_rows, dtype=int)
 
     rng = np.random.default_rng(seed)
     out = np.zeros((n_draws, n_rows), dtype=np.int64)

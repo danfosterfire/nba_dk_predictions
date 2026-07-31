@@ -132,6 +132,30 @@ test. Missing artifacts are *skipped*, so a fresh checkout without `make eda` is
 It guards the artifact→prose direction tightly and the prose→artifact direction loosely;
 see the module docstring for exactly what it cannot catch.
 
+**It covers five docs — `availability-plan`, `minutes-composition-plan`, `predictions-plan`,
+`adp-plan` and `CLAUDE.md` — with 1,100 claims and one builder per doc.** Coverage of measured
+figures: 80% (predictions), 62% (adp), 59% (CLAUDE.md), 56% (availability), 36% (composition)
+— `make docs-audit` prints them live, so treat the printout rather than this line as current.
+The uncovered remainder is prose-only figures (`docs/provenance-plan.md` lists all fourteen),
+costing estimates, and counts of things rather than measurements.
+
+**Some quoted figures must NOT agree with the artifact, and `Claim(historical=True)` is how
+they survive.** Two kinds: a superseded value preserved beside its correction ("corrected
+2026-07-30 from 0.664 / 0.838 / 0.922"), and a scratch-session measurement kept beside the
+promoted one — `docs/adp-plan.md` is built on the second, quoting ρ **0.8704** on 218 pairs in
+its planning section and **0.8675** on 226 in its implementation section, *both correct*. A
+historical claim is excluded from the value check and still presence-checked, so the failure
+mode it guards is **deletion**, not drift. There are 56 of them. Without the flag the only
+options are to "correct" a reversal out of existence or to leave it unprotected.
+
+**Extending it to the three new docs found drift in all three**, which is the argument for
+having built it: the serial-correlation table in `predictions-plan.md` (twelve rows, refreshed
+in `CLAUDE.md` and not here), the roster-coverage and residual-correlation figures corrected in
+two other files and missed here, the ADP position offset (−0.3 → **−2.0**, a real change on the
+larger matched set), and — the second occurrence of the exact failure named above — the
+**report-calibration block, stale in `CLAUDE.md` while current in `availability-plan.md`**. It
+is now claimed from both docs against the one artifact so that cannot recur.
+
 **The dashboard reads artifacts and nothing else — that is an invariant, not a
 convention.** It never refits, and there is **no import from `src/`** anywhere in the
 package; a test walks it with `ast` and fails if one appears. The nine tabs follow the
@@ -418,7 +442,7 @@ share of the remaining 42%. The artifact carries `basis` per row so the mix-up i
 - The opponent rows are **in-sample ANOVAs on contemporaneous opponent identity** — ceilings,
   not achievable gains. Both `opponent.variance_ceiling` and
   `feature_diagnostics.cell_importance` are run on identical rows and the gap ships as its own
-  row (0.0050 pp / 0.0020 pp), so the one-off and its generalization cannot drift.
+  row (0.0050 pp / 0.0024 pp), so the one-off and its generalization cannot drift.
 - The main effects are on the full window (254,167); the interaction needs a prior-season
   archetype and is on 198,509, where opponent × season reads 0.793% instead of 0.691%. Both
   frames are emitted, each with its own `n_games`.
@@ -668,7 +692,7 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
   `stl` 0.743 weighted vs 0.401 unweighted, `tov` 0.790/0.456, `blk` 0.902/0.626,
   `plus_minus` 0.477/0.154. Unweighted, the low-count defensive stats look like noise when
   they are among the stickiest things a player has.
-- **Games played is the least persistent quantity in the project — r = 0.316.**
+- **Games played is the least persistent quantity in the project — r = 0.317.**
   Season-absorbed and minutes-weighted over the same 11,272 pairs, against `min` per game
   0.779, `dk_pts` per game 0.869, `min_total` 0.640, `dk_pts_total` 0.760. `min`/`gp` are
   held *out* of `persistence.csv` as volume columns; reproduce with
@@ -866,14 +890,24 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
 
   | head | no-fit floor | linear | **log(own)** | spline(own) | + age×own |
   |---|---|---|---|---|---|
-  | `reb` | 0.9424 | 0.9278 | **0.9441** | 0.9436 | 0.9437 |
+  | `reb` | 0.9424 | 0.9278 | **0.9441** | 0.9436 | 0.9442 |
   | `fg2a` | 0.9194 | 0.9089 | **0.9245** | 0.9248 | 0.9260 |
-  | `ast` | 0.9197 | 0.8601 | **0.9229** | 0.9262 | 0.9249 |
-  | `fg3a` | 0.9036 | 0.5197 | 0.8791 | **0.9088** | 0.9083 |
-  | `blk` | 0.8407 | 0.6375 | 0.8204 | **0.8605** | 0.8558 |
-  | `fta` | 0.8673 | 0.8449 | 0.8689 | 0.8692 | **0.8708** |
-  | `stl` | 0.8194 | 0.8170 | 0.8369 | **0.8397** | 0.8381 |
-  | `tov` | 0.8845 | 0.8828 | **0.8915** | 0.8913 | 0.8918 |
+  | `ast` | 0.9197 | 0.8601 | **0.9229** | 0.9262 | 0.9236 |
+  | `fg3a` | 0.9036 | 0.5197 | 0.8791 | **0.9088** | 0.8784 |
+  | `blk` | 0.8407 | 0.6375 | 0.8204 | **0.8605** | 0.8228 |
+  | `fta` | 0.8673 | 0.8449 | 0.8689 | 0.8692 | **0.8720** |
+  | `stl` | 0.8194 | 0.8170 | 0.8369 | **0.8397** | 0.8338 |
+  | `tov` | 0.8845 | 0.8828 | **0.8915** | 0.8913 | 0.8916 |
+
+  > ⚠️ **The `+ age×own` column was corrected 2026-07-31, and the correction is a change of
+  > *variant*, not of value.** It previously read 0.9437 / 0.9260 / 0.9249 / 0.9083 / 0.8558 /
+  > 0.8708 / 0.8381 / 0.8918, which no row of `component_rate_metrics.csv` reproduces — those
+  > are the interaction added on top of the **spline**, and the artifact ships `log_own_inter`,
+  > the interaction on top of **`log(own)`**. The other four columns match the artifact
+  > exactly on all eight heads, so this was one column typed from a variant that was later
+  > dropped, in a table that was otherwise refreshed — the same shape as the season-total R²
+  > failure. **The conclusion is unchanged and slightly stronger**: read against its own base
+  > the interaction is worth ≤ +0.0031, and it is *negative* on two heads either way.
 
   A **log link wants a multiplicative predictor**: `log E[rate] = β·log(prior rate)` makes
   the model `rate ∝ prior_rate^β`, which is the right shape. Linear-in-raw-rate inside
@@ -883,7 +917,7 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     skewed** — `fg3a` +0.030 and `blk` +0.041 over `log(own)`, and ≤ +0.003 on the other
     six. Spend flexibility on those two heads only.
   - **The `age × own` and `mpg × own` interactions are a null once the scale is right** —
-    ≤ +0.001, and *negative* for `blk` and `ast`. Component-specific aging is real
+    ≤ +0.003 over `log(own)`, and *negative* for `fg3a` and `stl`. Component-specific aging is real
     (`make aging`) but does not survive as an interaction here.
   - The floor being this strong is the sharpest available statement of "attempts persist"
     (`fg3a` 0.908 in `persistence.csv`), and it means the rate side is close to saturated
@@ -1041,7 +1075,7 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     arm this replicates. Do not generalize "put it on the link's scale" from the counts to
     the minutes head.
   - **The season-level ρ is NOT the number the simulator needs, and they differ by more than
-    the fit does.** Fitted season-level ρ = **0.0496**; game-level ρ measured separately
+    the fit does.** Fitted season-level ρ = **0.0495**; game-level ρ measured separately
     against each player-season's own mean over 713,947 player-games = **0.0776**, i.e.
     **4.65× binomial** at a 48-minute game. A season total cannot separate a per-game random
     effect from a per-season one — iid game noise is diluted by ~1/G while a shared season
@@ -1135,8 +1169,9 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
   |---|---|---|---|
   | `carry_forward` (floor) | 4.6331 | 4.8194 | 0.0178 |
   | `binomial` | 4.9345 | **4.9429** — *fails the floor* | **0.1942** |
-  | `betabinom` | 4.5107 | 4.5360 | 0.0201 |
-  | **`betabinom_ot`** (selected) | **4.5101** | **4.5322** | 0.0199 |
+  | `betabinom` | 4.5109 | 4.5361 | 0.0205 |
+  | `betabinom_ot` | 4.5099 | 4.5353 | 0.0202 |
+  | **`betabinom_ot_graded`** (selected) | **4.4561** | **4.5078** | 0.0221 |
   | `independent_comparator` | 4.7842 | 4.9140 | 0.0769 |
 
   - **This resolves the fork `docs/predictions-plan.md` left open.** That doc's warning
@@ -1144,7 +1179,7 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     individual at `game_length`, and "**neither form gets both**". The sequential
     decomposition **does**: trials-as-remaining-capacity gives the cap, the deterministic
     last step gives the total. Both are asserted on every simulated draw.
-  - **−0.382 minutes of CRPS against the incumbent** (4.5322 vs 4.9140, −7.8%) — the plan
+  - **−0.406 minutes of CRPS against the incumbent** (4.5078 vs 4.9140, −8.3%) — the plan
     predicted a wash and budgeted for arguing on capability instead. It won outright.
     And the capability gap is there too: the independent draw misses the team total by
     **36.87 minutes per team-game** where the composition is exact.
@@ -1158,9 +1193,26 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     That is **already a redistribution model** — a missing teammate shrinks the
     renormalizer and scales everyone else up — so `β` fits *deviations* from proportional
     redistribution, which is the "who absorbs the minutes" question as a fitted quantity.
-  - **One shared ρ is measurably wrong at both ends** — realized/simulated variance ratio
-    1.59 (fringe quartile) to 0.70 (stars). A share-graded ρ is the next move, ahead of
-    the full-window fit (Gate E, costed at ~8–10 h and open).
+  - **✅ ρ is graded by prior-share quartile, and role grading is real** — fitted
+    **0.1480 / 0.1125 / 0.0874 / 0.0613** from fringe to star, a **2.41×** spread against
+    a single shared **0.0970**. A 34-mpg starter's allocation step is genuinely steadier
+    than a reserve's. `betabinom_ot_graded` differs from its twin in the **dispersion
+    alone** — same features, same mean function — so the contrast is clean, and it is
+    worth −0.054 val / −0.028 test CRPS, moving the same way on both splits.
+    - **The calibration fix is the point, not the CRPS.** Realized/simulated variance
+      ratio by tier goes **1.5900 / 0.9656 / 0.8961 / 0.7000** shared →
+      **1.2093 / 0.8405 / 0.9587 / 0.9880** graded: mean |ratio − 1| falls **0.2571 →
+      0.1055**, a 59% cut, and the star tier lands at 0.988.
+    - **⚠️ q2 gets *worse* (0.966 → 0.841), and it is structural.** The fitted ρ is the
+      dispersion of a **sequential step**; the ratio is measured on a player's
+      **marginal** minutes. Because the order is prior-share *descending*, a low-share
+      player breaks his stick last and inherits the accumulated remainder variation from
+      everyone ahead of him — so grading step dispersion does not map one-to-one onto
+      marginal variance by tier, and a tier can be pushed off a mark it happened to hit.
+    - `n_rho = 1` is the shared model **exactly**, so one code path serves both and the
+      graded arm strictly generalizes. A test pins the identity at the simulator level.
+      **Bin edges come from train quantiles only** — leakage here would be especially
+      quiet, since ρ never touches the mean.
   - **The OT interaction is real but tiny** (won validation by 0.0006 CRPS); starters take
     0.5882 of team minutes in regulation and 0.6314 in OT, and the head reproduces the
     +4.3 pp shift as +4.1 pp with a +1.2 pp level overshoot.
@@ -1208,22 +1260,28 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
   0.0365. Absences are a **mixture**; use a 2-component or semi-Markov process, and build it
   for the season-total joint distribution and the preseason initial state, not for GP CRPS.
 - **The injury-report transfer function is measured, and the designation scale is NOT
-  monotone.** 12,007 of 12,406 archive rows joined to a realized box-score outcome (96.8%,
+  monotone.** 12,338 of 12,406 archive rows joined to a realized box-score outcome (99.5%,
   **0.0% unmatched names**), 142 game dates inside 2025-26, 532 players. `P(play)`:
-  **Out 0.002, Doubtful 0.027, Questionable 0.500, Probable 0.914, Available 0.852** —
+  **Out 0.002, Doubtful 0.030, Questionable 0.498, Probable 0.914, Available 0.855** —
   `Available` plays *less* than `Probable`. That inversion is reason mix, not noise in the
-  labels: excluding G-League rows the scale reads 0.001 / 0.016 / 0.559 / 0.920 / **0.903**,
-  and the residual 1.7 pp sits inside a ~1.6 pp standard error. **Treat Probable and
+  labels: excluding G-League rows the scale reads 0.001 / 0.022 / 0.553 / 0.919 / **0.903**,
+  and the residual 1.6 pp sits inside a ~1.6 pp standard error. **Treat Probable and
   Available as one designation**, and condition on `reason_category` rather than on the
   five-level scale. `make report-calibration`, `src/eda/report_calibration.py` →
   `data/features/report_transfer.parquet` (20 cells) + `outputs/eda/report_calibration.csv`.
+  - **⚠️ This block was refreshed 2026-07-31 and had read 12,007 of 12,406 (96.8%) with
+    Doubtful 0.027 / Questionable 0.500 / Available 0.852.** `docs/availability-plan.md`
+    carried the same block and was refreshed on 2026-07-30 when the box-score backfill closed
+    331 previously uncovered rows; this copy was not. It is the second time this exact block
+    has gone stale in one doc while being current in another, which is why it is now claimed
+    in `src/docs_audit.py` from **both** docs against the one artifact.
 - **`Out` is near-deterministic and sticky; `Questionable` is a coin flip that resolves.**
-  Out → 89.7% inactive / 9.5% dnp / 0.2% played, and **98.5% of Out designations are
-  unchanged** in the next day's report. Questionable is unchanged only 37.5% of the time,
-  and a *stale* Questionable is worth about what a fresh one is (p_play 0.477 at lead 1 vs
-  0.500 at lead 0) — which is the encouraging read for a preseason snapshot, since that is
-  read weeks ahead. Minutes barely move: a Questionable who plays gets 23.6 against a
-  Probable's 24.6, so there is **no meaningful minutes haircut** to model — the designation
+  Out → 89.8% inactive / 9.4% dnp / 0.2% played, and **98.5% of Out designations are
+  unchanged** in the next day's report. Questionable is unchanged only 38.9% of the time,
+  and a *stale* Questionable is worth about what a fresh one is (p_play 0.475 at lead 1 vs
+  0.512 at lead 0) — which is the encouraging read for a preseason snapshot, since that is
+  read weeks ahead. Minutes barely move: a Questionable who plays gets 23.5 against a
+  Probable's 24.7, so there is **no meaningful minutes haircut** to model — the designation
   acts on the play/not-play margin, not on workload.
 - **The stated reason disambiguates `inactive` directly — no Basketball-Reference scrape
   needed.** The plan wanted BBRef transaction logs to separate "unavailable because hurt"
@@ -1408,8 +1466,8 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
   nulls (z = 1.9 and −1.3 on ~600k pairs), so constant-θ-within-season — exactly what the
   binomial collapse assumes — is what the data looks like. What *is* dependent is the
   exposure side: minutes at 2.43×, and shot volume at ~1.46× **on top of** minutes. Decay is
-  slower than AR(1) (minutes reads 0.279/0.212/0.170/0.113 at lags 1/2/3/5 against AR(1)'s
-  0.279/0.078/0.022), and removing a within-season linear trend drops lag-1 to 0.196 — so
+  slower than AR(1) (minutes reads 0.278/0.212/0.170/0.113 at lags 1/2/3/5 against AR(1)'s
+  0.278/0.078/0.022), and removing a within-season linear trend drops lag-1 to 0.196 — so
   roughly a third is slow role drift and two-thirds a shock with a 3–5 game e-folding.
   Rotation churn and injury ramps, not shooting form. **Put the sequential model on minutes,
   beside the availability spell process, and leave the other eleven heads collapsed.**
