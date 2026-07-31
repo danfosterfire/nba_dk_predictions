@@ -1549,6 +1549,133 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("next", "defect"),
     ),
     Decision(
+        id="composition-beats-independent-minutes",
+        topic="minutes",
+        claim="The team-game **composition** — a multinomial decomposed into sequential "
+              "binomial trials — beats the independent per-player minutes draw on its "
+              "own marginal metric, *and* makes the team total exact by construction.",
+        because="Held out on 2024-25/2025-26 (52,957 player-rows / 4,920 team-games), "
+                "the selected variant scores **4.5322** minutes of CRPS against the "
+                "no-fit floor's 4.8194 (−0.287) and the incumbent independent draw's "
+                "**4.9140** (−0.382, −7.8%) — not the expected wash. On top of that the "
+                "incumbent misses the team's `5 × game_length` total by **36.87** "
+                "minutes per team-game on average where the composition is exact on "
+                "every draw of every game. Zero-sum is what makes teammate-absence "
+                "redistribution a *fitted* quantity rather than a hand-set rule.",
+        status="built",
+        reproduce="make stan-composition → "
+                  "outputs/predictions/stan_composition_metrics.csv, "
+                  "outputs/predictions/stan_composition_ppc.csv",
+        source="docs/minutes-composition-plan.md",
+        reviewed="2026-07-31",
+        date="2026-07-31",
+        tags=("simulator-input",),
+    ),
+    Decision(
+        id="composition-needs-dispersion-not-just-decomposition",
+        topic="minutes",
+        claim="The **pure** stick-breaking decomposition is worse than the no-fit floor. "
+              "The dispersion is the model, not a refinement.",
+        because="The `binomial` arm — the demo's model with the cap fixed — scores "
+                "**4.9429** test CRPS against the floor's 4.8194, with PIT KS "
+                "**0.1942** against 0.0178: far too tight, exactly as the measured "
+                "game-level ρ (4.65× binomial) predicted. The beta-binomial arm at "
+                "4.5360 clears the floor comfortably. Same shape as the NB-vs-Poisson "
+                "finding on the count heads — the likelihood family decides whether "
+                "there is a model at all.",
+        status="measured",
+        reproduce="make stan-composition → "
+                  "outputs/predictions/stan_composition_metrics.csv",
+        source="docs/minutes-composition-plan.md",
+        reviewed="2026-07-31",
+        date="2026-07-31",
+        tags=("specification",),
+    ),
+    Decision(
+        id="composition-shared-rho-is-role-graded",
+        topic="minutes",
+        claim="One shared ρ across the roster is measurably wrong at both ends — too "
+              "tight for fringe players, too wide for stars.",
+        because="Realized-over-simulated variance ratio by prior-share quartile runs "
+                "**1.59** (fringe) / 0.96 / 0.89 / **0.70** (stars) on the held-out "
+                "split. The direction was predicted before the run — a 34-mpg starter's "
+                "allocation step is steadier than a fringe player's — and it is the "
+                "first candidate improvement, ahead of the full-window fit.",
+        status="open",
+        reproduce="make stan-composition → outputs/predictions/stan_composition_ppc.csv",
+        source="docs/minutes-composition-plan.md",
+        reviewed="2026-07-31",
+        date="2026-07-31",
+        tags=("next", "defect"),
+    ),
+    Decision(
+        id="composition-joint-nll-is-not-a-bijection",
+        topic="minutes",
+        claim="The composition's joint-NLL win over independent draws is **not** the "
+              "same kind of comparison as the 3PA/2PA reparameterization's, and must "
+              "not be quoted as if it were.",
+        because="Composition 33.64 against independent 38.83 per team-game on the "
+                "held-out split — but the map is not a bijection with unit Jacobian. "
+                "The composition's last step is deterministic, so it concentrates all "
+                "its mass on the simplex slice the data always satisfy and wins partly "
+                "by *knowing the constraint* rather than by fitting better. `fga` × "
+                "`fg3a|fga` was legitimate because `(fg2a, fg3a) ↔ (fga, fg3a)` is the "
+                "same point in different coordinates. Here the decision metrics are "
+                "CRPS, the team-sum error and the PPCs; the joint NLL is contrast only.",
+        status="measured",
+        reproduce="make stan-composition → "
+                  "outputs/predictions/stan_composition_joint_nll.csv",
+        source="docs/minutes-composition-plan.md",
+        reviewed="2026-07-31",
+        date="2026-07-31",
+        tags=("methodology",),
+    ),
+    Decision(
+        id="game-length-is-a-two-parameter-geometric-tail",
+        topic="minutes",
+        claim="Game length needs exactly **two** parameters — P(any OT) and a constant "
+              "continuation probability — and it covers 3OT/4OT for free.",
+        because="Fitted on 30,626 regular-season training games: p_any = **0.0608**, "
+                "p_more = **0.1408**. The continuation probability is near-constant in "
+                "depth over the full sample (1,942 → 264 → 41 → 6 games at 1/2/3/4 OT), "
+                "which is what makes the geometric form enough. Held out, it predicts "
+                "**256.9** single-OT games against **222** observed — the shape holds "
+                "but it overpredicts OT by ~16% on recent seasons, which is one more "
+                "entry for the season-effects ledger rather than a defect in the form. "
+                "A covariate model is not worth it at a 6% base rate, and game "
+                "closeness is not knowable preseason.",
+        status="built",
+        reproduce="make stan-composition → "
+                  "outputs/predictions/stan_composition_ot_tail.csv",
+        source="docs/minutes-composition-plan.md",
+        reviewed="2026-07-31",
+        date="2026-07-31",
+        tags=("simulator-input",),
+    ),
+    Decision(
+        id="composition-sampling-cost-is-four-specific-traps",
+        topic="minutes",
+        claim="The composition head's sampling cost was four separate numerical traps, "
+              "not one — the probe went from **60+ minutes without a draw** to 65 s.",
+        because="(1) A hard clip on the carry-forward offset put near-zero beta shape "
+                "parameters on ~1% of rows where proportional carry-forward exceeds the "
+                "cap; saturating at 0.93 with an `offset_clipped` indicator fixes it. "
+                "(2) `beta_binomial_lccdf` routes through `grad_F32`: `optimize(iter=30)` "
+                "took >600 s with it and 0.8 s with a pmf-ratio recurrence. (3) Summing "
+                "that recurrence as `1 − head` gives `log1m(1) = −inf` on a tiny tail "
+                "and killed every chain at init; sum the **tail upward in log space**. "
+                "(4) `metric=\"dense_e\"` drops treedepth 8–9 → 4, cutting the probe "
+                "645 s → 65 s. Also: per-column imputation flags are exact duplicates "
+                "here, because a rookie loses the whole design block at once.",
+        status="measured",
+        reproduce="make stan-composition → "
+                  "outputs/predictions/stan_composition_diagnostics.csv",
+        source="docs/minutes-composition-plan.md",
+        reviewed="2026-07-31",
+        date="2026-07-31",
+        tags=("performance", "failure-mode"),
+    ),
+    Decision(
         id="bspline-bases-are-ill-conditioned-for-hmc",
         topic="minutes",
         claim="B-spline bases are badly conditioned for HMC — valid, just expensive.",

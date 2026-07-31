@@ -43,10 +43,13 @@ src/eda/       season_matrix, pca, archetypes, context_value, persistence, aging
                (season-level analysis pipeline)
 src/models/    lstm, transformer, multihead, xgboost baseline, availability,
                season_total, component_rates,
-               stan_utils, stan_availability, stan_minutes, stan_components
+               stan_utils, stan_availability, stan_minutes, stan_components,
+               stan_composition
 src/stan/      betabinomial_glm.stan, negbinomial_glm.stan — TWO files for eleven-plus
                heads, because availability / minutes / conversions are the same
-               likelihood with different data, and the counts are the other one
+               likelihood with different data, and the counts are the other one.
+               composition_glm.stan is the third and stands apart: the team-game
+               minutes allocation, a multinomial decomposed into binomial trials
 src/train.py   training loop
 src/evaluate.py test-split metrics
 src/predict.py  inference entry point
@@ -176,6 +179,8 @@ make stan-availability # port of the point-MLE beta-binomial + the posterior it 
 make stan-minutes      # min | available, trials = real game length (NEVER 48)
 make stan-components   # 8 NB count heads + 3 beta-binomial conversion heads
 make stan              # all three, in chain order
+make stan-composition  # the team-game minutes COMPOSITION pilot — deliberately not in
+                       #   `stan`; see docs/minutes-composition-plan.md
 ```
 
 Fitted **separately**, one model per head, because the chain
@@ -1117,6 +1122,80 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
   components run spanned a ~7 h machine sleep (10 h 11 m elapsed) and reported **208.6 min**
   of compute with a maximum single fit of 19.8 min — no inflated row anywhere.
   `stan_utils.diagnostics` needs no sleep-correction.
+- **✅ The team-game minutes COMPOSITION is built and it beats the independent draw on
+  the independent draw's own metric — `make stan-composition`, pilot 2026-07-31.**
+  `docs/minutes-composition-plan.md`. Each team-game's `5 × game_length` minutes are
+  allocated among the K players who played by decomposing the multinomial into
+  **sequential binomial trials**, ordered by prior-season minutes share, with the
+  per-player cap enforced through the **trials** (`m_k = min(U, R_k)` — remaining
+  capacity) rather than checked afterwards. Held out on 2024-25/2025-26 (52,957
+  player-rows / 4,920 team-games, pilot window 2018-19 on):
+
+  | variant | val CRPS | test CRPS | test PIT KS |
+  |---|---|---|---|
+  | `carry_forward` (floor) | 4.6331 | 4.8194 | 0.0178 |
+  | `binomial` | 4.9345 | **4.9429** — *fails the floor* | **0.1942** |
+  | `betabinom` | 4.5107 | 4.5360 | 0.0201 |
+  | **`betabinom_ot`** (selected) | **4.5101** | **4.5322** | 0.0199 |
+  | `independent_comparator` | 4.7842 | 4.9140 | 0.0769 |
+
+  - **This resolves the fork `docs/predictions-plan.md` left open.** That doc's warning
+    box said a Dirichlet-multinomial gets the team total exactly but cannot bound any
+    individual at `game_length`, and "**neither form gets both**". The sequential
+    decomposition **does**: trials-as-remaining-capacity gives the cap, the deterministic
+    last step gives the total. Both are asserted on every simulated draw.
+  - **−0.382 minutes of CRPS against the incumbent** (4.5322 vs 4.9140, −7.8%) — the plan
+    predicted a wash and budgeted for arguing on capability instead. It won outright.
+    And the capability gap is there too: the independent draw misses the team total by
+    **36.87 minutes per team-game** where the composition is exact.
+  - **The pure decomposition is worse than the no-fit floor**, and this is the sharpest
+    result: the `binomial` arm reads 4.9429 against 4.8194 with PIT KS 0.1942 against
+    0.0178 — far too tight, exactly as the measured game-level ρ (4.65× binomial)
+    predicted. The dispersion is not a refinement, it is the difference between a model
+    and a failure. Same shape as the NB-vs-Poisson finding on the count heads.
+  - **The offset IS the floor**, so both share one code path: `logit(w_k / Σ_{j≥k} w_j ×
+    R_k / m_k)` on renormalized prior shares means `β = 0` is prior-shares-carried-forward.
+    That is **already a redistribution model** — a missing teammate shrinks the
+    renormalizer and scales everyone else up — so `β` fits *deviations* from proportional
+    redistribution, which is the "who absorbs the minutes" question as a fitted quantity.
+  - **One shared ρ is measurably wrong at both ends** — realized/simulated variance ratio
+    1.59 (fringe quartile) to 0.70 (stars). A share-graded ρ is the next move, ahead of
+    the full-window fit (Gate E, costed at ~8–10 h and open).
+  - **The OT interaction is real but tiny** (won validation by 0.0006 CRPS); starters take
+    0.5882 of team minutes in regulation and 0.6314 in OT, and the head reproduces the
+    +4.3 pp shift as +4.1 pp with a +1.2 pp level overshoot.
+  - **Game length itself is a two-parameter geometric tail**: p_any = 0.0608, p_more =
+    0.1408, which covers 3OT/4OT for free. Held out it predicts 256.9 single-OT games
+    against 222 observed — the form holds, but it overpredicts OT by ~16% on recent
+    seasons, which belongs in the season-effects ledger.
+  - **Rookies cannot be filtered here, unlike every other head** — the sum must be
+    complete — so no-prior players (15.2% of rows, 12.3% of minutes) get an
+    expanding-window draft-bucket share prior and sit last in the order.
+- **Four numerical traps cost this head an hour of dead warmup, and three are new to this
+  repo.** ✅ `make stan-composition`; the probe went from **60+ min without one draw** to
+  **65 s**. Each is a case where the algebraically identical form is not the
+  computationally identical form — the same lesson as `s * inv_logit(-eta)`, four more times.
+  - **Never compute a tail as `1 − head`.** A tiny tail rounds the head mass to exactly
+    1.0, `log1m(1)` is `-inf`, and **every chain died at initialization** — while the true
+    target contribution (pmf over tail, both tiny) is O(1) and perfectly finite. Sum the
+    **tail upward in log space**. A test pins it on a case where the head form returns −inf.
+  - **Never call `beta_binomial_lcdf`/`lccdf` inside the gradient.** Stan routes it through
+    the generalized hypergeometric (`grad_F32`); ~400 truncation rows made one gradient
+    cost seconds. `optimize(iter=30)` took **>600 s** with it and **0.8 s** with an
+    explicit pmf-ratio recurrence.
+  - **Use `metric="dense_e"`.** Residual linear correlation held NUTS at treedepth 8–9
+    under the default diagonal metric; dense drops it to 4 and the probe fit from
+    **645 s to 65 s**. At ~25 parameters the dense adaptation is free. `stan_utils.sample`
+    now takes `metric`; every other head keeps the default.
+  - **Per-column imputation flags are a degenerate subspace when missingness is
+    block-structured.** A rookie loses every design column at once, so `impute()`'s 18
+    flags were exact copies — C(18,2) = 153 duplicate standardized columns. One
+    `design_missing` indicator carries the same information. The other heads never hit
+    this because they *filter* the no-prior rows.
+  - A fifth, model-level rather than numerical: **the carry-forward offset can demand more
+    than the cap** (~1% of rows — a star whose played-set prior shares sum well below 5),
+    so it saturates at 0.93 with an `offset_clipped` indicator rather than at `1 − 1e-3`,
+    which asserted "47.95 of 48 minutes" with a near-zero beta shape parameter.
 - **Availability is strongly autocorrelated but that is NOT where the overdispersion comes
   from.** `serial_structure` on 942,597 transitions (appearance window):
   `P(play|played) = 0.905`, `P(play|missed) = 0.308`, so lag-1 ρ = **0.597** and a 2-state

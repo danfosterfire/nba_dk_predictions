@@ -100,7 +100,8 @@ def cmdstan_version() -> str:
 def sample(model, data: dict, chains: int = CHAINS, warmup: int = WARMUP,
            samples: int = SAMPLES, seed: int = SEED,
            adapt_delta: float = ADAPT_DELTA, show_progress: bool = False,
-           label: str = "", inits: dict | None = None) -> tuple[object, dict]:
+           label: str = "", inits: dict | None = None,
+           metric: str | None = None) -> tuple[object, dict]:
     """Run NUTS and return the fit alongside its diagnostics.
 
     **Pass `inits`.** Stan's default initialization is uniform(-2, 2) on the unconstrained
@@ -116,9 +117,15 @@ def sample(model, data: dict, chains: int = CHAINS, warmup: int = WARMUP,
     forty fits actually needs.
     """
     started = time.perf_counter()
+    # `metric=None` keeps CmdStan's default (diag_e). A caller passes "dense_e" when
+    # the posterior carries strong linear correlations a diagonal metric cannot
+    # absorb — cheap at these dimensions (every head here is < ~30 parameters) and
+    # worth an order of magnitude in treedepth on the composition head.
+    extra = {} if metric is None else {"metric": metric}
     fit = model.sample(data=data, chains=chains, iter_warmup=warmup,
                        iter_sampling=samples, seed=seed, adapt_delta=adapt_delta,
-                       inits=inits, show_progress=show_progress, show_console=False)
+                       inits=inits, show_progress=show_progress, show_console=False,
+                       **extra)
     seconds = time.perf_counter() - started
     return fit, diagnostics(fit, seconds, label=label)
 

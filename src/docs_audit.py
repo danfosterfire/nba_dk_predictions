@@ -59,6 +59,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent
 
 AVAIL = "docs/availability-plan.md"
+COMP = "docs/minutes-composition-plan.md"
 
 PROFILE = "outputs/eda/availability_profile.csv"
 METRICS = "outputs/predictions/availability_metrics.csv"
@@ -73,6 +74,11 @@ STAN_AV_D = "outputs/predictions/stan_availability_diagnostics.csv"
 STAN_AV_B = "outputs/predictions/stan_availability_board.csv"
 SEASON_TOTAL = "outputs/predictions/season_total_metrics.csv"
 REPORT_CAL = "outputs/eda/report_calibration.csv"
+COMP_M = "outputs/predictions/stan_composition_metrics.csv"
+COMP_D = "outputs/predictions/stan_composition_diagnostics.csv"
+COMP_P = "outputs/predictions/stan_composition_ppc.csv"
+COMP_J = "outputs/predictions/stan_composition_joint_nll.csv"
+COMP_O = "outputs/predictions/stan_composition_ot_tail.csv"
 
 
 # ── Claims ────────────────────────────────────────────────────────────────────
@@ -181,6 +187,11 @@ def total(rel: str, column: str) -> float:
 def rows(rel: str) -> float:
     frame = table(rel)
     return float(len(frame)) if frame is not None else float("nan")
+
+
+def max_of(rel: str, column: str) -> float:
+    frame = table(rel)
+    return float(frame[column].max()) if frame is not None else float("nan")
 
 
 # ── The claim registry ────────────────────────────────────────────────────────
@@ -568,6 +579,73 @@ def _build() -> tuple[Claim, ...]:
     add(_c("0.469", PROFILE,
            lambda: prof("decomposition", "missed_scratch", "r_persistence_of_column"),
            "missed_scratch persistence"))
+
+    # ── the composition pilot ─────────────────────────────────────────────────
+    # docs/minutes-composition-plan.md. The `binomial` row is the one worth auditing
+    # hardest: it is the arm that FAILS, and "the pure decomposition is too tight"
+    # is the pilot's sharpest claim.
+    comp = [("carry_forward", "4.6331", "4.8194", "0.3679", "0.0178"),
+            ("binomial", "4.9345", "4.9429", "0.4307", "0.1942"),
+            ("betabinom", "4.5107", "4.5360", "0.4306", "0.0201"),
+            ("betabinom_ot", "4.5101", "4.5322", "0.4310", "0.0199"),
+            ("independent_comparator", "4.7842", "4.9140", "0.3301", "0.0769")]
+    for name, val_crps, test_crps, test_r2, pit in comp:
+        for quoted, column in [(val_crps, "val_crps"), (test_crps, "test_crps"),
+                               (test_r2, "test_r2"), (pit, "test_pit_ks")]:
+            add(_c(quoted, COMP_M,
+                   lambda n=name, c=column: cell(COMP_M, c, variant=n),
+                   f"composition {name} {column}", doc=COMP))
+    add(_c("1.8", COMP_M, lambda: cell(COMP_M, "probe_hours", variant="binomial"),
+           "composition Gate A extrapolation", doc=COMP))
+    add(_c("116.0", COMP_D, lambda: total(COMP_D, "wall_clock_s") / 60,
+           "composition sampler minutes", doc=COMP))
+    add(_c("1.0093", COMP_D, lambda: max_of(COMP_D, "max_rhat"),
+           "composition max R-hat", doc=COMP))
+    add(_c("0", COMP_D, lambda: total(COMP_D, "divergences"),
+           "composition divergences", doc=COMP))
+
+    # The team-sum asymmetry — the capability the model exists for, so both sides
+    # are audited rather than only the headline.
+    add(_c("36.87", COMP_P,
+           lambda: cell(COMP_P, "simulated", analysis="team_sum_abs_error",
+                        group="independent"),
+           "comparator team-sum error", doc=COMP))
+    add(_c("0.5882", COMP_P,
+           lambda: cell(COMP_P, "observed", analysis="starter_share",
+                        group="regulation/composition"),
+           "observed starter share, regulation", doc=COMP))
+    add(_c("0.6314", COMP_P,
+           lambda: cell(COMP_P, "observed", analysis="starter_share",
+                        group="overtime/composition"),
+           "observed starter share, overtime", doc=COMP))
+    add(_c("0.6001", COMP_P,
+           lambda: cell(COMP_P, "simulated", analysis="starter_share",
+                        group="regulation/composition"),
+           "simulated starter share, regulation", doc=COMP))
+    add(_c("0.6411", COMP_P,
+           lambda: cell(COMP_P, "simulated", analysis="starter_share",
+                        group="overtime/composition"),
+           "simulated starter share, overtime", doc=COMP))
+    for tier, quoted in [("q1_fringe", "1.59"), ("q4_star", "0.70")]:
+        add(_c(quoted, COMP_P,
+               lambda t=tier: cell(COMP_P, "ratio", analysis="variance_ratio",
+                                   group=t),
+               f"composition variance ratio {tier}", doc=COMP))
+    for arm, quoted in [("composition", "33.64"), ("independent", "38.83")]:
+        add(_c(quoted, COMP_J,
+               lambda a=arm: cell(COMP_J, "mean_joint_nll", split="test", arm=a),
+               f"composition joint NLL {arm}", doc=COMP))
+
+    add(_c("0.0608", COMP_O, lambda: cell(COMP_O, "p_any_ot", **{"class": "params"}),
+           "OT tail p_any", doc=COMP))
+    add(_c("0.1408", COMP_O, lambda: cell(COMP_O, "p_more_ot", **{"class": "params"}),
+           "OT tail p_more", doc=COMP))
+    add(_c("30,626", COMP_O, lambda: cell(COMP_O, "n_games", **{"class": "params"}),
+           "OT tail training games", doc=COMP))
+    add(_c("256.9", COMP_O, lambda: cell(COMP_O, "predicted", **{"class": "1OT"}),
+           "OT tail predicted 1OT", doc=COMP))
+    add(_c("222", COMP_O, lambda: cell(COMP_O, "observed", **{"class": "1OT"}),
+           "OT tail observed 1OT", doc=COMP))
 
     return tuple(C)
 

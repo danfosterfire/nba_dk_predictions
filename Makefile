@@ -10,7 +10,7 @@ PIP    := .venv/bin/pip
         season-total adp adp-draftkings adp-fantasypros adp-panel adp-profile \
         adp-status game-length serial-correlation component-rates \
         variance-budget residual-correlation season-effects \
-        stan stan-availability stan-minutes stan-components
+        stan stan-availability stan-minutes stan-components stan-composition
 
 venv:
 	/opt/homebrew/bin/python3.14 -m venv .venv
@@ -172,6 +172,12 @@ stan-minutes:
 
 stan-components:
 	$(PYTHON) -m src.models.stan_components
+
+# The team-game minutes composition PILOT (docs/minutes-composition-plan.md) —
+# deliberately NOT in the `stan` aggregate until the pilot's gates pass and the
+# full-window decision is recorded there.
+stan-composition:
+	$(PYTHON) -m src.models.stan_composition
 
 stan: stan-availability stan-minutes stan-components
 

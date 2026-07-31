@@ -330,7 +330,33 @@ explicit lagged-observation term, **not** a free latent per game.
   redistribution model conditioned on who is out amplifies availability error into minutes
   error instead of averaging over it.
 
-### The team-game composition alternative — worth costing before a per-game player model
+### The team-game composition alternative — ✅ BUILT 2026-07-31, and it wins
+
+> **See `docs/minutes-composition-plan.md` for the full pilot.** `make stan-composition`.
+> The costing below stands; the warning box that follows it is **resolved**, and by a form
+> neither option in it anticipated.
+>
+> The team-game minutes are allocated by decomposing the multinomial into **sequential
+> binomial trials** with the per-player cap carried in the **trials** (`m_k = min(U, R_k)`,
+> the remaining capacity) rather than as a truncation. That gets **both** constraints:
+> the individual cap by construction, the team total by the deterministic last step.
+> Held out on 2024-25/2025-26, the selected variant scores **4.5322** minutes of CRPS
+> against the no-fit floor's 4.8194 and the independent per-player draw's **4.9140** —
+> so it beats the incumbent on the incumbent's own marginal metric, which this plan
+> expected to be a wash, *and* the independent draw's mean team-sum error is **36.87**
+> minutes per team-game against the composition's exact zero.
+>
+> Two results worth carrying back here. **The pure decomposition fails**: the plain
+> binomial arm scores 4.9429 with PIT KS 0.1942, below the floor — the measured 4.65×
+> game-level dispersion is not optional, exactly as the NB-vs-Poisson result on the count
+> heads. And **the offset is the floor**, so proportional redistribution comes for free
+> and `β` fits deviations from it — which makes "who absorbs the minutes when a starter
+> sits" a fitted quantity, the thing the redistribution section below wants.
+>
+> Still open: one shared ρ is too tight for fringe players (variance ratio 1.59) and too
+> wide for stars (0.70), and the full-window fit (~8–10 h) has not been run. This is
+> **iid across games** and therefore does *not* address the 2.43× block inflation — the
+> residual serial process below is unaffected by it.
 
 Rather than 731,863 player-game rows, model the **team-game composition directly**: a
 Dirichlet-multinomial over the `5 × game_length` minutes among the players who dressed. That
@@ -340,14 +366,17 @@ construction rather than as a penalty**. It is the natural formulation for the t
 redistribution section actually wants, and it makes "who absorbs the minutes when a starter
 sits" a fitted parameter instead of a hand-set rule.
 
-> ⚠️ **It trades one exact constraint for the other, and that is the catch.** A
-> Dirichlet-multinomial over 240 minutes among ~10 players enforces the team total exactly but
-> does **not** bound any individual at `game_length` — nothing stops a draw allocating one
-> player 100 minutes, only the fitted concentration making it rare. The current per-player
-> beta-binomial is the mirror image: individual cap exact, team total only approximate.
-> **Neither form gets both**, and getting both needs a constrained/truncated allocation step.
-> Whichever is chosen, the other constraint has to be checked in posterior predictive rather
-> than assumed.
+> ~~⚠️ **It trades one exact constraint for the other, and that is the catch.**~~ —
+> **resolved 2026-07-31, and the resolution is the last sentence taken literally.** The
+> concern was real as stated: a Dirichlet-multinomial enforces the team total exactly but
+> does **not** bound any individual at `game_length`, while the per-player beta-binomial is
+> the mirror image, so "**neither form gets both**" was true of *those two* forms. What was
+> also true and easy to skip past is the escape hatch already written here — "getting both
+> needs a constrained allocation step". The sequential binomial decomposition **is** that
+> step, and the constraint costs nothing: setting each step's trials to the remaining
+> capacity `min(U, R)` bounds the player, and the deterministic last step closes the total.
+> No truncation CDF in the gradient, no rejection sampling. Both constraints are asserted on
+> every simulated draw rather than checked in posterior predictive.
 
 ### Why not just an explicit lagged term? — measured 2026-07-30, it buys **46%** of the excess
 
@@ -720,12 +749,18 @@ teammates weighted by their `teammate_usage_load` role, instead of treating ever
 minutes as independent of teammates' health. `nba_stats`'s injury adjustment zeroed the hurt
 player and left every other prediction untouched — this is the direct fix.
 
-**The team-game composition model above is the principled version of this**, and the choice
-between them is a real fork: a redistribution *rule* weighted by `teammate_usage_load` is a
-hand-set heuristic applied on top of independent marginals, whereas a Dirichlet-multinomial
-over the team's `5 × game_length` minutes makes the same redistribution a **fitted** quantity
-with zero-sum exact by construction. The heuristic is an afternoon and the composition model
-is days; measure the heuristic first, since it may be most of the gain.
+**The team-game composition model above is the principled version of this — and it is now
+built, so the fork is closed in its favour.** The argument was that a redistribution *rule*
+weighted by `teammate_usage_load` is a hand-set heuristic on top of independent marginals,
+whereas a composition model makes the same redistribution a **fitted** quantity with
+zero-sum exact by construction; the advice was to measure the cheap heuristic first because
+the composition was "days".
+
+It was not days, and the heuristic is no longer the cheaper path. The composition's offset
+*is* proportional redistribution — a missing teammate shrinks the renormalizer and scales
+every remaining player up — so the heuristic arrives as the `β = 0` special case, and the
+fitted `β` measures deviations from it. There is nothing left for a hand-set rule to add
+that the fit does not already estimate. See `docs/minutes-composition-plan.md`.
 
 ## ADP as a prediction input / validation signal
 
@@ -781,10 +816,18 @@ before shipping; given this repo's record on ceilings, a settled null is the lik
   surface is cheap: the availability head is 254 s and the eight count heads are ~1–3 min each
   on 4 chains. The cost wall is **not** the hierarchy, it is abandoning the collapse — see the
   per-game minutes subsection, where the same head goes from 9,048 rows to 731,863.
-- **Whether minutes should be fitted per-game at all is open and deliberately deferred**
-  (2026-07-30). Three options are costed under "Fitting strategy" — a per-game player model,
-  a team-game composition model, and a residual-only serial process (**the recommended
-  first move**). Two premises are already retired there: the 48-minute bound is *not* a
-  reason to go per-game, and a single lagged-observation term reproduces only **46%** of the
-  measured block-variance excess. Decide by measurement against the cheap comparator, once
-  the simulator is standing.
+- ~~**Whether minutes should be fitted per-game at all is open and deliberately deferred**~~
+  — **partly answered 2026-07-31.** Of the three options costed under "Fitting strategy",
+  the **team-game composition model is built and wins** (`make stan-composition`,
+  `docs/minutes-composition-plan.md`): −0.382 minutes of held-out CRPS against the
+  independent per-player draw, and both the individual cap and the team total exact by
+  construction. It was an afternoon rather than days, because the season collapse was never
+  what made it expensive — the numerics were.
+  - Still open, and **unaffected by this**: the composition is iid across games, so it does
+    nothing about the 2.43× ten-game block inflation. **The residual serial process remains
+    the recommended next move** on that axis, and it now sits *on top of* the composition
+    rather than beside a per-player marginal.
+  - Also open: one shared ρ across the roster (measured too tight for fringe players at
+    1.59 and too wide for stars at 0.70), and the full-window fit at ~8–10 h.
+  - The two retired premises stand: the 48-minute bound is not a reason to go per-game, and
+    a single lagged-observation term reproduces only **46%** of the block-variance excess.

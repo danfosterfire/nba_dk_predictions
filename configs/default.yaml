@@ -200,6 +200,19 @@ stan:
     # make the sweep unable to disagree.
     spline_knots: 5
 
+  # The team-game minutes composition pilot — docs/minutes-composition-plan.md.
+  composition:
+    # The frame is built over every season (lags and the expanding rookie prior need
+    # the history); fitting starts here. Full-window promotion is Gate E, decided on
+    # the pilot's recorded verdict.
+    first_season: "2018-19"
+    # Joint draws kept per predictive. Each is a full sequential allocation of every
+    # team-game, so this is the wall-clock knob for scoring, not for fitting.
+    predictive_samples: 200
+    # Gate A: abort before the sweep if the one-season timing probe extrapolates the
+    # six-fit sweep past this many hours.
+    max_extrapolated_hours: 24
+
 eda:
   # Qualification filter for the season matrix. MIN is per-game, so this reads
   # "at least 20 games at 10+ minutes a night" — below that, per-36 rates from a
