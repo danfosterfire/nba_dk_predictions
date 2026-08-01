@@ -24,6 +24,19 @@
 // reproduces the MLE" is a check with a defined answer rather than a vague expectation.
 // For the same reason `beta_scale` is passed in rather than hard-coded — the caller sets
 // it to 1/sqrt(2*l2) to match that head's L2 penalty exactly.
+// ── The optional year-level random effect ────────────────────────────────────────────
+//
+// A season FIXED effect is unusable at prediction time — there is no dummy for a season
+// that has not happened. A year-level RANDOM effect is usable, because at prediction time
+// it contributes mean zero and its variance: it widens the predictive rather than shifting
+// it. It is also the only form that can touch `yoy_sd_pct`, the irreducible year-to-year
+// spread a trend term provably cannot reach (`make season-effects`).
+//
+// **S = 0 disables it EXACTLY.** `year_z` and `sigma_year` are then zero-length, so the
+// parameter space, the priors and the likelihood are identical to the model without this
+// block — which is what preserves this file's load-bearing property that with a
+// normal(0, 1/sqrt(2*l2)) prior the posterior MODE is exactly the penalized MLE
+// `src/models/availability.py::BetaBinomialGLM` finds. A test pins the nesting.
 data {
   int<lower=0> N;
   int<lower=0> K;
@@ -32,6 +45,12 @@ data {
   array[N] int<lower=0> y;            // successes, y <= n on every row
   real<lower=0> beta_scale;           // 1/sqrt(2*l2) reproduces an L2 penalty of l2
   real<lower=0> intercept_scale;
+  int<lower=0> S;                     // training seasons; 0 disables the year effect
+  array[N] int<lower=0> season_idx;   // 1..S, ignored (and all zero) when S == 0
+  real<lower=0> year_sd_scale;        // half-normal scale on sigma_year
+}
+transformed data {
+  int H = S > 0 ? 1 : 0;
 }
 parameters {
   // Bounds mirror RHO_MIN / RHO_MAX in `src/models/availability.py` exactly, so this is
@@ -43,6 +62,8 @@ parameters {
   real<lower=1e-6, upper=0.95> rho;
   real alpha;
   vector[K] beta;
+  vector[S] year_z;                   // zero-length when S == 0
+  vector<lower=0>[H] sigma_year;      // zero-length when S == 0
 }
 model {
   // `eta` is local rather than a `transformed parameter`: it is one value per row, so
@@ -53,6 +74,12 @@ model {
 
   alpha ~ normal(0, intercept_scale);
   beta ~ normal(0, beta_scale);
+  if (S > 0) {
+    // Non-centered: with ~28 seasons and a small sigma the centered form is a funnel.
+    year_z ~ std_normal();
+    sigma_year ~ normal(0, year_sd_scale);
+    eta += sigma_year[1] * year_z[season_idx];
+  }
   // `s * inv_logit(-eta)` rather than the algebraically identical `s * (1 - inv_logit(eta))`.
   // In double precision `inv_logit(eta)` saturates to exactly 1.0 by eta ~ 37, so the
   // subtraction yields a beta shape parameter of exactly 0 and the whole target is

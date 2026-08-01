@@ -74,7 +74,7 @@ from src.models.availability import (EPS, FEATURE_COLS, RHO_MAX, RHO_MIN,
                                      _sigmoid, build_design, evaluate,
                                      pit_table, season_start_dates,
                                      split_seasons)
-from src.models.stan_utils import (compile_model, diagnostics_frame,
+from src.models.stan_utils import (YearTerm, compile_model, diagnostics_frame,
                                    posterior, prior_sd_for_l2, sample,
                                    standardized, thin, warn_if_unconverged)
 
@@ -157,7 +157,8 @@ class StanAvailability(AvailabilityModel):
     def __init__(self, l2: float = 1.0, features: list[str] | None = None,
                  pmf_mode: str = "posterior", name: str | None = None,
                  chains: int = 4, warmup: int = 1000, samples: int = 1000,
-                 seed: int = 42, predictive_draws: int = PREDICTIVE_DRAWS):
+                 seed: int = 42, predictive_draws: int = PREDICTIVE_DRAWS,
+                 year_column: str | None = None, metric: str | None = None):
         if pmf_mode not in ("posterior", "plug_in"):
             raise ValueError(f"pmf_mode must be 'posterior' or 'plug_in'; got {pmf_mode!r}")
         self.l2 = l2
@@ -166,6 +167,8 @@ class StanAvailability(AvailabilityModel):
         self.name = name or f"stan_{pmf_mode}"
         self.chains, self.warmup, self.samples, self.seed = chains, warmup, samples, seed
         self.predictive_draws = predictive_draws
+        self.metric = metric
+        self.year = YearTerm(year_column, seed=seed, stream=self.name)
 
     # ── Fitting ───────────────────────────────────────────────────────────────
 
@@ -184,6 +187,7 @@ class StanAvailability(AvailabilityModel):
             # quantity that happens to resemble it.
             "beta_scale": prior_sd_for_l2(self.l2),
             "intercept_scale": INTERCEPT_SCALE,
+            **self.year.data(train),
         }
         share = float(np.clip(y.sum() / max(n.sum(), 1), EPS, 1 - EPS))
         inits = {"alpha": float(np.log(share / (1 - share))),
@@ -193,7 +197,8 @@ class StanAvailability(AvailabilityModel):
         model = compile_model(MODEL)
         fit, self.diagnostics = sample(
             model, data, chains=self.chains, warmup=self.warmup,
-            samples=self.samples, seed=self.seed, label=self.name, inits=inits)
+            samples=self.samples, seed=self.seed, label=self.name, inits=inits,
+            metric=self.metric)
         warn_if_unconverged(self.diagnostics)
 
         draws = posterior(fit, ["alpha", "beta", "rho"])
@@ -205,6 +210,7 @@ class StanAvailability(AvailabilityModel):
         # so the two coefficient vectors can be diffed element-wise.
         self.beta = np.r_[self.alpha_draws.mean(), self.beta_draws.mean(axis=0)]
         self.rho = float(self.rho_draws.mean())
+        self.year.absorb(fit)
         return self
 
     # ── Prediction ────────────────────────────────────────────────────────────
@@ -218,7 +224,8 @@ class StanAvailability(AvailabilityModel):
         """(draws x rows) mean and the matching rho draws."""
         idx = thin(len(self.alpha_draws), keep or self.predictive_draws)
         # (rows x K) @ (K x draws) -> (rows x draws), then transposed to draws-major.
-        eta = self._design(df) @ self.beta_draws[idx].T + self.alpha_draws[idx][None, :]
+        eta = (self._design(df) @ self.beta_draws[idx].T
+               + self.alpha_draws[idx][None, :] + self.year.shift(idx)[None, :])
         return _sigmoid(eta).T, self.rho_draws[idx]
 
     def predict_mean(self, df: pd.DataFrame) -> np.ndarray:

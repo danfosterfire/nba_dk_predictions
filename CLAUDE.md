@@ -44,10 +44,12 @@ src/eda/       season_matrix, pca, archetypes, context_value, persistence, aging
 src/models/    lstm, transformer, multihead, xgboost baseline, availability,
                season_total, component_rates,
                stan_utils, stan_availability, stan_minutes, stan_components,
-               stan_composition
+               stan_composition, season_terms
 src/stan/      betabinomial_glm.stan, negbinomial_glm.stan — TWO files for eleven-plus
                heads, because availability / minutes / conversions are the same
                likelihood with different data, and the counts are the other one.
+               Both carry an OPTIONAL year random effect that `S = 0` disables
+               EXACTLY — zero-length parameter vectors, identical posterior.
                composition_glm.stan is the third and stands apart: the team-game
                minutes allocation, a multinomial decomposed into binomial trials
 src/train.py   training loop
@@ -133,11 +135,19 @@ It guards the artifact→prose direction tightly and the prose→artifact direct
 see the module docstring for exactly what it cannot catch.
 
 **It covers five docs — `availability-plan`, `minutes-composition-plan`, `predictions-plan`,
-`adp-plan` and `CLAUDE.md` — with 1,100 claims and one builder per doc.** Coverage of measured
-figures: 80% (predictions), 62% (adp), 59% (CLAUDE.md), 56% (availability), 36% (composition)
+`adp-plan` and `CLAUDE.md` — with 1,287 claims and one builder per doc.** Coverage of measured
+figures: 65% (predictions), 62% (adp), 59% (CLAUDE.md), 53% (availability), 44% (composition)
 — `make docs-audit` prints them live, so treat the printout rather than this line as current.
 The uncovered remainder is prose-only figures (`docs/provenance-plan.md` lists all fourteen),
 costing estimates, and counts of things rather than measurements.
+
+**A block quoted in two docs is claimed from both against the one artifact**, because
+"current in one doc and stale in the other" is the failure that has already happened twice
+here (the season-total R² column, the report-calibration block). `_regime_claims` and
+`_season_term_claims` / `_season_term_summary_claims` are shared builders for exactly that
+reason — `CLAUDE.md` carries a summary of the season-term verdict and the plan doc carries
+it in full, so the summary claims the subset it quotes rather than being forced to carry
+every cell.
 
 **Some quoted figures must NOT agree with the artifact, and `Claim(historical=True)` is how
 they survive.** Two kinds: a superseded value preserved beside its correction ("corrected
@@ -205,6 +215,11 @@ make stan-components   # 8 NB count heads + 3 beta-binomial conversion heads
 make stan              # all three, in chain order
 make stan-composition  # the team-game minutes COMPOSITION pilot — deliberately not in
                        #   `stan`; see docs/minutes-composition-plan.md
+make season-terms      # does any head need a season term, and which kind? A trend
+                       #   covariate and a year random effect per head, plus the
+                       #   season × role arm the availability era effect calls for.
+                       #   An ABLATION over the shipped heads, so also not in `stan`;
+                       #   it reads their selected specs from their artifacts.
 ```
 
 Fitted **separately**, one model per head, because the chain
@@ -561,9 +576,10 @@ effort accordingly, and do not expect team composition to carry the model.
   composition: n=**892 team-seasons** — reduce hard, 2–4 dims per side.
 - **Own-team features must be leave-one-out**, else they encode P's own style.
 - **Never use same-game teammate stats** — contemporaneous with the outcome.
-- **⏰ NO head carries a season term, and the league moves — open TODO with a scoped session
-  prompt in `docs/predictions-plan.md`.** `make season-effects`
-  (`src/eda/season_effects.py`). A season *fixed* effect is unusable at prediction time —
+- **NO head carries a season term, the league moves, and after the ablation that is the
+  RIGHT answer — settled 2026-07-31.** `make season-effects` (`src/eda/season_effects.py`)
+  measures the league; `make season-terms` (`src/models/season_terms.py`) tests whether any
+  head wants a term for it. A season *fixed* effect is unusable at prediction time —
   there is no dummy for a season that has not happened — so the two candidates are a
   **year-on-year trend** and a **year-level random effect**, and they are complementary
   rather than alternatives: **subtracting a linear trend shifts the *mean* of the
@@ -572,6 +588,8 @@ effort accordingly, and do not expect team composition to carry the model.
   spread. Pinned by a test.
   - **`fg3a` is the only quantity where a trend is worth extrapolating** — trend R² **0.93**
     at **+4.07%/season**, against `stl` at R² **0.03**. Everything else is shock.
+    **⚠️ True of the league SERIES and false of the HEAD** — see the ablation bullet below,
+    where `fg3a` selects `base` and a trend flips its bias from −3.74% to **+8.44%**.
   - **`fta` is the sharpest shock case and it is refereeing**: a 1.21× band, 4.3% yoy sd,
     past ±5% in 9 of 29 transitions — **+7.6% in 2004-05** (hand-checking crackdown) and
     **+8.6% in 2025-26**. `fg3a`'s worst year is −24.4%, the 1997-98 three-point line moving
@@ -582,9 +600,111 @@ effort accordingly, and do not expect team composition to carry the model.
   - **This outranks the shared-β correlation the Stan work was built for.** A league shift is
     perfectly correlated across every player, so it does not diversify: −7% on free throws is
     −7% on a whole roster's free-throw points, against **+0.2%** for shared-β on a 15-man
-    roster. It is currently modelled as exactly zero.
+    roster. ✅ **Now measured, and the gap is ~95× rather than the recorded order of
+    magnitude** — a year effect widens a 15-man roster's season-total dk_pts spread by
+    **+19.0%** and the whole 791-player board's by **+364%** (against shared-β's +6.4%).
   - **Rule changes are announced in the summer**, so a manual league-level override is
     legitimate point-in-time information — unlike anything drawn from inside the season.
+    ✅ The path is live and empty: `stan.season_terms.league_override` in
+    `configs/default.yaml`, `{component: {season: multiplier}}`.
+  - **⚠️ Two confounds sit inside the window and they are different SHAPES.** ✅
+    `make season-effects` (`regime_tests` → `season_effects_regimes.csv`). COVID (2019-20,
+    2020-21) is a *transient regime* and gets an indicator that is zero for the forecast
+    season; the Player Participation Policy (2023-24) is a *permanent* rule change and gets a
+    break. Modelling COVID as a break would put the whole post-2021 series on the wrong
+    intercept. **COVID is undetectable at league-rate level — 0 of 17 series significant**
+    (`gp_share [30+ mpg]` +0.22%, p = 0.91), because the shortened schedules cancel in a
+    rate. **The policy break is real and role-graded**: a level-only break reads **−4.63%**
+    on `gp_share [30+ mpg]` at **p = 0.008** and −4.43% on `gp_share [all]` (p = 0.024),
+    against **+5.37%** and *not* significant for `gp_share [<12 mpg]` — the sign flips
+    across role, which is the availability plan's era gradient arriving as a dated policy
+    step from a different estimator.
+    - **Read `regime_seasons` before `next_season_shift_pct`.** Every break arm has only
+      **3** post-break seasons, so the level+slope form fits its slope on three points and
+      then moves the one-season-ahead forecast by up to **+22.1%** (`gp_share [<12 mpg]`)
+      and **+18.8%** (`stl`). That is noise. **The break test disqualifies extrapolating a
+      trend across 2023-24 rather than supplying a corrected one**; `policy_break_level` is
+      the stable form and ships beside it.
+  - **The year shocks are NOT one common factor, so a simulator draws one per head.** ✅
+    `make season-effects` (`year_shock_correlation` → `season_effects_shock_correlation.csv`,
+    136 pairs over 30 seasons). Detrended log league rates correlate at a mean of **−0.009**
+    — no common factor at all — but mean |r| is **0.307** and 20.6% of pairs exceed 0.5, so
+    they are not independent either: the structure is in specific **pairs**, the largest
+    being `fg2a`–`fg3a` at **−0.833**, which is the 3PA/2PA substitution the count heads
+    already remove by reparameterizing into `fga` × `fg3a | fga`. Detrending is load-bearing
+    — two series that both drift upward would otherwise correlate through their trends,
+    which is drift and not shock. `stan_utils.YearTerm` takes a `stream` per head for this.
+- **✅ THE ABLATION RAN — `make season-terms`, 2026-07-31, and no head ships a season term.**
+  108 fits, **0 divergences**, **0 treedepth-saturated draws**, max R̂ 1.0142, 155.9 min.
+  5 fits sit marginally over the 1.01 R̂ bar (worst 1.0142, all with ESS ≥ 371 and zero
+  divergences) and **4 of the 5 are `base` arms** — so the season terms are not what strains
+  the sampler. Four arms per head (`base`, `trend`,
+  `year`, `trend_year`) on each head's already-selected spec, plus `trend_x_role` and
+  `trend_x_role_year` for availability; selected on validation (2022-23/23-24), confirmed on
+  test (2024-25/25-26), every arm quoted against its no-fit floor. Full verdict in
+  `docs/predictions-plan.md`.
+  - **The trend is refuted most sharply on the one quantity that predicted it.** `fg3a`
+    selects **`base`** (val CRPS **33.247** against trend 35.443 and year 34.309), and a
+    trend flips its held-out bias from **−3.74% to +8.44%**. Two measured mechanisms: the
+    three-point climb **decelerated** — +4.07%/season over 30 seasons but **+1.61%/season
+    over the last six** — and the head's dominant feature `log(fg3a_p36_lag1)` already
+    carries the league level, so a trend adds a second correction on top of one already
+    there. **The trend worsens held-out bias on 6 of 8 count heads**, and where it wins on
+    test it wins on heads with no era story (`stl`, trend R² 0.03). That is overfitting.
+  - **A trend's apparent win on season-total dk_pts is cross-component cancellation.** All-
+    trend scores MAE **108.88** and bias **+7.60** against base's 109.96 / **−32.44** — but
+    the component biases behind it move in *both* directions (`fg3a` +8.44%, `blk` +7.18%
+    against `fta` −9.35%, `fg2a` −3.07%), so the aggregate gain is those errors cancelling in
+    the DK sum. Same mechanism as the 8.30× cancellation on `teammate_assist_supply`, now
+    producing a false positive for a season term. The season-total table is **uniform-arm and
+    test-only** — confirmation, never selection.
+  - **⭐ The oracle bounds the whole question at ~3% of MAE, and this is the number to
+    remember.** `oracle_league` rescales each held-out season by its own realized total — a
+    perfect per-season league multiplier, and therefore the ceiling on a trend, a year effect
+    and a manual override alike. As a share of base MAE: `stl` **3.11%**, `blk` 2.32%, `fta`
+    **2.16%**, `reb` 1.71%, `fg3a` **0.92%**, `ast` 0.58%, `tov` 0.01%, `fg2a` −0.06% —
+    **median 1.32%**. `fta` carries a −7.0% systematic bias and removing it *entirely*
+    recovers 2.2% of MAE, because player-level error dominates.
+  - **The year effect behaves exactly as designed, and recovers the league independently.**
+    Median held-out ΔR² vs base is **+0.00004** across thirteen heads — the mean-zero
+    property surviving contact with data. And `sigma_year`, fitted by NUTS on player-season
+    rows, lands within 20% of the *directly measured* league yoy sd on **5 of 8** count
+    heads (`blk` 0.99×, `tov` 0.94×, `fta` 0.87×, `stl` 0.82×, `reb` 1.18×). **`fg3a` at
+    2.36× is the tell**: with no trend term it absorbs *drift* as a sequence of shocks and
+    then zeroes it at prediction time, which is why its bias goes to −9.01%.
+  - **Mean-zero on the linear predictor is NOT mean-zero on the response.** Under a log link
+    `E[exp(σz)] = exp(σ²/2)`, so integrating the year effect *raises* every predicted count.
+    Measured at **1.000–1.012** across the heads — real, negligible, and reported rather than
+    assumed (`YearTerm.response_multiplier`).
+  - **What the year effect IS worth is joint spread, and only that.** Roster season-total
+    dk_pts sd: **+15.0%** at 12 players, **+19.0% at 15**, +37.7% at 30, +138% at 150 and
+    **+364%** across all 791 — against shared-β's +0.2% / +0.2% / +0.3% / +1.1% / +6.4% on
+    the same board. Treat as an **upper bound**: `fg3a`, `ast` and `fg2a` have a fitted σ
+    above their measured league movement, so some of it is player heterogeneity. Give the
+    simulator σ from `season_effects_summary.csv` (`yoy_sd_pct`), not the fitted value.
+  - **The minutes head is the one head that adopts a season term**, and it falsifies a
+    recorded hypothesis. `year` wins on **both** splits (val **143.81**, test **146.54**
+    against base 144.09 / 147.02) and nudges the standing bias to **−38.2** from −41.0.
+    `docs/availability-plan.md` proposed that bias as "the signature an era effect would
+    leave"; a trend makes it **worse by 15.5 minutes** (−41.0 → **−56.6**), so it is
+    shrinkage toward a 30-season mean, **not** an era effect.
+  - **The availability season × role interaction is a validation NULL, and the exact
+    false-positive shape this repo has shipped before.** `trend_x_role` and
+    `trend_x_role_year` are the **best two arms on test** (10.742, 10.736 against base
+    10.797) and the **worst two on validation** (10.078, 10.087 against 10.007). Caught only
+    because selection never reads test. The selected arm, `trend`, is worth **0.010 games**
+    of validation CRPS — nothing. The era effect is real in the league series and does not
+    transfer into a better availability forecast.
+  - **Every arm under-predicts the bonus by 12–19%** (`base` −16.6%, `trend` −12.0%, `year`
+    −18.5%) and **that level is mostly not the season term**: this composition draws the
+    eleven heads independently given realized minutes, omitting the positive cross-component
+    dependence a simultaneous threshold needs. It argues for the residual copula, not against
+    a season term.
+  - **`metric="dense_e"` is what made 108 Bayesian fits affordable.** On the `blk` spline
+    base: **13.4 s against 236.6 s**, treedepth saturation **0 against 35**, same posterior.
+    This is the cheaper form of the QR-whitened basis this file already recommends for
+    spline variants, and the ablation applies it to *every* arm so the metric cannot confound
+    the contrast.
 - **ALWAYS absorb season when regressing on 30 pooled seasons.** This has already produced
   one false finding. Pooled, `teammate_spacing` correlates +0.315 with next-season per-36
   points and `team_pace` +0.336; with season fixed effects they are +0.035 and +0.091.

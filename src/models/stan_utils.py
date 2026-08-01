@@ -27,6 +27,7 @@ wrong, and the containing metric is then not trustworthy no matter how good it l
 from __future__ import annotations
 
 import time
+import zlib
 from pathlib import Path
 
 import numpy as np
@@ -51,6 +52,14 @@ RHAT_MAX = 1.01
 ESS_MIN = 400.0
 MAX_TREEDEPTH = 10        # NUTS's default; nothing here overrides it
 
+# Half-normal scale on the year random effect's sd, on the LINEAR PREDICTOR scale. The
+# league's year-to-year movement is 1-7% depending on the quantity (`make season-effects`,
+# `yoy_sd_pct`), which on a log or logit scale is ~0.01-0.07 — so 0.25 is weakly
+# informative by roughly an order of magnitude, and the data decides. Deliberately not
+# tighter: a prior that pins sigma_year near the measured league movement would make "the
+# head recovers the league's spread" a foregone conclusion rather than a check.
+YEAR_SD_SCALE = 0.25
+
 
 def prior_sd_for_l2(l2: float) -> float:
     """Prior sd whose posterior mode equals a penalized MLE with L2 weight `l2`.
@@ -62,6 +71,141 @@ def prior_sd_for_l2(l2: float) -> float:
     if l2 <= 0:
         raise ValueError(f"l2 must be positive to correspond to a proper prior; got {l2}")
     return float(1.0 / np.sqrt(2.0 * l2))
+
+
+def year_block(n_rows: int, seasons: "pd.Series | np.ndarray | None" = None,
+               levels: list | None = None,
+               scale: float = YEAR_SD_SCALE) -> tuple[dict, list]:
+    """The year-random-effect data block for `betabinomial_glm` / `negbinomial_glm`.
+
+    Both `.stan` files declare `S`, `season_idx` and `year_sd_scale` unconditionally
+    because Stan has no optional data. Passing `seasons=None` returns the **disabled**
+    block — `S = 0`, every index 0 — which makes the parameter vectors zero-length and the
+    model bit-for-bit the one that existed before the year effect was added. Every head
+    that does not want a year term gets it from here rather than hand-writing three keys,
+    so "disabled" has exactly one definition.
+
+    Returns the data keys and the season **levels** in index order. The levels matter:
+    they are the training seasons the fitted `year_z` corresponds to, and a held-out
+    season must NOT map into them — at prediction time the effect is a fresh draw, not a
+    lookup. Any season absent from `levels` is mapped to 0, which the model never reads.
+    """
+    if seasons is None:
+        return {"S": 0, "season_idx": [0] * int(n_rows), "year_sd_scale": float(scale)}, []
+    values = np.asarray(seasons)
+    order = list(levels) if levels is not None else sorted(set(values.tolist()))
+    lookup = {s: i + 1 for i, s in enumerate(order)}
+    idx = [int(lookup.get(v, 0)) for v in values.tolist()]
+    return ({"S": len(order), "season_idx": idx, "year_sd_scale": float(scale)}, order)
+
+
+class YearTerm:
+    r"""One implementation of the year random effect, held by all four head classes.
+
+    Disabled by default (`column=None`), in which case every method is a no-op returning
+    zeros and the Stan data block is the `S = 0` one — so a head that does not want a
+    season term is unchanged rather than "changed but with the coefficient near zero".
+
+    ## What happens at prediction time, and why it is a DRAW rather than a lookup
+
+    The fitted `year_z[s]` exist only for training seasons. The season being forecast has
+    no `z`, and inventing one by carrying forward the last fitted value would be a season
+    fixed effect smuggled in — the exact thing that is unusable here. So the predictive
+    integrates over a **fresh** `z ~ normal(0, 1)`:
+
+        eta_new = alpha + x'beta + sigma_year * z,   z ~ N(0, 1) per posterior draw
+
+    One `z` per posterior draw, **shared across every row in that draw**. That sharing is
+    the entire mechanism: a league shift is perfectly correlated across players, so it does
+    not diversify away in a portfolio the way independent per-player error does. Drawing an
+    independent `z` per player would reproduce the marginal widening while destroying the
+    only property that makes it matter.
+
+    ## The trap: mean-zero on the linear predictor is NOT mean-zero on the response
+
+    Under a log link `E_z[exp(sigma*z)] = exp(sigma^2/2) > 1`, so integrating over the year
+    effect *raises* every predicted count by that factor rather than leaving the mean
+    alone. It is small at the measured league movement (sigma ~ 0.03 gives +0.05%) but it
+    is not zero, and it is the difference between "this only widens the predictive" being
+    true and merely nearly true. `response_multiplier` reports it so the claim is checked
+    rather than assumed.
+
+    ## One stream per head, not one stream for all of them
+
+    `stream` splits the random draw so two heads fitted with the same `seed` do not get
+    the *identical* `z` sequence. That would make every head's year effect perfectly
+    correlated, which is a strong claim and a measured wrong one: `make season-effects`
+    (`season_effects_shock_correlation.csv`) puts the mean pairwise correlation of
+    detrended league movements at **-0.009** across 136 pairs — no common factor — with
+    large correlations confined to specific pairs, `fg2a`-`fg3a` at **-0.833** being the
+    3PA/2PA substitution the heads already reparameterize away. Independent streams are
+    therefore the right default, and a shared one has to be argued for per pair.
+    """
+
+    def __init__(self, column: str | None = None, scale: float = YEAR_SD_SCALE,
+                 seed: int = SEED, stream: str = ""):
+        self.column, self.scale, self.seed = column, float(scale), int(seed)
+        self.stream = str(stream)
+        self.levels: list = []
+        self.sigma_draws = np.zeros(0)
+
+    def _rng(self) -> np.random.Generator:
+        return np.random.default_rng([self.seed, zlib.crc32(self.stream.encode())])
+
+    @property
+    def enabled(self) -> bool:
+        return self.column is not None
+
+    def data(self, train: "pd.DataFrame") -> dict:
+        """Stan data keys, and a record of which seasons the fitted `z` correspond to."""
+        if not self.enabled:
+            block, self.levels = year_block(len(train))
+            return block
+        block, self.levels = year_block(len(train), train[self.column].to_numpy(),
+                                        scale=self.scale)
+        return block
+
+    def absorb(self, fit) -> None:
+        """Keep the `sigma_year` draws; `year_z` is deliberately discarded.
+
+        The fitted `z` values describe seasons that are over. Nothing downstream may read
+        them — if they were kept, using them would be a season fixed effect — so they are
+        not stored at all rather than stored and trusted not to be used.
+        """
+        if not self.enabled:
+            self.sigma_draws = np.zeros(0)
+            return
+        draws = np.atleast_1d(fit.stan_variable("sigma_year"))
+        self.sigma_draws = np.asarray(draws).reshape(len(draws), -1)[:, 0]
+
+    def shift(self, idx: np.ndarray) -> np.ndarray:
+        """`sigma_year * z` per posterior draw — one value per draw, shared across rows."""
+        idx = np.asarray(idx)
+        if not self.enabled or self.sigma_draws.size == 0:
+            return np.zeros(len(idx))
+        return self.sigma_draws[idx] * self._rng().standard_normal(len(idx))
+
+    def response_multiplier(self, link: str = "log") -> float:
+        """`E_z[exp(sigma*z)]` — how much integrating the year effect moves the MEAN.
+
+        Exactly 1.0 when disabled. For a log link this is the multiplicative bias a
+        mean-zero linear-predictor term induces on the response scale; for a logit link
+        there is no closed form and the Monte Carlo estimate through `inv_logit` is what
+        the predictive actually uses, so this reports the log-scale figure as the bound.
+        """
+        if not self.enabled or self.sigma_draws.size == 0:
+            return 1.0
+        return float(np.mean(np.exp(0.5 * self.sigma_draws ** 2)))
+
+    def summary(self) -> dict:
+        if not self.enabled or self.sigma_draws.size == 0:
+            return {"year_effect": False, "sigma_year": 0.0, "sigma_year_sd": 0.0,
+                    "n_train_seasons": 0, "response_multiplier": 1.0}
+        return {"year_effect": True,
+                "sigma_year": float(self.sigma_draws.mean()),
+                "sigma_year_sd": float(self.sigma_draws.std(ddof=1)),
+                "n_train_seasons": len(self.levels),
+                "response_multiplier": self.response_multiplier()}
 
 
 def compile_model(name: str, stan_dir: Path | str = STAN_DIR,

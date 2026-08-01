@@ -200,6 +200,28 @@ stan:
     # make the sweep unable to disagree.
     spline_knots: 5
 
+  # The season-term ablation — `make season-terms`, src/models/season_terms.py.
+  season_terms:
+    # Posterior draws pushed through the eleven-head season-total composition. A memory
+    # knob: eleven heads x draws x test rows of predictive samples.
+    composition_draws: 400
+
+    # ⏰ THE MANUAL LEAGUE-LEVEL OVERRIDE — the one season effect that IS knowable in
+    # advance, and the reason this is config rather than code.
+    #
+    # Rule changes and points of emphasis are announced in the summer, before opening
+    # night: the 2004-05 hand-checking crackdown (+7.6% league FTA) and the 2021-22
+    # non-basketball-moves emphasis were both public ahead of the season. A multiplier set
+    # here by a human who read the announcement is therefore legitimate point-in-time
+    # information, unlike anything drawn from inside the season — and unlike a fitted
+    # trend, which `make season-effects` shows is only extrapolable for `fg3a`.
+    #
+    # `{component: {season: multiplier}}`, applied to the predicted season total. Empty is
+    # today's behaviour exactly. `make season-terms` prints the ORACLE version of this
+    # beside it — a perfect per-season multiplier — which is the ceiling on what filling
+    # this in could ever be worth, so a real entry can be judged against a known bound.
+    league_override: {}
+
   # The team-game minutes composition pilot — docs/minutes-composition-plan.md.
   composition:
     # The frame is built over every season (lags and the expanding rookie prior need

@@ -75,7 +75,7 @@ from src.eda.availability import with_lags
 from src.models.availability import (EPS, FEATURE_COLS, RHO_MAX, RHO_MIN,
                                      fit_dispersion, split_seasons)
 from src.models.stan_availability import availability_design
-from src.models.stan_utils import (compile_model, crps_from_samples,
+from src.models.stan_utils import (YearTerm, compile_model, crps_from_samples,
                                    diagnostics_frame, ks_uniform,
                                    pit_from_samples, posterior,
                                    prior_sd_for_l2, sample, standardized, thin,
@@ -255,10 +255,13 @@ class StanMinutes:
 
     def __init__(self, features: list[str], l2: float = GLM_L2, name: str = "stan",
                  chains: int = 4, warmup: int = 1000, samples: int = 1000,
-                 seed: int = 42, predictive_samples: int = PREDICTIVE_SAMPLES):
+                 seed: int = 42, predictive_samples: int = PREDICTIVE_SAMPLES,
+                 year_column: str | None = None, metric: str | None = None):
         self.features, self.l2, self.name = features, l2, name
         self.chains, self.warmup, self.samples, self.seed = chains, warmup, samples, seed
         self.predictive_samples = predictive_samples
+        self.metric = metric
+        self.year = YearTerm(year_column, seed=seed, stream=name)
 
     def fit(self, train: pd.DataFrame) -> "StanMinutes":
         (X,), self.scaler = standardized(train, [train], self.features)
@@ -273,9 +276,9 @@ class StanMinutes:
             model,
             {"N": len(train), "K": X.shape[1], "X": X, "n": n.tolist(), "y": y.tolist(),
              "beta_scale": prior_sd_for_l2(self.l2),
-             "intercept_scale": INTERCEPT_SCALE},
+             "intercept_scale": INTERCEPT_SCALE, **self.year.data(train)},
             chains=self.chains, warmup=self.warmup, samples=self.samples,
-            seed=self.seed, label=self.name,
+            seed=self.seed, label=self.name, metric=self.metric,
             inits={"alpha": float(np.log(share / (1 - share))),
                    "beta": np.zeros(X.shape[1]).tolist(), "rho": 0.05})
         warn_if_unconverged(self.diagnostics)
@@ -285,6 +288,7 @@ class StanMinutes:
         self.beta_draws = draws["beta"].reshape(len(self.alpha_draws), -1)
         self.rho_draws = draws["rho"].reshape(-1)
         self.rho = float(self.rho_draws.mean())
+        self.year.absorb(fit)
         return self
 
     def _design(self, df: pd.DataFrame) -> np.ndarray:
@@ -294,7 +298,8 @@ class StanMinutes:
     def mu_draws(self, df: pd.DataFrame, keep: int) -> tuple[np.ndarray, np.ndarray]:
         idx = thin(len(self.alpha_draws), keep)
         # (rows x K) @ (K x draws) -> (rows x draws), then transposed to draws-major.
-        eta = self._design(df) @ self.beta_draws[idx].T + self.alpha_draws[idx][None, :]
+        eta = (self._design(df) @ self.beta_draws[idx].T
+               + self.alpha_draws[idx][None, :] + self.year.shift(idx)[None, :])
         return 1.0 / (1.0 + np.exp(-np.clip(eta.T, -30, 30))), self.rho_draws[idx]
 
     def predict_mean(self, df: pd.DataFrame) -> np.ndarray:

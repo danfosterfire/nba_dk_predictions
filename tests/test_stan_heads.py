@@ -383,7 +383,13 @@ def test_negbinomial_source_offsets_by_log_exposure_in_transformed_data():
 
     source = (STAN_DIR / "negbinomial_glm.stan").read_text()
     assert "transformed data" in source and "log_exposure = log(exposure)" in source
-    assert "neg_binomial_2_log(log_exposure + alpha + X * beta, phi)" in source
+    # `eta` is assembled once and passed whole, so the offset is checked where it is
+    # BUILT rather than inside the likelihood call — the optional year term made the
+    # single-expression form untenable and this is the property that actually matters.
+    assert "vector[N] eta = log_exposure + alpha + X * beta;" in source
+    assert "neg_binomial_2_log(eta, phi)" in source
+    # Never a fitted covariate: `exposure` must not reach the design matrix.
+    assert "X * beta" in source and "exposure * beta" not in source
 
 
 # ── End to end, with a real sampler ──────────────────────────────────────────

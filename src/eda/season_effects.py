@@ -219,6 +219,188 @@ def drift_vs_shock(rates: pd.DataFrame, group: str = "quantity") -> pd.DataFrame
     return out.sort_values("yoy_sd_pct", ascending=False).reset_index(drop=True)
 
 
+# ── Regime confounds: is the trend even a trend? ──────────────────────────────
+#
+# Two known interventions sit inside the 30-season window, and they are different SHAPES,
+# which is why they get different tests rather than one generic "break" scan:
+#
+#   2019-20 / 2020-21   COVID health protocols — bubble, quarantines, contact tracing.
+#                       A **transient regime**: two seasons unlike their neighbours, after
+#                       which the league returns. The right treatment is an indicator on
+#                       those seasons, and the right question is how much the trend moves
+#                       when they are excluded.
+#   2023-24             The Player Participation Policy. A **permanent** rule change, so
+#                       the right test is a level-and-slope break from that season on.
+#
+# Extrapolating one smooth line across either is the specific error this measures. The
+# decision-relevant output is not the p-value, it is `next_season_shift_pct`: how far the
+# one-season-ahead extrapolation moves once the regime is handled. A statistically
+# significant break that moves next season's forecast by 0.1% changes nothing.
+
+COVID_SEASONS = ("2019-20", "2020-21")
+POLICY_BREAK_SEASON = "2023-24"
+
+
+def series_label(rates: pd.DataFrame) -> pd.DataFrame:
+    """One unique key per league series, folding the availability role into the name.
+
+    `gp_share` is emitted once per role bucket, so `quantity` alone repeats a season five
+    times and any per-series regression silently fits a smear of five curves. This is the
+    same `gp_share [30+ mpg]` label `run` already builds for the summary table, hoisted so
+    every consumer keys on the same thing.
+    """
+    out = rates.copy()
+    role = out["role"] if "role" in out.columns else pd.Series(np.nan, index=out.index)
+    labelled = role.notna() & (role.astype(str) != "nan")
+    out["series"] = out["quantity"].astype(str)
+    out.loc[labelled, "series"] = (out.loc[labelled, "quantity"].astype(str)
+                                   + " [" + role[labelled].astype(str) + "]")
+    return out
+
+
+def _ols(X: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, float]:
+    coef, *_ = np.linalg.lstsq(X, y, rcond=None)
+    return coef, float(((y - X @ coef) ** 2).sum())
+
+
+def _extrapolate(coef: np.ndarray, X_next: np.ndarray) -> float:
+    return float(X_next @ coef)
+
+
+def regime_tests(rates: pd.DataFrame,
+                 covid_seasons: tuple[str, ...] = COVID_SEASONS,
+                 break_season: str = POLICY_BREAK_SEASON,
+                 group: str = "series") -> pd.DataFrame:
+    """Per series: does a COVID indicator or a 2023-24 break change the extrapolation?
+
+    Both arms are nested F tests against the same plain log-linear trend, so the
+    statistics are comparable to each other. `next_season_shift_pct` is the column that
+    decides anything: it is the difference between what the plain trend predicts for the
+    season *after* the sample and what the regime-aware model predicts, in percent. A
+    trend term is only worth extrapolating across a regime if that number is small.
+
+    The COVID arm is an indicator, not a break, because the two seasons are an
+    interruption rather than a new level — modelling them as a permanent shift would
+    push the whole post-2021 series onto the wrong intercept. The policy arm is a break
+    (level **and** slope from 2023-24 on) because a rule change does not revert.
+    """
+    if group == "series" and "series" not in rates.columns:
+        rates = series_label(rates)
+    rows = []
+    for name, d in rates.groupby(group):
+        d = d.sort_values("season")
+        keep = np.isfinite(d["rate"].to_numpy(dtype=float)) & (d["rate"] > 0)
+        d = d[keep]
+        if len(d) < 8:
+            continue
+        seasons = d["season"].to_numpy()
+        y = np.log(d["rate"].to_numpy(dtype=float))
+        t = np.arange(len(y), dtype=float)
+        n = len(y)
+
+        base = np.column_stack([np.ones(n), t])
+        base_next = np.array([1.0, float(n)])
+        coef0, sse0 = _ols(base, y)
+        plain_next = _extrapolate(coef0, base_next)
+
+        arms = {}
+        covid = np.isin(seasons, list(covid_seasons)).astype(float)
+        if 0 < covid.sum() < n:
+            # The indicator is 0 for the next season by construction: COVID is over, so
+            # the extrapolation uses the trend fitted with those two seasons' influence
+            # removed rather than carried forward.
+            arms["covid_indicator"] = (np.column_stack([base, covid]),
+                                       np.r_[base_next, 0.0])
+
+        after = (seasons >= break_season).astype(float)
+        if 0 < after.sum() < n:
+            first = t[after.astype(bool)][0]
+            since = after * (t - first)
+            # Two forms, because they fail differently. The level+slope break is the
+            # general one and is what "test for a break" normally means; with only three
+            # post-break seasons its slope is fitted on three points and extrapolating it
+            # is worse than not testing at all. The level-only arm asks the narrower and
+            # far more stable question a rule change actually poses: did the level step?
+            arms["policy_break"] = (np.column_stack([base, after, since]),
+                                    np.r_[base_next, 1.0, float(n) - first])
+            arms["policy_break_level"] = (np.column_stack([base, after]),
+                                          np.r_[base_next, 1.0])
+
+        for arm, (X, x_next) in arms.items():
+            coef, sse = _ols(X, y)
+            df_num = X.shape[1] - base.shape[1]
+            df_den = n - X.shape[1]
+            f = ((sse0 - sse) / df_num) / (sse / df_den) if sse > 0 and df_den > 0 else np.nan
+            shifted = _extrapolate(coef, x_next)
+            rows.append({
+                group: name, "arm": arm, "seasons": n,
+                # How many seasons the regime term is fitted on. A slope estimated from
+                # three points and then extrapolated is the reason `policy_break` moves
+                # the forecast by 20%: read this column before believing that column.
+                "regime_seasons": int(X[:, 2].astype(bool).sum()),
+                "trend_pct_per_season": float((np.exp(coef0[1]) - 1) * 100),
+                "trend_pct_per_season_adjusted": float((np.exp(coef[1]) - 1) * 100),
+                "f_stat": float(f), "df_num": int(df_num), "df_den": int(df_den),
+                "p_value": float(_f_sf(f, df_num, df_den)) if np.isfinite(f) else np.nan,
+                # exp() of a log-scale difference, minus one: the percentage by which the
+                # one-season-ahead forecast moves.
+                "next_season_shift_pct": float((np.exp(shifted - plain_next) - 1) * 100),
+                "regime_effect_pct": float((np.exp(coef[2]) - 1) * 100),
+            })
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    out["significant"] = out["p_value"] < 0.05
+    out["abs_shift"] = out["next_season_shift_pct"].abs()
+    return (out.sort_values(["arm", "abs_shift"], ascending=[True, False])
+            .drop(columns=["abs_shift"]).reset_index(drop=True))
+
+
+def _f_sf(f: float, df_num: int, df_den: int) -> float:
+    from scipy.stats import f as f_dist
+    return float(f_dist.sf(f, df_num, df_den))
+
+
+def year_shock_correlation(rates: pd.DataFrame, group: str = "series") -> pd.DataFrame:
+    """Are the league's year-to-year shocks ONE common factor, or many independent ones?
+
+    This is the question a simulator has to answer before it can draw a year effect at
+    all. If detrended league movements are strongly correlated across quantities, one
+    shared draw per simulated season is right and the eleven heads must not draw
+    independently. If they are near-independent, eleven independent draws are right and a
+    shared one would invent a league-wide factor that does not exist.
+
+    Measured on the **detrended** log level — the residual after removing each quantity's
+    own log-linear trend — because two quantities that both drift upward would otherwise
+    correlate at +0.9 through their trends alone, which is drift and not shock.
+    """
+    if group == "series" and "series" not in rates.columns:
+        rates = series_label(rates)
+    wide = {}
+    for name, d in rates.groupby(group):
+        d = d.sort_values("season")
+        d = d[np.isfinite(d["rate"].to_numpy(dtype=float)) & (d["rate"] > 0)]
+        if len(d) < 8:
+            continue
+        y = np.log(d["rate"].to_numpy(dtype=float))
+        t = np.arange(len(y), dtype=float)
+        slope, intercept = np.polyfit(t, y, 1)
+        wide[name] = pd.Series(y - (intercept + slope * t), index=d["season"].to_numpy())
+
+    if len(wide) < 2:
+        return pd.DataFrame()
+    panel = pd.DataFrame(wide).dropna()
+    corr = panel.corr()
+    rows = []
+    names = list(corr.columns)
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            rows.append({"series_a": a, "series_b": b,
+                         "corr": float(corr.loc[a, b]), "n_seasons": int(len(panel))})
+    out = pd.DataFrame(rows).sort_values("corr", key=abs, ascending=False)
+    return out.reset_index(drop=True)
+
+
 # ── What ignoring it costs ────────────────────────────────────────────────────
 
 def carry_forward_bias(design: pd.DataFrame, test_seasons: int = 2) -> pd.DataFrame:
@@ -282,6 +464,8 @@ def run(cfg: dict) -> dict[str, Path]:
 
     design = build_design(targets, cfg["data"]["seasons"], cfg["data"]["raw_dir"])
     bias = carry_forward_bias(design)
+    regimes = regime_tests(rates)
+    shocks = year_shock_correlation(rates)
 
     print(f"Season effects: {rates['season'].nunique()} seasons, "
           f"{rates['quantity'].nunique()} quantities\n")
@@ -311,10 +495,53 @@ def run(cfg: dict) -> dict[str, Path]:
           "diversify away in a\n  portfolio — unlike the shared-beta term, which is worth "
           "+0.2% on a 15-man roster.")
 
+    if not regimes.empty:
+        print("\nRegime confounds — a smooth trend extrapolated across a policy "
+              "discontinuity is wrong.\n"
+              "COVID (2019-20/2020-21) is a transient INDICATOR; the Player Participation "
+              "Policy (2023-24)\nis a permanent level+slope BREAK. The decisive column is "
+              "the last one, not the p-value:")
+        cols = [c for c in ["series", "arm", "regime_seasons", "trend_pct_per_season",
+                            "trend_pct_per_season_adjusted", "regime_effect_pct",
+                            "p_value", "significant", "next_season_shift_pct"]
+                if c in regimes.columns]
+        for arm, block in regimes.groupby("arm"):
+            print(f"\n  arm = {arm}  ({int(block['significant'].sum())} of {len(block)} "
+                  f"significant at p < 0.05)")
+            print(block[cols].drop(columns=["arm"]).round(3).to_string(index=False))
+        worst = regimes.loc[regimes["next_season_shift_pct"].abs().idxmax()]
+        print(f"\n  Largest move in the one-season-ahead extrapolation: "
+              f"{worst['series']} under {worst['arm']}, "
+              f"{worst['next_season_shift_pct']:+.2f}% off {int(worst['regime_seasons'])} "
+              f"regime seasons.")
+        print("  Read `regime_seasons` before `next_season_shift_pct`: the level+slope arm "
+              "fits its slope\n  on the post-break seasons alone, so with three of them "
+              "the extrapolation is noise. That\n  is itself the finding — it disqualifies "
+              "trend extrapolation across the break rather than\n  supplying a better "
+              "trend. `policy_break_level` is the stable form of the same question.")
+
+    if not shocks.empty:
+        strongest = shocks.iloc[0]
+        print("\nAre the year-to-year shocks ONE common factor or many? "
+              "(detrended log level, pairwise)")
+        print(f"  {len(shocks)} pairs over {int(shocks['n_seasons'].iloc[0])} seasons: "
+              f"mean r {shocks['corr'].mean():+.3f}, mean |r| "
+              f"{shocks['corr'].abs().mean():.3f}, range "
+              f"{shocks['corr'].min():+.3f} to {shocks['corr'].max():+.3f}")
+        print(f"  strongest pair: {strongest['series_a']}–{strongest['series_b']} at "
+              f"{strongest['corr']:+.3f}")
+        print("  This decides whether a simulator draws ONE year effect per season and "
+              "shares it across\n  every head, or one per head. A mean near zero with a "
+              "large mean |r| is neither: the\n  shocks are correlated in specific PAIRS "
+              "rather than loaded on a common factor, so the\n  year effect needs a "
+              "correlation matrix, the same shape the residual copula already takes.")
+
     artifacts = {
         "league_rates": (rates, out_dir / "season_effects_league_rates.csv"),
         "summary": (summary, out_dir / "season_effects_summary.csv"),
         "carry_forward_bias": (bias, out_dir / "season_effects_carry_forward_bias.csv"),
+        "regimes": (regimes, out_dir / "season_effects_regimes.csv"),
+        "shock_correlation": (shocks, out_dir / "season_effects_shock_correlation.csv"),
     }
     paths = {}
     for name, (frame, dest) in artifacts.items():

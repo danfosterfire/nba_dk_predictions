@@ -480,7 +480,7 @@ season posterior driven by the measured ρ_game (4.65× binomial) and 2.43× blo
 scored on held-out season-total CRPS and on whether simulated bonus rates match realized ones.
 The comparator costs an afternoon; the per-game fit costs days.
 
-### ⏰ TODO — season effects: no head carries one, and the league moves. Measured 2026-07-30
+### Season effects: the league moves, and no head should carry a term for it — settled 2026-07-31
 
 **Reproduce with `make season-effects`** (`src/eda/season_effects.py`) →
 `outputs/eda/season_effects_{league_rates,summary,carry_forward_bias}.csv`. Every figure
@@ -559,6 +559,13 @@ term:
 > uncertainty measured in `stan_availability.board_correlation` is worth **+0.2%** on a
 > 15-man roster. Season effects are the larger non-diversifiable risk by an order of
 > magnitude, and they are currently modelled as exactly zero.
+>
+> ✅ **Now measured, and the "order of magnitude" was an under-statement by a further
+> order** — `make season-terms` (`season_term_roster_spread.csv`): a year effect widens a
+> 15-man roster's season-total dk_pts spread by **+19.0%** against shared-β's **+0.2%**,
+> i.e. ~**95×**, and by **+364%** across the whole 791-player board against **+6.4%**. See
+> the verdict below, which also finds this is the *only* thing a season term is worth: on
+> point accuracy the ceiling is ~3% of MAE.
 
 **One piece is genuinely knowable at prediction time and should not be lumped in with the
 rest.** Rule changes and points of emphasis are announced in the summer, before opening
@@ -566,72 +573,237 @@ night — the 2021-22 non-basketball-moves emphasis was public in advance. A man
 league-level override is therefore legitimate under the point-in-time discipline, unlike
 anything drawn from within the season.
 
-**⏰ TODO — assess a year-level random effect and a year-on-year trend fixed effect across
-every head**: the eleven dk components, availability, and minutes. This is scoped as its own
-session; the prompt is below. Delete this TODO once the ablation has run and its verdict is
-recorded here.
+### ✅ VERDICT — the ablation ran 2026-07-31, and **no head ships a season term**
 
-<details>
-<summary><b>Prompt for a new session</b></summary>
+**Reproduce with `make season-terms`** (`src/models/season_terms.py`) →
+`outputs/predictions/season_term_{metrics,season_total,roster_spread,bonus,sigma_vs_league,diagnostics}.csv`.
+108 fits, **0 divergences**, **0 treedepth-saturated draws**, max R̂ 1.0142, 155.9 min. Five
+fits sit marginally over the 1.01 R̂ bar — worst 1.0142, all with ESS ≥ 371 and no
+divergences — and **four of the five are `base` arms**, so the season terms are not what
+strains the sampler. Four arms per head — `base`,
+`trend`, `year`, `trend_year` — on top of each head's already-selected specification, plus
+`trend_x_role` and `trend_x_role_year` for availability. Selected on the validation split
+(2022-23/2023-24), confirmed on test (2024-25/2025-26), every arm quoted against its no-fit
+floor. Every fit uses `metric="dense_e"`: on the `blk` spline base that is **13.4 s against
+236.6 s** with treedepth saturation **0 against 35**, which is what made 108 full Bayesian
+fits affordable at all.
 
-```
-Assess whether the heads in this repo need a season term, and which kind. Read CLAUDE.md,
-docs/predictions-plan.md (the "TODO — season effects" section) and docs/availability-plan.md
-(the "Load management" section) first — the measurement already exists, reproducible with
-`make season-effects` → outputs/eda/season_effects_*.csv. Do not re-derive it; build on it.
+> ⚠️ The ablation runs at the **selection** sampler budget (500/500) on *both* splits, so
+> the `base` arm's test column is not directly comparable to `stan_component_metrics.csv`,
+> whose test fits run at 1000/1000. Differences between the two tables are sampler noise.
+> Within this table every arm shares one budget, which is what the contrast needs.
 
-The established facts you are starting from:
-- No head carries a season term today: not availability, not minutes, not any of the eleven
-  components.
-- A season FIXED effect is unusable at prediction time — there is no dummy for a season that
-  has not happened. The two usable forms are a year-on-year TREND extrapolated one season
-  forward, and a YEAR-LEVEL RANDOM EFFECT.
-- These are complementary, not alternatives: detrending shifts the mean of the year-over-year
-  changes and leaves their variance exactly unchanged. A trend fixes bias; only a year effect
-  addresses spread.
-- `fg3a` is the ONLY quantity where a trend is worth extrapolating (R² 0.93, +4.07%/season).
-  Everything else is shock — `stl` has a trend R² of 0.03.
-- The cost is measured: the no-fit floor carries −7.0% bias on `fta` (−10.7% in 2025-26) and
-  +6.2% on `blk` across the held-out seasons.
-- `docs/availability-plan.md` separately finds the availability era effect is ROLE-GRADED:
-  heavy-minute players lost −0.101 of games-played share from 2004-2010 to 2023-2025 against
-  −0.037 for fringe players. So for availability the candidate is a season × role
-  interaction, not a level shift.
+#### 1. The trend is refuted, and most sharply on the one quantity that predicted it
 
-What to build:
-1. A trend variant and a year-random-effect variant for each head, on top of the existing
-   Stan specs in src/models/stan_{availability,minutes,components}.py. The year effect is a
-   hierarchical term over season with a fitted sd; at prediction time it contributes mean 0
-   and its variance, which is the entire point — it widens the predictive rather than
-   shifting it.
-2. For availability, test the season × role interaction specifically, not just a level term.
-3. Quote every variant against its no-fit floor (mandatory — see CLAUDE.md) and select on a
-   VALIDATION split, never on test. This repo has already shipped one false positive whose
-   paired bootstrap on test read [-0.079, -0.015] with P(Δ<0) = 99.7% and did not replicate.
+`fg3a` is the only quantity `make season-effects` marks **"trend + year effect"** — trend R²
+0.93 at +4.07%/season. On the head it is the **worst** case for a trend:
 
-How to judge it, and this is the part that matters:
-- A year random effect should NOT improve held-out point accuracy — it is mean-zero by
-  construction. If R²/MAE moves much, something is wrong. Judge it on CALIBRATION: CRPS, PIT
-  uniformity, and whether simulated season-total intervals achieve nominal coverage.
-- A trend term SHOULD improve point accuracy and bias, and only on `fg3a` per the measurement
-  above. If it helps everywhere, suspect overfitting to the last two seasons.
-- The decisive downstream metric is season-total dk_pts and bonus-threshold calibration, not
-  per-component R².
+| `fg3a` arm | val CRPS | test CRPS | held-out bias |
+|---|---|---|---|
+| `carry_forward` | — | 38.747 | −4.17% |
+| **`base`** (selected) | **33.247** | **33.723** | **−3.74%** |
+| `trend` | 35.443 | 33.900 | **+8.44%** |
+| `year` | 34.309 | 35.408 | −9.01% |
+| `trend_year` | 36.108 | 34.706 | **+11.48%** |
 
-Two traps specific to this question:
-- Two confounds sit inside the window: 2019-20 and 2020-21 are a COVID health-protocol
-  regime, and the NBA's Player Participation Policy arrived in 2023-24. A smooth trend
-  extrapolated across a policy discontinuity is actively wrong. Test for a break.
-- Rule changes are ANNOUNCED before the season, so a manual league-level override is
-  legitimate point-in-time information. Keep that path open rather than forcing everything
-  through a fitted trend.
+The trend more than doubles the absolute bias and flips its sign. **Two mechanisms, both
+measured:**
 
-Conventions: python -m src.<module>, a matching Makefile target in .PHONY, cfg =
-yaml.safe_load(open("configs/default.yaml")) in __main__, plain-assert tests with synthetic
-builders. Stan sources in src/stan/, compiled binaries stay out of git.
-```
+- **The three-point trend decelerated.** +4.07%/season over 30 seasons, but **+1.61%/season
+  over the last six** and a mean year-over-year change of **+1.39%** across the last five
+  transitions (`season_effects_league_rates.csv`). A 30-season slope extrapolated one and
+  two seasons into a flattening series over-shoots, and the held-out seasons are exactly
+  where it flattened.
+- **The head's own feature already carries the league level.** The dominant term is
+  `log(fg3a_p36_lag1)` — the player's prior-season rate — which moves with the league. The
+  carry-forward lags a league move by exactly one season, so what is needed is a *one-season*
+  increment; a fitted trend adds a second, independently-sized correction on top of a base
+  that has already moved. That is why the correction over-shoots rather than merely being
+  mis-sized.
 
-</details>
+**Across the eight count heads the trend makes held-out bias worse on six of eight**
+(`fg3a` −3.74→+8.44, `fta` −7.40→−9.35, `blk` +4.75→+7.18, `fg2a` −0.27→−3.07,
+`stl` −6.68→−5.98 and `tov` −3.36→−4.82; only `stl` and `reb` are unharmed). And where the
+trend *does* win on test it wins on heads with no era story at all — `stl`, whose trend R²
+is **0.03**. That is the overfitting signature, not a finding.
+
+#### 2. The trend's win on season-total dk_pts is cross-component cancellation
+
+Composed through the chain over the eight scoring components, held out on 791 player-seasons
+(bonus excluded, so this is exact and linear in the components):
+
+| arm | MAE | bias | CRPS | coverage 50 / 80 / 95 |
+|---|---|---|---|---|
+| `base` | 109.96 | −32.44 | 82.70 | 0.612 / 0.858 / 0.980 |
+| **`trend`** | **108.88** | **+7.60** | **80.57** | 0.623 / 0.885 / 0.984 |
+| `year` | 113.64 | −51.71 | 85.68 | **0.584 / 0.847 / 0.979** |
+| `trend_year` | 110.09 | +15.25 | 80.87 | 0.618 / 0.885 / 0.984 |
+
+Read alone, the `trend` row says ship a trend everywhere. It should not be read alone. The
+component biases behind it move in **both directions** — `fg3a` +8.44%, `blk` +7.18% against
+`fta` −9.35%, `fg2a` −3.07% — so the aggregate improvement is those errors **cancelling in
+the DK sum**, which is the same cross-component cancellation this repo already documents at
+8.30× on `teammate_assist_supply`, now appearing as a false positive for a season term. A
+model that is wrong in both directions and right on average is not a model of the league.
+
+⚠️ **This table is uniform-arm and test-only, so it is confirmation and not selection.** The
+per-head validation table above is what selects.
+
+#### 3. The oracle bounds the entire question at ~3% of MAE
+
+`oracle_league` rescales each held-out season by its own realized total — a perfect
+per-season league multiplier, applied to every player. It is the most general form *any*
+league-level term can take, so it is the ceiling on a fitted trend, a year effect and a
+manual override alike, and it cannot be a model because it reads the season it forecasts.
+
+As a share of the base arm's MAE it is worth: `stl` **3.11%**, `blk` 2.32%, `fta` **2.16%**,
+`reb` 1.71%, `fg3a` **0.92%**, `ast` 0.58%, `tov` 0.01%, `fg2a` −0.06% — **median 1.32%,
+maximum 3.11%.** So even oracular knowledge of the league shift buys almost nothing at the
+player level, because player-level error dominates it. `fta` carries a **−7.0%** systematic
+bias and removing it entirely recovers **2.2%** of MAE. **That is the single most important
+number here**: it bounds every form of season term, and it is small.
+
+#### 4. The year effect does exactly what it should, and recovers the league independently
+
+Median held-out ΔR² against `base` is **+0.00004** across the thirteen heads, which is the
+mean-zero property surviving contact with the data. The largest is `fg3a` at **0.017**, the
+head where it absorbs drift rather than shock.
+
+It is also a **defined check rather than a hopeful comparison**: `sigma_year` is fitted by
+NUTS on player-season rows and knows nothing about `make season-effects`, which measures the
+league rate directly as totals over totals. On a log link the two are the same number in the
+same units, and **5 of the 8 count heads land within 20%** —
+
+| head | fitted `sigma_year` | measured league yoy sd | ratio |
+|---|---|---|---|
+| `blk` | 3.66% | 3.70% | **0.99** |
+| `tov` | 2.71% | 2.89% | 0.94 |
+| `fta` | 3.78% | 4.36% | 0.87 |
+| `stl` | 2.49% | 3.03% | 0.82 |
+| `reb` | 1.75% | 1.48% | 1.18 |
+| `fg2a` | 3.03% | 2.42% | 1.25 |
+| `ast` | 4.46% | 3.08% | 1.45 |
+| **`fg3a`** | **15.43%** | 6.53% | **2.36** |
+
+`fg3a` at 2.36× is the tell: with no trend term to carry the secular climb, the year effect
+absorbs **drift as a sequence of shocks** and then zeroes it at prediction time — which is
+why its bias goes to −9.01%. The logit-link rows (`gp` 4.47×, the conversions ~3.6×) differ
+by a 1/(1−p) factor and are a sanity check only.
+
+**The Jensen inflation is real and negligible**: mean-zero on the linear predictor is *not*
+mean-zero on the response, since `E[exp(σz)] = exp(σ²/2)`, and the measured multiplier runs
+**1.000 to 1.012** across the heads. Worth reporting rather than assuming away; not worth
+correcting.
+
+#### 5. What the year effect IS worth — and the plan understated it by another order of magnitude
+
+Roster season-total dk_pts spread, sd of the summed total across posterior draws, averaged
+over 200 random rosters:
+
+| roster | `base` sd | `year` sd | inflation | shared-β, same board |
+|---|---|---|---|---|
+| 12 | 753 | 866 | **+15.0%** | +0.2% |
+| **15** | **841** | **1,001** | **+19.0%** | **+0.2%** |
+| 30 | 1,213 | 1,671 | +37.7% | +0.3% |
+| 150 | 2,796 | 6,652 | +138% | +1.1% |
+| 791 (whole board) | 7,098 | 32,967 | **+364%** | +6.4% |
+
+**On a 15-man roster the year effect is worth ~95× the shared-β term** the Stan work was
+built for. The plan's "larger by an order of magnitude" is understated by a further order.
+The mechanism is the one the plan named: a league shift is perfectly correlated across
+players, so it grows as **N** while independent error grows as **sqrt(N)** — and unlike
+shared-β, which is negligible on one roster and only matters board-wide, this one is already
++15% at twelve players.
+
+⚠️ **Treat these as an upper bound.** The fitted `sigma_year` exceeds the independently
+measured league movement on `fg3a`, `ast` and `fg2a`, so part of this spread is player-level
+heterogeneity the year effect has absorbed rather than league movement.
+
+#### 6. Minutes is the one head that adopts a season term — and it falsifies a recorded hypothesis
+
+| `min` arm | val CRPS | test CRPS | bias (minutes) |
+|---|---|---|---|
+| `carry_forward` | 161.45 | 168.24 | −5.69 |
+| `base` | 144.09 | 147.02 | −41.05 |
+| `trend` | 144.44 | 148.78 | **−56.59** |
+| **`year`** (selected) | **143.81** | **146.54** | **−38.19** |
+| `trend_year` | 144.28 | 148.85 | −56.63 |
+
+The year effect wins on **both** splits — the replication bar this repo insists on — and
+nudges the standing −33 to −41 minute bias to −38.2.
+
+**And the trend settles an open question in `docs/availability-plan.md`.** That doc proposed
+the minutes head's held-out bias as "the signature an era effect would leave". Adding a trend
+makes the bias **worse by 15.5 minutes** (−41.0 → −56.6) on both arms that carry one. So the
+minutes bias is **shrinkage toward a 30-season mean, not an era effect** — the hypothesis is
+falsified rather than left open.
+
+#### 7. Availability: the season × role interaction is a validation null
+
+`docs/availability-plan.md` finds the availability era effect is role-graded (−0.101 of
+games-played share for heavy-minute players against −0.037 for fringe), and
+`season_effects_regimes.csv` now confirms it as a dated policy step — the 2023-24
+Participation Policy is a **−4.63%** level break on `gp_share [30+ mpg]` at **p = 0.008**
+while the fringe bucket is +5.37% and not significant. So the era effect is real. It does not
+transfer:
+
+| arm | features | **val CRPS** | test CRPS | bias |
+|---|---|---|---|---|
+| `carry_forward` (league/age) | 0 | 13.387 | 13.614 | +6.80 |
+| `base` | 19 | 10.007 | 10.797 | +1.68 |
+| **`trend`** (selected) | 20 | **9.997** | 10.765 | −1.29 |
+| `year` | 19 | 10.015 | 10.813 | +2.20 |
+| `trend_year` | 20 | 10.005 | 10.757 | −1.24 |
+| `trend_x_role` | 26 | **10.078** | **10.742** | −1.23 |
+| `trend_x_role_year` | 26 | **10.087** | **10.736** | −1.27 |
+
+**The two role arms are the best two on test and the worst two on validation.** That is the
+exact false-positive shape this repo has already shipped once — the nonlinearity arm whose
+paired bootstrap on test read [−0.079, −0.015] with P(Δ<0) = 99.7% and did not replicate. It
+is caught here because selection never reads the test column. And the arm that *is* selected,
+`trend`, is worth **0.010 games of CRPS** on validation, which is nothing.
+
+#### 8. Bonus-threshold calibration
+
+| arm | predicted / game | realized / game | bias |
+|---|---|---|---|
+| `base` | 0.1154 | 0.1391 | **−16.6%** |
+| `trend` | 0.1216 | 0.1391 | −12.0% |
+| `year` | 0.1127 | 0.1391 | −18.5% |
+| `trend_year` | 0.1222 | 0.1391 | −11.6% |
+
+Every arm under-predicts the bonus by 12–19%, and **that level is mostly not the season
+term** — this composition draws the eleven heads independently given realized minutes, so it
+omits the positive cross-component dependence the bonus threshold needs (measured
+off-diagonals average +0.0121 across the eight counts). It is a standing argument for the
+residual copula, not against a season term. The *ordering* tracks the bias story exactly.
+
+### What to do, and what not to
+
+- **Do not add a trend to any head.** ⚠️ **This withdraws the head-level reading of
+  "`fg3a` is worth a trend"**, which `make season-effects` supports as a statement about the
+  *league series* and which is false of the *head*: the head's carry-forward feature already
+  tracks the level, and the 30-season slope is no longer the current slope.
+- **Do not add a year effect to the component heads for accuracy.** It is mean-zero by
+  construction, and where it absorbs drift it costs bias.
+- **Do give the simulator a year effect as a variance component**, because it is the only
+  mechanism in the project that produces non-diversifiable board-level risk, and it is worth
+  ~95× the shared-β term on a 15-man roster. Take σ from the **measured** league movement
+  (`season_effects_summary.csv`, `yoy_sd_pct`) rather than the fitted per-head value, which
+  over-shoots on three of eight count heads. Draw it **per head, not shared** — the measured
+  cross-component shock correlation is **−0.009** on average over 136 pairs, so there is no
+  common factor, though the `fg2a`–`fg3a` pair at **−0.833** is the substitution the heads
+  already reparameterize away.
+- **Adopt the year effect on the minutes head.** It wins on both splits and improves the
+  standing bias.
+- **Keep the manual override path** (`stan.season_terms.league_override` in
+  `configs/default.yaml`). It is legitimate point-in-time information because rule changes
+  are announced in the summer — but the oracle says its ceiling is ~3% of MAE, so wire it and
+  do not expect much.
+- **Do not extrapolate any trend across 2023-24.** `season_effects_regimes.csv` finds a
+  significant break, and with only **3** post-break seasons the level+slope arm's
+  one-season-ahead extrapolation moves by up to **+22.1%**, which is noise. The break test
+  disqualifies extrapolation rather than supplying a better slope.
 
 ### The rate side is nearly saturated — measured, with a mandatory floor
 

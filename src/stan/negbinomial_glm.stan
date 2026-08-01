@@ -25,6 +25,26 @@
 // pushed to infinity. A half-normal on 1/sqrt(phi) is the usual recommendation; the
 // exponential below is the same idea with a heavier tail, and at ~10^4 rows it is
 // dominated by the data on every head.
+//
+// ── The optional year-level random effect ────────────────────────────────────────────
+//
+// A season FIXED effect is unusable at prediction time — there is no dummy for a season
+// that has not happened. A year-level RANDOM effect is usable, because at prediction time
+// it contributes mean zero and its variance: it widens the predictive rather than shifting
+// it. That is the whole point, and it is the only form that can touch `yoy_sd_pct`, the
+// irreducible year-to-year spread a trend term provably cannot reach (`make season-effects`;
+// subtracting a linear trend shifts the mean of the year-over-year changes and leaves their
+// variance exactly unchanged, since diff(a + b*x) is the constant b).
+//
+// **S = 0 disables it EXACTLY, not approximately.** `year_z` and `sigma_year` are then
+// zero-length vectors, so the parameter space, the priors and the likelihood are identical
+// to the model without this block — the same nesting identity `composition_glm.stan` gets
+// from `n_rho = 1`, and it is what lets one file serve both arms of the ablation. A test
+// pins it.
+//
+// NON-CENTERED on purpose: with ~28 seasons and a small sigma, `year ~ normal(0, sigma)`
+// is a funnel and NUTS handles it badly. `sigma * z` with `z ~ std_normal()` is the
+// standard reparameterization and samples cleanly at this group count.
 data {
   int<lower=0> N;
   int<lower=0> K;
@@ -34,23 +54,35 @@ data {
   real<lower=0> beta_scale;
   real<lower=0> intercept_scale;
   real<lower=0> phi_inv_scale;
+  int<lower=0> S;                     // training seasons; 0 disables the year effect
+  array[N] int<lower=0> season_idx;   // 1..S, ignored (and all zero) when S == 0
+  real<lower=0> year_sd_scale;        // half-normal scale on sigma_year
 }
 transformed data {
   // Constant across the fit, so it is computed once instead of at every gradient
   // evaluation.
   vector[N] log_exposure = log(exposure);
+  int H = S > 0 ? 1 : 0;
 }
 parameters {
   real alpha;
   vector[K] beta;
   real<lower=0> phi_inv;
+  vector[S] year_z;                   // zero-length when S == 0
+  vector<lower=0>[H] sigma_year;      // zero-length when S == 0
 }
 transformed parameters {
   real<lower=0> phi = inv(phi_inv);
 }
 model {
+  vector[N] eta = log_exposure + alpha + X * beta;
   alpha ~ normal(0, intercept_scale);
   beta ~ normal(0, beta_scale);
   phi_inv ~ exponential(inv(phi_inv_scale));
-  y ~ neg_binomial_2_log(log_exposure + alpha + X * beta, phi);
+  if (S > 0) {
+    year_z ~ std_normal();
+    sigma_year ~ normal(0, year_sd_scale);
+    eta += sigma_year[1] * year_z[season_idx];
+  }
+  y ~ neg_binomial_2_log(eta, phi);
 }

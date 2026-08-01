@@ -963,6 +963,43 @@ column-specific), or simply restricting the training window. All three are testa
 held-out CRPS against the current flat-pooled fit, and that comparison is the actual
 experiment.
 
+> ### ❌ The experiment ran, and the season × role interaction is a validation NULL
+>
+> **`make season-terms`** (`src/models/season_terms.py` →
+> `outputs/predictions/season_term_metrics.csv`). Six arms on this head — the 2×2 over trend
+> and year effect, plus the two role-interaction arms this section's finding calls for. Role
+> is bucketed on **prior-season** MPG, so it is knowable before the season starts; bucketing
+> on the target season's MPG would put the outcome in the design, which is the ⚠️ above.
+>
+> | arm | features | **val CRPS** | test CRPS | bias | 80% coverage |
+> |---|---|---|---|---|---|
+> | `carry_forward` (league/age) | 0 | 13.387 | 13.614 | +6.80 | 0.827 |
+> | `base` | 19 | 10.007 | 10.797 | +1.68 | 0.857 |
+> | **`trend`** (selected) | 20 | **9.997** | 10.765 | −1.29 | 0.866 |
+> | `year` | 19 | 10.015 | 10.813 | +2.20 | 0.856 |
+> | `trend_year` | 20 | 10.005 | 10.757 | −1.24 | 0.866 |
+> | `trend_x_role` | 26 | **10.078** | **10.742** | −1.23 | 0.864 |
+> | `trend_x_role_year` | 26 | **10.087** | **10.736** | −1.27 | 0.864 |
+>
+> **The two role arms are the best two on test and the worst two on validation.** That is
+> the exact shape of the false positive this project has already shipped once — the
+> nonlinearity arm whose paired bootstrap on test read [−0.079, −0.015] with P(Δ<0) = 99.7%
+> and did not replicate — and it is caught here only because selection never reads the test
+> column. Seven extra parameters buying −0.055 on one split and +0.071 on the other is
+> noise.
+>
+> And the arm that *is* selected is worth **0.010 games of validation CRPS**, which is
+> nothing. So: **the era effect is real in the league series and does not transfer into a
+> better availability forecast.** The 2023-24 policy break is significant at p = 0.008 on
+> `gp_share [30+ mpg]`, the role gradient is in the right direction and confirmed by two
+> independent estimators — and none of it survives as a feature. The reason is visible in
+> the ceiling: a *perfect* per-season league multiplier is worth at most 3.1% of MAE on any
+> component, because player-level error dominates a league-level one.
+>
+> **What a season term IS worth on this head is spread, not accuracy** — see
+> `docs/predictions-plan.md`, where a year effect widens a 15-man roster's season-total
+> spread by +19.0% against shared-β's +0.2%. That is a simulator input, not a feature.
+
 Two confounds sit inside the window and must be handled before any trend is fitted:
 
 - **2019-20 and 2020-21 are a health-protocol regime**, not a load-management one — bubble,
@@ -973,6 +1010,42 @@ Two confounds sit inside the window and must be handled before any trend is fitt
   0.759 in 2024-25, 0.742 in 2025-26), but that slice is composition-sensitive and is not a
   test.
 
+> ### ✅ Both confounds are now tested rather than flagged — `make season-effects`
+>
+> `regime_tests` (`src/eda/season_effects.py` → `outputs/eda/season_effects_regimes.csv`).
+> They get **different tests because they are different shapes**, which is the part worth
+> carrying: COVID is a *transient regime* — two seasons unlike their neighbours, after which
+> the league returns — so it gets an indicator that is zero for the forecast season; the
+> Participation Policy is a *permanent* rule change, so it gets a break from 2023-24 on.
+> Modelling COVID as a break would put the whole post-2021 series on the wrong intercept.
+>
+> **The policy break is real, significant, and role-graded exactly as the table above
+> predicts.** A level-only break at 2023-24:
+>
+> | series | level break | p | one-season-ahead shift |
+> |---|---|---|---|
+> | **`gp_share` [30+ mpg]** | **−4.63%** | **0.008** | −2.90% |
+> | `gp_share` [all] | −4.43% | 0.024 | −2.78% |
+> | `gp_share` [24-30] | −4.92% | 0.066 | −3.08% |
+> | `gp_share` [12-24] | −3.46% | 0.180 | −2.16% |
+> | `gp_share` [<12 mpg] | **+5.37%** | 0.280 | +3.30% |
+>
+> The heavy-minute bucket loses and the fringe bucket does not — the sign even flips. That
+> is the load-management gradient arriving as a dated policy step rather than as drift, and
+> it is a second, independent confirmation from a different estimator than the era table.
+>
+> **COVID, by contrast, is undetectable at the league-rate level: 0 of 17 series are
+> significant**, `gp_share [30+ mpg]` reading +0.22% at p = 0.91. The two seasons are strange
+> in ways that a league *rate* does not see — the schedule was shortened, and `gp_share`
+> normalizes by team games.
+>
+> ⚠️ **The break test disqualifies a trend rather than supplying a better one, and the
+> column that says so is `regime_seasons` = 3.** A level+**slope** break fits its slope on
+> the three post-break seasons alone; extrapolated one year further that moves the forecast
+> by up to **+22.1%** (`gp_share [<12 mpg]`) and **+18.8%** (`stl`). Those are noise, not
+> corrections. Read `regime_seasons` before `next_season_shift_pct`, and prefer the
+> level-only arm — which is why both are emitted.
+
 **One loose end this may or may not explain.** The Stan minutes head carries a **−33 to −41
 minute** held-out bias against the no-fit floor's −5.7, and the floor is bias-free precisely
 because it carries only the *immediately prior* season forward and is therefore era-current by
@@ -980,6 +1053,20 @@ construction, while the fitted head shrinks toward a 30-season average. That is 
 an era effect would leave. **But the naive direction does not match** — MPG within role is
 flat or slightly falling, which would produce over-prediction, and the head under-predicts. So
 treat this as a hypothesis with an obvious test, not as a diagnosis.
+
+> ### ❌ FALSIFIED 2026-07-31 — the minutes bias is shrinkage, not era. `make season-terms`
+>
+> The obvious test ran. Adding a year-on-year trend to the minutes head makes the bias
+> **worse by 15.5 minutes** — −41.0 on `base` against **−56.6** on `trend` and −56.6 on
+> `trend_year` — on both arms that carry one. An era effect the head was failing to track
+> would have been *corrected* by a trend, not amplified by it. So the bias is the fitted
+> head shrinking toward a 30-season mean, and the era hypothesis is closed.
+>
+> **What does help is the year random effect, and it is the only head where one does.** It
+> wins on **both** splits — validation CRPS **143.81** against base's 144.09, test
+> **146.54** against 147.02 — which is the replication bar this repo insists on, and it
+> nudges the bias to **−38.2**. That is a partial improvement rather than a fix; a genuine
+> bias correction before the simulator consumes these minutes is still owed.
 
 > ⚠️ **The buckets condition on the *same* season's MPG, which is endogenous to
 > availability, and the full window counts waived and traded players as rostered all year.**

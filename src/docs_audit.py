@@ -111,6 +111,13 @@ STAN_C_M = "outputs/predictions/stan_component_metrics.csv"
 STAN_C_S = "outputs/predictions/stan_component_substitution.csv"
 STAN_C_D = "outputs/predictions/stan_component_diagnostics.csv"
 SEASON_EFF = "outputs/eda/season_effects_summary.csv"
+SEASON_REGIME = "outputs/eda/season_effects_regimes.csv"
+SHOCK_CORR = "outputs/eda/season_effects_shock_correlation.csv"
+TERM_M = "outputs/predictions/season_term_metrics.csv"
+TERM_TOTAL = "outputs/predictions/season_term_season_total.csv"
+TERM_SPREAD = "outputs/predictions/season_term_roster_spread.csv"
+TERM_SIGMA = "outputs/predictions/season_term_sigma_vs_league.csv"
+TERM_BONUS = "outputs/predictions/season_term_bonus.csv"
 SEASON_BIAS = "outputs/eda/season_effects_carry_forward_bias.csv"
 SEASON_RATES = "outputs/eda/season_effects_league_rates.csv"
 ROSTER_A = "outputs/eda/roster_coverage_profile_tierA.csv"
@@ -303,6 +310,48 @@ def stan_c(head: str, variant: str, column: str) -> float:
 
 def season_eff(quantity: str, column: str) -> float:
     return _one(table(SEASON_EFF), column, quantity=quantity)
+
+
+def term(head: str, arm: str, column: str) -> float:
+    """One season-term ablation cell. `arm` is never optional: `base` and `trend` are
+    different models and quoting a number without naming the arm is the same mistake as
+    quoting a variance-budget share without its basis."""
+    return _one(table(TERM_M), column, head=head, arm=arm)
+
+
+def oracle_gain(head: str) -> float:
+    """The perfect-league-override ceiling as a FRACTION of the base arm's MAE.
+
+    A fraction rather than a percentage because the quoted strings carry `%`, which the
+    value check re-multiplies. This is the number that bounds every form of season term.
+    """
+    base = term(head, "base", "test_mae")
+    return (base - term(head, "oracle_league", "test_mae")) / base
+
+
+def term_total(arm: str, column: str) -> float:
+    return _one(table(TERM_TOTAL), column, arm=arm)
+
+
+def term_spread(n_players: int, arm: str,
+                column: str = "inflation_vs_base") -> float:
+    return _one(table(TERM_SPREAD), column, n_players=n_players, arm=arm)
+
+
+def term_sigma(head: str, column: str) -> float:
+    return _one(table(TERM_SIGMA), column, head=head)
+
+
+def term_bonus(arm: str, column: str = "bonus_bias_pct") -> float:
+    return _one(table(TERM_BONUS), column, arm=arm)
+
+
+def regime(series: str, column: str, arm: str = "policy_break_level") -> float:
+    """One regime-test row. `arm` defaults to the LEVEL-only break, not the level+slope
+    one: with three post-break seasons the slope arm's extrapolation is noise, so quoting
+    it without naming the arm would be the same class of error as quoting a variance-budget
+    share without its basis."""
+    return _one(table(SEASON_REGIME), column, series=series, arm=arm)
 
 
 def carry_bias(component: str, season: str) -> float:
@@ -721,6 +770,49 @@ def _availability() -> list[Claim]:
            lambda: prof("decomposition", "missed_scratch", "r_persistence_of_column"),
            "missed_scratch persistence"))
 
+    C += _regime_claims(AVAIL)
+    return C
+
+
+def _regime_claims(doc: str) -> list[Claim]:
+    """The two regime confounds, tested rather than flagged.
+
+    Shared by `docs/availability-plan.md` and `CLAUDE.md` against the one artifact. The
+    Participation Policy arm is the one that matters: it is the era finding arriving as a
+    dated policy step, from a different estimator than the era table.
+    """
+    C: list[Claim] = []
+    add = C.append
+    ppp = [("gp_share [30+ mpg]", "−4.63%", "0.008", "−2.90%"),
+           ("gp_share [all]", "−4.43%", "0.024", "−2.78%"),
+           ("gp_share [24-30]", "−4.92%", "0.066", "−3.08%"),
+           ("gp_share [12-24]", "−3.46%", "0.180", "−2.16%"),
+           ("gp_share [<12 mpg]", "+5.37%", "0.280", "+3.30%")]
+    for name, effect, p, shift in ppp:
+        add(_c(effect, SEASON_REGIME,
+               lambda s=name: regime(s, "regime_effect_pct") / 100.0,
+               f"PPP level break {name}", doc=doc))
+        add(_c(p, SEASON_REGIME, lambda s=name: regime(s, "p_value"),
+               f"PPP break p-value {name}", doc=doc))
+        add(_c(shift, SEASON_REGIME,
+               lambda s=name: regime(s, "next_season_shift_pct") / 100.0,
+               f"PPP one-season-ahead shift {name}", doc=doc))
+    add(_c("+0.22%", SEASON_REGIME,
+           lambda: regime("gp_share [30+ mpg]", "regime_effect_pct",
+                          "covid_indicator") / 100.0, "COVID effect, 30+ mpg", doc=doc))
+    add(_c("0.91", SEASON_REGIME,
+           lambda: regime("gp_share [30+ mpg]", "p_value", "covid_indicator"),
+           "COVID p-value, 30+ mpg", doc=doc))
+    # The fragility pair: a slope fitted on three seasons, extrapolated one further.
+    add(_c("+22.1%", SEASON_REGIME,
+           lambda: regime("gp_share [<12 mpg]", "next_season_shift_pct",
+                          "policy_break") / 100.0, "level+slope shift, fringe", doc=doc))
+    add(_c("+18.8%", SEASON_REGIME,
+           lambda: regime("stl", "next_season_shift_pct", "policy_break") / 100.0,
+           "level+slope shift, stl", doc=doc))
+    add(_c("3", SEASON_REGIME,
+           lambda: regime("gp_share [all]", "regime_seasons"), "post-break seasons",
+           doc=doc))
     return C
 
 
@@ -1185,6 +1277,156 @@ def _predictions() -> list[Claim]:
                  - adp("ladder", "consensus raw")),
         "monotone step gain")
 
+    # ── the season-term ablation ──────────────────────────────────────────────
+    # The full block. `CLAUDE.md` carries a summary of the same verdict and claims the
+    # overlapping figures against the SAME artifact — deliberately, because a block going
+    # stale in one doc while current in the other is this repo's recorded failure mode and
+    # it has already happened twice.
+    C += _season_term_claims(PRED)
+    return C
+
+
+def _season_term_summary_claims(doc: str) -> list[Claim]:
+    """The subset of the verdict `CLAUDE.md` quotes, against the same artifact.
+
+    A subset rather than the whole block because `CLAUDE.md` is a summary and does not
+    carry every cell — forcing it to would make the two docs the same document. What it
+    does carry is claimed here, so the two cannot drift apart on the figures they share.
+    """
+    C: list[Claim] = []
+    add = C.append
+    add(_c("33.247", TERM_M, lambda: term("fg3a", "base", "val_crps"),
+           "fg3a base val CRPS", doc=doc))
+    add(_c("35.443", TERM_M, lambda: term("fg3a", "trend", "val_crps"),
+           "fg3a trend val CRPS", doc=doc))
+    add(_c("34.309", TERM_M, lambda: term("fg3a", "year", "val_crps"),
+           "fg3a year val CRPS", doc=doc))
+    add(_c("−3.74%", TERM_M, lambda: term("fg3a", "base", "bias_pct") / 100.0,
+           "fg3a base bias", doc=doc))
+    add(_c("+8.44%", TERM_M, lambda: term("fg3a", "trend", "bias_pct") / 100.0,
+           "fg3a trend bias", doc=doc))
+    add(_c("−9.01%", TERM_M, lambda: term("fg3a", "year", "bias_pct") / 100.0,
+           "fg3a year bias", doc=doc))
+    for head, quoted in [("stl", "3.11%"), ("blk", "2.32%"), ("fta", "2.16%"),
+                         ("reb", "1.71%"), ("fg3a", "0.92%"), ("ast", "0.58%"),
+                         ("tov", "0.01%"), ("fg2a", "−0.06%")]:
+        add(_c(quoted, TERM_M, lambda h=head: oracle_gain(h),
+               f"oracle ceiling {head}", doc=doc))
+    add(_c("108.88", TERM_TOTAL, lambda: term_total("trend", "mae"),
+           "season total trend MAE", doc=doc))
+    add(_c("109.96", TERM_TOTAL, lambda: term_total("base", "mae"),
+           "season total base MAE", doc=doc))
+    add(_c("+7.60", TERM_TOTAL, lambda: term_total("trend", "bias"),
+           "season total trend bias", doc=doc))
+    add(_c("−32.44", TERM_TOTAL, lambda: term_total("base", "bias"),
+           "season total base bias", doc=doc))
+    for head, sigma in [("blk", "0.99×"), ("tov", "0.94×"), ("fta", "0.87×"),
+                        ("stl", "0.82×"), ("reb", "1.18×")]:
+        add(_c(sigma, TERM_SIGMA, lambda h=head: term_sigma(h, "ratio_to_yoy_sd"),
+               f"sigma/league ratio {head}", doc=doc))
+    add(_c("2.36×", TERM_SIGMA, lambda: term_sigma("fg3a", "ratio_to_yoy_sd"),
+           "sigma/league ratio fg3a", doc=doc))
+    for n, quoted in [(12, "+15.0%"), (15, "+19.0%"), (30, "+37.7%"),
+                      (150, "+138%"), (791, "+364%")]:
+        add(_c(quoted, TERM_SPREAD, lambda k=n: term_spread(k, "year") - 1.0,
+               f"year roster spread inflation, {n} players", doc=doc))
+    for arm, val, test in [("base", "144.09", "147.02"), ("year", "143.81", "146.54")]:
+        add(_c(val, TERM_M, lambda a=arm: term("min", a, "val_crps"),
+               f"minutes {arm} val CRPS", doc=doc))
+        add(_c(test, TERM_M, lambda a=arm: term("min", a, "test_crps"),
+               f"minutes {arm} test CRPS", doc=doc))
+    add(_c("−38.2", TERM_M, lambda: term("min", "year", "bias"),
+           "minutes year bias", doc=doc))
+    add(_c("−56.6", TERM_M, lambda: term("min", "trend", "bias"),
+           "minutes trend bias", doc=doc))
+    for arm, quoted in [("base", "−16.6%"), ("trend", "−12.0%"), ("year", "−18.5%")]:
+        add(_c(quoted, TERM_BONUS, lambda a=arm: term_bonus(a) / 100.0,
+               f"bonus bias {arm}", doc=doc))
+    return C
+
+
+def _season_term_claims(doc: str) -> list[Claim]:
+    """The `make season-terms` verdict, in full, for `docs/predictions-plan.md`."""
+    C: list[Claim] = []
+    add = C.append
+
+    # `fg3a` — the head that refutes the trend, and the reason the verdict is what it is.
+    for arm, val, test, bias in [("base", "33.247", "33.723", "−3.74%"),
+                                 ("trend", "35.443", "33.900", "+8.44%"),
+                                 ("year", "34.309", "35.408", "−9.01%"),
+                                 ("trend_year", "36.108", "34.706", "+11.48%")]:
+        add(_c(val, TERM_M, lambda a=arm: term("fg3a", a, "val_crps"),
+               f"fg3a {arm} val CRPS", doc=doc))
+        add(_c(test, TERM_M, lambda a=arm: term("fg3a", a, "test_crps"),
+               f"fg3a {arm} test CRPS", doc=doc))
+        add(_c(bias, TERM_M, lambda a=arm: term("fg3a", a, "bias_pct") / 100.0,
+               f"fg3a {arm} bias", doc=doc))
+    add(_c("38.747", TERM_M, lambda: term("fg3a", "carry_forward", "test_crps"),
+           "fg3a floor CRPS", doc=doc))
+
+    # The oracle ceiling — the single number that bounds the whole question.
+    for head, quoted in [("stl", "3.11%"), ("blk", "2.32%"), ("fta", "2.16%"),
+                         ("reb", "1.71%"), ("fg3a", "0.92%"), ("ast", "0.58%"),
+                         ("tov", "0.01%"), ("fg2a", "−0.06%")]:
+        add(_c(quoted, TERM_M, lambda h=head: oracle_gain(h),
+               f"oracle ceiling {head}", doc=doc))
+
+    # Season-total dk_pts, uniform-arm and test-only.
+    for arm, mae, bias, crps in [("base", "109.96", "−32.44", "82.70"),
+                                 ("trend", "108.88", "+7.60", "80.57"),
+                                 ("year", "113.64", "−51.71", "85.68"),
+                                 ("trend_year", "110.09", "+15.25", "80.87")]:
+        add(_c(mae, TERM_TOTAL, lambda a=arm: term_total(a, "mae"),
+               f"season total {arm} MAE", doc=doc))
+        add(_c(bias, TERM_TOTAL, lambda a=arm: term_total(a, "bias"),
+               f"season total {arm} bias", doc=doc))
+        add(_c(crps, TERM_TOTAL, lambda a=arm: term_total(a, "crps"),
+               f"season total {arm} CRPS", doc=doc))
+
+    # `sigma_year` against the independently measured league movement.
+    for head, sigma, league, ratio in [("blk", "3.66%", "3.70%", "0.99"),
+                                       ("tov", "2.71%", "2.89%", "0.94"),
+                                       ("fta", "3.78%", "4.36%", "0.87"),
+                                       ("stl", "2.49%", "3.03%", "0.82"),
+                                       ("reb", "1.75%", "1.48%", "1.18"),
+                                       ("fg2a", "3.03%", "2.42%", "1.25"),
+                                       ("ast", "4.46%", "3.08%", "1.45"),
+                                       ("fg3a", "15.43%", "6.53%", "2.36")]:
+        add(_c(sigma, TERM_SIGMA, lambda h=head: term_sigma(h, "sigma_year_pct") / 100.0,
+               f"sigma_year {head}", doc=doc))
+        add(_c(league, TERM_SIGMA,
+               lambda h=head: term_sigma(h, "league_yoy_sd_pct") / 100.0,
+               f"league yoy sd {head}, beside sigma", doc=doc))
+        add(_c(ratio, TERM_SIGMA, lambda h=head: term_sigma(h, "ratio_to_yoy_sd"),
+               f"sigma/league ratio {head}", doc=doc))
+
+    # Roster spread — what the year effect is actually worth.
+    for n, quoted in [(12, "+15.0%"), (15, "+19.0%"), (30, "+37.7%"),
+                      (150, "+138%"), (791, "+364%")]:
+        add(_c(quoted, TERM_SPREAD, lambda k=n: term_spread(k, "year") - 1.0,
+               f"year roster spread inflation, {n} players", doc=doc))
+    add(_c("841", TERM_SPREAD, lambda: term_spread(15, "base", "total_sd"),
+           "base roster sd, 15 players", doc=doc))
+    add(_c("1,001", TERM_SPREAD, lambda: term_spread(15, "year", "total_sd"),
+           "year roster sd, 15 players", doc=doc))
+
+    # Minutes — the one head that adopts a season term.
+    for arm, val, test, bias in [("carry_forward", "161.45", "168.24", "−5.69"),
+                                 ("base", "144.09", "147.02", "−41.05"),
+                                 ("trend", "144.44", "148.78", "−56.59"),
+                                 ("year", "143.81", "146.54", "−38.19")]:
+        add(_c(val, TERM_M, lambda a=arm: term("min", a, "val_crps"),
+               f"minutes {arm} val CRPS", doc=doc))
+        add(_c(test, TERM_M, lambda a=arm: term("min", a, "test_crps"),
+               f"minutes {arm} test CRPS", doc=doc))
+        add(_c(bias, TERM_M, lambda a=arm: term("min", a, "bias"),
+               f"minutes {arm} bias", doc=doc))
+
+    # The bonus, whose LEVEL is the missing copula and whose ORDERING is the bias story.
+    for arm, quoted in [("base", "−16.6%"), ("trend", "−12.0%"),
+                        ("year", "−18.5%"), ("trend_year", "−11.6%")]:
+        add(_c(quoted, TERM_BONUS, lambda a=arm: term_bonus(a) / 100.0,
+               f"bonus bias {arm}", doc=doc))
     return C
 
 
@@ -2237,7 +2479,54 @@ def _claude() -> list[Claim]:
         "rejected rule's unmatched rate")
     add("57", ADP_AUDIT, lambda: rows(ADP_AUDIT), "match audit rows")
 
+    # The season-term verdict, claimed against the SAME artifact `docs/predictions-plan.md`
+    # claims it from. Both, deliberately: this file's copy of a block going stale while the
+    # plan doc's stayed current is the exact failure that has already happened twice here.
+    C += _season_term_summary_claims(CLAUDE)
+
+    # The regime block, restricted to what this file's summary quotes — the availability
+    # plan carries the full five-row table and claims all of it.
+    add("−4.63%", SEASON_REGIME,
+        lambda: regime("gp_share [30+ mpg]", "regime_effect_pct") / 100.0,
+        "PPP level break, 30+ mpg")
+    add("0.008", SEASON_REGIME, lambda: regime("gp_share [30+ mpg]", "p_value"),
+        "PPP break p-value, 30+ mpg")
+    add("−4.43%", SEASON_REGIME,
+        lambda: regime("gp_share [all]", "regime_effect_pct") / 100.0,
+        "PPP level break, all")
+    add("0.024", SEASON_REGIME, lambda: regime("gp_share [all]", "p_value"),
+        "PPP break p-value, all")
+    add("+5.37%", SEASON_REGIME,
+        lambda: regime("gp_share [<12 mpg]", "regime_effect_pct") / 100.0,
+        "PPP level break, fringe")
+    add("+0.22%", SEASON_REGIME,
+        lambda: regime("gp_share [30+ mpg]", "regime_effect_pct",
+                       "covid_indicator") / 100.0, "COVID effect, 30+ mpg")
+    add("0.91", SEASON_REGIME,
+        lambda: regime("gp_share [30+ mpg]", "p_value", "covid_indicator"),
+        "COVID p-value, 30+ mpg")
+    add("+22.1%", SEASON_REGIME,
+        lambda: regime("gp_share [<12 mpg]", "next_season_shift_pct",
+                       "policy_break") / 100.0, "level+slope shift, fringe")
+    add("+18.8%", SEASON_REGIME,
+        lambda: regime("stl", "next_season_shift_pct", "policy_break") / 100.0,
+        "level+slope shift, stl")
+    add("−0.833", SHOCK_CORR, lambda: _strongest_shock_pair(), "strongest shock pair")
+    add("−0.009", SHOCK_CORR, lambda: table(SHOCK_CORR)["corr"].mean(),
+        "mean shock correlation")
+    add("0.307", SHOCK_CORR, lambda: table(SHOCK_CORR)["corr"].abs().mean(),
+        "mean |shock correlation|")
+    add("136", SHOCK_CORR, lambda: rows(SHOCK_CORR), "shock correlation pairs")
+    add("20.6%", SHOCK_CORR,
+        lambda: (table(SHOCK_CORR)["corr"].abs() > 0.5).mean(),
+        "share of pairs above |r| = 0.5")
+
     return C
+
+
+def _strongest_shock_pair() -> float:
+    frame = table(SHOCK_CORR)
+    return float(frame.loc[frame["corr"].abs().idxmax(), "corr"])
 
 
 def _derivation(column: str, how: str) -> float:

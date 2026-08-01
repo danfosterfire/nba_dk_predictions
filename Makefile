@@ -10,7 +10,8 @@ PIP    := .venv/bin/pip
         season-total adp adp-draftkings adp-fantasypros adp-panel adp-profile \
         adp-status game-length serial-correlation component-rates \
         variance-budget residual-correlation season-effects \
-        stan stan-availability stan-minutes stan-components stan-composition
+        stan stan-availability stan-minutes stan-components stan-composition \
+        season-terms
 
 venv:
 	/opt/homebrew/bin/python3.14 -m venv .venv
@@ -180,6 +181,16 @@ stan-composition:
 	$(PYTHON) -m src.models.stan_composition
 
 stan: stan-availability stan-minutes stan-components
+
+# Does any head need a season term, and which kind? A trend covariate and a year-level
+# random effect for every head, plus the season x role interaction the availability era
+# effect calls for, scored on held-out CRPS, interval coverage and season-total dk_pts.
+# Reads each head's already-selected spec from the `stan-components` / `stan-minutes`
+# artifacts, so run those first or it falls back to the right-scale spec and says so.
+# Deliberately NOT in the `stan` aggregate: it is an ablation over the shipped heads
+# rather than one of them.
+season-terms:
+	$(PYTHON) -m src.models.season_terms
 
 report-calibration:
 	$(PYTHON) -m src.eda.report_calibration

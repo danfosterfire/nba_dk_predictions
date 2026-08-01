@@ -69,7 +69,7 @@ from src.models.component_rates import (BIO_COLS, CONTEXT_COLS, CONVERSION_HEADS
                                         build_design, carry_forward,
                                         carry_forward_conversion, fit_nb_dispersion,
                                         impute, nb_nll, split_seasons)
-from src.models.stan_utils import (compile_model, crps_from_samples,
+from src.models.stan_utils import (YearTerm, compile_model, crps_from_samples,
                                    diagnostics_frame, ks_uniform,
                                    pit_from_samples, posterior,
                                    prior_sd_for_l2, sample, standardized, thin,
@@ -163,10 +163,17 @@ class StanCount:
 
     def __init__(self, features: list[str], component: str, name: str = "count",
                  chains: int = 4, warmup: int = 1000, samples: int = 1000,
-                 seed: int = 42, predictive_samples: int = PREDICTIVE_SAMPLES):
+                 seed: int = 42, predictive_samples: int = PREDICTIVE_SAMPLES,
+                 year_column: str | None = None, metric: str | None = None):
         self.features, self.component, self.name = features, component, name
         self.chains, self.warmup, self.samples, self.seed = chains, warmup, samples, seed
         self.predictive_samples = predictive_samples
+        self.metric = metric
+        # `year_column=None` is the disabled term, which makes the Stan parameter vectors
+        # zero-length and the model identical to the one that existed before it. `stream`
+        # is the head's name, so two heads fitted with the same seed draw INDEPENDENT year
+        # effects — which is what the measured cross-component shock correlation supports.
+        self.year = YearTerm(year_column, seed=seed, stream=name)
 
     def fit(self, train: pd.DataFrame) -> "StanCount":
         (X,), self.scaler = standardized(train, [train], self.features)
@@ -181,9 +188,9 @@ class StanCount:
             {"N": len(train), "K": X.shape[1], "X": X,
              "y": np.rint(y).astype(int).tolist(), "exposure": exposure.tolist(),
              "beta_scale": BETA_SCALE, "intercept_scale": INTERCEPT_SCALE,
-             "phi_inv_scale": PHI_INV_SCALE},
+             "phi_inv_scale": PHI_INV_SCALE, **self.year.data(train)},
             chains=self.chains, warmup=self.warmup, samples=self.samples,
-            seed=self.seed, label=self.name,
+            seed=self.seed, label=self.name, metric=self.metric,
             inits={"alpha": float(np.log(max(y.sum(), 1) / exposure.sum())),
                    "beta": np.zeros(X.shape[1]).tolist(), "phi_inv": 0.05})
         warn_if_unconverged(self.diagnostics)
@@ -193,6 +200,7 @@ class StanCount:
         self.beta_draws = draws["beta"].reshape(len(self.alpha_draws), -1)
         self.phi_draws = draws["phi"].reshape(-1)
         self.phi = float(self.phi_draws.mean())
+        self.year.absorb(fit)
         return self
 
     def _design(self, df: pd.DataFrame) -> np.ndarray:
@@ -202,6 +210,9 @@ class StanCount:
     def mu_draws(self, df: pd.DataFrame, keep: int) -> tuple[np.ndarray, np.ndarray]:
         idx = thin(len(self.alpha_draws), keep)
         eta = self._design(df) @ self.beta_draws[idx].T + self.alpha_draws[idx][None, :]
+        # One year draw per posterior draw, added to every row alike — the shared factor
+        # is the point, not the marginal width.
+        eta = eta + self.year.shift(idx)[None, :]
         mu = np.exp(np.clip(eta, -30, 30)).T * df["total_minutes"].to_numpy(float)[None, :]
         return np.clip(mu, 1e-9, None), self.phi_draws[idx]
 
@@ -221,11 +232,14 @@ class StanConversion:
     def __init__(self, features: list[str], made: str, attempted: str,
                  name: str = "conversion", l2: float = CONVERSION_L2, chains: int = 4,
                  warmup: int = 1000, samples: int = 1000, seed: int = 42,
-                 predictive_samples: int = PREDICTIVE_SAMPLES):
+                 predictive_samples: int = PREDICTIVE_SAMPLES,
+                 year_column: str | None = None, metric: str | None = None):
         self.features, self.made, self.attempted = features, made, attempted
         self.name, self.l2 = name, l2
         self.chains, self.warmup, self.samples, self.seed = chains, warmup, samples, seed
         self.predictive_samples = predictive_samples
+        self.metric = metric
+        self.year = YearTerm(year_column, seed=seed, stream=name)
 
     def fit(self, train: pd.DataFrame) -> "StanConversion":
         live = train[train[self.attempted] > 0]
@@ -240,9 +254,9 @@ class StanConversion:
             model,
             {"N": len(live), "K": X.shape[1], "X": X, "n": n.tolist(), "y": y.tolist(),
              "beta_scale": prior_sd_for_l2(self.l2),
-             "intercept_scale": INTERCEPT_SCALE},
+             "intercept_scale": INTERCEPT_SCALE, **self.year.data(live)},
             chains=self.chains, warmup=self.warmup, samples=self.samples,
-            seed=self.seed, label=self.name,
+            seed=self.seed, label=self.name, metric=self.metric,
             inits={"alpha": float(np.log(share / (1 - share))),
                    "beta": np.zeros(X.shape[1]).tolist(), "rho": 0.01})
         warn_if_unconverged(self.diagnostics)
@@ -252,6 +266,7 @@ class StanConversion:
         self.beta_draws = draws["beta"].reshape(len(self.alpha_draws), -1)
         self.rho_draws = draws["rho"].reshape(-1)
         self.rho = float(self.rho_draws.mean())
+        self.year.absorb(fit)
         return self
 
     def _design(self, df: pd.DataFrame) -> np.ndarray:
@@ -262,7 +277,8 @@ class StanConversion:
         idx = thin(len(self.alpha_draws), keep)
         # (rows x K) @ (K x draws) -> (rows x draws), transposed to draws-major.
         eta = (self._design(df) @ self.beta_draws[idx].T
-               + self.alpha_draws[idx][None, :]).T
+               + self.alpha_draws[idx][None, :]
+               + self.year.shift(idx)[None, :]).T
         return 1.0 / (1.0 + np.exp(-np.clip(eta, -30, 30))), self.rho_draws[idx]
 
     def predict_p(self, df: pd.DataFrame) -> np.ndarray:

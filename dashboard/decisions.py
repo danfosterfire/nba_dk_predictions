@@ -1745,10 +1745,9 @@ REGISTRY: tuple[Decision, ...] = (
                 "outranks the shared-β correlation the Stan work was built for, "
                 "because a league shift is perfectly correlated across every player "
                 "and so does not diversify — against +0.2% for shared-β on a 15-man "
-                "roster. **The measurement is done and the decision is not**: the "
-                "scoped ablation in `docs/predictions-plan.md` — a trend variant and a "
-                "year-random-effect variant per head, selected on a validation split "
-                "and judged on calibration rather than point accuracy — has not run.",
+                "roster. **The ablation has now run and the decision is recorded "
+                "separately** — see `season-term-ablation`, `no-trend-on-any-head` and "
+                "`year-effect-is-a-simulator-input`.",
         status="measured",
         reproduce="make season-effects → outputs/eda/season_effects_summary.csv, "
                   "outputs/eda/season_effects_league_rates.csv, "
@@ -1757,6 +1756,197 @@ REGISTRY: tuple[Decision, ...] = (
         reviewed="2026-07-31",
         date="2026-07-30",
         tags=("method", "era"),
+    ),
+    Decision(
+        id="no-trend-on-any-head",
+        topic="components",
+        claim="No head carries a year-on-year trend — and the refutation is sharpest on "
+              "`fg3a`, the one quantity the league measurement said needed one.",
+        because="`fg3a` has trend R² 0.93 at +4.07%/season in the league series, and on "
+                "the head it selects **`base`** (validation CRPS 33.247 against trend "
+                "35.443) while a trend flips its held-out bias from **−3.74% to +8.44%**. "
+                "Two measured mechanisms: the three-point climb **decelerated** — "
+                "+4.07%/season over 30 seasons but **+1.61%/season over the last six** — "
+                "so a long-run slope extrapolated into a flattening series over-shoots; "
+                "and the head's dominant feature `log(fg3a_p36_lag1)` already carries the "
+                "league level forward, so a trend adds a second correction on top of one "
+                "that is already there. Across the count heads a trend worsens held-out "
+                "bias on **6 of 8**, and where it wins on test it wins on heads with no "
+                "era story at all (`stl`, trend R² 0.03). Its apparent win on season-total "
+                "dk_pts (bias −32.4 → +7.6) is **cross-component cancellation** — the "
+                "component biases move in both directions and cancel in the DK sum, the "
+                "same mechanism recorded at 8.30× on `teammate_assist_supply`.",
+        status="settled",
+        reproduce="make season-terms → outputs/predictions/season_term_metrics.csv, "
+                  "outputs/predictions/season_term_season_total.csv",
+        source="docs/predictions-plan.md",
+        reviewed="2026-07-31",
+        date="2026-07-31",
+        tags=("era", "method"),
+    ),
+    Decision(
+        id="season-term-ablation",
+        topic="components",
+        claim="A perfect league-level override is worth at most **3.1% of MAE**, which "
+              "bounds every form of season term — fitted or manual.",
+        because="`oracle_league` rescales each held-out season by its own realized total: "
+                "a perfect per-season league multiplier, the most general form any "
+                "league-level term can take, and unusable as a model because it reads the "
+                "season it forecasts. As a share of the base arm's MAE it is worth `stl` "
+                "**3.11%**, `blk` 2.32%, `fta` **2.16%**, `reb` 1.71%, `fg3a` 0.92%, `ast` "
+                "0.58%, `tov` 0.01%, `fg2a` −0.06% — median **1.32%**. `fta` carries a "
+                "−7.0% systematic bias and removing it *entirely* recovers 2.2% of MAE, "
+                "because player-level error dominates a league-level one. So the whole "
+                "season-term question is bounded small on point accuracy, which is why "
+                "the answer is 'no term' despite the league movement being real. 108 "
+                "fits, 0 divergences, max R̂ 1.0142, 155.9 min — affordable only because "
+                "`metric=\"dense_e\"` cut the `blk` spline base from 236.6 s to 13.4 s.",
+        status="settled",
+        reproduce="make season-terms → outputs/predictions/season_term_metrics.csv, "
+                  "outputs/predictions/season_term_diagnostics.csv, "
+                  "outputs/predictions/season_term_bonus.csv",
+        source="docs/predictions-plan.md",
+        reviewed="2026-07-31",
+        date="2026-07-31",
+        tags=("era", "method"),
+    ),
+    Decision(
+        id="year-effect-is-a-simulator-input",
+        topic="simulations",
+        claim="The year random effect belongs in the SIMULATOR as a variance component, "
+              "not in any component head as a feature — it is worth ~95× the shared-β "
+              "term on a 15-man roster.",
+        because="It is mean-zero at prediction time, so it cannot move point accuracy and "
+                "measurably does not: median held-out ΔR² against base is **+0.00004** "
+                "across thirteen heads. What it does is widen the JOINT distribution, and "
+                "a league shift is perfectly correlated across players so it grows as N "
+                "while independent error grows as sqrt(N). Roster season-total dk_pts sd "
+                "inflation: **+15.0%** at 12 players, **+19.0% at 15**, +37.7% at 30, "
+                "+138% at 150, **+364%** across all 791 — against shared-β's +0.2% / "
+                "+0.2% / +0.3% / +1.1% / +6.4% on the same board. It is also a defined "
+                "check rather than a hopeful one: `sigma_year`, fitted by NUTS on "
+                "player-season rows, lands within 20% of the directly measured league "
+                "yoy sd on 5 of 8 count heads (`blk` 0.99×, `tov` 0.94×, `fta` 0.87×, "
+                "`stl` 0.82×, `reb` 1.18×). **`fg3a` at 2.37× is the tell** — with no "
+                "trend term it absorbs drift as a sequence of shocks and then zeroes it, "
+                "which is why its bias goes to −9.01%. Take σ from the measured league "
+                "movement rather than the fitted value, and draw one per head: the "
+                "cross-component shock correlation is −0.009 on average, so there is no "
+                "common factor. Exception: the **minutes** head, where a year effect wins "
+                "on both splits (val 143.81, test 146.54) and improves the standing bias "
+                "to −38.2 — the one head that adopts a season term.",
+        status="settled",
+        reproduce="make season-terms → "
+                  "outputs/predictions/season_term_roster_spread.csv, "
+                  "outputs/predictions/season_term_sigma_vs_league.csv",
+        source="docs/predictions-plan.md",
+        reviewed="2026-07-31",
+        date="2026-07-31",
+        tags=("era", "correlation", "simulation"),
+    ),
+    Decision(
+        id="availability-season-x-role-is-a-null",
+        topic="availability",
+        claim="The availability season × role interaction is a **validation null**, "
+              "despite being the best arm on test — the era effect does not transfer "
+              "into a better forecast.",
+        because="`trend_x_role` and `trend_x_role_year` are the best two of seven arms on "
+                "test (10.742, 10.736 against base 10.797) and the **worst two on "
+                "validation** (10.078, 10.087 against 10.007). That is the exact shape of "
+                "the false positive this project already shipped once — the nonlinearity "
+                "arm whose paired bootstrap on test read [−0.079, −0.015] with "
+                "P(Δ<0) = 99.7% and did not replicate — and it is caught only because "
+                "selection never reads the test column. The selected arm, `trend`, is "
+                "worth **0.010 games** of validation CRPS, which is nothing. The era "
+                "effect itself is real and independently confirmed (the 2023-24 policy "
+                "break is −4.63% at p = 0.008 on `gp_share [30+ mpg]`); it simply does "
+                "not survive as a feature, because a perfect league-level correction is "
+                "worth ≤3.1% of MAE anywhere.",
+        status="null",
+        reproduce="make season-terms → outputs/predictions/season_term_metrics.csv",
+        source="docs/availability-plan.md",
+        reviewed="2026-07-31",
+        date="2026-07-31",
+        tags=("era", "availability"),
+    ),
+    Decision(
+        id="minutes-bias-is-shrinkage-not-era",
+        topic="minutes",
+        claim="The minutes head's −33 to −41 minute held-out bias is shrinkage toward a "
+              "30-season mean, **not** an era effect.",
+        because="`docs/availability-plan.md` proposed the bias as 'the signature an era "
+                "effect would leave', with the obvious test being a trend. The test ran "
+                "and falsifies it: a trend makes the bias **worse by 15.5 minutes** "
+                "(−41.0 on `base` against **−56.6** on `trend`, and −56.6 on "
+                "`trend_year`). An era effect the head was failing to track would have "
+                "been corrected by a trend, not amplified by it. The year random effect "
+                "does help — it wins on both splits (val 143.81 / test 146.54 against "
+                "144.09 / 147.02) and nudges the bias to −38.2 — but that is a partial "
+                "improvement, so a genuine bias correction is still owed before the "
+                "simulator consumes these minutes as exposure for eleven other heads.",
+        status="withdrawn",
+        replaced_by="The bias is shrinkage toward the pooled mean; the year effect "
+                    "recovers ~3 minutes of it and no trend helps.",
+        caught_by="make season-terms — the trend arm doubled the bias instead of "
+                  "removing it",
+        reproduce="make season-terms → outputs/predictions/season_term_metrics.csv",
+        source="docs/availability-plan.md",
+        reviewed="2026-07-31",
+        date="2026-07-31",
+        tags=("era", "minutes"),
+    ),
+    Decision(
+        id="player-participation-policy-is-a-real-break",
+        topic="availability",
+        claim="The 2023-24 Player Participation Policy is a measurable level break in "
+              "games-played share, and it is **role-graded in the direction the "
+              "availability plan predicted** — heavy-minute players lose, fringe "
+              "players do not.",
+        because="A level-only break at 2023-24 reads **−4.63%** on `gp_share [30+ mpg]` "
+                "(p = 0.008) and −4.43% on `gp_share [all]` (p = 0.024), while "
+                "`gp_share [<12 mpg]` is **+5.37% and not significant** (p = 0.28). "
+                "COVID gets a different treatment because it is a different shape: "
+                "2019-20 and 2020-21 are a transient regime, so they get an indicator "
+                "that does not carry into the forecast, and on that arm **0 of 17** "
+                "series are significant. The decisive column is neither p-value but "
+                "`next_season_shift_pct` — how far the one-season-ahead extrapolation "
+                "moves once the regime is handled — and beside it `regime_seasons`, "
+                "which is **3** for every break arm. A level+slope break fits its slope "
+                "on those three seasons alone and then moves the forecast by up to "
+                "**+22.1%**, which is noise, not a better trend. So the break test "
+                "**disqualifies extrapolating a trend across 2023-24** rather than "
+                "supplying a corrected one.",
+        status="measured",
+        reproduce="make season-effects → outputs/eda/season_effects_regimes.csv",
+        source="docs/availability-plan.md",
+        reviewed="2026-07-31",
+        date="2026-07-31",
+        tags=("era", "method"),
+    ),
+    Decision(
+        id="year-shocks-are-not-one-common-factor",
+        topic="simulations",
+        claim="League year-to-year shocks are **not** one common factor, so a simulator "
+              "draws an independent year effect per head rather than one shared draw.",
+        because="Detrended log league rates correlate at a mean of **−0.009** across "
+                "136 pairs over 30 seasons — no common factor at all. But mean |r| is "
+                "**0.307** and 20.6% of pairs exceed 0.5, so they are not independent "
+                "either: the structure is in specific PAIRS. The largest is "
+                "`fg2a`–`fg3a` at **−0.833**, which is the 3PA/2PA substitution the "
+                "component heads already remove by reparameterizing into "
+                "`fga` × `fg3a | fga`. Detrending is load-bearing — two series that "
+                "both drift upward would otherwise correlate through their trends, "
+                "which is drift and not shock. So the year effect needs a correlation "
+                "matrix, the same shape the residual copula already takes, and "
+                "`YearTerm.stream` gives each head an independent draw as the default "
+                "until one is fitted.",
+        status="measured",
+        reproduce="make season-effects → "
+                  "outputs/eda/season_effects_shock_correlation.csv",
+        source="docs/predictions-plan.md",
+        reviewed="2026-07-31",
+        date="2026-07-31",
+        tags=("era", "correlation"),
     ),
     Decision(
         id="no-shooting-hot-hand",
