@@ -228,10 +228,38 @@ def test_every_audited_doc_has_its_own_builder():
     """The registry is split per doc so a section's claims stay findable."""
     for build, doc in [(A._availability, A.AVAIL), (A._composition, A.COMP),
                        (A._predictions, A.PRED), (A._adp, A.ADP),
-                       (A._claude, A.CLAUDE)]:
+                       (A._claude, A.CLAUDE), (A._readme, A.README)]:
         claims = build()
         assert claims, doc
         assert {c.doc for c in claims} == {doc}, doc
+
+
+def test_the_readme_claims_every_section_that_quotes_a_figure():
+    """The README is the most-read and least-maintained doc in the repo, so the guard
+    worth having is that every headline section reaches an artifact — not merely that
+    the easy ones do. A section losing its claims is otherwise invisible."""
+    artifacts = {c.artifact for c in A._readme()}
+    for required in (A.VARIANCE, A.GAME_LEN, A.CONTEXT_A, A.OPPONENT_A, A.SERIAL,
+                     A.BONUS, A.DIAGNOSTICS, A.METRICS, A.SEASON_TOTAL, A.RATES,
+                     A.STAN_C_M, A.STAN_C_S, A.COMP_M, A.COMP_RHO, A.TERM_M,
+                     A.PROFILE, A.TARGET, A.ROSTER_A, A.TOURNAMENTS):
+        assert required in artifacts, required
+
+
+def test_the_audit_copy_of_the_break_even_hurdle_matches_the_dashboard():
+    """`docs_audit._break_even_hurdle` re-implements one line of `dashboard.economics`
+    instead of importing it, because nothing in `src/` imports the dashboard package and
+    the dashboard's own invariant is that the dependency never runs the other way. This
+    is the pin that makes that duplication safe: if the economics formula moves, the copy
+    the README is audited against has to move with it."""
+    from dashboard import economics
+
+    meta = economics.load_metadata()
+    assert len(meta), "the tournament metadata board is checked in"
+    for row in meta.itertuples():
+        expected = economics.break_even_hurdle(
+            economics.rake(row.total_entries, row.entry_fee_per_team, row.total_prizes))
+        assert abs(A._break_even_hurdle(row.type) - expected) < 1e-12, row.type
 
 
 def test_the_poisson_and_negative_binomial_runs_are_claimed_separately():

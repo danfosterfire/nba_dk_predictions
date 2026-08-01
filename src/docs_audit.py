@@ -83,6 +83,7 @@ COMP = "docs/minutes-composition-plan.md"
 PRED = "docs/predictions-plan.md"
 ADP = "docs/adp-plan.md"
 CLAUDE = "CLAUDE.md"
+README = "README.md"
 
 PROFILE = "outputs/eda/availability_profile.csv"
 METRICS = "outputs/predictions/availability_metrics.csv"
@@ -131,6 +132,12 @@ CONTEXT_A = "outputs/eda/team_context_value_tierA.csv"
 OPPONENT_A = "outputs/eda/opponent_matchup_tierA.csv"
 ADP_PROFILE = "outputs/eda/adp_profile.csv"
 ADP_AUDIT = "outputs/eda/adp_match_audit.csv"
+DIAGNOSTICS = "outputs/eda/feature_diagnostics.csv"
+MATRIX_A = "data/features/season_matrix_tierA.parquet"
+# The tournament economics have no `outputs/` artifact — `dashboard/economics.py`
+# derives them at render time from these checked-in raw boards, which are therefore
+# the artifact. `table()` reads any CSV path, so no new plumbing is needed.
+TOURNAMENTS = "data/raw/dk_best_ball_tournament_metadata.csv"
 
 
 # ── Claims ────────────────────────────────────────────────────────────────────
@@ -2541,10 +2548,265 @@ def _derivation(column: str, how: str) -> float:
     return float((rows[column] * rows["games"]).sum() / rows["games"].sum())
 
 
+def _break_even_hurdle(tournament: str) -> float:
+    """A tournament's break-even edge hurdle, as a percentage.
+
+    `1/(1 − rake) − 1` with `rake = 1 − prizes/(entries × fee)`, which collapses to
+    `entries × fee / prizes − 1`. Mirrors `dashboard.economics.rake` /
+    `break_even_hurdle` rather than importing them: nothing in `src/` imports the
+    dashboard package, and the dashboard's own invariant is that the dependency never
+    runs the other way either. The formula is one line and both copies are pinned by
+    tests, which is cheaper than coupling the two packages.
+    """
+    frame = table(TOURNAMENTS)
+    if frame is None:
+        return float("nan")
+    hit = frame[frame["type"] == tournament]
+    if not len(hit):
+        return float("nan")
+    row = hit.iloc[0]
+    pool = float(row["total_entries"]) * float(row["entry_fee_per_team"])
+    return pool / float(row["total_prizes"]) - 1.0
+
+
+def _readme() -> list[Claim]:
+    """`README.md` — the project overview, in scientific-paper form.
+
+    Its figures are a **selection** from `CLAUDE.md` and the plan docs rather than new
+    measurements, and that is precisely why it needs claiming. A headline copied once
+    into an overview and never refreshed is the exact failure this module was built for,
+    and the README is the most-read and least-maintained document in the repo — the two
+    drift incidents on record (the season-total R2 column, the report-calibration block)
+    both happened in files under far more active editing than this one.
+
+    Two things are different here from the plan-doc builders:
+
+    - **Roundings are claimed, not skipped.** The README quotes `58%` for 57.96% and
+      `86%` for an R2 of 0.859, because an overview should round. `implied_tolerance`
+      already handles this correctly — a figure is wrong only if no correctly-rounded
+      value could have produced it — so rounding costs no strictness worth having and
+      leaving them unclaimed would exempt the most-read numbers in the repo.
+    - **Shipped constants are claimed against their fitted optima.** The bonus
+      overdispersions 0.10 and 0.025 are constants in `features/targets.py`, not
+      measurements; claiming them against `bonus_calibration.csv`'s fitted values is
+      what makes a re-calibration that moves the optimum away from the shipped constant
+      show up as a failure here rather than silently.
+
+    Three figures are deliberately left unclaimed because no artifact holds them: the
+    whole-block team-context delta R2 (`+0.0086`), mid-season churn (`13.6%`), and the
+    approximate skill split (`~90%`). They are unclaimed in `CLAUDE.md` for the same
+    reason, and coverage reports them rather than hiding them.
+    """
+    C: list[Claim] = []
+
+    def add(quoted, artifact, actual, label, **kw):
+        C.append(_c(quoted, artifact, actual, label, doc=README, **kw))
+
+    def context(feature: str, column: str) -> float:
+        return _one(table(CONTEXT_A), column, feature=feature)
+
+    def opp(outcome: str, column: str) -> float:
+        return _one(table(OPPONENT_A), column, outcome=outcome)
+
+    def glen(column: str) -> float:
+        return _one(table(GAME_LEN), column, analysis="feasibility", season="all",
+                    season_type="regular")
+
+    def comp_m(variant: str, column: str) -> float:
+        return cell(COMP_M, column, variant=variant)
+
+    def first_k(column: str, k: str = "5") -> float:
+        return _one(table(TARGET), column, analysis="season_total",
+                    bucket_kind="first_k_games", bucket=k)
+
+    def bonus_optimum(unit: str) -> float:
+        return _one(table(BONUS), "overdispersion", analysis="fitted", unit=unit,
+                    bucket="all")
+
+    # ── introduction: the variance budget ─────────────────────────────────────
+    add("254,167", VARIANCE, lambda: budget("own_minutes", "n_games"),
+        "variance-budget population")
+    add("9.445", VARIANCE,
+        lambda: budget("within_player_season_residual_sd", "value"), "residual sd")
+    add("14.566", VARIANCE, lambda: budget("dk_pts_sd", "value"), "total sd")
+    add("57.96%", VARIANCE, lambda: budget("player_season_identity"),
+        "player-season identity share")
+    add("46.40%", VARIANCE, lambda: budget("own_minutes"), "own minutes share")
+    add("0.691%", VARIANCE, lambda: budget("opponent_x_season"),
+        "opponent x season share")
+    add("0.034%", VARIANCE, lambda: budget("home_away"), "home/away share")
+    # The two roundings in the "never quote a row without its basis" sentence. The
+    # second is derived, because "the remaining 42%" is only true as the complement.
+    add("58%", VARIANCE, lambda: budget("player_season_identity"),
+        "identity share, rounded")
+    add("42%", VARIANCE, lambda: 1.0 - budget("player_season_identity"),
+        "the residual share, as the complement")
+    add("46.4%", VARIANCE, lambda: budget("own_minutes"),
+        "own minutes share, rounded")
+
+    # ── methods: data ─────────────────────────────────────────────────────────
+    add("731,906", GAME_LEN, lambda: glen("player_games"), "cleaned player-games")
+    add("10,900", MATRIX_A, lambda: rows(MATRIX_A), "Tier A player-seasons")
+
+    # ── methods: the output contract ──────────────────────────────────────────
+    add("2.106", CONTEXT_A,
+        lambda: context("teammate_assist_supply", "gross_dk_movement"),
+        "teammate_assist_supply gross DK movement")
+    add("−0.254", CONTEXT_A,
+        lambda: context("teammate_assist_supply", "net_dk_movement"),
+        "teammate_assist_supply net DK movement")
+    add("8.30", CONTEXT_A,
+        lambda: context("teammate_assist_supply", "cancellation_ratio"),
+        "teammate_assist_supply cancellation ratio")
+    add("1.98", OPPONENT_A, lambda: opp("dk_pts", "cancellation_ratio"),
+        "opponent cancellation ratio")
+    add("37,986", GAME_LEN, lambda: _derivation("games", "sum"),
+        "games in the game-length derivation")
+    add("5.93%", GAME_LEN, lambda: _derivation("ot_rate", "weighted"), "overtime rate")
+
+    # ── methods: the simulation specification ─────────────────────────────────
+    add("4.65", STAN_MIN_D,
+        lambda: cell(STAN_MIN_D, "implied_overdispersion", metric="game_level_rho"),
+        "game-level minutes overdispersion")
+    add("2.43", SERIAL, lambda: serial("min", "block_inflation"),
+        "minutes block variance inflation")
+    add("0.10", BONUS, lambda: bonus_optimum("player_season"),
+        "season-unit bonus overdispersion, against its fitted optimum")
+    add("0.025", BONUS, lambda: bonus_optimum("player_game"),
+        "game-unit bonus overdispersion, against its fitted optimum")
+
+    # ── methods: contest economics ────────────────────────────────────────────
+    add("10.45%", TOURNAMENTS, lambda: _break_even_hurdle("88k_alley_oop"),
+        "lowest break-even edge hurdle")
+    add("17.60%", TOURNAMENTS, lambda: _break_even_hurdle("600k_shootaround"),
+        "highest break-even edge hurdle")
+
+    # ── methods: what was deprioritized ───────────────────────────────────────
+    add("0.0059", DIAGNOSTICS,
+        lambda: cell(DIAGNOSTICS, "delta_sequence", analysis="sequence_ablation"),
+        "sequence features over season aggregates")
+    add("0.0074", DIAGNOSTICS,
+        lambda: cell(DIAGNOSTICS, "delta_above_null", analysis="sequence_ablation"),
+        "sequence features above their shuffled null")
+
+    # ── results: availability ─────────────────────────────────────────────────
+    for model, quoted in [("beta_binomial", "10.795"), ("gbm", "10.888"),
+                          ("ridge", "10.896"), ("league_age", "13.614")]:
+        add(quoted, METRICS, lambda m=model: metric(METRICS, m, "crps_games"),
+            f"{model} CRPS")
+    for name, which, quoted in [("full_season", "mae_dk_total", "646.3"),
+                                ("beta_binomial", "mae_dk_total", "435.1"),
+                                ("full_season", "bias_dk_total", "541.9"),
+                                ("beta_binomial", "bias_dk_total", "6.1"),
+                                ("oracle_gp", "mae_dk_total", "221.3"),
+                                ("oracle_rate", "mae_dk_total", "302.7")]:
+        add(quoted, SEASON_TOTAL, lambda n=name, w=which: treatment(n, w),
+            f"season total {name} {which}")
+
+    # ── results: the component floor ──────────────────────────────────────────
+    count_heads = ("fg2a", "fg3a", "fta", "reb", "ast", "stl", "blk", "tov")
+    fitted = ("linear", "log_own", "log_own_spline", "log_own_inter", "pca",
+              "pca_spline", "pca_inter")
+    add("0.82", RATES,
+        lambda: min(rate(h, "carry_forward") for h in count_heads),
+        "weakest no-fit floor across the count heads")
+    add("0.0019", RATES,
+        lambda: min(max(rate(h, v) for v in fitted) - rate(h, "carry_forward")
+                    for h in count_heads),
+        "smallest gain over the no-fit floor")
+    add("0.0228", RATES,
+        lambda: max(max(rate(h, v) for v in fitted) - rate(h, "carry_forward")
+                    for h in count_heads),
+        "largest gain over the no-fit floor")
+    add("−19.00", STAN_C_M, lambda: stan_c("fg3a", "linear", "test_r2"),
+        "fg3a under a linear predictor")
+    add("0.679", STAN_C_M, lambda: stan_c("blk", "log_own", "test_r2"),
+        "blk log_own R2, 3dp")
+    add("0.858", STAN_C_M, lambda: stan_c("blk", "log_own_spline", "test_r2"),
+        "blk spline R2, 3dp")
+    # The two figures behind "the substitution arm's canonical side was handicapped":
+    # `substitution_arm` fits every head at log_own, and that is the variant on which
+    # `fg3a` fails its own floor. Claimed so the caveat cannot rot into a bare assertion.
+    add("0.3719", STAN_C_M, lambda: stan_c("fg3a", "log_own", "test_r2"),
+        "fg3a at log_own — the variant the substitution arm used")
+    add("0.9046", STAN_C_M, lambda: stan_c("fg3a", "log_own_spline", "test_r2"),
+        "fg3a at its selected spline variant")
+
+    # ── results: the minutes composition ──────────────────────────────────────
+    SEL = "betabinom_ot_graded"
+    add("4.5078", COMP_M, lambda: comp_m(SEL, "test_crps"), "composition test CRPS")
+    add("4.9140", COMP_M, lambda: comp_m("independent_comparator", "test_crps"),
+        "independent comparator test CRPS")
+    add("−8.3%", COMP_M,
+        lambda: (comp_m(SEL, "test_crps")
+                 / comp_m("independent_comparator", "test_crps") - 1.0),
+        "composition CRPS gain, as a percentage")
+    add("−0.406", COMP_M,
+        lambda: comp_m(SEL, "test_crps") - comp_m("independent_comparator",
+                                                  "test_crps"),
+        "composition CRPS gain against the incumbent")
+    add("36.87", COMP_P,
+        lambda: cell(COMP_P, "simulated", variant=SEL, analysis="team_sum_abs_error",
+                     group="independent"),
+        "comparator team-sum error")
+    add("0.194", COMP_M, lambda: comp_m("binomial", "test_pit_ks"),
+        "binomial arm PIT KS, 3dp")
+    add("0.148", COMP_RHO, lambda: cell(COMP_RHO, "rho", variant=SEL, bin=1),
+        "fringe-tier dispersion, 3dp")
+    add("0.061", COMP_RHO, lambda: cell(COMP_RHO, "rho", variant=SEL, bin=4),
+        "star-tier dispersion, 3dp")
+    add("2.41", COMP_RHO,
+        lambda: (cell(COMP_RHO, "rho", variant=SEL, bin=1)
+                 / cell(COMP_RHO, "rho", variant=SEL, bin=4)),
+        "graded dispersion spread")
+    add("59%", COMP_P,
+        lambda: (1.0 - mean_abs_dev(COMP_P, "ratio", 1.0, variant=SEL,
+                                    analysis="variance_ratio")
+                 / mean_abs_dev(COMP_P, "ratio", 1.0, variant="betabinom_ot",
+                                analysis="variance_ratio")),
+        "calibration error cut by grading")
+
+    # ── results: substitution and season terms ────────────────────────────────
+    # Both splits, because the README's claim is that it *replicates* — quoting only the
+    # test figure would leave the word "replicates" describing nothing auditable.
+    for split, quoted in [("test", "−0.793"), ("val", "−0.771")]:
+        add(quoted, STAN_C_S,
+            lambda s=split: cell(STAN_C_S, "reparam_minus_canonical", split=s,
+                                 arm="two_counts"), f"substitution gain, {split}")
+    # The oracle bounds every form of season term, so both ends of the range the
+    # README quotes are claimed — the "~3%" ceiling and the median.
+    term_heads = ("fg2a", "fg3a", "fta", "reb", "ast", "stl", "blk", "tov")
+    add("3%", TERM_M, lambda: max(oracle_gain(h) for h in term_heads),
+        "the league-oracle ceiling")
+    add("1.32%", TERM_M,
+        lambda: float(pd.Series([oracle_gain(h) for h in term_heads]).median()),
+        "the league-oracle median")
+    add("19.0%", TERM_SPREAD,
+        lambda: term_spread(15, "year") - 1.0,
+        "year-effect roster spread at 15 players")
+    add("0.2%", STAN_AV_B,
+        lambda: cell(STAN_AV_B, "inflation", n_players=15) - 1.0,
+        "shared-beta roster spread at 15 players")
+
+    # ── discussion ────────────────────────────────────────────────────────────
+    add("0.317", PROFILE,
+        lambda: prof("persistence", "gp_share", "r_within_weighted"),
+        "games-played persistence")
+    add("86%", TARGET, lambda: first_k("r2_extrapolated"),
+        "first-5-games season-total share, rounded")
+    add("0.859", TARGET, lambda: first_k("r2_extrapolated"),
+        "first-5-games season-total R2")
+    add("14.7%", ROSTER_A, lambda: roster("undescribed"),
+        "roster minutes with no usable prior-season row")
+
+    return C
+
+
 def _build() -> tuple[Claim, ...]:
     """Every claim, in doc order. One builder per doc — the registry is long enough that
     a single function made it hard to see which doc a section belonged to."""
-    return tuple(_availability() + _composition() + _predictions() + _adp() + _claude())
+    return tuple(_availability() + _composition() + _predictions() + _adp()
+                 + _claude() + _readme())
 
 
 CLAIMS: tuple[Claim, ...] = _build()

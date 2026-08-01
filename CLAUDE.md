@@ -134,12 +134,28 @@ test. Missing artifacts are *skipped*, so a fresh checkout without `make eda` is
 It guards the artifact→prose direction tightly and the prose→artifact direction loosely;
 see the module docstring for exactly what it cannot catch.
 
-**It covers five docs — `availability-plan`, `minutes-composition-plan`, `predictions-plan`,
-`adp-plan` and `CLAUDE.md` — with 1,287 claims and one builder per doc.** Coverage of measured
-figures: 65% (predictions), 62% (adp), 59% (CLAUDE.md), 53% (availability), 44% (composition)
-— `make docs-audit` prints them live, so treat the printout rather than this line as current.
-The uncovered remainder is prose-only figures (`docs/provenance-plan.md` lists all fourteen),
-costing estimates, and counts of things rather than measurements.
+**It covers six docs — `README.md`, `availability-plan`, `minutes-composition-plan`,
+`predictions-plan`, `adp-plan` and `CLAUDE.md` — with 1,347 claims and one builder per doc.**
+Coverage of measured figures: 89% (README), 65% (predictions), 62% (adp), 59% (CLAUDE.md),
+53% (availability), 44% (composition) — `make docs-audit` prints them live, so treat the
+printout rather than this line as current. The uncovered remainder is prose-only figures
+(`docs/provenance-plan.md` lists all fourteen), costing estimates, and counts of things
+rather than measurements.
+
+**`README.md` was added last and is the doc the guard fits best**, which is why its coverage
+is the highest: it holds no measurements of its own, only a selection of headlines copied
+from `CLAUDE.md` and the plan docs, and it is the most-read and least-maintained file in the
+repo — the exact conditions under which a figure goes stale unnoticed. Two things its builder
+does that the others do not: it claims **roundings** (`58%` against 57.96%, `86%` against an
+R² of 0.859), because an overview should round and `implied_tolerance` already handles that
+correctly; and it claims **shipped constants against their fitted optima** (the bonus
+overdispersions 0.10 and 0.025 against `bonus_calibration.csv`'s `analysis == "fitted"`
+rows), so a re-calibration that moves an optimum away from the constant fails here rather
+than passing silently. The tournament break-even hurdles have no `outputs/` artifact —
+`dashboard/economics.py` derives them at render time — so they are claimed against the
+checked-in raw boards, with `_break_even_hurdle` duplicating one line of `economics.py`
+rather than importing it, since nothing in `src/` imports the dashboard package. A test pins
+the two copies together.
 
 **A block quoted in two docs is claimed from both against the one artifact**, because
 "current in one doc and stale in the other" is the failure that has already happened twice
@@ -1265,6 +1281,13 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
   log-densities are directly comparable. This converts a recommendation into a result: model
   the substitution by reparameterizing into the chain, never by coupling two Poissons.
   `stan_components.substitution_arm`.
+  - **⚠️ It is an ABLATION ARM, not the shipped spec — `component_rates.COUNT_HEADS` still
+    fits `fg2a` and `fg3a` as two independent NB counts**, and `sweep_counts` iterates that
+    list. The reparameterized form is fitted only inside `substitution_arm` and lands in
+    `stan_component_substitution.csv`. So "model the substitution by reparameterizing" is
+    guidance the repo has *measured* and not yet *adopted* — the same standing gap as
+    `models.availability.FEATURE_COLS` not consuming the absence-reason columns. Read the
+    head list, not this bullet, when asking what is fitted today.
 - **Sampler cost is concentrated entirely in the spline variants.** 16 of 74 fits saturated
   treedepth, *all* of them spline arms; the slowest fit is 19.8 min (`fg2m|fg2a` spline)
   against 1–3 min for a linear count head. 73/74 cleared every convergence bar; the one
