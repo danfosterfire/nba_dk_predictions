@@ -137,10 +137,21 @@ def _logit_column(train: pd.DataFrame, test: pd.DataFrame, col: str
 
 
 def conversion_variants(train: pd.DataFrame, test: pd.DataFrame, made: str,
-                        attempted: str, n_knots: int = SPLINE_KNOTS
+                        attempted: str, n_knots: int = SPLINE_KNOTS,
+                        own: str | None = None
                         ) -> dict[str, tuple[pd.DataFrame, pd.DataFrame, list[str]]]:
-    """The same scale-then-curvature ladder, on the logit that a logit link wants."""
-    own = f"{made}_pct_lag1"
+    """The same scale-then-curvature ladder, on the logit that a logit link wants.
+
+    `own` names the prior-season rate column explicitly. It defaults to the
+    `{made}_pct_lag1` convention every conversion head in `CONVERSION_HEADS` follows,
+    but the convention does NOT generalize: the `fg3a | fga` share head's own rate is
+    the attempt-*mix* share `fg3a_share_lag1`, and `fg3a_pct_lag1` — which the
+    convention would ask for — is three-point *shooting* percentage. That column does
+    not exist today, so the call would raise; the danger is someone adding it, at which
+    point the head would silently fit on shooting accuracy instead of shot mix and
+    destroy its entire rationale. Naming the column is the fix.
+    """
+    own = own or f"{made}_pct_lag1"
     vol = f"{attempted}_p36_lag1"
     base = [own, vol] + CONTEXT_COLS + BIO_COLS
     tr, te, flags = impute(train, test, base)
@@ -501,6 +512,10 @@ def add_substitution_columns(design: pd.DataFrame) -> pd.DataFrame:
     """
     out = design.copy()
     out["fga"] = out["fg2a"].to_numpy() + out["fg3a"].to_numpy()
+    # The raw lag-1 counts too, because the shrunk conversion floor for `fg3a | fga`
+    # reads `{made}_lag1` / `{attempted}_lag1` rather than per-36 rates.
+    out["fga_lag1"] = (out["fg2a_lag1"].to_numpy(float)
+                       + out["fg3a_lag1"].to_numpy(float))
     prior = (out["fg2a_p36_lag1"].to_numpy(float) + out["fg3a_p36_lag1"].to_numpy(float))
     out["fga_p36_lag1"] = prior
     with np.errstate(invalid="ignore", divide="ignore"):
@@ -558,11 +573,14 @@ def substitution_arm(train, val, test, full_train, cfg_stan, n_knots
         nll_b = nb_nll(v_te["fga"].to_numpy(float),
                        np.clip(fga_model.predict_mean(v_te), 1e-6, None), fga_model.phi)
 
-        share_base = ["fg3a_share_lag1", "fga_p36_lag1"] + CONTEXT_COLS + BIO_COLS
-        s_tr, s_te, flags = impute(tr, te, share_base)
-        s_tr, s_te, name = _logit_column(s_tr, s_te, "fg3a_share_lag1")
-        share_features = [c for c in share_base + flags
-                          if c != "fg3a_share_lag1"] + [name]
+        # Exactly `conversion_variants(...)["logit_own"]` with the own-rate column named
+        # explicitly. It has to be named: the `{made}_pct_lag1` convention would ask for
+        # `fg3a_pct_lag1`, which is three-point *shooting* percentage and not the
+        # attempt-*mix* share this head is about. `substitution_sweep` pins that the
+        # refactor reproduces this arm's recorded NLL to full precision.
+        share_variants = conversion_variants(tr, te, "fg3a", "fga", n_knots,
+                                             own="fg3a_share_lag1")
+        s_tr, s_te, share_features = share_variants["logit_own"]
         share_model = StanConversion(share_features, "fg3a", "fga",
                                      name=f"subst/fg3a|fga/{split}", chains=chains,
                                      seed=seed, **_iters(cfg_stan, fast)).fit(s_tr)
@@ -593,6 +611,199 @@ def _beta_binomial_logpmf(y: np.ndarray, n: np.ndarray, p: np.ndarray,
     from scipy.stats import betabinom
     a, b = _beta_shapes(np.asarray(p, dtype=float), np.asarray(float(rho)))
     return np.nan_to_num(betabinom.logpmf(y, n, a, b), nan=-1e6, neginf=-1e6)
+
+
+# ── Gate 0: the substitution comparison, un-handicapped ───────────────────────
+
+SUBSTITUTION_COUNT_VARIANTS = ("linear", "log_own", "log_own_spline")
+SUBSTITUTION_SHARE_VARIANTS = ("linear", "logit_own", "logit_own_spline")
+SUBSTITUTION_PAIR = ("fg2a", "fg3a")
+
+
+def _share_nll(model: "StanConversion", frame: pd.DataFrame, made: str,
+               attempted: str) -> np.ndarray:
+    """Per-row beta-binomial NLL, zero where there were no attempts to convert."""
+    n = np.rint(frame[attempted].to_numpy(float)).astype(int)
+    y = np.minimum(np.rint(frame[made].to_numpy(float)).astype(int), n)
+    live = n > 0
+    out = np.zeros(len(frame))
+    p = model.predict_p(frame[live])
+    out[live] = -_beta_binomial_logpmf(y[live], n[live], p, model.rho)
+    return out
+
+
+def substitution_sweep(train, val, test, full_train, cfg_stan, n_knots,
+                       predictions_dir: Path) -> tuple[pd.DataFrame, list[dict]]:
+    """Gate 0 — the same comparison as `substitution_arm`, with both arms un-handicapped.
+
+    `substitution_arm` fits **every** head at `log_own`. That is a straw man for arm A:
+    `fg3a` selects `log_own_spline`, and at `log_own` it reads held-out R² 0.3719 with
+    `beats_floor = False` against 0.9046 for the spline it actually ships. 0.3056 of the
+    recorded 0.7927-nat margin is that handicap alone.
+
+    So here arm A is fitted at **each head's own validation-selected variant**, read from
+    the artifact that selected it (`season_terms.selected_specs`) rather than re-derived,
+    and arm B is **swept for real** instead of being pinned at one variant. Additive
+    separability is what makes the sweep cheap: the joint density factors as
+    `p(fga) · p(fg3a | fga)`, and the two factors share no parameters, so they select
+    **independently** — 3 + 3 fits per split, not 9 combinations.
+
+    Selection reads validation only; the test column is confirmation. `val_nll` is empty
+    for count heads in `stan_component_metrics.csv`, so arm A's validation side genuinely
+    has to be refitted — and refitting its test side too makes the artifact
+    self-contained *and* doubles as the falsification that the design has not drifted
+    since July: `fg2a @ log_own` must come back at the recorded 5.229492.
+
+    The comparison stays legitimate for the same reason it always was: `(fg2a, fg3a)` and
+    `(fga, fg3a)` are the same point in different coordinates, a bijection with unit
+    Jacobian on the integers, so the two joint log-densities are directly comparable.
+    """
+    from src.models.season_terms import DEFAULT_COUNT_SPEC, selected_specs
+
+    seed = int(cfg_stan.get("seed", 42))
+    chains = int(cfg_stan.get("chains", 4))
+    specs, _ = selected_specs(Path(predictions_dir))
+    rows, diagnostics = [], []
+
+    print("\nGate 0 — the substitution comparison at each head's SELECTED variant")
+    print(f"  arm A specs read from stan_component_metrics.csv: "
+          f"{', '.join(f'{h}@{specs.get(h, DEFAULT_COUNT_SPEC)}' for h in SUBSTITUTION_PAIR)}")
+
+    for split, (tr, te) in {"val": (train, val), "test": (full_train, test)}.items():
+        fast = split == "val"
+        tr, te = add_substitution_columns(tr), add_substitution_columns(te)
+        per_head: dict[tuple[str, str], np.ndarray] = {}
+
+        # ── Arm A: the canonical pair, each at its own selected variant ────────
+        for component in SUBSTITUTION_PAIR:
+            spec = specs.get(component, DEFAULT_COUNT_SPEC)
+            variants = count_variants(tr, te, component, n_knots)
+            v_tr, v_te, features = variants[spec]
+            model = StanCount(features, component,
+                              name=f"gate0/{component}/{spec}/{split}",
+                              chains=chains, seed=seed,
+                              **_iters(cfg_stan, fast)).fit(v_tr)
+            diagnostics.append(model.diagnostics)
+            nll = nb_nll(v_te[component].to_numpy(float),
+                         np.clip(model.predict_mean(v_te), 1e-6, None), model.phi)
+            per_head[("two_counts", component)] = nll
+            rows.append(_g0_row(split, "two_counts", component, spec, len(features),
+                                nll, count_floor(tr, te, component, seed)["nll"],
+                                selected=True))
+
+        # ── Arm B, factor 1: total attempts as a count ─────────────────────────
+        fga_floor = count_floor(tr, te, "fga", seed)["nll"]
+        fga_variants = count_variants(tr, te, "fga", n_knots)
+        for label in SUBSTITUTION_COUNT_VARIANTS:
+            v_tr, v_te, features = fga_variants[label]
+            model = StanCount(features, "fga", name=f"gate0/fga/{label}/{split}",
+                              chains=chains, seed=seed,
+                              **_iters(cfg_stan, fast)).fit(v_tr)
+            diagnostics.append(model.diagnostics)
+            nll = nb_nll(v_te["fga"].to_numpy(float),
+                         np.clip(model.predict_mean(v_te), 1e-6, None), model.phi)
+            per_head[("fga_x_fg3a_share", f"fga/{label}")] = nll
+            rows.append(_g0_row(split, "fga_x_fg3a_share", "fga", label, len(features),
+                                nll, fga_floor))
+
+        # ── Arm B, factor 2: the three-point share on `fga` trials ─────────────
+        # `own=` is mandatory here — the `{made}_pct_lag1` convention would silently ask
+        # for shooting percentage instead of the attempt mix. See `conversion_variants`.
+        share_floor = conversion_floor(tr, te, "fg3a", "fga", seed)["nll"]
+        share_variants = conversion_variants(tr, te, "fg3a", "fga", n_knots,
+                                             own="fg3a_share_lag1")
+        for label in SUBSTITUTION_SHARE_VARIANTS:
+            s_tr, s_te, features = share_variants[label]
+            model = StanConversion(features, "fg3a", "fga",
+                                   name=f"gate0/fg3a|fga/{label}/{split}",
+                                   chains=chains, seed=seed,
+                                   **_iters(cfg_stan, fast)).fit(s_tr)
+            diagnostics.append(model.diagnostics)
+            nll = _share_nll(model, s_te, "fg3a", "fga")
+            per_head[("fga_x_fg3a_share", f"fg3a|fga/{label}")] = nll
+            rows.append(_g0_row(split, "fga_x_fg3a_share", "fg3a|fga", label,
+                                len(features), nll, share_floor))
+
+        rows.append({"analysis": "joint", "split": split, "arm": "two_counts",
+                     "head": "fg2a+fg3a", "variant": "selected", "n": len(te),
+                     "mean_nll": float(sum(per_head[("two_counts", c)]
+                                           for c in SUBSTITUTION_PAIR).mean())})
+        for fga_label in SUBSTITUTION_COUNT_VARIANTS:
+            for share_label in SUBSTITUTION_SHARE_VARIANTS:
+                joint = (per_head[("fga_x_fg3a_share", f"fga/{fga_label}")]
+                         + per_head[("fga_x_fg3a_share", f"fg3a|fga/{share_label}")])
+                rows.append({"analysis": "joint", "split": split,
+                             "arm": "fga_x_fg3a_share", "head": "fga+fg3a|fga",
+                             "variant": f"{fga_label}+{share_label}", "n": len(te),
+                             "mean_nll": float(joint.mean())})
+
+    out = _g0_select(pd.DataFrame(rows))
+    rows_grid = _arm_a_grid(Path(predictions_dir))
+    return pd.concat([out, rows_grid], ignore_index=True), diagnostics
+
+
+def _g0_row(split: str, arm: str, head: str, variant: str, n_features: int,
+            nll: np.ndarray, floor_nll: float, selected: bool | None = None) -> dict:
+    return {"analysis": "head", "split": split, "arm": arm, "head": head,
+            "variant": variant, "n_features": n_features, "n": len(nll),
+            "mean_nll": float(nll.mean()), "floor_nll": float(floor_nll),
+            "beats_floor": bool(nll.mean() < floor_nll),
+            "selected": selected}
+
+
+def _g0_select(table: pd.DataFrame) -> pd.DataFrame:
+    """Validation picks each arm-B factor independently, and the joint row follows.
+
+    Independent selection is not a shortcut — the two factors share no parameters, so
+    the joint NLL is a *sum* and minimising it is exactly minimising each term.
+    """
+    out = table.copy()
+    val = out[(out["analysis"] == "head") & (out["split"] == "val")
+              & (out["arm"] == "fga_x_fg3a_share")]
+    chosen = {str(head): str(block.loc[block["mean_nll"].idxmin(), "variant"])
+              for head, block in val.groupby("head")}
+    for head, variant in chosen.items():
+        picked = ((out["analysis"] == "head") & (out["arm"] == "fga_x_fg3a_share")
+                  & (out["head"] == head) & (out["variant"] == variant))
+        out.loc[picked, "selected"] = True
+    out.loc[(out["analysis"] == "head") & out["selected"].isna(), "selected"] = False
+
+    combo = f"{chosen.get('fga', '')}+{chosen.get('fg3a|fga', '')}"
+    is_joint = out["analysis"] == "joint"
+    out.loc[is_joint, "selected"] = (
+        ((out.loc[is_joint, "arm"] == "two_counts")
+         | (out.loc[is_joint, "variant"] == combo)))
+
+    sel = out[is_joint & out["selected"]].set_index(["split", "arm"])["mean_nll"]
+    for split in out.loc[is_joint, "split"].unique():
+        margin = float(sel[(split, "fga_x_fg3a_share")] - sel[(split, "two_counts")])
+        out.loc[is_joint & (out["split"] == split), "reparam_minus_canonical"] = margin
+    return out
+
+
+def _arm_a_grid(predictions_dir: Path) -> pd.DataFrame:
+    """Arm A's best-of-16, straight from the shipped artifact — zero extra fits.
+
+    Sixteen (fg2a variant x fg3a variant) combinations, summed. The point is the
+    *minimum*: it turns "we removed the handicap" into "arm B wins even against arm A's
+    most favourable configuration", which is the version that cannot be argued with.
+    Missing artifact returns empty, matching the module's skip-don't-fail convention.
+    """
+    path = Path(predictions_dir) / "stan_component_metrics.csv"
+    if not path.exists():
+        return pd.DataFrame()
+    table = pd.read_csv(path)
+    per = {c: table[table["head"] == c].set_index("variant")["test_nll"].to_dict()
+           for c in SUBSTITUTION_PAIR}
+    if not all(per.values()):
+        return pd.DataFrame()
+    rows = [{"analysis": "arm_a_grid", "split": "test", "arm": "two_counts",
+             "head": "fg2a+fg3a", "variant": f"{a}+{b}",
+             "mean_nll": float(x + y)}
+            for a, x in per["fg2a"].items() for b, y in per["fg3a"].items()]
+    out = pd.DataFrame(rows)
+    out["selected"] = out["mean_nll"] == out["mean_nll"].min()
+    return out
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -688,6 +899,66 @@ def run(cfg: dict) -> dict[str, Path]:
     return paths
 
 
+def run_substitution_sweep(cfg: dict) -> dict[str, Path]:
+    """Gate 0 on its own, writing its own artifact — `make stan-substitution`.
+
+    Deliberately a separate entry point from `run`. `substitution_arm` is called from
+    inside `run`, which writes all three component CSVs together, so refreshing the
+    substitution comparison through it would cost the full 209-minute sweep and would
+    also rewrite `stan_component_metrics.csv` — the artifact this sweep *reads* arm A's
+    selected specs and best-of-16 grid from. Sixteen fits against seventy-four.
+    """
+    features_dir = Path(cfg["data"]["features_dir"])
+    out_dir = Path(cfg["evaluation"]["predictions_dir"])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cfg_stan = cfg.get("stan", {})
+    n_knots = int(cfg_stan.get("components", {}).get("spline_knots", SPLINE_KNOTS))
+
+    targets = pd.read_parquet(features_dir / "component_targets.parquet")
+    design = build_design(targets, cfg["data"]["seasons"], cfg["data"]["raw_dir"])
+    full_train, test = split_seasons(design, 2)
+    order = sorted(full_train["season"].unique())
+    train, val = split_seasons(full_train, min(2, len(order) - 1))
+    print(f"Gate 0 — {len(design):,} player-seasons, {len(full_train):,} train / "
+          f"{len(test):,} test, validation split {len(train):,} / {len(val):,}")
+
+    table, diagnostics = substitution_sweep(train, val, test, full_train, cfg_stan,
+                                            n_knots, out_dir)
+    heads = table[table["analysis"] == "head"]
+    print("\nPer-factor NLL (lower is better; selection reads validation only):")
+    print(heads[["split", "arm", "head", "variant", "n_features", "mean_nll",
+                 "floor_nll", "beats_floor", "selected"]]
+          .round(6).to_string(index=False))
+    joint = table[table["analysis"] == "joint"]
+    print("\nJoint NLL per player-season — the bijection makes these comparable:")
+    print(joint[joint["selected"]][["split", "arm", "variant", "mean_nll",
+                                    "reparam_minus_canonical"]]
+          .round(6).to_string(index=False))
+    grid = table[table["analysis"] == "arm_a_grid"]
+    if len(grid):
+        best = grid.loc[grid["mean_nll"].idxmin()]
+        print(f"\nArm A best-of-16 (from stan_component_metrics.csv, no new fits): "
+              f"{best['variant']} at {best['mean_nll']:.6f}")
+
+    diag = diagnostics_frame(diagnostics)
+    paths = {}
+    for name, frame in (("substitution_sweep", table),
+                        ("substitution_sweep_diagnostics", diag)):
+        dest = out_dir / f"stan_component_{name}.csv"
+        frame.to_csv(dest, index=False)
+        paths[name] = dest
+        print(f"Saved {len(frame):,} {name} rows → {dest}")
+    print(f"\nSampler over {len(diag)} fits: max R-hat {diag['max_rhat'].max():.4f}, "
+          f"{int(diag['divergences'].sum())} divergences, "
+          f"{diag['wall_clock_s'].sum() / 60:.1f} min total")
+    return paths
+
+
 if __name__ == "__main__":
+    import sys
+
     cfg = yaml.safe_load(open("configs/default.yaml"))
-    run(cfg)
+    if "--gate0" in sys.argv:
+        run_substitution_sweep(cfg)
+    else:
+        run(cfg)

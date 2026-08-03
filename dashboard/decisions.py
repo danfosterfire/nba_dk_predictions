@@ -2171,20 +2171,83 @@ REGISTRY: tuple[Decision, ...] = (
         because="It enforces the substitution *by construction*, keeps the posterior "
                 "factorization exact, and is better specified anyway, since shot-mix "
                 "shares persist like counts (`sco_pct_fga_3pt` at 0.886) while the two "
-                "raw counts trade off at −0.11 residual correlation. Now measured and "
-                "settled: the reparameterized arm beats two independent count heads by "
-                "**−0.771 nats on validation and −0.793 on test**, per player-season, "
-                "on the joint density of `(fg2a, fg3a)`. The comparison is legitimate "
+                "raw counts trade off at −0.11 residual correlation. **Re-measured "
+                "un-handicapped (Gate 0, 2026-08-03) and it still wins**: arm A at each "
+                "head's own selected variant against arm B swept for real gives "
+                "**−0.501 nats on validation and −0.494 on test**, per player-season, "
+                "and **−0.492 even against arm A's best-of-16** configuration. The "
+                "recorded −0.771 / −0.793 was measured against a straw man — both arms "
+                "fitted at `log_own`, where `fg3a` reads test R² 0.3719 with "
+                "`beats_floor = False` against 0.9046 for the spline it ships — and "
+                "0.306 of that margin was the handicap. The comparison is legitimate "
                 "because `(fg2a, fg3a) ↔ (fga, fg3a)` is a **bijection with unit "
                 "Jacobian on the integers**, so the two joint log-densities are "
-                "directly comparable. Coupling two Poissons was never necessary.",
+                "directly comparable. **The sharpest result is that arm B's *no-fit "
+                "floor* (10.086) beats arm A's *best fitted* configuration (10.476) by "
+                "−0.391**: writing the identity in the right basis is worth ~79% of the "
+                "margin, and arm B's own fitting adds only −0.101 on top of its floor. "
+                "Still measured, not adopted — `COUNT_HEADS` is unchanged and "
+                "`docs/shot-attempt-basis-plan.md` specifies what adoption requires.",
         status="measured",
-        reproduce="make stan-components → "
+        reproduce="make stan-substitution → "
+                  "outputs/predictions/stan_component_substitution_sweep.csv, "
+                  "outputs/predictions/stan_component_substitution_sweep_diagnostics.csv, "
                   "outputs/predictions/stan_component_substitution.csv",
-        source="docs/predictions-plan.md",
-        reviewed="2026-07-30",
-        date="2026-07-30",
+        source="docs/shot-attempt-basis-plan.md",
+        reviewed="2026-08-03",
+        date="2026-08-03",
         tags=("specification",),
+    ),
+    Decision(
+        id="the-coordinate-change-beats-the-fitting",
+        topic="components",
+        claim="For the shot-attempt pair, **the basis is worth more than the model**: the "
+              "reparameterized no-fit floor beats the canonical basis's best fitted "
+              "configuration.",
+        because="At their no-fit floors — prior per-36 rate × minutes for the count, a "
+                "shrunk carry-forward for the share, no features anywhere — the two bases "
+                "score **11.024** (canonical) against **10.086** (reparameterized), a "
+                "**−0.938** nat gap. Arm A's best of sixteen fitted combinations is "
+                "10.476, so the reparameterized floor beats it by **−0.391** with zero "
+                "features, and arm B's own fitted heads add only −0.101 on top of their "
+                "floor. This is the same shape as the standing finding that the component "
+                "rate side is nearly saturated by a carry-forward: when the floor is that "
+                "strong, the parameterization is where the remaining leverage is, not the "
+                "feature set. It also reframes the substitution result — it is not a "
+                "better model of shot attempts, it is the same information in coordinates "
+                "where the dependence is structural instead of residual.",
+        status="measured",
+        reproduce="make stan-substitution → "
+                  "outputs/predictions/stan_component_substitution_sweep.csv",
+        source="docs/shot-attempt-basis-plan.md",
+        reviewed="2026-08-03",
+        date="2026-08-03",
+        tags=("specification", "methodology"),
+    ),
+    Decision(
+        id="conversion-own-rate-column-must-be-named",
+        topic="components",
+        claim="`conversion_variants` takes its own-rate column **explicitly**; the "
+              "`{made}_pct_lag1` naming convention does not generalize.",
+        because="The `fg3a | fga` share head's own rate is the attempt-**mix** share "
+                "`fg3a_share_lag1`, but the convention resolves to `fg3a_pct_lag1` — "
+                "three-point *shooting* percentage. That column does not exist today, so "
+                "the call raises; the hazard is that adopting the reparameterization "
+                "**creates** it (`(\"fg3a\", \"fga\")` becomes a conversion head, and "
+                "`build_design`'s lag loops generate it for free), at which point the "
+                "head would silently fit on shooting accuracy and its entire rationale — "
+                "shot-mix shares persist at 0.886, conversion percentages at 0.500 — "
+                "would be gone with no error anywhere. Fixed before the Gate 0 "
+                "measurement rather than after, and the refactored arm reproduces the "
+                "recorded 9.991042 joint NLL to nine decimal places, which is how we know "
+                "the fix changed nothing else.",
+        status="built",
+        reproduce="make stan-substitution → "
+                  "outputs/predictions/stan_component_substitution_sweep.csv",
+        source="docs/shot-attempt-basis-plan.md",
+        reviewed="2026-08-03",
+        date="2026-08-03",
+        tags=("failure-mode",),
     ),
 
     # ══ Season simulations ═══════════════════════════════════════════════════

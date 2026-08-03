@@ -11,7 +11,7 @@ PIP    := .venv/bin/pip
         adp-status game-length serial-correlation component-rates \
         variance-budget residual-correlation season-effects \
         stan stan-availability stan-minutes stan-components stan-composition \
-        season-terms
+        stan-substitution season-terms
 
 venv:
 	/opt/homebrew/bin/python3.14 -m venv .venv
@@ -173,6 +173,15 @@ stan-minutes:
 
 stan-components:
 	$(PYTHON) -m src.models.stan_components
+
+# Gate 0 of docs/shot-attempt-basis-plan.md — the `fga` count x `fg3a | fga` share
+# reparameterization against the two independent attempt counts, with BOTH arms
+# un-handicapped: arm A at each head's own selected variant, arm B swept for real.
+# Sixteen fits, and its own artifact, because `substitution_arm` lives inside
+# `stan-components` and cannot be refreshed without that target's 209 minutes.
+# Reads stan_component_metrics.csv, so run `stan-components` first.
+stan-substitution:
+	$(PYTHON) -m src.models.stan_components --gate0
 
 # The team-game minutes composition PILOT (docs/minutes-composition-plan.md) —
 # deliberately NOT in the `stan` aggregate until the pilot's gates pass and the

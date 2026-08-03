@@ -83,6 +83,7 @@ COMP = "docs/minutes-composition-plan.md"
 PRED = "docs/predictions-plan.md"
 ADP = "docs/adp-plan.md"
 CLAUDE = "CLAUDE.md"
+SHOT = "docs/shot-attempt-basis-plan.md"
 README = "README.md"
 
 PROFILE = "outputs/eda/availability_profile.csv"
@@ -110,6 +111,8 @@ RESID = "outputs/eda/residual_correlation.csv"
 RATES = "outputs/predictions/component_rate_metrics.csv"
 STAN_C_M = "outputs/predictions/stan_component_metrics.csv"
 STAN_C_S = "outputs/predictions/stan_component_substitution.csv"
+SHOT_SWEEP = "outputs/predictions/stan_component_substitution_sweep.csv"
+SHOT_D = "outputs/predictions/stan_component_substitution_sweep_diagnostics.csv"
 STAN_C_D = "outputs/predictions/stan_component_diagnostics.csv"
 SEASON_EFF = "outputs/eda/season_effects_summary.csv"
 SEASON_REGIME = "outputs/eda/season_effects_regimes.csv"
@@ -1065,7 +1068,8 @@ def _predictions() -> list[Claim]:
         lambda: cell(COMP_M, "test_pit_ks", variant="binomial"),
         "composition binomial PIT KS")
     add("36.87", COMP_P,
-        lambda: cell(COMP_P, "simulated", analysis="team_sum_abs_error",
+        lambda: cell(COMP_P, "simulated", variant="betabinom_ot_graded",
+                     analysis="team_sum_abs_error",
                      group="independent"), "comparator team-sum error")
     add("−0.406", COMP_M,
         lambda: (cell(COMP_M, "test_crps", variant="betabinom_ot_graded")
@@ -2005,19 +2009,105 @@ def _claude() -> list[Claim]:
         "component sampler minutes")
     add("1.0118", STAN_C_D, lambda: max_of(STAN_C_D, "max_rhat"),
         "component max R-hat")
+    # The handicapped margins, kept in the doc beside their correction. They remain
+    # exactly true of `stan_component_substitution.csv` — a weaker experiment, not a
+    # stale value — so they are value-checked rather than flagged historical.
     add("−0.771", STAN_C_S,
         lambda: cell(STAN_C_S, "reparam_minus_canonical", split="val",
-                     arm="two_counts"), "substitution gain, val")
+                     arm="two_counts"), "substitution gain, val (handicapped)")
     add("−0.793", STAN_C_S,
         lambda: cell(STAN_C_S, "reparam_minus_canonical", split="test",
-                     arm="two_counts"), "substitution gain, test")
-    for split, arm, quoted in [("val", "two_counts", "10.797"),
-                               ("val", "fga_x_fg3a_share", "10.026"),
-                               ("test", "two_counts", "10.784"),
-                               ("test", "fga_x_fg3a_share", "9.991")]:
-        add(quoted, STAN_C_S,
-            lambda s=split, a=arm: cell(STAN_C_S, "mean_joint_nll", split=s, arm=a),
-            f"substitution joint NLL {split}/{arm}")
+                     arm="two_counts"), "substitution gain, test (handicapped)")
+    add("0.792657", STAN_C_S,
+        lambda: -cell(STAN_C_S, "reparam_minus_canonical", split="test",
+                      arm="two_counts"), "the handicapped test margin, unsigned")
+    # The four joint-NLL cells the doc used to quote are gone from the prose, replaced by
+    # Gate 0's. `10.797` was deliberately NOT re-pointed: the string survives elsewhere in
+    # this doc as an unrelated availability CRPS, so a presence check on it would pass for
+    # the wrong reason — the exact false-negative `check_presence` exists to avoid.
+    def shot(split: str, arm: str) -> float:
+        frame = table(SHOT_SWEEP)
+        if frame is None:
+            return float("nan")
+        sub = frame[(frame["analysis"] == "joint") & (frame["split"] == split)
+                    & (frame["arm"] == arm) & frame["selected"].astype(bool)]
+        return float(sub["mean_nll"].iloc[0])
+
+    def shot_head(split: str, name: str, variant: str, column: str = "mean_nll") -> float:
+        arm = "two_counts" if name in ("fg2a", "fg3a") else "fga_x_fg3a_share"
+        return cell(SHOT_SWEEP, column, analysis="head", split=split, arm=arm,
+                    head=name, variant=variant)
+
+    def shot_floor_total(names, variants, split: str = "test") -> float:
+        return sum(shot_head(split, n, v, "floor_nll") for n, v in zip(names, variants))
+
+    def shot_grid_best() -> float:
+        frame = table(SHOT_SWEEP)
+        if frame is None:
+            return float("nan")
+        return float(frame[frame["analysis"] == "arm_a_grid"]["mean_nll"].min())
+
+    for split, canonical, reparam, margin in [
+            ("val", "10.504935", "10.004153", "−0.500782"),
+            ("test", "10.478052", "9.984503", "−0.493549")]:
+        add(canonical, SHOT_SWEEP, lambda s=split: shot(s, "two_counts"),
+            f"gate 0 arm A joint NLL, {split}")
+        add(reparam, SHOT_SWEEP, lambda s=split: shot(s, "fga_x_fg3a_share"),
+            f"gate 0 arm B joint NLL, {split}")
+        add(margin, SHOT_SWEEP,
+            lambda s=split: shot(s, "fga_x_fg3a_share") - shot(s, "two_counts"),
+            f"gate 0 margin, {split}")
+    add("10.476413", SHOT_SWEEP, shot_grid_best, "gate 0 arm A best-of-16")
+    add("−0.491910", SHOT_SWEEP,
+        lambda: shot("test", "fga_x_fg3a_share") - shot_grid_best(),
+        "gate 0 margin against arm A's best-of-16")
+    add("0.305646", SHOT_SWEEP,
+        lambda: (cell(STAN_C_M, "test_nll", head="fg3a", variant="log_own")
+                 - shot_head("test", "fg3a", "log_own_spline")),
+        "gate 0 handicap in nats")
+    add("−0.487010", SHOT_SWEEP,
+        lambda: (shot_head("test", "fga", "log_own")
+                 + shot_head("test", "fg3a|fga", "logit_own")
+                 - shot("test", "two_counts")),
+        "gate 0 margin before arm B was swept")
+    add("−0.006539", SHOT_SWEEP,
+        lambda: (shot("test", "fga_x_fg3a_share")
+                 - shot_head("test", "fga", "log_own")
+                 - shot_head("test", "fg3a|fga", "logit_own")),
+        "gate 0 value of sweeping arm B")
+    add("9.991042", SHOT_SWEEP,
+        lambda: (shot_head("test", "fga", "log_own")
+                 + shot_head("test", "fg3a|fga", "logit_own")),
+        "gate 0 reproduces the recorded joint NLL")
+    # The headline: the coordinate change beats the fitting.
+    ARM_A_F = (("fg2a", "fg3a"), ("log_own", "log_own_spline"))
+    ARM_B_F = (("fga", "fg3a|fga"), ("log_own", "logit_own"))
+    add("11.024027", SHOT_SWEEP, lambda: shot_floor_total(*ARM_A_F),
+        "gate 0 arm A no-fit floor total")
+    add("10.085599", SHOT_SWEEP, lambda: shot_floor_total(*ARM_B_F),
+        "gate 0 arm B no-fit floor total")
+    add("−0.938427", SHOT_SWEEP,
+        lambda: shot_floor_total(*ARM_B_F) - shot_floor_total(*ARM_A_F),
+        "gate 0 floor-to-floor gain")
+    add("−0.390814", SHOT_SWEEP,
+        lambda: shot_floor_total(*ARM_B_F) - shot_grid_best(),
+        "gate 0 arm B floor vs arm A best fitted")
+    add("−0.101096", SHOT_SWEEP,
+        lambda: shot("test", "fga_x_fg3a_share") - shot_floor_total(*ARM_B_F),
+        "gate 0 what arm B's own fitting adds")
+    # The share head's floor failure on validation — the reason it needs its spline.
+    for quoted, name, variant, column, split in [
+            ("4.636033", "fg3a|fga", "logit_own", "mean_nll", "val"),
+            ("4.619109", "fg3a|fga", "logit_own", "floor_nll", "val"),
+            ("4.615620", "fg3a|fga", "logit_own_spline", "mean_nll", "val"),
+            ("5.388533", "fga", "log_own_spline", "mean_nll", "val"),
+            ("5.390057", "fga", "log_own", "mean_nll", "val")]:
+        add(quoted, SHOT_SWEEP,
+            lambda n=name, v=variant, c=column, s=split: shot_head(s, n, v, c),
+            f"gate 0 {name}@{variant} {column} {split}")
+    add("1.0087", SHOT_D, lambda: max_of(SHOT_D, "max_rhat"), "gate 0 max R-hat")
+    add("46.5", SHOT_D, lambda: total(SHOT_D, "wall_clock_s") / 60,
+        "gate 0 sampler minutes")
 
     # the availability port and the board decomposition
     for model, crps, rho in [("beta_binomial", "10.7952", "0.2757"),
@@ -2100,13 +2190,16 @@ def _claude() -> list[Claim]:
         add(pit, COMP_M, lambda v=variant: cell(COMP_M, "test_pit_ks", variant=v),
             f"composition {variant} PIT KS")
     add("36.87", COMP_P,
-        lambda: cell(COMP_P, "simulated", analysis="team_sum_abs_error",
+        lambda: cell(COMP_P, "simulated", variant="betabinom_ot_graded",
+                     analysis="team_sum_abs_error",
                      group="independent"), "comparator team-sum error")
     add("0.5882", COMP_P,
-        lambda: cell(COMP_P, "observed", analysis="starter_share",
+        lambda: cell(COMP_P, "observed", variant="betabinom_ot_graded",
+                     analysis="starter_share",
                      group="regulation/composition"), "starter share, regulation")
     add("0.6314", COMP_P,
-        lambda: cell(COMP_P, "observed", analysis="starter_share",
+        lambda: cell(COMP_P, "observed", variant="betabinom_ot_graded",
+                     analysis="starter_share",
                      group="overtime/composition"), "starter share, overtime")
     # Both arms of the graded-vs-shared calibration table, each pinned to its variant:
     # the PPC artifact carries two arms now, so an unfiltered lookup would silently
@@ -2768,11 +2861,56 @@ def _readme() -> list[Claim]:
 
     # ── results: substitution and season terms ────────────────────────────────
     # Both splits, because the README's claim is that it *replicates* — quoting only the
-    # test figure would leave the word "replicates" describing nothing auditable.
+    # test figure would leave the word "replicates" describing nothing auditable. The
+    # handicapped pair stays claimed against the artifact it is still true of; the
+    # un-handicapped pair is claimed against Gate 0's.
     for split, quoted in [("test", "−0.793"), ("val", "−0.771")]:
         add(quoted, STAN_C_S,
             lambda s=split: cell(STAN_C_S, "reparam_minus_canonical", split=s,
-                                 arm="two_counts"), f"substitution gain, {split}")
+                                 arm="two_counts"),
+            f"substitution gain, {split} (handicapped)")
+
+    def shot_joint(split: str, arm: str) -> float:
+        frame = table(SHOT_SWEEP)
+        if frame is None:
+            return float("nan")
+        sub = frame[(frame["analysis"] == "joint") & (frame["split"] == split)
+                    & (frame["arm"] == arm) & frame["selected"].astype(bool)]
+        return float(sub["mean_nll"].iloc[0])
+
+    def shot_floor(name: str, variant: str) -> float:
+        arm = "two_counts" if name in ("fg2a", "fg3a") else "fga_x_fg3a_share"
+        return cell(SHOT_SWEEP, "floor_nll", analysis="head", split="test", arm=arm,
+                    head=name, variant=variant)
+
+    def shot_grid_min() -> float:
+        frame = table(SHOT_SWEEP)
+        if frame is None:
+            return float("nan")
+        return float(frame[frame["analysis"] == "arm_a_grid"]["mean_nll"].min())
+
+    for split, quoted in [("test", "−0.493549"), ("val", "−0.500782")]:
+        add(quoted, SHOT_SWEEP,
+            lambda s=split: (shot_joint(s, "fga_x_fg3a_share")
+                             - shot_joint(s, "two_counts")),
+            f"un-handicapped substitution gain, {split}")
+    add("−0.491910", SHOT_SWEEP,
+        lambda: shot_joint("test", "fga_x_fg3a_share") - shot_grid_min(),
+        "substitution gain against arm A's best-of-16")
+    add("11.024027", SHOT_SWEEP,
+        lambda: shot_floor("fg2a", "log_own") + shot_floor("fg3a", "log_own_spline"),
+        "canonical-basis no-fit floor")
+    add("10.085599", SHOT_SWEEP,
+        lambda: shot_floor("fga", "log_own") + shot_floor("fg3a|fga", "logit_own"),
+        "reparameterized no-fit floor")
+    add("−0.390814", SHOT_SWEEP,
+        lambda: (shot_floor("fga", "log_own") + shot_floor("fg3a|fga", "logit_own")
+                 - shot_grid_min()),
+        "reparameterized floor vs canonical best fitted")
+    add("−0.101096", SHOT_SWEEP,
+        lambda: (shot_joint("test", "fga_x_fg3a_share")
+                 - shot_floor("fga", "log_own") - shot_floor("fg3a|fga", "logit_own")),
+        "what the reparameterized arm's own fitting adds")
     # The oracle bounds every form of season term, so both ends of the range the
     # README quotes are claimed — the "~3%" ceiling and the median.
     term_heads = ("fg2a", "fg3a", "fta", "reb", "ast", "stl", "blk", "tov")
@@ -2802,11 +2940,181 @@ def _readme() -> list[Claim]:
     return C
 
 
+def _shot_basis() -> list[Claim]:
+    """`docs/shot-attempt-basis-plan.md` — Gate 0 of the shot-attempt reparameterization.
+
+    Every figure in that doc comes from one artifact, `stan_component_substitution_sweep`,
+    except the arm-A grid, which is read out of `stan_component_metrics.csv` at zero fits
+    and is therefore claimed against *that* file. The two are audited together on purpose:
+    the doc's headline is a comparison between them, and a comparison whose two sides come
+    from different runs is exactly the drift this module exists to catch.
+    """
+    C: list[Claim] = []
+    add = C.append
+
+    def head(split: str, arm: str, name: str, variant: str,
+             column: str = "mean_nll") -> float:
+        return cell(SHOT_SWEEP, column, analysis="head", split=split, arm=arm,
+                    head=name, variant=variant)
+
+    def joint(split: str, arm: str) -> float:
+        frame = table(SHOT_SWEEP)
+        if frame is None:
+            return float("nan")
+        sub = frame[(frame["analysis"] == "joint") & (frame["split"] == split)
+                    & (frame["arm"] == arm) & frame["selected"].astype(bool)]
+        return float(sub["mean_nll"].iloc[0])
+
+    def grid_best() -> float:
+        frame = table(SHOT_SWEEP)
+        if frame is None:
+            return float("nan")
+        return float(frame[frame["analysis"] == "arm_a_grid"]["mean_nll"].min())
+
+    # ── the regression check, which is what licenses every other figure here ──
+    add(_c("5.229492", SHOT_SWEEP, lambda: head("test", "two_counts", "fg2a", "log_own"),
+           "fg2a@log_own reproduces the July fit", doc=SHOT))
+    add(_c("5.248561", SHOT_SWEEP,
+           lambda: head("test", "two_counts", "fg3a", "log_own_spline"),
+           "fg3a@log_own_spline reproduces the July fit", doc=SHOT))
+    add(_c("9.991042", SHOT_SWEEP,
+           lambda: (head("test", "fga_x_fg3a_share", "fga", "log_own")
+                    + head("test", "fga_x_fg3a_share", "fg3a|fga", "logit_own")),
+           "refactored share arm reproduces the recorded joint NLL", doc=SHOT))
+
+    # ── the per-factor table, both splits, every variant, against its floor ───
+    per_factor = [
+        ("two_counts", "fg2a", "log_own", "5.262971", "5.229492"),
+        ("two_counts", "fg3a", "log_own_spline", "5.241963", "5.248561"),
+        ("fga_x_fg3a_share", "fga", "linear", "5.407438", "5.426520"),
+        ("fga_x_fg3a_share", "fga", "log_own", "5.390057", "5.379640"),
+        ("fga_x_fg3a_share", "fga", "log_own_spline", "5.388533", "5.376766"),
+        ("fga_x_fg3a_share", "fg3a|fga", "linear", "4.912507", "4.929134"),
+        ("fga_x_fg3a_share", "fg3a|fga", "logit_own", "4.636033", "4.611402"),
+        ("fga_x_fg3a_share", "fg3a|fga", "logit_own_spline", "4.615620", "4.607737"),
+    ]
+    for arm, name, variant, val, test in per_factor:
+        for quoted, split in ((val, "val"), (test, "test")):
+            add(_c(quoted, SHOT_SWEEP,
+                   lambda s=split, a=arm, h=name, v=variant: head(s, a, h, v),
+                   f"{h_label(arm)} {name}@{variant} {split} NLL", doc=SHOT))
+    floors = [("fg2a", "log_own", "two_counts", "5.271028", "5.292842"),
+              ("fg3a", "log_own_spline", "two_counts", "5.903396", "5.731185"),
+              ("fga", "log_own", "fga_x_fg3a_share", "5.445210", "5.432802"),
+              ("fg3a|fga", "logit_own", "fga_x_fg3a_share", "4.619109", "4.652797")]
+    for name, variant, arm, val, test in floors:
+        for quoted, split in ((val, "val"), (test, "test")):
+            add(_c(quoted, SHOT_SWEEP,
+                   lambda s=split, a=arm, h=name, v=variant: head(s, a, h, v,
+                                                                  "floor_nll"),
+                   f"{name} no-fit floor, {split}", doc=SHOT))
+
+    # ── the verdict ──────────────────────────────────────────────────────────
+    for split, canonical, reparam, margin in [
+            ("val", "10.504935", "10.004153", "−0.500782"),
+            ("test", "10.478052", "9.984503", "−0.493549")]:
+        add(_c(canonical, SHOT_SWEEP, lambda s=split: joint(s, "two_counts"),
+               f"arm A joint NLL, {split}", doc=SHOT))
+        add(_c(reparam, SHOT_SWEEP, lambda s=split: joint(s, "fga_x_fg3a_share"),
+               f"arm B joint NLL, {split}", doc=SHOT))
+        add(_c(margin, SHOT_SWEEP,
+               lambda s=split: joint(s, "fga_x_fg3a_share") - joint(s, "two_counts"),
+               f"reparameterization margin, {split}", doc=SHOT))
+
+    add(_c("10.476413", SHOT_SWEEP, grid_best, "arm A best-of-16", doc=SHOT))
+    add(_c("−0.491910", SHOT_SWEEP,
+           lambda: joint("test", "fga_x_fg3a_share") - grid_best(),
+           "arm B against arm A's best-of-16", doc=SHOT))
+    # The handicap decomposition: how much of the recorded margin was the straw man.
+    add(_c("0.305646", SHOT_SWEEP,
+           lambda: (head("test", "two_counts", "fg3a", "log_own_spline")
+                    - cell(STAN_C_M, "test_nll", head="fg3a", variant="log_own")) * -1,
+           "the handicap, in nats", doc=SHOT))
+    add(_c("−0.487010", SHOT_SWEEP,
+           lambda: (head("test", "fga_x_fg3a_share", "fga", "log_own")
+                    + head("test", "fga_x_fg3a_share", "fg3a|fga", "logit_own")
+                    - joint("test", "two_counts")),
+           "margin before arm B was swept", doc=SHOT))
+    add(_c("−0.006539", SHOT_SWEEP,
+           lambda: (joint("test", "fga_x_fg3a_share")
+                    - head("test", "fga_x_fg3a_share", "fga", "log_own")
+                    - head("test", "fga_x_fg3a_share", "fg3a|fga", "logit_own")),
+           "what sweeping arm B added", doc=SHOT))
+
+    # ── the headline: the coordinate change beats the fitting ─────────────────
+    def floor_total(arm: str, names: tuple[str, str], variants: tuple[str, str]) -> float:
+        return sum(head("test", arm, n, v, "floor_nll")
+                   for n, v in zip(names, variants))
+
+    arm_a_floor = ("two_counts", ("fg2a", "fg3a"), ("log_own", "log_own_spline"))
+    arm_b_floor = ("fga_x_fg3a_share", ("fga", "fg3a|fga"), ("log_own", "logit_own"))
+    add(_c("11.024027", SHOT_SWEEP, lambda: floor_total(*arm_a_floor),
+           "arm A no-fit floor total", doc=SHOT))
+    add(_c("10.085599", SHOT_SWEEP, lambda: floor_total(*arm_b_floor),
+           "arm B no-fit floor total", doc=SHOT))
+    add(_c("−0.938427", SHOT_SWEEP,
+           lambda: floor_total(*arm_b_floor) - floor_total(*arm_a_floor),
+           "floor-to-floor gain from the coordinate change", doc=SHOT))
+    add(_c("−0.390814", SHOT_SWEEP,
+           lambda: floor_total(*arm_b_floor) - grid_best(),
+           "arm B's floor against arm A's best fitted", doc=SHOT))
+    add(_c("−0.101096", SHOT_SWEEP,
+           lambda: joint("test", "fga_x_fg3a_share") - floor_total(*arm_b_floor),
+           "what arm B's own fitting adds", doc=SHOT))
+
+    # ── population and sampler ────────────────────────────────────────────────
+    add(_c("791", SHOT_SWEEP,
+           lambda: head("test", "two_counts", "fg2a", "log_own", "n"),
+           "test rows", doc=SHOT))
+    add(_c("773", SHOT_SWEEP,
+           lambda: head("val", "two_counts", "fg2a", "log_own", "n"),
+           "validation rows", doc=SHOT))
+    add(_c("52", SHOT_SWEEP, lambda: rows(SHOT_SWEEP), "sweep artifact rows", doc=SHOT))
+    add(_c("1.0087", SHOT_D, lambda: max_of(SHOT_D, "max_rhat"), "max R-hat", doc=SHOT))
+    add(_c("0", SHOT_D, lambda: total(SHOT_D, "divergences"), "divergences", doc=SHOT))
+    add(_c("46.5", SHOT_D, lambda: total(SHOT_D, "wall_clock_s") / 60,
+           "sampler minutes", doc=SHOT))
+    add(_c("16", SHOT_D, lambda: rows(SHOT_D), "fits", doc=SHOT))
+
+    # The recorded (handicapped) margins, preserved beside their correction. These are
+    # still exactly true of `stan_component_substitution.csv`, which this session does not
+    # rebuild — so they are value-checked rather than flagged historical.
+    for split, quoted in (("val", "−0.771"), ("test", "−0.793")):
+        add(_c(quoted, STAN_C_S,
+               lambda s=split: cell(STAN_C_S, "reparam_minus_canonical", split=s,
+                                    arm="two_counts"),
+               f"the recorded handicapped margin, {split}", doc=SHOT))
+    add(_c("0.792657", STAN_C_S,
+           lambda: -cell(STAN_C_S, "reparam_minus_canonical", split="test",
+                         arm="two_counts"),
+           "the recorded test margin, unsigned", doc=SHOT))
+    add(_c("0.3719", STAN_C_M,
+           lambda: cell(STAN_C_M, "test_r2", head="fg3a", variant="log_own"),
+           "fg3a at log_own — the handicap", doc=SHOT))
+    add(_c("0.9046", STAN_C_M,
+           lambda: cell(STAN_C_M, "test_r2", head="fg3a", variant="log_own_spline"),
+           "fg3a at its shipped spline", doc=SHOT))
+    add(_c("−0.1248", RESID, lambda: cell(RESID, "r", basis="minutes_conditioned",
+                             component_a="fg3a", component_b="fg2a"),
+           "the substitution off-diagonal", doc=SHOT))
+    add(_c("+0.0071", RESID, lambda: resid("mean"),
+           "conditioned off-diagonal mean", doc=SHOT))
+    add(_c("0.886", PERSIST, lambda: persist("sco_pct_fga_3pt"),
+           "shot-mix share persistence", doc=SHOT))
+    add(_c("731,906", GAME_LEN, lambda: cell(GAME_LEN, "player_games", analysis="feasibility",
+                             season="all", season_type="regular"), "player-games", doc=SHOT))
+    return C
+
+
+def h_label(arm: str) -> str:
+    return "arm A" if arm == "two_counts" else "arm B"
+
+
 def _build() -> tuple[Claim, ...]:
     """Every claim, in doc order. One builder per doc — the registry is long enough that
     a single function made it hard to see which doc a section belonged to."""
     return tuple(_availability() + _composition() + _predictions() + _adp()
-                 + _claude() + _readme())
+                 + _claude() + _readme() + _shot_basis())
 
 
 CLAIMS: tuple[Claim, ...] = _build()

@@ -220,7 +220,8 @@ def test_the_registry_covers_every_head_the_plan_documents():
                      A.SEASON_TOTAL, A.REPORT_CAL, A.SERIAL, A.RESID, A.RATES,
                      A.STAN_C_M, A.STAN_C_S, A.SEASON_EFF, A.SEASON_BIAS,
                      A.ROSTER_A, A.VARIANCE, A.PERSIST, A.TARGET, A.AGING,
-                     A.GAME_LEN, A.BONUS, A.ADP_PROFILE, A.ADP_AUDIT):
+                     A.GAME_LEN, A.BONUS, A.ADP_PROFILE, A.ADP_AUDIT,
+                     A.SHOT_SWEEP, A.SHOT_D):
         assert required in artifacts, required
 
 
@@ -228,7 +229,8 @@ def test_every_audited_doc_has_its_own_builder():
     """The registry is split per doc so a section's claims stay findable."""
     for build, doc in [(A._availability, A.AVAIL), (A._composition, A.COMP),
                        (A._predictions, A.PRED), (A._adp, A.ADP),
-                       (A._claude, A.CLAUDE), (A._readme, A.README)]:
+                       (A._claude, A.CLAUDE), (A._readme, A.README),
+                       (A._shot_basis, A.SHOT)]:
         claims = build()
         assert claims, doc
         assert {c.doc for c in claims} == {doc}, doc

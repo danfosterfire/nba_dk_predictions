@@ -274,7 +274,8 @@ def test_substitution_columns_are_exact_and_additive():
     from src.models.stan_components import add_substitution_columns
 
     design = pd.DataFrame({"fg2a": [500, 300], "fg3a": [200, 100],
-                           "fg2a_p36_lag1": [8.0, 6.0], "fg3a_p36_lag1": [2.0, 4.0]})
+                           "fg2a_p36_lag1": [8.0, 6.0], "fg3a_p36_lag1": [2.0, 4.0],
+                           "fg2a_lag1": [480.0, 310.0], "fg3a_lag1": [190.0, 90.0]})
     out = add_substitution_columns(design)
     assert out["fga"].tolist() == [700, 400]
     # Per-36 rates share a denominator, so the total is the sum exactly.
@@ -288,8 +289,120 @@ def test_substitution_share_is_nan_rather_than_zero_when_there_were_no_attempts(
     from src.models.stan_components import add_substitution_columns
 
     design = pd.DataFrame({"fg2a": [0], "fg3a": [0],
-                           "fg2a_p36_lag1": [0.0], "fg3a_p36_lag1": [0.0]})
+                           "fg2a_p36_lag1": [0.0], "fg3a_p36_lag1": [0.0],
+                           "fg2a_lag1": [0.0], "fg3a_lag1": [0.0]})
     assert np.isnan(add_substitution_columns(design)["fg3a_share_lag1"].iloc[0])
+
+
+def test_substitution_columns_carry_the_raw_lag_counts_the_conversion_floor_needs():
+    """`carry_forward_conversion` reads `{made}_lag1` / `{attempted}_lag1`, not per-36
+    rates, so `fga_lag1` has to exist or the `fg3a | fga` floor cannot be computed at
+    all — and a head with no floor is a head this repo will not accept."""
+    from src.models.stan_components import add_substitution_columns
+
+    design = pd.DataFrame({"fg2a": [500], "fg3a": [200],
+                           "fg2a_p36_lag1": [8.0], "fg3a_p36_lag1": [2.0],
+                           "fg2a_lag1": [480.0], "fg3a_lag1": [190.0]})
+    assert add_substitution_columns(design)["fga_lag1"].tolist() == [670.0]
+
+
+def _conversion_frame():
+    rng = np.random.default_rng(4)
+    n = 60
+    return pd.DataFrame({
+        "fg3a_share_lag1": rng.uniform(0.05, 0.7, n),
+        "fg3a_pct_lag1": rng.uniform(0.2, 0.5, n),
+        "fga_p36_lag1": rng.uniform(8, 20, n),
+        "mpg_lag1": rng.uniform(10, 36, n), "total_minutes_lag1": rng.uniform(500, 2500, n),
+        "gp_lag1": rng.uniform(40, 82, n), "age": rng.uniform(20, 36, n),
+        "age_sq": rng.uniform(400, 1300, n), "career_year": rng.integers(0, 15, n),
+    })
+
+
+def test_conversion_variants_takes_the_own_column_explicitly():
+    """The `{made}_pct_lag1` convention does not generalize to the `fg3a | fga` head:
+    its own rate is the attempt-MIX share, while `fg3a_pct_lag1` would be three-point
+    SHOOTING percentage. Both columns are present here, so a silent fallback to the
+    convention would be invisible — which is exactly the failure being guarded."""
+    from src.models.stan_components import conversion_variants
+
+    frame = _conversion_frame()
+    out = conversion_variants(frame, frame, "fg3a", "fga", own="fg3a_share_lag1")
+    features = out["logit_own"][2]
+    assert "logit_fg3a_share_lag1" in features
+    assert "logit_fg3a_pct_lag1" not in features
+    # The own column is replaced by its logit, never carried alongside it.
+    assert "fg3a_share_lag1" not in features
+
+
+def test_conversion_variants_defaults_to_the_made_pct_convention():
+    from src.models.stan_components import conversion_variants
+
+    frame = _conversion_frame().rename(columns={"fga_p36_lag1": "fg3a_p36_lag1"})
+    out = conversion_variants(frame, frame, "fg3a", "fg3a")
+    assert "logit_fg3a_pct_lag1" in out["logit_own"][2]
+
+
+def test_gate0_arm_b_selects_its_two_factors_independently():
+    """Additive separability is not a shortcut: the joint NLL is a SUM of two terms with
+    no shared parameters, so minimising it is exactly minimising each term. This pins
+    that `_g0_select` picks per factor and that the joint row it marks is the pair of
+    per-factor winners — 3+3 fits rather than 9 combinations."""
+    from src.models.stan_components import _g0_select
+
+    head_rows = [
+        {"analysis": "head", "split": "val", "arm": "fga_x_fg3a_share", "head": "fga",
+         "variant": v, "mean_nll": nll, "selected": None}
+        for v, nll in (("linear", 5.4), ("log_own", 5.1), ("log_own_spline", 5.2))]
+    head_rows += [
+        {"analysis": "head", "split": "val", "arm": "fga_x_fg3a_share",
+         "head": "fg3a|fga", "variant": v, "mean_nll": nll, "selected": None}
+        for v, nll in (("linear", 4.9), ("logit_own", 4.6), ("logit_own_spline", 4.4))]
+    head_rows.append({"analysis": "head", "split": "val", "arm": "two_counts",
+                      "head": "fg2a", "variant": "log_own", "mean_nll": 5.2,
+                      "selected": True})
+    joint = [{"analysis": "joint", "split": "val", "arm": "two_counts",
+              "head": "fg2a+fg3a", "variant": "selected", "mean_nll": 10.4,
+              "selected": None}]
+    joint += [{"analysis": "joint", "split": "val", "arm": "fga_x_fg3a_share",
+               "head": "fga+fg3a|fga", "variant": f"{a}+{b}",
+               "mean_nll": 0.0, "selected": None}
+              for a in ("linear", "log_own", "log_own_spline")
+              for b in ("linear", "logit_own", "logit_own_spline")]
+
+    out = _g0_select(pd.DataFrame(head_rows + joint))
+    picked = out[(out["analysis"] == "head") & out["selected"]
+                 & (out["arm"] == "fga_x_fg3a_share")]
+    assert sorted(picked["variant"]) == ["log_own", "logit_own_spline"]
+    chosen_joint = out[(out["analysis"] == "joint") & out["selected"]
+                       & (out["arm"] == "fga_x_fg3a_share")]
+    assert chosen_joint["variant"].tolist() == ["log_own+logit_own_spline"]
+
+
+def test_gate0_arm_a_grid_is_the_best_of_sixteen_from_the_artifact(tmp_path):
+    """Arm A's most favourable configuration costs zero fits — it is already on disk.
+    Quoting it turns "we removed the handicap" into "arm B wins even against arm A's
+    best", which is the version a reviewer cannot argue with."""
+    from src.models.stan_components import _arm_a_grid
+
+    pd.DataFrame([{"head": h, "variant": v, "test_nll": nll}
+                  for h, rows in (("fg2a", [("linear", 5.4), ("log_own", 5.2)]),
+                                  ("fg3a", [("linear", 5.9), ("log_own", 5.3)]))
+                  for v, nll in rows]).to_csv(
+        tmp_path / "stan_component_metrics.csv", index=False)
+
+    grid = _arm_a_grid(tmp_path)
+    assert len(grid) == 4
+    best = grid[grid["selected"]]
+    assert len(best) == 1
+    assert best["variant"].iloc[0] == "log_own+log_own"
+    assert best["mean_nll"].iloc[0] == 10.5
+
+
+def test_gate0_arm_a_grid_is_empty_rather_than_wrong_without_its_artifact(tmp_path):
+    from src.models.stan_components import _arm_a_grid
+
+    assert _arm_a_grid(tmp_path).empty
 
 
 def _sweep_table():

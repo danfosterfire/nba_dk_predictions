@@ -220,19 +220,26 @@ result appearing in Results is not.
 
 | Result | Margin | What exists today | Blocking step |
 |---|---|---|---|
-| `fga` count × `fg3a \| fga` share, replacing two independent attempt counts | −0.771 val / −0.793 test nats per player-season | an ablation arm beside the shipped heads | re-measure at each head's *selected* variant, then swap `COUNT_HEADS` |
+| `fga` count × `fg3a \| fga` share, replacing two independent attempt counts | −0.500782 val / −0.493549 test nats per player-season | an ablation arm beside the shipped heads, and a re-measurement | swap `COUNT_HEADS`, per `docs/shot-attempt-basis-plan.md` |
 | Team-game minutes composition, replacing independent per-game draws | −0.406 min test CRPS, and exact team totals | a pilot fitted on 2018-19 onward | Gate E — the full-window refit |
 
-**The shot-attempt reparameterization.** `stan_components.substitution_arm` fits it and
-reports the win, but `component_rates.COUNT_HEADS` still lists `fg2a` and `fg3a` as two
-independent negative binomial counts, and that list is what `sweep_counts` iterates. ⚠️ **The
-recorded margin is also measured against a handicapped comparison**: the arm fits every head
-at the `log_own` variant, but `fg3a`'s shipped spec is `log_own_spline`, and at `log_own`
-that head reads test R² **0.3719** with `beats_floor = False` against **0.9046** for the
-spline it actually selects. The structural argument is independent and strong — the
-substitution is the largest off-diagonal the residual copula would otherwise carry, and
-shot-mix *shares* persist like counts — but the number attached to it needs re-measuring at
-selected variants before adoption.
+**The shot-attempt reparameterization.** `component_rates.COUNT_HEADS` still lists `fg2a`
+and `fg3a` as two independent negative binomial counts, and that list is what `sweep_counts`
+iterates. The re-measurement this row used to be blocked on is **done** — `make
+stan-substitution`, 16 fits, [docs/shot-attempt-basis-plan.md](docs/shot-attempt-basis-plan.md)
+— and the result survives it. ⚠️ **The previously recorded −0.771 / −0.793 was measured
+against a handicapped comparison**: `substitution_arm` fits every head at the `log_own`
+variant, but `fg3a`'s shipped spec is `log_own_spline`, and at `log_own` that head reads test
+R² **0.3719** with `beats_floor = False` against **0.9046** for the spline it actually
+selects. Fitting arm A at each head's own selected variant and sweeping arm B for real still
+gives **−0.493549** on test, and **−0.491910** against arm A's *best-of-16* configuration.
+
+⭐ **The re-measurement produced a sharper result than the one it was checking.** Compared at
+their **no-fit floors** — no features anywhere — the two bases score **11.024027** against
+**10.085599**. Arm B's floor beats arm A's *best fitted* configuration by **−0.390814**, ~79%
+of the total margin, while arm B's own fitting adds only **−0.101096** on top of its floor.
+This is not a better model of shot attempts; it is the same information written in
+coordinates where the dependence is structural instead of residual.
 
 **The minutes composition.** [stan_composition.py](src/models/stan_composition.py) allocates
 each team-game's `5 × game_length` minutes among the players who played by decomposing the
@@ -337,13 +344,18 @@ difference between a model and a failure again — and dispersion is genuinely r
 fitted at 0.148 for fringe players against 0.061 for stars, a 2.41× spread that cuts
 calibration error by 59%. See *Measured but not adopted*.
 
-**The 3PA/2PA substitution is best handled by reparameterization — measured, not yet
-shipped, and the margin needs re-measuring.** Modelling `fga` as a count and `fg3a | fga` as
-a beta-binomial share on `fga` trials beats two independent count heads by **−0.793 nats**
-per player-season on test and −0.771 on validation, a legitimate comparison because the
-coordinate change is a bijection with unit Jacobian. But both arms were fitted at `log_own`,
-where `fg3a` scores test R² **0.3719** against **0.9046** for the spline it actually selects
-— so the canonical arm was handicapped. See *Measured but not adopted*.
+**The 3PA/2PA substitution is best handled by reparameterization — re-measured
+un-handicapped, and still not shipped.** `make stan-substitution`. Modelling `fga` as a count
+and `fg3a | fga` as a beta-binomial share on `fga` trials beats two independent count heads
+by **−0.493549 nats** per player-season on test and −0.500782 on validation, with each head
+fitted at its own selected variant and both arms swept — a legitimate comparison because the
+coordinate change is a bijection with unit Jacobian. The originally recorded −0.793 / −0.771
+had both arms pinned at `log_own`, where `fg3a` scores test R² **0.3719** against **0.9046**
+for the spline it actually selects, so the canonical arm was handicapped; removing the
+handicap costs 0.306 nats of the margin and the result survives anyway. **The strongest
+version is that the basis beats the model**: the reparameterized *no-fit floor* beats the
+canonical basis's *best fitted* configuration by **−0.390814**. See *Measured but not
+adopted*.
 
 **No head ships a season term, and the ceiling on ever needing one is ~3% of MAE.** `make
 season-terms`. An oracle that rescales each held-out season by its own realized league total

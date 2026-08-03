@@ -66,7 +66,10 @@ dashboard/     nine-tab project walkthrough over the precomputed artifacts.
                streamlit; nothing in the package imports src/ — see dashboard/README.md
 docs/          eda-plan (season-level EDA spec), availability-plan (games played /
                minutes), adp-plan (market proxy, sourcing + where ADP belongs),
-               predictions-plan, simulations-plan, dk_best_ball_rules,
+               predictions-plan, minutes-composition-plan, simulations-plan,
+               shot-attempt-basis-plan (Gate 0 of the fga x fg3a|fga
+               reparameterization — measured, adoption specified, NOT taken),
+               dk_best_ball_rules,
                provenance-plan (every figure gets a make target — and the six
                corrections that fell out of building them), dashboard-plan
 ```
@@ -231,6 +234,12 @@ make stan-components   # 8 NB count heads + 3 beta-binomial conversion heads
 make stan              # all three, in chain order
 make stan-composition  # the team-game minutes COMPOSITION pilot — deliberately not in
                        #   `stan`; see docs/minutes-composition-plan.md
+make stan-substitution # Gate 0 of docs/shot-attempt-basis-plan.md — the `fga` count x
+                       #   `fg3a | fga` share against the two independent attempt
+                       #   counts, both arms un-handicapped. 16 fits and its OWN
+                       #   artifact, because `substitution_arm` lives inside
+                       #   `stan-components` and cannot be refreshed without its 209
+                       #   minutes. An ablation, so not in `stan`.
 make season-terms      # does any head need a season term, and which kind? A trend
                        #   covariate and a year random effect per head, plus the
                        #   season × role arm the availability era effect calls for.
@@ -1272,22 +1281,58 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     `logit(own)` + spline: `fg2m|fg2a` **3.7249** vs floor 3.7770 (**+0.0521**), `fg3m|fg3a`
     **3.2407** vs 3.2614 (+0.0208), `ftm|fta` 3.1313 vs **3.0822** (−0.0491, fails as
     predicted). Same ordering as the sklearn run, slightly smaller gains.
-- **✅ The 3PA/2PA reparameterization is now MEASURED, and it wins decisively.** Modelling
-  `fga` as the count and `fg3a | fga` as a binomial *share* beats two independent count heads
-  by **−0.771 nats** on validation and **−0.793** on test, per player-season, on the joint
-  density of `(fg2a, fg3a)`: 10.797 → 10.026 and 10.784 → 9.991. It replicates on both splits.
-  The comparison is legitimate because `(fg2a, fg3a) ↔ (fga, fg3a)` is a **bijection with unit
-  Jacobian on the integers** — the same point in different coordinates — so the two joint
-  log-densities are directly comparable. This converts a recommendation into a result: model
-  the substitution by reparameterizing into the chain, never by coupling two Poissons.
-  `stan_components.substitution_arm`.
-  - **⚠️ It is an ABLATION ARM, not the shipped spec — `component_rates.COUNT_HEADS` still
-    fits `fg2a` and `fg3a` as two independent NB counts**, and `sweep_counts` iterates that
-    list. The reparameterized form is fitted only inside `substitution_arm` and lands in
-    `stan_component_substitution.csv`. So "model the substitution by reparameterizing" is
-    guidance the repo has *measured* and not yet *adopted* — the same standing gap as
-    `models.availability.FEATURE_COLS` not consuming the absence-reason columns. Read the
-    head list, not this bullet, when asking what is fitted today.
+- **✅ The 3PA/2PA reparameterization survives an un-handicapped re-measurement — Gate 0,
+  `make stan-substitution`, 2026-08-03. Full design and adoption spec:
+  `docs/shot-attempt-basis-plan.md`.** Modelling `fga` as the count and `fg3a | fga` as a
+  binomial *share* beats two independent count heads by **−0.500782 nats** on validation and
+  **−0.493549** on test, per player-season, on the joint density of `(fg2a, fg3a)`:
+  10.504935 → 10.004153 and 10.478052 → 9.984503. It replicates on both splits and wins by
+  **−0.491910** even against arm A's *best-of-16* configuration (10.476413), so the result
+  does not depend on which variant the canonical basis is granted. 16 fits, max R̂ **1.0087**,
+  **0** divergences, 46.5 min. The comparison is legitimate because
+  `(fg2a, fg3a) ↔ (fga, fg3a)` is a **bijection with unit Jacobian on the integers** — the
+  same point in different coordinates — so the two joint log-densities are directly
+  comparable.
+  - **⚠️ The recorded −0.771 / −0.793 was measured against a straw man**, and 0.305646 of the
+    0.792657-nat test margin was the handicap alone. `substitution_arm` fits *every* head at
+    `log_own`, but `fg3a` selects `log_own_spline`, and at `log_own` it reads test R² 0.3719
+    with `beats_floor = False` against 0.9046 for the spline it ships. Arm B was also pinned
+    at one variant rather than swept. Un-handicapping arm A leaves **−0.487010**; sweeping arm
+    B adds a further −0.006539. Both recorded figures remain true of
+    `stan_component_substitution.csv`, which is not rebuilt — they are a different, weaker
+    experiment, not a stale value.
+  - **⭐ The sharpest result is that the coordinate change beats the fitting.** At their
+    **no-fit floors** — prior per-36 rate × minutes for the count, shrunk carry-forward for
+    the share, no features anywhere — the two bases score **11.024027** against
+    **10.085599**, a **−0.938427** gap. So arm B's floor beats arm A's *best fitted*
+    configuration by **−0.390814**, which is ~79% of the total margin, and arm B's own fitted
+    heads add only **−0.101096** on top of their floor. This is not a better model of shot
+    attempts; it is the same information in coordinates where the dependence is structural
+    instead of residual. Same shape as "the rate side is nearly saturated by a
+    carry-forward": when the floor is that strong, the **parameterization** is where the
+    leverage is.
+  - **The share head needs its spline to clear its floor.** `logit_own` reads 4.636033 on
+    validation against a floor of 4.619109 — *below* it — while `logit_own_spline` clears at
+    4.615620. On test `logit_own` does clear, so **a test-only reading would have shipped a
+    variant that fails its floor on the split that selects.** `linear` fails on both. For
+    `fga` the spline is near-irrelevant by contrast (5.388533 vs 5.390057 on validation).
+  - **⚠️ STILL an ablation, not the shipped spec — `component_rates.COUNT_HEADS` still fits
+    `fg2a` and `fg3a` as two independent NB counts**, and `sweep_counts` iterates that list.
+    Read the head list, not this bullet, when asking what is fitted today. Adoption is
+    specified but deliberately not taken: the head count stays **11** (`fg2a` becomes
+    *derived*, like `pts`), `season_totals`' `agg` must add `fg2a` explicitly since it is
+    still the trials for `fg2m|fg2a`, three sites degrade *silently* on an unknown head
+    (`season_terms.py:822-823`, `selected_specs`'s fallback to `log_own` — which is the very
+    failure above — and `residual_correlation.to_matrix`), and
+    `season_terms._draw_components` needs a draw ordering it cannot currently express:
+    `fga → fg3a|fga → fg2a = fga − fg3a → makes`.
+  - **`conversion_variants` now takes `own=` explicitly, and that fix had to land first.**
+    The `{made}_pct_lag1` convention resolves to `fg3a_pct_lag1` — three-point *shooting*
+    percentage, not the attempt-*mix* share. It does not exist today so the call raises; but
+    adoption **creates** it, at which point the head would silently fit on shooting accuracy
+    and lose its whole rationale (shares persist at 0.886, conversion percentages at 0.500).
+    The refactored arm reproduces the recorded **9.991042** to nine decimals, which is how we
+    know the fix changed nothing else.
 - **Sampler cost is concentrated entirely in the spline variants.** 16 of 74 fits saturated
   treedepth, *all* of them spline arms; the slowest fit is 19.8 min (`fg2m|fg2a` spline)
   against 1–3 min for a linear count head. 73/74 cleared every convergence bar; the one
