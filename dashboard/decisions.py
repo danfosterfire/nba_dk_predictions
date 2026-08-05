@@ -1554,20 +1554,25 @@ REGISTRY: tuple[Decision, ...] = (
         claim="The team-game **composition** — a multinomial decomposed into sequential "
               "binomial trials — beats the independent per-player minutes draw on its "
               "own marginal metric, *and* makes the team total exact by construction.",
-        because="Held out on 2024-25/2025-26 (52,957 player-rows / 4,920 team-games), "
-                "the selected variant scores **4.5322** minutes of CRPS against the "
-                "no-fit floor's 4.8194 (−0.287) and the incumbent independent draw's "
-                "**4.9140** (−0.382, −7.8%) — not the expected wash. On top of that the "
-                "incumbent misses the team's `5 × game_length` total by **36.87** "
-                "minutes per team-game on average where the composition is exact on "
-                "every draw of every game. Zero-sum is what makes teammate-absence "
-                "redistribution a *fitted* quantity rather than a hand-set rule.",
+        because="Fitted on all 30 seasons and held out on 2024-25/2025-26 (52,957 "
+                "player-rows / 4,920 team-games), the selected variant scores **4.5592** "
+                "minutes of CRPS against the no-fit floor's 4.8576 (−0.2985) and the "
+                "incumbent independent draw's **4.9140** (−0.3548, −7.2%) — not the "
+                "expected wash. On top of that the incumbent misses the team's "
+                "`5 × game_length` total by **36.87** minutes per team-game on average "
+                "where the composition is exact on every draw of every game. Zero-sum is "
+                "what makes teammate-absence redistribution a *fitted* quantity rather "
+                "than a hand-set rule. **Gate E taken 2026-08-04**: the head is now in "
+                "`make stan`. The `independent_comparator` row is the control — it never "
+                "trains on the composition window and reproduced 4.9140 exactly, which is "
+                "what makes the rest readable as a window effect. (The pilot read 4.5078 "
+                "and −0.406; the win shrank about a tenth at full window.)",
         status="built",
         reproduce="make stan-composition → "
                   "outputs/predictions/stan_composition_metrics.csv, "
                   "outputs/predictions/stan_composition_ppc.csv",
         source="docs/minutes-composition-plan.md",
-        reviewed="2026-07-31",
+        reviewed="2026-08-04",
         date="2026-07-31",
         tags=("simulator-input",),
     ),
@@ -1577,17 +1582,17 @@ REGISTRY: tuple[Decision, ...] = (
         claim="The **pure** stick-breaking decomposition is worse than the no-fit floor. "
               "The dispersion is the model, not a refinement.",
         because="The `binomial` arm — the demo's model with the cap fixed — scores "
-                "**4.9429** test CRPS against the floor's 4.8194, with PIT KS "
-                "**0.1942** against 0.0178: far too tight, exactly as the measured "
+                "**4.9732** test CRPS against the floor's 4.8576, with PIT KS "
+                "**0.1948** against 0.0354: far too tight, exactly as the measured "
                 "game-level ρ (4.65× binomial) predicted. The beta-binomial arm at "
-                "4.5360 clears the floor comfortably. Same shape as the NB-vs-Poisson "
+                "4.5893 clears the floor comfortably. Same shape as the NB-vs-Poisson "
                 "finding on the count heads — the likelihood family decides whether "
                 "there is a model at all.",
         status="measured",
         reproduce="make stan-composition → "
                   "outputs/predictions/stan_composition_metrics.csv",
         source="docs/minutes-composition-plan.md",
-        reviewed="2026-07-31",
+        reviewed="2026-08-04",
         date="2026-07-31",
         tags=("specification",),
     ),
@@ -1595,17 +1600,19 @@ REGISTRY: tuple[Decision, ...] = (
         id="composition-shared-rho-is-role-graded",
         topic="minutes",
         claim="The allocation dispersion is **role-graded**: ρ per prior-share quartile "
-              "runs 0.1480 fringe to 0.0613 star, a 2.41× spread that one shared ρ of "
-              "0.0970 was splitting the difference on.",
+              "runs 0.1751 fringe to 0.0839 star, a 2.09× spread that one shared ρ of "
+              "0.1195 was splitting the difference on.",
         because="A 34-mpg starter's allocation step is genuinely steadier than a "
                 "reserve's, and the direction was predicted from the shared-ρ arm's "
-                "variance ratios (1.59 fringe to 0.70 star) before it was fitted. "
+                "variance ratios (1.35 fringe to 0.60 star) before it was fitted. "
                 "`betabinom_ot_graded` differs from its twin in the **dispersion "
                 "alone** — same features, same mean function — so the contrast is "
                 "clean. Worth −0.054 validation and −0.028 test CRPS, moving the same "
                 "way on both splits. **The calibration fix is the point**: mean "
-                "|variance ratio − 1| falls **0.2571 → 0.1055** and the star tier "
-                "lands at 0.9880. `n_rho = 1` is the shared model exactly, so the "
+                "|variance ratio − 1| falls **0.2928 → 0.1796**, a 39% cut. ⚠️ The pilot "
+                "reported 0.2571 → 0.1055 (59%) with the star tier at 0.9880; at full "
+                "window the star tier lands at 0.7757 and three of four tiers sit below "
+                "1, so the head is mildly over-dispersed in aggregate. `n_rho = 1` is the shared model exactly, so the "
                 "graded arm strictly generalizes it; bin edges come from **train** "
                 "quantiles only, since leakage in ρ never touches the mean and would "
                 "be invisible.",
@@ -1614,7 +1621,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/stan_composition_dispersion.csv, "
                   "outputs/predictions/stan_composition_ppc.csv",
         source="docs/minutes-composition-plan.md",
-        reviewed="2026-07-31",
+        reviewed="2026-08-04",
         date="2026-07-31",
         tags=("specification",),
     ),
@@ -1624,10 +1631,10 @@ REGISTRY: tuple[Decision, ...] = (
         claim="Grading a **step** dispersion does not map one-to-one onto **marginal** "
               "variance by tier — q2's calibration got *worse* while the two extremes "
               "got much better.",
-        because="Realized/simulated variance ratio by tier went 1.5900 / 0.9656 / "
-                "0.8961 / 0.7000 shared to 1.2093 / **0.8405** / 0.9587 / 0.9880 "
-                "graded: the star tier is essentially fixed, the fringe tier much "
-                "improved, and q2 pushed off a mark it happened to hit. The fitted ρ "
+        because="Realized/simulated variance ratio by tier went 1.3466 / 0.8089 / "
+                "0.7691 / 0.5973 shared to 1.0845 / **0.7687** / 0.8217 / 0.7757 "
+                "graded: both extremes much improved, and q2 pushed further off a mark "
+                "it happened to hit. The fitted ρ "
                 "is the dispersion of a sequential step, while the ratio is measured "
                 "on a player's marginal minutes — and because the order is prior-share "
                 "*descending*, a low-share player breaks his stick last and inherits "
@@ -1637,7 +1644,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make stan-composition → outputs/predictions/stan_composition_ppc.csv",
         source="docs/minutes-composition-plan.md",
-        reviewed="2026-07-31",
+        reviewed="2026-08-04",
         date="2026-07-31",
         tags=("next", "methodology"),
     ),
@@ -1647,8 +1654,8 @@ REGISTRY: tuple[Decision, ...] = (
         claim="The composition's joint-NLL win over independent draws is **not** the "
               "same kind of comparison as the 3PA/2PA reparameterization's, and must "
               "not be quoted as if it were.",
-        because="Composition 33.64 against independent 38.83 per team-game on the "
-                "held-out split — but the map is not a bijection with unit Jacobian. "
+        because="Composition **33.614** against independent **38.828** per team-game on "
+                "the held-out split — but the map is not a bijection with unit Jacobian. "
                 "The composition's last step is deterministic, so it concentrates all "
                 "its mass on the simplex slice the data always satisfy and wins partly "
                 "by *knowing the constraint* rather than by fitting better. `fga` × "
@@ -1659,7 +1666,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-composition → "
                   "outputs/predictions/stan_composition_joint_nll.csv",
         source="docs/minutes-composition-plan.md",
-        reviewed="2026-07-31",
+        reviewed="2026-08-04",
         date="2026-07-31",
         tags=("methodology",),
     ),
@@ -1681,7 +1688,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-composition → "
                   "outputs/predictions/stan_composition_ot_tail.csv",
         source="docs/minutes-composition-plan.md",
-        reviewed="2026-07-31",
+        reviewed="2026-08-04",
         date="2026-07-31",
         tags=("simulator-input",),
     ),
@@ -1704,7 +1711,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-composition → "
                   "outputs/predictions/stan_composition_diagnostics.csv",
         source="docs/minutes-composition-plan.md",
-        reviewed="2026-07-31",
+        reviewed="2026-08-04",
         date="2026-07-31",
         tags=("performance", "failure-mode"),
     ),
@@ -1977,7 +1984,7 @@ REGISTRY: tuple[Decision, ...] = (
         claim="Every component head must be quoted against the no-fit floor: prior "
               "per-36 rate × actual minutes / 36, with no fitting at all.",
         because="The floor scores held-out R² **0.82–0.94** and the best of seven "
-                "fitted variants beats it by only +0.0019 to +0.0228. A head that does "
+                "fitted variants beats it by only +0.0019 to +0.0203. A head that does "
                 "not clear it is not a model — and the floor is what caught the sklearn "
                 "alpha artifact, which is why it is mandatory rather than advisory. "
                 "Every output row carries `beats_floor` and the runner warns when no "
@@ -2199,6 +2206,85 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("specification",),
     ),
     Decision(
+        id="shot-attempt-basis-adopted",
+        topic="components",
+        claim="**Adopted 2026-08-04**: `COUNT_HEADS` is now `fga, fta, reb, ast, stl, blk, "
+              "tov` and `fg3a | fga` is a conversion head. `fg2a` is derived, and the head "
+              "count is still eleven.",
+        because="Gate 0 measured the reparameterization un-handicapped and it won by "
+                "−0.4935 nats on test, so the ablation became the specification. Three "
+                "things the migration turned up that the plan did not predict. (1) "
+                "`season_totals` computed per-36 rates over `COUNT_HEADS` alone, so "
+                "`fg2a_p36` and `fg3a_p36` would have vanished and two conversion heads "
+                "would have lost their volume feature — `rate_columns()` now derives the "
+                "list from both head lists, which is a no-op in the old basis. (2) The "
+                "`fg3a_pct_lag1` hazard the plan warned about is **not real** after "
+                "adoption: `season_totals` builds `fg3a_pct = fg3a / fga`, which is the "
+                "attempt mix and exactly right, while shooting percentage stays "
+                "`fg3m_pct`. (3) `fga` and `fg3a` are drawn from different posteriors, so "
+                "the derived `fg2a` needs a zero-clip. **`fga` is now the best-behaved "
+                "count head in the project**: the highest floor (0.9464), selected at "
+                "0.9505, and a linear predictor costs it 0.0068 R² where it cost `fg3a` "
+                "−19.00.",
+        status="built",
+        reproduce="make stan-components → "
+                  "outputs/predictions/stan_component_metrics.csv",
+        source="docs/shot-attempt-basis-plan.md",
+        reviewed="2026-08-04",
+        date="2026-08-04",
+        tags=("specification",),
+    ),
+    Decision(
+        id="shot-mix-drifts-but-shooting-does-not",
+        topic="components",
+        claim="`fg3a | fga` is a conversion head by **likelihood**, not by subject matter — "
+              "it is the largest non-minutes serial dependence in the project, while the "
+              "three shooting heads remain clean nulls.",
+        because="`make serial-correlation` on the new heads puts the shot-mix share at a "
+                "lag-1 excess of **+0.101** (z = 94) with a 10-game block variance "
+                "inflation of **1.57×** — above the `fga` count it splits — against a max "
+                "|excess| of **0.0122** across `fg2m|fg2a`, `fg3m|fg3a` and `ftm|fta`. "
+                "Shot *selection* drifts within a season the way minutes do; shooting "
+                "*accuracy* does not. The module's summary line used to take one maximum "
+                "over all conversion heads, which after adoption would have reported that "
+                "drift as a hot hand **and** hidden that the shooting heads are still "
+                "nulls; it now reports the two groups separately. This is a finding the "
+                "two-count basis could not surface, because the mix was not a modelled "
+                "quantity.",
+        status="measured",
+        reproduce="make serial-correlation → outputs/eda/serial_correlation.csv",
+        source="docs/shot-attempt-basis-plan.md",
+        reviewed="2026-08-04",
+        date="2026-08-04",
+        tags=("next", "simulator-input"),
+    ),
+    Decision(
+        id="gate-a-cost-model-is-a-lower-bound",
+        topic="minutes",
+        claim="The composition's timing gate **under-predicted by 1.63×** at full window, "
+              "because per-row sampler cost is superlinear in rows.",
+        because="The probe extrapolated **12.8 h** for the four-arm sweep; it took "
+                "**20.9 h** of sampler time. Per-row cost runs 5.75 ms on the 26k-row "
+                "probe against **15.23 ms** on the 631k-row `betabinom` fit: more data "
+                "sharpens the posterior, which shrinks the step size, which buys more "
+                "leapfrog steps per iteration on top of an already-linear per-gradient "
+                "cost. The pilot's linear model was accurate to 1.2% over a 16× "
+                "extrapolation and is off by 63% over a 24× one, so **Gate A is a lower "
+                "bound, not an estimate**. Its recorded fallback order is also wrong: it "
+                "says cut `binomial` first, but `binomial` is the *cheapest* arm (15.3% of "
+                "sweep time against `betabinom`'s 40.4%) and cutting it removes the result "
+                "that dispersion is load-bearing. Shorten chains first, subsample train "
+                "second, cut arms last — and never cut `betabinom_ot`, which `run()` reads "
+                "after the whole sweep and before any CSV is written.",
+        status="measured",
+        reproduce="make stan-composition → "
+                  "outputs/predictions/stan_composition_diagnostics.csv",
+        source="docs/minutes-composition-plan.md",
+        reviewed="2026-08-04",
+        date="2026-08-04",
+        tags=("performance", "methodology"),
+    ),
+    Decision(
         id="the-coordinate-change-beats-the-fitting",
         topic="components",
         claim="For the shot-attempt pair, **the basis is worth more than the model**: the "
@@ -2292,6 +2378,38 @@ REGISTRY: tuple[Decision, ...] = (
         source="docs/simulations-plan.md",
         reviewed="2026-07-30",
         date="2026-07-29",
+        tags=("simulator-input",),
+    ),
+    Decision(
+        id="simulator-inputs-calibrate-on-train-plus-validation",
+        topic="simulations",
+        claim="The four numbers the simulator is **given** — the residual copula, the "
+              "game-level minutes dispersion, the ten-game block inflation and the bonus "
+              "overdispersion — are calibrated on train + validation, excluding the "
+              "2024-25/2025-26 test seasons. Every one of their artifacts carries both "
+              "windows under a `fit_window` column and the consumers default to "
+              "`train_val`.",
+        because="None of the four is *fitted*, so no train/test split guard has ever "
+                "covered them, and all four were being measured over every season "
+                "including the two the heads hold out. That would calibrate the "
+                "simulator on the seasons it is later backtested against. The measured "
+                "differences are small — game-level dispersion 4.65× → 4.68×, `min` "
+                "block inflation 2.4321 → 2.4206, copula off-diagonal mean +0.0070 → "
+                "+0.0070 with min eigenvalue +0.7853 → +0.7839, bonus overdispersion "
+                "0.0248 → 0.0248 — which is exactly why this had to be fixed rather "
+                "than argued about: every difference is below the precision the figures "
+                "are quoted at, so the leak could never have announced itself in a "
+                "backtest. `to_matrix` defaults to `train_val` because a default is what "
+                "an unthinking consumer gets.",
+        status="built",
+        reproduce="make residual-correlation / serial-correlation / component-targets "
+                  "/ stan-minutes → outputs/eda/residual_correlation.csv, "
+                  "outputs/eda/serial_correlation.csv, "
+                  "outputs/eda/bonus_calibration.csv, "
+                  "outputs/predictions/stan_minutes_dispersion.csv",
+        source="README.md",
+        reviewed="2026-08-04",
+        date="2026-08-04",
         tags=("simulator-input",),
     ),
     Decision(

@@ -108,6 +108,55 @@ PCA's `GP≥20 & MIN≥10` filter drops real teammates who consume real minutes.
 The full season-level EDA pipeline runs as `make eda`; each stage is one module in
 [src/eda/](src/eda/) writing one artifact.
 
+### Train / validation / test
+
+**A temporal walk-forward by target season.** Every row is a season predicted from the
+season before it, so the 30 data seasons give 29 target seasons, and the split is a
+suffix of them:
+
+| Split | Target seasons | Role |
+|---|---|---|
+| Train | 1997-98 → 2021-22 | fitting |
+| Validation | 2022-23, 2023-24 | **variant selection — the only thing selection may read** |
+| Test | 2024-25, 2025-26 | confirmation, quoted in Results |
+
+`test_seasons: 2` is the knob; the seasons are derived by sorting the labels present and
+taking the last two, never hard-coded. Each head applies it through its own
+`split_seasons`, and validation is the same function applied again to the training half.
+The three-way heads (components, minutes, composition, season terms) **refit on
+train + validation** before scoring test, so the test-side model is never handicapped by
+the split that selected it.
+
+Two habits this project treats as rules, both learned from false positives it shipped.
+Selection reads validation only — the availability nonlinearity ablation is the case in
+point, where the test column preferred *every* curved variant and none replicated, and a
+paired bootstrap on the test rows put the effect at 99.7% confident and still wrong.
+And anything fitted from data — spline knots, imputation means, the conversion floor's
+shrinkage constant, the composition head's dispersion bin edges — is estimated on the
+fitting half alone.
+
+Three honest caveats, kept here rather than in a footnote because they are the places the
+discipline is not clean:
+
+- **Not every comparison went through validation.** Two decisions on the availability head
+  were taken on test: the playoff-workload feature block (`workload_ablation`) and the
+  choice of a GLM over a GBM and ridge. And [component_rates.py](src/models/component_rates.py),
+  the sklearn reference, has no validation split at all — its whole variant table is a
+  test-set comparison. What ships is unaffected, because the specs come from
+  [stan_components.py](src/models/stan_components.py), which does select on validation and
+  disagreed with that table on two heads. But guidance read off it is test-derived.
+- **The EDA layer is pooled over all 30 seasons, test included.** Nothing there is fitted,
+  so no held-out score is inflated — but specification decisions came out of it
+  (persistence splitting on attempts vs conversions, "shrink conversion percentages hard",
+  minutes weighting, and the shot-attempt reparameterization itself). That is model design
+  informed by data that includes the test window, and no split guard can see it.
+- **The four numbers the simulator will consume as direct inputs are now calibrated on
+  train + validation**, because they are *given* to the simulator rather than scored by it:
+  the residual copula, the game-level minutes dispersion, the block variance inflation and
+  the bonus overdispersion. Their artifacts carry both windows under a `fit_window` column
+  and the consumers default to `train_val`; the full-window figures move by less than the
+  precision they are quoted at, which is why the leak would never have announced itself.
+
 ### The output contract — twelve components, and `dk_pts` falls out
 
 **`dk_pts` is deterministic given the components and is never predicted directly.** Twelve
@@ -117,18 +166,23 @@ quantities are modelled per player-game, built by
 | Component | Likelihood | Exposure / trials |
 |---|---|---|
 | `min` (given availability) | successes / trials | **game length** — 48 in regulation; 53/58/… in OT |
-| `fg2a` `fg3a` `fta` `reb` `ast` `stl` `blk` `tov` | count (negative binomial) | `min` |
+| `fga` `fta` `reb` `ast` `stl` `blk` `tov` | count (negative binomial) | `min` |
+| `fg3a` \| `fga` | successes / trials — the three-point **share** | `fga` |
 | `fg2m` `fg3m` `ftm` | successes / trials | `fg2a` / `fg3a` / `fta` |
+| *`fg2a`* | **derived**, `fga − fg3a` | — |
 
-Only eight of the twelve reach the scoring function; `min` and the three attempt counts
-matter solely through the exposure and trials they supply. Reassembly is exact and linear:
+Only eight of the twelve reach the scoring function; `min` and the attempt counts matter
+solely through the exposure and trials they supply. Reassembly is exact and linear:
 `pts = 2·fg2m + 3·fg3m + ftm`, then `compute_dk_pts`.
 
-> **The two shot-attempt counts are the one row of this table known to be beatable.** A
+> **Total attempts are the count and the three-point mix is a share of them.** A
 > three-point attempt *substitutes* for a two, so fitting `fg2a` and `fg3a` as independent
-> counts leaves that dependence for the residual copula to carry. A reparameterization that
-> removes it by construction has been measured and wins — see *Measured but not adopted*
-> below. **The table describes what is fitted today, not what scored best.**
+> counts left that dependence for the residual copula to carry. Modelling `fga` and
+> `fg3a | fga` enforces it by construction, keeps the posterior factorization exact, and
+> is better specified — shot-mix *shares* persist like counts (0.886) while conversion
+> percentages do not (0.500). Adopted 2026-08-03; `fg2a` becomes derived, exactly as `pts`
+> already is, and the head count stays at eleven. See
+> [docs/shot-attempt-basis-plan.md](docs/shot-attempt-basis-plan.md).
 
 Two things force this decomposition rather than a single `dk_pts` head. First, the
 double-double bonus is a **simultaneous threshold** on five components, so
@@ -176,15 +230,15 @@ factorization argument as code:
 
 | Source | Serves | Driver | In `make stan` |
 |---|---|---|---|
-| `betabinomial_glm.stan` | availability, minutes, the 3 conversion heads | [stan_availability.py](src/models/stan_availability.py), [stan_minutes.py](src/models/stan_minutes.py), [stan_components.py](src/models/stan_components.py) | **yes** |
-| `negbinomial_glm.stan` | the 8 count heads | [stan_components.py](src/models/stan_components.py) | **yes** |
-| `composition_glm.stan` | the team-game minutes allocation | [stan_composition.py](src/models/stan_composition.py) | **no — pilot** |
+| `betabinomial_glm.stan` | availability, minutes, the 4 conversion heads | [stan_availability.py](src/models/stan_availability.py), [stan_minutes.py](src/models/stan_minutes.py), [stan_components.py](src/models/stan_components.py) | **yes** |
+| `negbinomial_glm.stan` | the 7 count heads | [stan_components.py](src/models/stan_components.py) | **yes** |
+| `composition_glm.stan` | the team-game minutes allocation | [stan_composition.py](src/models/stan_composition.py) | **yes** |
 
 Shared plumbing — compilation, sampling, and diagnostic extraction into a CSV rather than a
 scrollback buffer — is in [src/models/stan_utils.py](src/models/stan_utils.py).
-`make stan` runs exactly the three heads that ship: `stan-availability`, `stan-minutes`,
-`stan-components`. `make stan-composition` is a separate target, and that separation is
-deliberate rather than an oversight — see the next section.
+`make stan` runs all four: `stan-availability`, `stan-minutes`, `stan-components`,
+`stan-composition` — in that order, because the composition imports the minutes head and
+measures itself against it.
 
 **Availability** ([src/models/availability.py](src/models/availability.py) is the point-MLE
 reference, [stan_availability.py](src/models/stan_availability.py) the Bayesian port) is a
@@ -196,67 +250,28 @@ toward a league/age baseline and emits a distribution.
 marginal `min | available`, fitted season-collapsed as successes out of real game length,
 selecting `logit(own) + spline`. It supplies two of the three numbers the simulator needs —
 the season-level mean, and separately the **game-level** dispersion, which a season total
-cannot identify on its own. A second, richer minutes model exists and is not in the chain;
-it is the first entry in the next section.
+cannot identify on its own.
 
-**Components** ([stan_components.py](src/models/stan_components.py)) fits the eight negative
-binomial counts and three beta-binomial conversions, each against a mandatory no-fit floor.
-Its head lists come from [component_rates.py](src/models/component_rates.py) — `COUNT_HEADS`
-still fits `fg2a` and `fg3a` independently, while `substitution_arm` fits the reparameterized
-alternative beside them as an ablation and beats it, as noted under the output contract.
+**Minutes as a team-game composition**
+([stan_composition.py](src/models/stan_composition.py)) is the second minutes head, and it
+does something the marginal one cannot: it allocates each team-game's `5 × game_length`
+minutes among the players who played, by decomposing the multinomial into sequential
+binomial trials ordered by prior-season minutes share, with the per-player cap enforced
+through the trials (`m_k = min(U, R_k)`) rather than checked afterwards. That gets **both**
+per-game constraints — the exact team total and the individual cap — where the marginal head
+gets only the cap, and it makes teammate-absence redistribution a *fitted* quantity. The two
+heads compose rather than compete: `stan_minutes` still owns the season-level mean and the
+game-level dispersion, neither of which the composition produces.
+
+**Components** ([stan_components.py](src/models/stan_components.py)) fits the seven negative
+binomial counts and four beta-binomial conversions, each against a mandatory no-fit floor.
+Its head lists come from [component_rates.py](src/models/component_rates.py), which models
+total attempts as a count and the three-point mix as a share — see the output contract above.
 
 **Season terms** ([src/models/season_terms.py](src/models/season_terms.py), `make
 season-terms`) is a 108-fit ablation asking whether any head needs a year trend or a year
 random effect to track league-wide era movement. [src/eda/season_effects.py](src/eda/season_effects.py)
 measures the league series it would be correcting for.
-
-### Measured but not adopted
-
-**Two results have beaten the shipped specification and are still not in it.** Both are easy
-to misread as settled — the measurement is done, the code exists, the numbers are quoted in
-Results — and both have been misread that way in this repo's own documentation. The table in
-the previous section and the contents of `make stan` are the authority on what runs; a
-result appearing in Results is not.
-
-| Result | Margin | What exists today | Blocking step |
-|---|---|---|---|
-| `fga` count × `fg3a \| fga` share, replacing two independent attempt counts | −0.500782 val / −0.493549 test nats per player-season | an ablation arm beside the shipped heads, and a re-measurement | swap `COUNT_HEADS`, per `docs/shot-attempt-basis-plan.md` |
-| Team-game minutes composition, replacing independent per-game draws | −0.406 min test CRPS, and exact team totals | a pilot fitted on 2018-19 onward | Gate E — the full-window refit |
-
-**The shot-attempt reparameterization.** `component_rates.COUNT_HEADS` still lists `fg2a`
-and `fg3a` as two independent negative binomial counts, and that list is what `sweep_counts`
-iterates. The re-measurement this row used to be blocked on is **done** — `make
-stan-substitution`, 16 fits, [docs/shot-attempt-basis-plan.md](docs/shot-attempt-basis-plan.md)
-— and the result survives it. ⚠️ **The previously recorded −0.771 / −0.793 was measured
-against a handicapped comparison**: `substitution_arm` fits every head at the `log_own`
-variant, but `fg3a`'s shipped spec is `log_own_spline`, and at `log_own` that head reads test
-R² **0.3719** with `beats_floor = False` against **0.9046** for the spline it actually
-selects. Fitting arm A at each head's own selected variant and sweeping arm B for real still
-gives **−0.493549** on test, and **−0.491910** against arm A's *best-of-16* configuration.
-
-⭐ **The re-measurement produced a sharper result than the one it was checking.** Compared at
-their **no-fit floors** — no features anywhere — the two bases score **11.024027** against
-**10.085599**. Arm B's floor beats arm A's *best fitted* configuration by **−0.390814**, ~79%
-of the total margin, while arm B's own fitting adds only **−0.101096** on top of its floor.
-This is not a better model of shot attempts; it is the same information written in
-coordinates where the dependence is structural instead of residual.
-
-**The minutes composition.** [stan_composition.py](src/models/stan_composition.py) allocates
-each team-game's `5 × game_length` minutes among the players who played by decomposing the
-multinomial into sequential binomial trials, ordered by prior-season minutes share, with the
-per-player cap enforced through the trials (`m_k = min(U, R_k)`) rather than checked
-afterwards. It gets both per-game constraints — the exact team total and the per-player cap
-— where the shipped marginal head gets only the cap, and it is the only head that represents
-teammate-absence redistribution. Its own `independent_comparator` names `stan_minutes` as
-"the plan of record being compared against", and it imports that head rather than replacing
-it. Gates A–D passed on the pilot; **Gate E, the full-window refit, is open and not taken** —
-costed at ~10–12 h for the 736k-row sweep. Note that promotion would not retire
-`stan_minutes`: the composition head produces neither the season-level mean nor the
-game-level dispersion the simulator also needs.
-
-Neither is recorded as a decision reversal, because neither has been reversed — they are
-measurements the build has not yet absorbed. `docs/minutes-composition-plan.md` holds the
-gate definitions; `CLAUDE.md` holds both results in full.
 
 ### Simulation — planned
 
@@ -324,7 +339,7 @@ error dominates: perfect games played gives MAE 221.3 against perfect rate's 302
 **The component rate side is nearly saturated from prior-season information alone.**
 `make component-rates` / `make stan-components`. A no-fit floor — prior per-36 rate × actual
 minutes, no fitting — scores held-out R² **0.82–0.94**, and the best fitted head beats it by
-+0.0019 to +0.0228. Every head is quoted against that floor; `fta` and `ftm|fta` do not clear
++0.0019 to +0.0203. Every head is quoted against that floor; `fta` and `ftm|fta` do not clear
 it at all, so the whole free-throw family currently fails.
 
 **The specification that matters is scale, not curvature — except where the likelihood
@@ -334,28 +349,32 @@ almost everything; linear-in-raw-rate inside `exp()` is unusable (`fg3a` held-ou
 difference between a model and a failure on the skewed heads (`blk` 0.679 → 0.858), which
 reverses what the Poisson fits implied.
 
-**The minutes composition beats the independent draw on the independent draw's own metric —
-on a pilot window, and it is not yet shipped.** `make stan-composition`. Held out, test CRPS
-**4.5078** against the independent comparator's 4.9140 (−8.3%), while also hitting the team
-total exactly where the independent draw misses by 36.87 minutes per team-game. The plan
-predicted a wash and budgeted for arguing on capability instead. Two sub-results: the pure
-binomial decomposition is *worse* than the no-fit floor (PIT KS 0.194) — dispersion is the
-difference between a model and a failure again — and dispersion is genuinely role-graded,
-fitted at 0.148 for fringe players against 0.061 for stars, a 2.41× spread that cuts
-calibration error by 59%. See *Measured but not adopted*.
+**The minutes composition beats the independent draw on the independent draw's own metric.**
+`make stan-composition`, fitted on all 30 seasons. Held out, test CRPS **4.5592** against the
+independent comparator's 4.9140 (**−7.2%**), while also hitting the team total exactly where
+the independent draw misses by **36.87** minutes per team-game. The plan predicted a wash and
+budgeted for arguing on capability instead. Two sub-results: the pure binomial decomposition
+is *worse* than the no-fit floor (PIT KS **0.195**) — dispersion is the difference between a
+model and a failure again — and dispersion is genuinely role-graded, fitted at **0.175** for
+fringe players against **0.084** for stars, a **2.09×** spread that cuts calibration error by
+**39%**. The comparator row is the control on the full-window refit: it never trains on the
+composition window and reproduced exactly.
 
 **The 3PA/2PA substitution is best handled by reparameterization — re-measured
-un-handicapped, and still not shipped.** `make stan-substitution`. Modelling `fga` as a count
+un-handicapped, and now shipped.** `make stan-substitution` for the measurement;
+`component_rates.COUNT_HEADS` for the adoption. Modelling `fga` as a count
 and `fg3a | fga` as a beta-binomial share on `fga` trials beats two independent count heads
 by **−0.493549 nats** per player-season on test and −0.500782 on validation, with each head
 fitted at its own selected variant and both arms swept — a legitimate comparison because the
 coordinate change is a bijection with unit Jacobian. The originally recorded −0.793 / −0.771
-had both arms pinned at `log_own`, where `fg3a` scores test R² **0.3719** against **0.9046**
-for the spline it actually selects, so the canonical arm was handicapped; removing the
+had both arms pinned at `log_own`, where `fg3a` scored test R² **0.3719** against **0.9046**
+for the spline it actually selected, so the canonical arm was handicapped; removing the
 handicap costs 0.306 nats of the margin and the result survives anyway. **The strongest
 version is that the basis beats the model**: the reparameterized *no-fit floor* beats the
-canonical basis's *best fitted* configuration by **−0.390814**. See *Measured but not
-adopted*.
+canonical basis's *best fitted* configuration by **−0.390814**. Adopting it also retired
+this project's worst misspecification: `fg3a` scored **−19.00** held-out R² under a linear
+predictor, where the `fga` that replaces it scores 0.9396 and clears the highest floor of
+any count head.
 
 **No head ships a season term, and the ceiling on ever needing one is ~3% of MAE.** `make
 season-terms`. An oracle that rescales each held-out season by its own realized league total

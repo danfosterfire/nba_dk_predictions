@@ -65,6 +65,28 @@ def optional(path: Path, columns: tuple[str, ...] | None = None,
     return read_table(str(path), columns)
 
 
+FULL_WINDOW = "full"
+TRAIN_VAL_WINDOW = "train_val"
+
+
+def window(frame: pd.DataFrame | None,
+           fit_window: str = FULL_WINDOW) -> pd.DataFrame | None:
+    """Scope an artifact to one fit window, if it carries that axis.
+
+    Four artifacts are now emitted twice — once over every season (`full`) and once
+    excluding the seasons the heads hold out (`train_val`) — because figures the
+    *simulator consumes* must not be calibrated on the backtest seasons. Every panel here
+    renders the `full` figures, which are the ones the prose quotes; the point of routing
+    through one helper is that an unscoped read silently averages the two windows
+    together, and the windows are close enough that the result would look plausible.
+
+    Artifacts without the column are returned unchanged, so a stale checkout still renders.
+    """
+    if frame is None or "fit_window" not in frame.columns:
+        return frame
+    return frame[frame["fit_window"] == fit_window]
+
+
 def _rel(path: Path) -> str:
     try:
         return str(Path(path).resolve().relative_to(ROOT))

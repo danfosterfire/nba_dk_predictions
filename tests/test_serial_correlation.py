@@ -1,7 +1,11 @@
 import numpy as np
 import pandas as pd
+import pytest
 
+from src.data.preprocess import (FULL_WINDOW, TRAIN_VAL_WINDOW,
+                                 fit_window)
 from src.eda.serial_correlation import (
+    COUNT_COMPONENTS,
     block_inflation,
     conversion_residuals,
     count_residuals,
@@ -238,20 +242,59 @@ def test_measure_returns_a_row_per_component_with_its_own_chance_level():
     deterministic has zero residual variance and hides that."""
     rng = np.random.default_rng(8)
     n, per = 6000, 60
-    counts = {c: _iid_poisson(n, 4.0, seed=i)
-              for i, c in enumerate(["fg2a", "fg3a", "fta", "reb", "ast",
-                                     "stl", "blk", "tov"])}
-    for made, att, p in [("fg2m", "fg2a", 0.5), ("fg3m", "fg3a", 0.36),
-                         ("ftm", "fta", 0.78)]:
+    counts = {c: _iid_poisson(n, 8.0 if c == "fga" else 4.0, seed=i)
+              for i, c in enumerate(COUNT_COMPONENTS)}
+    # The chain, in order: the share splits `fga`, `fg2a` is the remainder, then the makes
+    # are drawn on their own attempts. `fg2a` is derived here exactly as the head list
+    # says it is derived in the model.
+    for made, att, p in [("fg3a", "fga", 0.36), ("fg2m", "fg2a", 0.5),
+                         ("fg3m", "fg3a", 0.36), ("ftm", "fta", 0.78)]:
+        if att not in counts:
+            counts["fg2a"] = np.maximum(counts["fga"] - counts["fg3a"], 0.0)
         counts[made] = rng.binomial(counts[att].astype(int), p).astype(float)
     minutes = rng.uniform(12.0, 38.0, n)
     df = _panel(counts, minutes, n_seasons=n // per)
 
     table = measure(df, lags=[1, 2])
-    assert len(table) == 13                        # 8 counts + 3 conversions + 2 minutes
+    assert len(table) == 13                        # 7 counts + 4 conversions + 2 minutes
     for col in ["lag1", "lag1_null", "lag1_excess", "block_inflation"]:
         assert col in table.columns
     assert table["lag1_null"].notna().all()
     assert table["block_inflation"].notna().all()
     # Independent by construction, so every excess should sit near zero.
     assert table["lag1_excess"].abs().max() < 0.05
+
+
+# ── The fit window: block inflation is a simulator input ─────────────────────
+
+def _multi_season_frame(seasons: int = 5, blocks: int = 20,
+                        games: int = 60) -> pd.DataFrame:
+    """A played-games frame spanning several seasons, for the window axis."""
+    n = blocks * games
+    minutes = np.full(n, 28.0)
+    counts = {c: _iid_poisson(n, 4.0, seed=i)
+              for i, c in enumerate(COUNT_COMPONENTS)}
+    counts |= {"fg3a": _iid_poisson(n, 3.0, seed=90),
+               "fg2a": _iid_poisson(n, 6.0, seed=91),
+               "fg2m": _iid_poisson(n, 3.0, seed=92),
+               "fg3m": _iid_poisson(n, 1.0, seed=93),
+               "ftm": _iid_poisson(n, 2.0, seed=94)}
+    df = _panel(counts, minutes, n_seasons=blocks)
+    labels = [f"20{10 + i:02d}-{11 + i:02d}" for i in range(seasons)]
+    df["season"] = [labels[p % seasons] for p in df["ps"]]
+    return df
+
+
+def test_fit_window_narrows_the_frame_without_changing_the_component_set():
+    df = _multi_season_frame()
+    full = measure(fit_window(df, FULL_WINDOW))
+    train_val = measure(fit_window(df, TRAIN_VAL_WINDOW))
+    assert list(full["component"]) == list(train_val["component"])
+    assert train_val["n_pairs"].sum() < full["n_pairs"].sum()
+
+
+def test_holding_out_more_seasons_than_exist_raises_rather_than_emptying():
+    """An empty fitting half makes every statistic NaN, which reads as a null."""
+    df = _multi_season_frame(seasons=2)
+    with pytest.raises(ValueError, match="would be empty"):
+        fit_window(df, TRAIN_VAL_WINDOW)

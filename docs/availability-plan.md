@@ -885,7 +885,7 @@ season rehabbing — which is exactly the population the preseason snapshot iden
 >
 > Selected on validation; the test column confirms rather than decides. It clears the no-fit
 > floor by **+0.0407 R² and −21.4 minutes of CRPS**. R̂ ≤ 1.0093, **0 divergences** over 8
-> fits, 1,829 s total.
+> fits, 2,183 s total.
 >
 > **The probe was right about where to spend flexibility, and the reason is now sharper.**
 > Curvature on prior minutes pays and it replicates across both splits — but the *scale*

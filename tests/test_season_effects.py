@@ -26,7 +26,7 @@ def _targets(seasons, per36, minutes_per_game=30.0, games=50, players=4):
                     "player_id": 100 + p, "season": season, "season_type": "regular",
                     "played": 1, "game_id": g, "min": minutes_per_game,
                     "fta": rate * minutes_per_game / 36.0,
-                    "fg2a": 8.0, "fg3a": 4.0, "reb": 5.0, "ast": 3.0,
+                    "fga": 12.0, "fg2a": 8.0, "fg3a": 4.0, "reb": 5.0, "ast": 3.0,
                     "stl": 1.0, "blk": 0.5, "tov": 2.0,
                     "ftm": 0.75 * rate * minutes_per_game / 36.0,
                     "fg2m": 4.0, "fg3m": 1.4,
@@ -44,12 +44,12 @@ def test_league_rate_is_totals_over_totals_not_a_mean_of_player_rates():
     for g in range(20):
         rows.append({"player_id": 1, "season": "2020-21", "season_type": "regular",
                      "played": 1, "game_id": g, "min": 36.0, "fta": 10.0,
-                     "fg2a": 1, "fg3a": 1, "reb": 1, "ast": 1, "stl": 1, "blk": 1,
-                     "tov": 1, "ftm": 5.0, "fg2m": 1, "fg3m": 1})
+                     "fga": 2, "fg2a": 1, "fg3a": 1, "reb": 1, "ast": 1, "stl": 1,
+                     "blk": 1, "tov": 1, "ftm": 5.0, "fg2m": 1, "fg3m": 1})
         rows.append({"player_id": 2, "season": "2020-21", "season_type": "regular",
                      "played": 1, "game_id": g, "min": 4.0, "fta": 0.0,
-                     "fg2a": 1, "fg3a": 1, "reb": 1, "ast": 1, "stl": 1, "blk": 1,
-                     "tov": 1, "ftm": 0.0, "fg2m": 1, "fg3m": 1})
+                     "fga": 2, "fg2a": 1, "fg3a": 1, "reb": 1, "ast": 1, "stl": 1,
+                     "blk": 1, "tov": 1, "ftm": 0.0, "fg2m": 1, "fg3m": 1})
     out = league_rates(pd.DataFrame(rows))
     fta = out[out["quantity"] == "fta"]["rate"].iloc[0]
     # totals-over-totals: 200 FTA over 800 minutes -> 9.0 per 36
@@ -146,7 +146,7 @@ def _design(seasons, rate_by_season, minutes=1000.0, players=30):
             continue
         for p in range(players):
             row = {"player_id": p, "season": season, "total_minutes": minutes}
-            for c in ["fg2a", "fg3a", "fta", "reb", "ast", "stl", "blk", "tov"]:
+            for c in ["fga", "fta", "reb", "ast", "stl", "blk", "tov"]:
                 value = rate if c == "fta" else 5.0
                 lag = prior[season] if c == "fta" else 5.0
                 row[c] = value * minutes / 36.0

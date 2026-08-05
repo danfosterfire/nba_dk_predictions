@@ -163,6 +163,10 @@ def _calibration_games(n_players: int = 40, games: int = 60, seed: int = 0,
     from the realized bonus is the whole check, and it cannot be passed by accident.
     """
     rng = np.random.default_rng(seed)
+    # Several season labels, assigned round-robin so each player still has exactly one
+    # player-season. `bonus_calibration` measures both fit windows and cannot hold out
+    # two seasons from a single-season frame.
+    seasons = ["2019-20", "2020-21", "2021-22"]
     rows = []
     for p in range(n_players):
         mpg = rng.uniform(14.0, 36.0)
@@ -170,7 +174,8 @@ def _calibration_games(n_players: int = 40, games: int = 60, seed: int = 0,
         g = rng.gamma(1.0 / frailty, frailty, size=games)
         draws = rng.poisson(base[None, :] * g[:, None])
         for i in range(games):
-            rows.append({"player_id": p, "season": "2021-22", "game_id": i,
+            rows.append({"player_id": p, "season": seasons[p % len(seasons)],
+                         "game_id": i,
                          "min": mpg, "fg3m": 1.0,
                          **dict(zip(BONUS_CATEGORIES, draws[i].astype(float)))})
     df = pd.DataFrame(rows)
@@ -206,7 +211,8 @@ def test_calibration_recovers_the_overdispersion_it_was_generated_with():
     cal = bonus_calibration(df, min_season_minutes=200,
                             grid=[0.0, 0.05, 0.10, 0.15, 0.20],
                             game_grid=[0.10], n_samples=400)
-    fitted = cal[(cal["analysis"] == "fitted") & (cal["unit"] == "player_season")]
+    fitted = cal[(cal["analysis"] == "fitted") & (cal["unit"] == "player_season")
+                 & (cal["fit_window"] == "full")]
     assert len(fitted) == 1
     assert abs(float(fitted["overdispersion"].iloc[0]) - 0.10) < 0.04
 
@@ -215,8 +221,12 @@ def test_independent_sampling_reads_low_and_the_bias_rises_with_overdispersion()
     df = _calibration_games(n_players=40, games=60, frailty=0.10, seed=5)
     cal = bonus_calibration(df, min_season_minutes=200, grid=[0.0, 0.10, 0.30],
                             game_grid=[0.10], n_samples=400)
+    # Scoped to one fit window: `bonus_calibration` emits every row under both `full` and
+    # `train_val`, so an unscoped count is two of everything and the "exactly one
+    # independent row" invariant reads as broken when it is not.
     allrows = cal[(cal["analysis"] == "calibration") & (cal["bucket"] == "all")
-                  & (cal["unit"] == "player_season")].sort_values("overdispersion")
+                  & (cal["unit"] == "player_season")
+                  & (cal["fit_window"] == "full")].sort_values("overdispersion")
     assert allrows["is_independent"].sum() == 1
     assert allrows["is_shipped"].sum() == 1
     assert float(allrows["bias"].iloc[0]) < 0            # independent reads low
@@ -227,8 +237,8 @@ def test_calibration_carries_a_bucket_break_alongside_the_aggregate():
     df = _calibration_games(n_players=30, games=50)
     cal = bonus_calibration(df, min_season_minutes=200, grid=[0.10],
                             game_grid=[0.10], n_samples=200)
-    rows = cal[cal["analysis"] == "calibration"]
-    assert (rows["bucket"] == "all").sum() == 2          # one per unit
+    rows = cal[(cal["analysis"] == "calibration") & (cal["fit_window"] == "full")]
+    assert (rows["bucket"] == "all").sum() == 2          # one per unit, one window
     assert (rows["bucket"] != "all").sum() > 0
     # Buckets must partition their unit exactly — no row counted twice or dropped.
     for unit in ("player_season", "player_game"):

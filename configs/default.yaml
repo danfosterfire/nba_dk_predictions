@@ -222,12 +222,13 @@ stan:
     # this in could ever be worth, so a real entry can be judged against a known bound.
     league_override: {}
 
-  # The team-game minutes composition pilot — docs/minutes-composition-plan.md.
+  # The team-game minutes composition head — docs/minutes-composition-plan.md.
   composition:
     # The frame is built over every season (lags and the expanding rookie prior need
-    # the history); fitting starts here. Full-window promotion is Gate E, decided on
-    # the pilot's recorded verdict.
-    first_season: "2018-19"
+    # the history); fitting starts here. This was "2018-19" for the pilot; Gate E —
+    # the full-window refit — was taken on 2026-08-03 after Gates A-D passed, so the
+    # head now fits every season the frame covers.
+    first_season: "1996-97"
     # Joint draws kept per predictive. Each is a full sequential allocation of every
     # team-game, so this is the wall-clock knob for scoring, not for fitting.
     predictive_samples: 200

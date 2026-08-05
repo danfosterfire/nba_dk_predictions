@@ -10,7 +10,7 @@ import pandas as pd
 import streamlit as st
 
 from dashboard import decisions as D
-from dashboard.artifacts import ROOT, Ctx, optional
+from dashboard.artifacts import ROOT, Ctx, optional, window
 from dashboard.charts import fig_bars, fig_heatmap
 from dashboard.layout import (decision_cards, detail, note, provenance, stat_tiles,
                               tab_header, table_view)
@@ -96,8 +96,8 @@ def _correlation(ctx: Ctx) -> None:
     st.markdown("---")
     st.markdown("### Where the correlation comes from")
 
-    res = optional(ctx.eda("residual_correlation.csv"),
-                   target="make residual-correlation")
+    res = window(optional(ctx.eda("residual_correlation.csv"),
+                          target="make residual-correlation"))
     if res is None:
         return
 
@@ -164,8 +164,8 @@ def _block_inflation(ctx: Ctx) -> None:
     st.markdown("---")
     st.markdown("### What an independent-draws simulator would get wrong")
 
-    serial = optional(ctx.eda("serial_correlation.csv"),
-                      target="make serial-correlation")
+    serial = window(optional(ctx.eda("serial_correlation.csv"),
+                             target="make serial-correlation"))
     if serial is None:
         return
 
@@ -193,7 +193,8 @@ def _bonus(ctx: Ctx) -> None:
     st.markdown("### The bonus needs the joint — and the per-game value is not the "
                 "per-season one")
 
-    cal = optional(ctx.eda("bonus_calibration.csv"), target="make component-targets")
+    cal = window(optional(ctx.eda("bonus_calibration.csv"),
+                          target="make component-targets"))
     if cal is None:
         return
 

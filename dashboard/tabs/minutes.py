@@ -10,7 +10,7 @@ splits.
 import streamlit as st
 
 from dashboard import decisions as D
-from dashboard.artifacts import Ctx, optional
+from dashboard.artifacts import Ctx, optional, window
 from dashboard.charts import fig_bars, fig_lines
 from dashboard.layout import (decision_cards, detail, note, provenance, stat_tiles,
                               tab_header, table_view)
@@ -271,13 +271,15 @@ def _dispersions(ctx: Ctx) -> None:
 
     disp = optional(ctx.predictions("stan_minutes_dispersion.csv"),
                     target="make stan-minutes")
-    serial = optional(ctx.eda("serial_correlation.csv"),
-                      target="make serial-correlation")
+    serial = window(optional(ctx.eda("serial_correlation.csv"),
+                             target="make serial-correlation"))
     if disp is None or serial is None:
         return
 
     season_rho = float(disp[disp["metric"] == "season_level_rho"]["rho"].iloc[0])
-    game = disp[disp["metric"] == "game_level_rho"].iloc[0]
+    # The game-level row exists per fit window; this panel renders the full-window
+    # figure the prose quotes. The simulator takes the `train_val` one.
+    game = window(disp[disp["metric"] == "game_level_rho"]).iloc[0]
     block = float(serial[serial["component"] == "min"]["block_inflation"].iloc[0])
 
     stat_tiles([

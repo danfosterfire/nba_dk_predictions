@@ -1,4 +1,4 @@
-r"""The eleven component rate heads in Stan — eight counts, three conversions.
+r"""The eleven component rate heads in Stan — seven counts, four conversions.
 
 The third link in the chain: `counts | min` and `makes | attempts`. Together with the
 availability and minutes heads this is the full output contract, and `dk_pts` is
@@ -6,8 +6,14 @@ reassembled deterministically from a joint draw rather than predicted directly.
 
 | head | likelihood | exposure / trials |
 |---|---|---|
-| `fg2a` `fg3a` `fta` `reb` `ast` `stl` `blk` `tov` | negative binomial, log link | season minutes |
-| `fg2m\|fg2a` `fg3m\|fg3a` `ftm\|fta` | beta-binomial, logit link | attempts |
+| `fga` `fta` `reb` `ast` `stl` `blk` `tov` | negative binomial, log link | season minutes |
+| `fg3a\|fga` `fg2m\|fg2a` `fg3m\|fg3a` `ftm\|fta` | beta-binomial, logit link | attempts |
+
+`fg2a` is **derived**, not fitted: `fga - fg3a`, exactly as `pts` is derived from the
+makes. Total attempts are the count and the three-point mix is a share of them, so the
+3PA/2PA substitution is enforced by construction instead of being left to the residual
+copula. Adopted 2026-08-03 on `docs/shot-attempt-basis-plan.md`; the head count is
+unchanged at eleven.
 
 ## Eleven fits, not one joint model — and this is an identity, not a shortcut
 
@@ -22,10 +28,10 @@ in the model.
 The correlation the simulator needs enters at **draw** time: one `min` draw pushed through
 all eleven heads as exposure (minutes is 18.6% of within-player residual variance, by far
 the largest common factor), then a Gaussian copula for the remainder if needed —
-conditioning minutes out, the residual off-diagonals average **+0.013** with a max of
-0.157. The one structural exception is the 3PA/2PA substitution at **-0.110**, and
-`substitution_arm` below handles it by reparameterization rather than by coupling two
-count heads.
+conditioning minutes out, the residual off-diagonals average **+0.007** with a max of
++0.142. The one structural exception was the 3PA/2PA substitution, and the shot-attempt
+basis removes it from the copula entirely rather than coupling two count heads.
+`substitution_arm` below now measures the RETIRED two-count basis against the shipped one.
 
 ## Season-collapsed, which is also an identity
 
@@ -47,8 +53,8 @@ not a model. `beats_floor` is on every output row. The conversion floor has to b
 column is confirmation only. The measured expectation (`make component-rates`) is that
 **scale beats curvature**: `log E[rate] = beta*log(prior rate)` makes the model
 `rate ~ prior_rate^beta`, which is the right shape, while linear-in-raw-rate inside `exp()`
-is badly misspecified — R^2 0.520 on `fg3a` and 0.638 on `blk`. Splines then add +0.030 and
-+0.041 on those two heads only and <= +0.003 on the other six. The spline basis here is
+is badly misspecified — R^2 0.520 on `fg3a` and 0.638 on `blk` under Poisson, and far worse
+under the negative binomial actually used. Splines then matter most on the skewed heads. The spline basis here is
 built on `log(own)` rather than raw `own`, so it strictly nests `log_own` and the
 comparison isolates curvature *given* the right scale.
 
@@ -619,6 +625,15 @@ SUBSTITUTION_COUNT_VARIANTS = ("linear", "log_own", "log_own_spline")
 SUBSTITUTION_SHARE_VARIANTS = ("linear", "logit_own", "logit_own_spline")
 SUBSTITUTION_PAIR = ("fg2a", "fg3a")
 
+# Gate 0 measured the RETIRED two-count basis against the one now shipped, so arm A's
+# heads are no longer in `stan_component_metrics.csv` and `selected_specs` cannot supply
+# their variants. These are what that artifact selected *before* adoption — a fact about
+# the retired basis, pinned here so the gate stays re-runnable rather than silently
+# falling back to `log_own`, which is the exact handicap the gate exists to remove.
+# The best-of-16 grid has no such fallback: it is read from the pre-adoption metrics file
+# and, once that is refitted, survives only inside the gate's own artifact.
+LEGACY_ARM_A_SPECS = {"fg2a": "log_own", "fg3a": "log_own_spline"}
+
 
 def _share_nll(model: "StanConversion", frame: pd.DataFrame, made: str,
                attempted: str) -> np.ndarray:
@@ -658,16 +673,18 @@ def substitution_sweep(train, val, test, full_train, cfg_stan, n_knots,
     `(fga, fg3a)` are the same point in different coordinates, a bijection with unit
     Jacobian on the integers, so the two joint log-densities are directly comparable.
     """
-    from src.models.season_terms import DEFAULT_COUNT_SPEC, selected_specs
+    from src.models.season_terms import selected_specs
 
     seed = int(cfg_stan.get("seed", 42))
     chains = int(cfg_stan.get("chains", 4))
     specs, _ = selected_specs(Path(predictions_dir))
+    specs = {**LEGACY_ARM_A_SPECS, **{k: v for k, v in specs.items()
+                                      if k in LEGACY_ARM_A_SPECS}}
     rows, diagnostics = [], []
 
     print("\nGate 0 — the substitution comparison at each head's SELECTED variant")
     print(f"  arm A specs read from stan_component_metrics.csv: "
-          f"{', '.join(f'{h}@{specs.get(h, DEFAULT_COUNT_SPEC)}' for h in SUBSTITUTION_PAIR)}")
+          f"{', '.join(f'{h}@{specs[h]}' for h in SUBSTITUTION_PAIR)}")
 
     for split, (tr, te) in {"val": (train, val), "test": (full_train, test)}.items():
         fast = split == "val"
@@ -676,7 +693,7 @@ def substitution_sweep(train, val, test, full_train, cfg_stan, n_knots,
 
         # ── Arm A: the canonical pair, each at its own selected variant ────────
         for component in SUBSTITUTION_PAIR:
-            spec = specs.get(component, DEFAULT_COUNT_SPEC)
+            spec = specs[component]
             variants = count_variants(tr, te, component, n_knots)
             v_tr, v_te, features = variants[spec]
             model = StanCount(features, component,

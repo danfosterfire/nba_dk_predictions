@@ -183,13 +183,22 @@ stan-components:
 stan-substitution:
 	$(PYTHON) -m src.models.stan_components --gate0
 
-# The team-game minutes composition PILOT (docs/minutes-composition-plan.md) —
-# deliberately NOT in the `stan` aggregate until the pilot's gates pass and the
-# full-window decision is recorded there.
+# The team-game minutes composition (docs/minutes-composition-plan.md). Gates A-E all
+# pass at the full window, so it is now part of the `stan` aggregate.
 stan-composition:
 	$(PYTHON) -m src.models.stan_composition
 
-stan: stan-availability stan-minutes stan-components
+# Order matters: the composition imports `StanMinutes`, `minutes_variants` and
+# `game_level_dispersion` from the minutes head, and its `independent_comparator` refits
+# that head as the incumbent it is measured against. `stan-minutes` therefore has to be
+# ahead of it, not merely present.
+#
+# BUDGET A DAY. `stan-composition` alone took ~21 h of sampler time at the full window
+# (its own Gate A extrapolated 12.8 h and under-predicted by 1.63x, because per-row cost
+# is superlinear in rows). `stan-components` is ~5 h on top. Each composition arm
+# checkpoints to outputs/checkpoints/stan_composition/ as it completes, so a crash costs
+# one arm rather than the run.
+stan: stan-availability stan-minutes stan-components stan-composition
 
 # Does any head need a season term, and which kind? A trend covariate and a year-level
 # random effect for every head, plus the season x role interaction the availability era

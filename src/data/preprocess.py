@@ -38,6 +38,69 @@ PLAYOFFS = "playoffs"
 ALL_SEASON_TYPES = "all"
 
 
+# ── The evaluation split, for the measurements that feed the simulator ────────
+#
+# Every fitted head splits temporally by target season: the trailing `TEST_SEASONS` are
+# held out, and the two before them are the validation split carved out of the training
+# half. That lives in `models.availability.TEST_SEASONS` and its copies, which describe a
+# *design matrix*.
+#
+# This is the same number for a different population. Four quantities the simulator will
+# take as direct inputs — the residual copula, the game-level minutes dispersion, the
+# block variance inflation and the bonus overdispersion — are **calibrations, not fits**,
+# so nothing stops them from being measured over every season including the held-out ones.
+# Doing that would calibrate the simulator on the seasons it is later scored against.
+# `fit_window` is the one-line fix, and the artifacts carry both windows so the size of
+# the difference is on disk rather than assumed.
+#
+# `tests/test_preprocess.py` pins this against the model modules' copies: two definitions
+# of "which seasons are held out" that could disagree is a worse failure than a duplicated
+# constant, because a disagreement is silent on both sides.
+TEST_SEASONS = 2
+
+FULL_WINDOW = "full"
+TRAIN_VAL_WINDOW = "train_val"
+FIT_WINDOWS = [FULL_WINDOW, TRAIN_VAL_WINDOW]
+
+
+def fit_window(frame: pd.DataFrame, window: str = TRAIN_VAL_WINDOW,
+               test_seasons: int = TEST_SEASONS) -> pd.DataFrame:
+    """Restrict `frame` to a fit window, keyed on its `season` column.
+
+    `full` returns everything; `train_val` drops the trailing `test_seasons` season
+    labels — the same seasons `split_seasons` holds out, derived the same way (sort the
+    labels present, take the last N) rather than hard-coded, so a change to the data
+    window moves both together.
+
+    Note this keys on the season a row is *from*, which for these calibration frames is
+    the season being held out. A design matrix's `season` is its *target* season and its
+    features describe S-1; the two coincide here because these frames are realized
+    outcomes, not lagged features.
+    """
+    if window not in FIT_WINDOWS:
+        raise ValueError(f"unknown fit window {window!r}; expected one of {FIT_WINDOWS}")
+    if window == FULL_WINDOW or not test_seasons:
+        return frame
+    order = sorted(frame["season"].unique())
+    # An empty fitting half is the failure this repo has already shipped once in another
+    # costume — a frame that silently shrank rather than raising. Every downstream
+    # statistic here degrades to NaN, which reads as "no dependence" rather than as "no
+    # data", so it has to be loud. `models.availability._inner_split` raises for the same
+    # reason on the same shape of input.
+    if len(order) <= test_seasons:
+        raise ValueError(
+            f"cannot hold out {test_seasons} of {len(order)} seasons ({order}) — the "
+            f"{TRAIN_VAL_WINDOW!r} window would be empty. Every correlation measured on "
+            "it would be NaN, which reads as a null rather than as missing data.")
+    return frame[~frame["season"].isin(set(order[-test_seasons:]))]
+
+
+def held_out_seasons(frame: pd.DataFrame,
+                     test_seasons: int = TEST_SEASONS) -> list[str]:
+    """The season labels `fit_window` drops — for printing what was excluded."""
+    return sorted(frame["season"].unique())[-test_seasons:] if test_seasons else []
+
+
 def _parse_log_filename(stem: str) -> tuple[str, str]:
     """`game_logs_2021_22` -> ("regular", "2021-22");
     `game_logs_playoffs_2021_22` -> ("playoffs", "2021-22").

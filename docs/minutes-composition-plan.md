@@ -1,9 +1,11 @@
 # Minutes Composition Plan: The Team-Game Allocation as a Decomposed Multinomial
 
 This is a planning doc in the house pattern — direction first, results filled in as the
-pilot lands. It executes the "team-game composition alternative" costed in
-`docs/predictions-plan.md`, as a **pilot gated on measurement**, not a committed
-replacement for the season-collapsed minutes head (`make stan-minutes`).
+results land. It executes the "team-game composition alternative" costed in
+`docs/predictions-plan.md`. It was built as a **pilot gated on measurement**; the pilot
+passed Gates A–D, the full-window refit (Gate E) was taken on **2026-08-04**, and the head
+now ships in `make stan`. It is **not** a replacement for the season-collapsed minutes head
+(`make stan-minutes`) — the two compose, and what each owns is stated in the results below.
 
 ## The problem
 
@@ -40,6 +42,7 @@ per-player caps `U = game_length` enforced through the trials, not checked after
 3. **Deliverable = this doc + a pilot** on a recent-season subset with a timing probe,
    posterior predictive checks, and a comparison against the season head + ρ_game
    comparator. The full-window fit is a later decision, gated on the pilot (Gate E).
+   ✅ **Gate E taken 2026-08-04** — the head is fitted on all 30 seasons.
 4. **The game-length class predictor is a geometric tail** fit on training seasons:
    P(any OT) and P(one more OT | current), which covers 3OT/4OT for free. A covariate
    model is not worth it at a 5.93% base rate, and projected closeness is not knowable
@@ -204,14 +207,15 @@ residual it absorbs is 3.08 minutes on one game; the builder reports the distrib
 Selection on **validation CRPS only** (2022-23/2023-24 carved from train; test
 2024-25/2025-26 is confirmation — this repo has already shipped one false positive
 selected on test). Every variant is quoted against the floor; `beats_floor` on every row.
-An `independent_comparator` row — the season head refit on the pilot window, plus
+An `independent_comparator` row — the season head refit outside the evaluation split, plus
 independent `BetaBinom(game_length, μ, ρ_game)` draws per player-game — is reported in
 the same table but excluded from selection: it is the incumbent, not a variant.
 
 ## Pilot design and gates
 
 Frame built over all seasons (lags and expanding rookie priors need the history), fitted
-from `stan.composition.first_season` = **2018-19**. In order:
+from `stan.composition.first_season`, which was **2018-19** for the pilot and is
+**1996-97** now that Gate E is taken. In order:
 
 - **Gate A — timing.** Fit `betabinom` on the most recent train season at select iters;
   extrapolate linearly in rows × iters to the six-fit sweep. Abort loudly past
@@ -230,7 +234,9 @@ from `stan.composition.first_season` = **2018-19**. In order:
   its own floor by only +0.041 R², so the marginal headroom is known to be small.
 - **Gate E — full window** (decided later, recorded here): only if B–D pass and the
   measured per-row cost extrapolates the 736k-row fit inside the 6–16 h envelope
-  `docs/predictions-plan.md` already costed.
+  `docs/predictions-plan.md` already costed. ✅ **Taken.** The extrapolation said 12.8 h and
+  the sweep took **20.9 h** — outside that envelope, and the reason (superlinear per-row
+  cost) is recorded under Gate A in the results.
 
 ### Posterior predictive checks
 
@@ -272,116 +278,150 @@ from `stan.composition.first_season` = **2018-19**. In order:
 - **44 played rows have `min == 0`** (sub-30-second cameos rounding down); y = 0 is in
   the support, kept.
 
-## Results — pilot run 2026-07-31, `make stan-composition`
+## Results — full window, 2026-08-04, `make stan-composition`
 
-**Verdict: Gates A–D all pass.** The composition clears its floor and beats the
-incumbent on the incumbent's own metric — while delivering the team-sum exactness that
-was the point of building it. Every figure below is from
-`outputs/predictions/stan_composition_*.csv` and audited by `make docs-audit`.
+**Verdict: Gates A–E all pass. Gate E is taken — the head is fitted on all 30 seasons and
+is now part of `make stan`.** The composition clears its floor and beats the incumbent on
+the incumbent's own metric, while delivering the team-sum exactness that was the point of
+building it. Every figure below is from `outputs/predictions/stan_composition_*.csv` and
+audited by `make docs-audit`.
 
-Pilot window 2018-19 →: train 97,587 rows / 9,198 team-games (2018-19 → 2021-22),
+Full window 1996-97 →: train 631,158 rows / 61,252 team-games (1996-97 → 2021-22),
 val 52,295 / 4,920 (2022-23 + 2023-24), test 52,957 / 4,920 (2024-25 + 2025-26).
 
 | variant | val CRPS | test CRPS | test R² | test PIT KS | selected |
 |---|---|---|---|---|---|
-| `carry_forward` (floor) | 4.6331 | 4.8194 | 0.3679 | 0.0178 | |
-| `binomial` | 4.9345 | 4.9429 | 0.4307 | **0.1942** | fails the floor |
-| `betabinom` | 4.5109 | 4.5361 | 0.4307 | 0.0205 | |
-| `betabinom_ot` | 4.5099 | 4.5353 | 0.4306 | 0.0202 | |
-| **`betabinom_ot_graded`** | **4.4561** | **4.5078** | 0.4295 | 0.0221 | **✓** |
+| `carry_forward` (floor) | 4.6776 | 4.8576 | 0.3678 | 0.0354 | |
+| `binomial` | 4.9394 | 4.9732 | 0.4259 | **0.1948** | fails the floor |
+| `betabinom` | 4.5422 | 4.5893 | 0.4247 | 0.0405 | |
+| `betabinom_ot` | 4.5430 | 4.5848 | 0.4255 | 0.0414 | |
+| **`betabinom_ot_graded`** | **4.4926** | **4.5592** | 0.4244 | 0.0393 | **✓** |
 | `independent_comparator` | 4.7842 | 4.9140 | 0.3301 | 0.0769 | (incumbent) |
 
-- **Gate A** — probe fit of 26,039 rows in 155 s → sweep extrapolated to **2.576** h;
-  the actual sampler total came in at **171.6** min over 11 fits.
-- **Gate B** — max R̂ **1.0093** (a comparator spline fit), **0** divergences anywhere,
-  0 treedepth-saturated draws on the composition fits.
-- **Gate C** — the selected variant beats the floor by **−0.312** minutes of test CRPS
-  (−6.5%), replicating validation (−0.177). And the `binomial` arm is **worse than the
-  floor** (4.9429 against 4.8194) with PIT KS 0.1942 against the floor's 0.0178: the
-  pure stick-breaking decomposition is far too tight, exactly as ρ_game = 4.65×
-  binomial predicted. The dispersion is not an optional refinement — it is the
-  difference between a model and a failure, the NB-vs-Poisson lesson again.
-- **Gate D** — **−0.406** minutes of test CRPS against the incumbent (4.5078 vs
-  4.9140, −8.3%) — not the expected wash, an outright win on the incumbent's own
-  marginal metric — plus the capability gap: the comparator's mean absolute team-sum
-  error is **36.87** minutes per team-game against the composition's exact **0** on
-  every draw of every game.
-- The OT interaction is real but tiny: `betabinom_ot` won validation by 0.001 CRPS.
-  Treat it as a refinement, not a driver.
+**The `independent_comparator` row is the control, and it came back identical.** It trains
+on `minutes_build_design(cfg)` filtered by season and never on the composition window, and
+it scores the same 52,957 rows either way — so it was predicted to be invariant to the
+window change, and it reproduced **4.7842 / 4.9140 / 0.3301 / 0.0769** exactly. Its
+team-sum error (36.87), the two *observed* starter shares and the whole OT-tail block
+reproduced exactly too. That is what licenses reading everything else as a window effect
+rather than a frame change.
 
-### The graded dispersion — added 2026-07-31, and it replicates
+- **Gate A — timing, and it is the one gate that did NOT behave.** The probe fit 26,039
+  rows in 150 s and extrapolated the sweep to **12.8 h**; the sweep actually took
+  **20.9 h** of sampler time, **1.63×** the estimate. The cause is that per-row cost is
+  **superlinear in rows**: 5.75 ms/row on the 26k-row probe against **15.23 ms/row** on the
+  631k-row `betabinom` validation fit. More data sharpens the posterior, which shrinks the
+  step size, which buys more leapfrog steps per iteration on top of a per-gradient cost that
+  is itself linear. The pilot's linear model was accurate to 1.2% over a 16× extrapolation
+  and is off by 63% over a 24× one, so **treat Gate A as a lower bound, not an estimate**,
+  and keep `max_extrapolated_hours` well above the number you would accept.
+- **Gate B — convergence.** Max R̂ **1.0113**, **0** divergences over 11 fits. The one fit
+  over the 1.01 bar is `binomial/val` — the arm that fails anyway — and every composition
+  fit that matters converged at R̂ ≤ 1.0065.
+- **Gate C — the floor.** The selected variant beats `carry_forward` by **−0.2985** minutes
+  of test CRPS (−6.1%), replicating validation (−0.1851). And the `binomial` arm is again
+  **worse than the floor** (4.9732 against 4.8576) with PIT KS **0.1948** against 0.0354:
+  the pure stick-breaking decomposition is far too tight, exactly as ρ_game = 4.65×
+  binomial predicted. The dispersion is not an optional refinement — it is the difference
+  between a model and a failure, the NB-vs-Poisson lesson again.
+- **Gate D — the incumbent.** **−0.3548** minutes of test CRPS against the incumbent
+  (4.5592 vs 4.9140, **−7.2%**) — not the expected wash — plus the capability gap: the
+  comparator's mean absolute team-sum error is **36.87** minutes per team-game against the
+  composition's exact **0** on every draw of every game. The comparator also carries a
+  −1.2856 minute bias where the composition's is 0 by construction.
+- **Gate E — the full window itself.** Taken. `stan-composition` joins `make stan`, after
+  `stan-minutes`, which it imports from and measures itself against.
+- The OT interaction remains real but tiny, and at full window it **loses** validation to
+  plain `betabinom` by 0.0008 CRPS while winning test by 0.0045. Treat it as a refinement,
+  not a driver; it survives in the shipped arm because the graded variant is built on it.
 
-`betabinom_ot_graded` differs from `betabinom_ot` in the **dispersion alone**: one ρ
-per quartile of prior minutes share (edges from train quantiles only) instead of one
-shared. Same features, same mean function, so the contrast is clean. It is now the
-selected variant.
+### What the full window changed against the pilot
 
-**Fitted ρ is monotone in role and spans 2.41×**: **0.1480** (fringe) / 0.1125 /
-0.0874 / **0.0613** (star), against a single shared **0.0970**. A 34-mpg starter's
-allocation step really is steadier than a reserve's, by more than a factor of two —
-the mechanism the pilot's tier ratios implied, now a fitted parameter.
+The ordering is unchanged and every gate still passes, but three things moved enough to
+restate rather than carry forward.
 
-Worth **−0.054** minutes of validation CRPS and **−0.028** of test CRPS against its
-shared-ρ twin. Small, and it moves the same way on both splits, which is the bar this
-repo sets after the nonlinearity false positive.
-
-**The calibration fix is the real result.** Realized-over-simulated variance ratio by
-prior-share tier, both arms on the same rows:
-
-| tier | shared ρ | graded ρ |
+| | pilot (2018-19 →) | full window (1996-97 →) |
 |---|---|---|
-| q1 fringe | **1.5900** | **1.2093** |
-| q2 | 0.9656 | 0.8405 |
-| q3 | 0.8961 | 0.9587 |
-| q4 star | **0.7000** | **0.9880** |
-| mean \|ratio − 1\| | **0.2571** | **0.1055** |
+| selected test CRPS | 4.5078 | **4.5592** |
+| vs the floor | −0.312 | **−0.2985** |
+| vs the incumbent | −0.406 | **−0.3548** |
+| graded ρ, fringe → star | 0.1480 / 0.1125 / 0.0874 / 0.0613 | **0.1751 / 0.1285 / 0.1099 / 0.0839** |
+| shared ρ | 0.0970 | **0.1195** |
+| ρ spread | 2.41× | **2.09×** |
+| mean \|variance ratio − 1\|, graded | 0.1055 | **0.1796** |
 
-Mean absolute miscalibration falls by **59%**, and the star tier goes from 30% too
-wide to essentially exact (0.988).
-
-- ⚠️ **q2 gets *worse* — 0.966 to 0.841 — and that is structural, not noise.** The
-  fitted ρ is the dispersion of a **sequential step**; the variance ratio is measured
-  on a player's **marginal** minutes, and those are not the same quantity. Because the
-  order is prior-share *descending*, a low-share player breaks his stick last and his
-  marginal spread inherits the accumulated variation in the remainder from everyone
-  ahead of him. So grading the step dispersion does not map one-to-one onto marginal
-  variance by tier, and a tier can be pushed off a mark it happened to hit. Fixing q2
-  specifically would mean grading against marginal variance, which is not what the
-  likelihood parameterizes.
-- Two small costs, both quoted so the win is not oversold: PIT KS is marginally worse
-  (0.0221 against 0.0202) and test R² marginally lower (0.4295 against 0.4306). CRPS
-  is the selection metric and a proper scoring rule; these are inside noise.
+- **Every ρ is larger and the spread is smaller.** Fitting 26 seasons instead of four raises
+  the fitted dispersion at every tier (fringe 0.148 → 0.175, star 0.061 → 0.084) and
+  compresses the fringe-to-star ratio from 2.41× to **2.09×**. Role grading is still real
+  and still monotone; it is less extreme once the model has to cover three decades of
+  rotation practice rather than one.
+- **The absolute win is smaller and still decisive.** −0.3548 against the incumbent instead
+  of −0.406, and −0.2985 against the floor instead of −0.312. Both shrank by roughly a
+  tenth; neither is close to a wash.
+- **⚠️ The graded arm's calibration gain is real but weaker, and the pilot oversold it.**
+  Mean |variance ratio − 1| falls **0.2928 → 0.1796**, a **39%** cut rather than the pilot's
+  59%, and the star tier lands at **0.7757** rather than the pilot's near-exact 0.988.
 
 **Posterior predictive checks** (test split, selected variant):
 
-- **Starter share in OT** — observed: top-5 ordered players take **0.5882** of team
-  minutes in regulation and **0.6314** in OT (+4.3 pp). The composition simulates
-  **0.6034** → **0.6446** — it reproduces the shift (+4.1 pp) with a +1.5 pp level
-  overshoot; the independent comparator compresses the shift (0.5973 → 0.6346).
-- **Joint per-team-game NLL** (plug-in, non-bijection caveat) — composition **33.51**
-  against independent **38.83** on test. Contrast, not a headline.
+| tier | shared ρ | graded ρ |
+|---|---|---|
+| q1 fringe | **1.3466** | **1.0845** |
+| q2 | 0.8089 | 0.7687 |
+| q3 | 0.7691 | 0.8217 |
+| q4 star | **0.5973** | **0.7757** |
+| mean \|ratio − 1\| | **0.2928** | **0.1796** |
 
-**OT tail** — fit on 30,626 regular-season training games: p_any = **0.0608**,
-p_more = **0.1408**. Held out on 4,920 games (2022-23 → 2025-26): predicted
-**256.9** / 36.2 / 5.9 games at 1/2/3+ OT against observed **222** / 30 / 0 — the
-two-parameter form holds but overpredicts OT by ~16% on recent seasons, a mild era
-decline in OT rate. Fine for a game-length draw; one more entry for the season-effects
-ledger in `docs/predictions-plan.md`.
+- The two extremes still improve substantially — fringe 1.35 → 1.08 and star 0.60 → 0.78 —
+  and **q2 still gets slightly worse** (0.809 → 0.769), which is the same structural point
+  the pilot recorded: the fitted ρ is the dispersion of a **sequential step** while the
+  ratio is measured on a player's **marginal** minutes, and because the order is prior-share
+  descending, a low-share player breaks his stick last and inherits the accumulated
+  remainder variation from everyone ahead of him. Grading step dispersion does not map
+  one-to-one onto marginal variance by tier.
+- **Now three of four tiers sit below 1**, where the pilot had two. The model is
+  systematically a little over-dispersed in aggregate at full window — worth a look before
+  the simulator consumes it, and a better-posed target than chasing q2 specifically.
+- **Starter share in OT** — observed: top-5 ordered players take **0.5882** of team minutes
+  in regulation and **0.6314** in OT (+4.3 pp). The composition simulates **0.5998** →
+  **0.6464**, reproducing the shift (+4.7 pp) with a +1.2 pp level overshoot; the
+  independent comparator compresses it (0.5973 → 0.6346).
+- **Joint per-team-game NLL** (plug-in, non-bijection caveat) — composition **33.614**
+  against independent **38.828** on test. Contrast, not a headline.
 
-**Gate E (full window) is open but not taken.** Measured cost is 5.96 ms/row at
-select iters, which extrapolates the 736k-row full-window sweep to ~10–12 h — inside
-the 6–16 h envelope `docs/predictions-plan.md` costed. Recommended order now that the
-graded ρ has landed: Gate E next, then wiring `sample_game_length` + the composition
-simulator into the season simulator when that exists.
+**OT tail** — unchanged, as predicted: `fit_ot_tail` receives 1996-97 → 2021-22 in both
+windows. Fit on 30,626 regular-season training games: p_any = **0.0608**, p_more =
+**0.1408**. Held out on 4,920 games: predicted **256.9** / 36.2 / 5.9 games at 1/2/3+ OT
+against observed **222** / 30 / 0 — the two-parameter form holds but overpredicts OT by
+~16% on recent seasons, a mild era decline in OT rate. `sample_game_length` is the
+simulator's game-length draw and carries that caveat with it.
 
-Still open after the graded arm:
+### The fallback order in Gate A was mis-prioritised, and the diagnostics say so
 
-- **q1 fringe remains 1.21 — under-dispersed at the bottom**, and q2 is now 0.84.
-  The step-vs-marginal distinction above says a finer or differently-placed binning
-  will not straightforwardly fix this; the honest next probe is whether the *ordering*
-  should put low-share players first, since sequence position and dispersion are
-  entangled by construction.
-- **One ρ per bin is still constant within a bin.** A smooth function of prior share
-  (or of position in the stick) is the obvious generalization, and cheap — but bins
-  were chosen deliberately because the pilot measured a pattern, not a shape, and
-  4 bins × ~6,450 rows is a lot of data per parameter.
+The gate's abort message lists the fallbacks as "cut `binomial` from the ladder, shorten
+select chains, subsample train team-games". **`binomial` is the *cheapest* arm** — 191.8 min
+of the sweep's 1,251.8, or **15.3%** — so cutting it saves the least of any arm while
+silently degrading five audited claims to `no-such-row` skips and removing the result that
+dispersion is load-bearing. The expensive arm is `betabinom` at **506.3 min (40.4%)**, with
+`betabinom_ot` at 21.4% and `betabinom_ot_graded` at 22.9%.
+
+The recorded order came from Gate A's own equal-cost-per-variant assumption, which the
+diagnostics refute. **`betabinom_ot` is the one arm that must never be cut**: `run()` reads
+`models["betabinom_ot"]["test"].rho` after the whole sweep and before any CSV is written, so
+losing it costs the entire run at the last step, and it is the only shared-ρ twin the
+graded-vs-shared contrast can be made against. The honest fallback order is: shorten select
+chains first, then subsample train team-games, and cut arms last.
+
+### Operational notes from the full-window run
+
+- **Each arm checkpoints as it completes** — its metric row, both diagnostics, and the
+  pickled `alpha`/`beta`/`rho` draws plus scaler — to `outputs/checkpoints/stan_composition/`.
+  `run()` writes its six CSVs only at the very end, so without this a crash at hour 20 loses
+  everything; with it the PPC / joint-NLL / OT-tail tail can be re-driven from the pickles in
+  minutes. `FITTED_VARIANTS` is also ordered decision-relevant-first, so the graded arm and
+  its shared-ρ twin land in the first third of the run rather than the last.
+- **Memory was never the constraint, and the reason is worth recording.** The parent
+  process's RSS *falls* to ~70 MB during each fit: it blocks on the cmdstan child processes,
+  which read their data from a JSON file, so macOS pages out the ~2.5 GB of frames it is not
+  touching. That reads alarmingly like a leak on `ps` and is the opposite — it is the OS
+  reclaiming idle pages, and they page back in when the fit returns.

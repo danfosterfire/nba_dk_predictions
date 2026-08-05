@@ -28,7 +28,8 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from src.data.preprocess import compute_dk_pts
+from src.data.preprocess import (FIT_WINDOWS, FULL_WINDOW, TRAIN_VAL_WINDOW,
+                                 compute_dk_pts, fit_window, held_out_seasons)
 
 # The linear part of DraftKings NBA scoring.
 DK_WEIGHTS: dict[str, float] = {
@@ -328,9 +329,30 @@ def bonus_calibration(targets: pd.DataFrame,
     if BONUS_OVERDISPERSION not in grid:
         grid = sorted(grid + [BONUS_OVERDISPERSION])
     game_grid = list(BONUS_GAME_GRID if game_grid is None else game_grid)
-    season, game = bonus_frames(targets, min_season_minutes)
 
+    out = []
+    for window in FIT_WINDOWS:
+        rows = _calibration_window(fit_window(targets, window), min_season_minutes,
+                                   grid, game_grid, n_samples, seed)
+        frame = pd.DataFrame(rows)
+        frame.insert(0, "fit_window", window)
+        out.append(frame)
+    return pd.concat(out, ignore_index=True)
+
+
+def _calibration_window(targets: pd.DataFrame, min_season_minutes: float,
+                        grid: list[float], game_grid: list[float],
+                        n_samples: int, seed: int) -> list[dict]:
+    """Both units' grids plus their fitted optima, on one window's rows.
+
+    Split out of `bonus_calibration` when the fit window became a second axis. The
+    overdispersion is a **simulator input** — the variance of the shared per-game Gamma
+    frailty `expected_bonus` draws — so fitting it on every season would calibrate the
+    bonus on the seasons the simulator is later scored against. Nothing here is a fit in
+    the train/test sense, which is exactly why no split guard would have caught it.
+    """
     rows = []
+    season, game = bonus_frames(targets, min_season_minutes)
     for od in grid:
         rows += calibration_rows(season, "player_season", "mpg", BONUS_MPG_BUCKETS,
                                  od, n_samples, seed)
@@ -341,7 +363,7 @@ def bonus_calibration(targets: pd.DataFrame,
         fitted = zero_bias_overdispersion(rows, unit)
         if fitted is not None:
             rows.append(fitted)
-    return pd.DataFrame(rows)
+    return rows
 
 
 def expected_dk_pts(minutes: np.ndarray, rates_per36: pd.DataFrame,
@@ -433,7 +455,8 @@ def run(cfg: dict) -> Path:
 
     show = ["unit", "bucket", "overdispersion", "n", "realized_mean_bonus",
             "expected_mean_bonus", "bias", "relative_bias"]
-    allrows = cal[(cal["analysis"] == "calibration") & (cal["bucket"] == "all")]
+    allrows = cal[(cal["analysis"] == "calibration") & (cal["bucket"] == "all")
+                  & (cal["fit_window"] == FULL_WINDOW)]
     print(f"\nBonus calibration — E[bonus] against realized, dk_pts/game "
           f"(player-seasons with >= "
           f"{b_cfg.get('min_season_minutes', BONUS_MIN_SEASON_MINUTES):g} season minutes):")
@@ -457,7 +480,8 @@ def run(cfg: dict) -> Path:
     # The aggregate bias is a *sum* over buckets, so it can be ~0 while every bucket is
     # wrong in an ordered way. That is exactly what happens, which is why the bucket break
     # is printed rather than filed.
-    buckets = cal[(cal["analysis"] == "calibration") & (cal["bucket"] != "all")]
+    buckets = cal[(cal["analysis"] == "calibration") & (cal["bucket"] != "all")
+                  & (cal["fit_window"] == FULL_WINDOW)]
     order = [f"{BONUS_MPG_BUCKETS[i]:g}-{BONUS_MPG_BUCKETS[i + 1]:g}"
              for i in range(len(BONUS_MPG_BUCKETS) - 1)]
     for unit in ("player_season", "player_game"):
@@ -478,7 +502,7 @@ def run(cfg: dict) -> Path:
               " — the bucket errors cancel rather than being small.\n  One scalar frailty "
               "cannot absorb minutes variation whose RELATIVE size differs by bucket.")
 
-    fitted = cal[cal["analysis"] == "fitted"]
+    fitted = cal[(cal["analysis"] == "fitted") & (cal["fit_window"] == FULL_WINDOW)]
     if len(fitted):
         print("\n  zero-bias overdispersion by unit: " + ", ".join(
             f"{r.unit} {r.overdispersion:.3f}" for r in fitted.itertuples()))
@@ -486,6 +510,21 @@ def run(cfg: dict) -> Path:
               "overdispersion\n  fitted on season-mean counts is also standing in for the "
               "minutes variation that\n  per-game counts already carry. Do not reuse one "
               "for the other.")
+
+    # ── the window the optimum is calibrated on ──────────────────────────────
+    # The overdispersion is a simulator INPUT, so measuring it over the held-out seasons
+    # would tune the bonus on the seasons the simulator is later scored against. Nothing
+    # here is a fit in the train/test sense, so no split guard covers it.
+    held = ", ".join(held_out_seasons(targets))
+    opt = cal[cal["analysis"] == "fitted"].pivot_table(
+        index="unit", columns="fit_window", values="overdispersion")
+    if set(FIT_WINDOWS).issubset(opt.columns):
+        opt = opt[FIT_WINDOWS]
+        opt["delta"] = opt[TRAIN_VAL_WINDOW] - opt[FULL_WINDOW]
+        print(f"\n  Fitted optimum by fit window ({held} held out of `{TRAIN_VAL_WINDOW}`) "
+              f"— the simulator draws at\n  the player-GAME unit, so `{TRAIN_VAL_WINDOW}` "
+              f"of that row is the one to ship:")
+        print(opt.to_string(float_format=lambda v: f"{v:.4f}"))
     print(f"\nBonus calibration: {len(cal):,} rows → {cal_dest}")
     return dest
 

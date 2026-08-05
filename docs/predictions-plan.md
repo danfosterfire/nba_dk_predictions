@@ -222,8 +222,8 @@ as binomial on those attempts. Fit collapsed, simulate expanded.
 | component | lag-1 ρ | shuffled null | excess | 10-game block variance inflation |
 |---|---|---|---|---|
 | **`min`** | 0.278 | −0.016 | **+0.294** | **2.43×** |
-| `fg3a` | 0.065 | −0.015 | +0.080 | 1.48× |
-| `fg2a` | 0.062 | −0.015 | +0.077 | 1.46× |
+| **`fg3a\|fga`** — shot **mix** | 0.085 | −0.016 | **+0.101** | **1.57×** |
+| `fga` | 0.045 | −0.016 | +0.061 | 1.38× |
 | `ast` | 0.024 | −0.016 | +0.039 | 1.22× |
 | `fta` | 0.015 | −0.016 | +0.031 | 1.18× |
 | `reb` | 0.014 | −0.015 | +0.030 | 1.17× |
@@ -233,6 +233,15 @@ as binomial on those attempts. Fit collapsed, simulate expanded.
 | **`ftm\|fta`** | −0.014 | −0.026 | +0.012 | 1.10× |
 | **`fg2m\|fg2a`** | −0.015 | −0.018 | **+0.002** | **1.03×** |
 | **`fg3m\|fg3a`** | −0.019 | −0.017 | **−0.002** | **1.01×** |
+
+> ⚠️ **Refreshed 2026-08-03 for the shot-attempt basis, and the change is not cosmetic.**
+> The `fg3a` / `fg2a` count rows (0.065 / +0.080 / 1.48× and 0.062 / +0.077 / 1.46×) are
+> retired with the two-count basis. In their place `fga` reads +0.061 / 1.38× and the **shot
+> mix** `fg3a|fga` reads **+0.101 / 1.57×** — the largest non-minutes dependence in the
+> table, above the count it splits. So a "conversion head" is no longer necessarily a
+> shooting head: shot *selection* drifts within a season, shooting *accuracy* does not, and
+> the three shooting heads remain clean nulls at max |excess| 0.0122. Quoting one maximum
+> over all four conversion heads would report the drift as a hot hand and hide that.
 
 > ⚠️ **The whole table was refreshed 2026-07-31 against `serial_correlation.csv`, having
 > been partially stale.** It previously read `min` excess **+0.297** against a null of
@@ -320,7 +329,7 @@ must be made on those terms, not as "a better minutes model". The season head al
 R² 0.8572 against a no-fit floor of 0.8166, so the headroom being competed for is small.
 
 **Costs, with real numbers.** 731,863 played regular-season player-games against the season
-head's 9,048 rows — **81× the data**. The season spline fit took 752 s (linear: 168 s), so a
+head's 9,048 rows — **81× the data**. The season spline fit took 899 s (linear: 189 s), so a
 plain per-game beta-binomial GLM with no latent state is order **6–16 h**: tolerable, and it
 delivers per-game covariates and heterogeneous dispersion. Adding a **latent AR state per
 player-season** introduces ~500,000 latent variables, which HMC handles badly without
@@ -338,9 +347,10 @@ explicit lagged-observation term, **not** a free latent per game.
   redistribution model conditioned on who is out amplifies availability error into minutes
   error instead of averaging over it.
 
-### The team-game composition alternative — ✅ BUILT 2026-07-31, and it wins
+### The team-game composition alternative — ✅ SHIPPED, full window 2026-08-04
 
-> **See `docs/minutes-composition-plan.md` for the full pilot.** `make stan-composition`.
+> **See `docs/minutes-composition-plan.md` for the full result.** `make stan-composition`,
+> now part of `make stan`.
 > The costing below stands; the warning box that follows it is **resolved**, and by a form
 > neither option in it anticipated.
 >
@@ -348,14 +358,15 @@ explicit lagged-observation term, **not** a free latent per game.
 > binomial trials** with the per-player cap carried in the **trials** (`m_k = min(U, R_k)`,
 > the remaining capacity) rather than as a truncation. That gets **both** constraints:
 > the individual cap by construction, the team total by the deterministic last step.
-> Held out on 2024-25/2025-26, the selected variant scores **4.5078** minutes of CRPS
-> against the no-fit floor's 4.8194 and the independent per-player draw's **4.9140** —
+> Fitted on all 30 seasons and held out on 2024-25/2025-26, the selected variant scores
+> **4.5592** minutes of CRPS against the no-fit floor's 4.8576 and the independent
+> per-player draw's **4.9140** —
 > so it beats the incumbent on the incumbent's own marginal metric, which this plan
 > expected to be a wash, *and* the independent draw's mean team-sum error is **36.87**
 > minutes per team-game against the composition's exact zero.
 >
 > Two results worth carrying back here. **The pure decomposition fails**: the plain
-> binomial arm scores 4.9429 with PIT KS 0.1942, below the floor — the measured 4.65×
+> binomial arm scores 4.9732 with PIT KS 0.1948, below the floor — the measured 4.65×
 > game-level dispersion is not optional, exactly as the NB-vs-Poisson result on the count
 > heads. And **the offset is the floor**, so proportional redistribution comes for free
 > and `β` fits deviations from it — which makes "who absorbs the minutes when a starter
@@ -507,13 +518,13 @@ Neither substitutes for the other. Pinned by
 
 | quantity | max/min | trend %/season | trend R² | yoy sd % | verdict |
 |---|---|---|---|---|---|
-| **`fg3a`** | **2.97×** | **+4.07** | **0.93** | 6.53 | **trend + year effect** |
+| **`fg3a_pct`** — the shot **mix** | **2.64×** | **+3.58** | **0.93** | 6.19 | **trend + year effect** |
 | `fta` | 1.21× | −0.55 | 0.63 | 4.36 | year effect only |
 | `blk` | 1.14× | −0.14 | 0.12 | 3.70 | year effect only |
 | `ast` | 1.30× | +0.73 | 0.64 | 3.08 | year effect only |
 | `stl` | 1.18× | −0.08 | **0.03** | 3.03 | year effect only |
 | `tov` | 1.16× | −0.33 | 0.59 | 2.89 | year effect only |
-| `fg2a` | 1.32× | −0.87 | 0.86 | 2.42 | year effect only |
+| `fga` | 1.14× | +0.47 | 0.84 | 1.52 | year effect only |
 | `fg3m_pct` | 1.08× | +0.10 | 0.27 | 2.06 | year effect only |
 | `reb` | 1.11× | +0.25 | 0.59 | 1.48 | year effect only |
 | `fg2m_pct` | 1.20× | +0.61 | 0.84 | 1.46 | year effect only |
@@ -525,9 +536,17 @@ Neither substitutes for the other. Pinned by
 | `gp_share` [all] | 1.24× | −0.51 | 0.71 | 2.86 | year effect only |
 | `gp_share` [30+ mpg] | 1.21× | −0.49 | 0.74 | 2.84 | year effect only |
 
-**`fg3a` is the only quantity where a trend is worth extrapolating** (R² 0.93 at +4.07%/season)
-— and note its worst single year is −24.4%, the 1997-98 three-point line being moved back
-after three shortened seasons. **Everything else is shock**, `fta` and `stl` most starkly:
+**The three-point MIX is the only quantity where a trend is worth extrapolating** —
+`fg3a_pct`, the three-point share of attempts, at R² 0.93 and **+3.58%/season** — and note
+its worst single year is **−24.7%**, the 1997-98 three-point line being moved back
+after three shortened seasons.
+
+> ⚠️ **Refreshed 2026-08-04 for the shot-attempt basis, and the split is informative.** The
+> retired `fg3a` *count* row read 2.97× / **+4.07** / 0.93 / 6.53 and the retired `fg2a` row
+> 1.32× / −0.87 / 0.86 / 2.42. Modelling total attempts and the mix separates them: `fga`
+> drifts at only **+0.47%/season** over a 1.14× band, so essentially all of the three-point
+> climb is *which* shots are taken rather than how many. The trend R² is unchanged at 0.93,
+> so the "only extrapolable trend" verdict survives the basis change intact. **Everything else is shock**, `fta` and `stl` most starkly:
 `stl` has a trend R² of **0.03**, i.e. essentially no drift at all and 3% of pure
 year-to-year noise.
 
@@ -775,7 +794,7 @@ is caught here because selection never reads the test column. And the arm that *
 Every arm under-predicts the bonus by 12–19%, and **that level is mostly not the season
 term** — this composition draws the eleven heads independently given realized minutes, so it
 omits the positive cross-component dependence the bonus threshold needs (measured
-off-diagonals average +0.0121 across the eight counts). It is a standing argument for the
+off-diagonals average +0.0225 across the seven counts). It is a standing argument for the
 residual copula, not against a season term. The *ordering* tracks the bias story exactly.
 
 ### What to do, and what not to
@@ -812,7 +831,7 @@ player-seasons, held out on 2024-25/2025-26. Three results bind on everything be
 
 - **`carry_forward` — prior per-36 rate x actual minutes / 36, no fitting at all — scores
   held-out R² 0.82–0.94**, and the best of seven fitted variants beats it by only **+0.0019 to
-  +0.0228**. Every component head must be quoted against it; `beats_floor` is on every output
+  +0.0203**. Every component head must be quoted against it; `beats_floor` is on every output
   row. Combined with `oracle_gp` 221.3 vs `oracle_rate` 302.7 on the season total, this says
   remaining value is in **availability and the joint structure**, not in richer rate features.
 - **The specification is scale, not curvature**: `log E[rate] = β·log(prior rate)`. Linear-in-
@@ -826,7 +845,7 @@ player-seasons, held out on 2024-25/2025-26. Three results bind on everything be
   raw spec.
 - **`ftm|fta` is the one head nothing beats** — free-throw percentage is pure player skill, so
   an empirical-Bayes shrink of the prior is already optimal. The conversion side is worth
-  ~1–2% of its NLL at most (`fg2m|fg2a` +0.061, `fg3m|fg3a` +0.037).
+  ~1–2% of its NLL at most (`fg2m|fg2a` +0.072, `fg3m|fg3a` +0.032).
 
 > ⚠️ **The first version of this measurement was an artifact**, and the failure mode is worth
 > carrying: `sklearn`'s `PoissonRegressor` averages the deviance by the weight sum, so with
@@ -866,7 +885,7 @@ player-seasons, held out on 2024-25/2025-26. Three results bind on everything be
 > estimates, because the simulator needs the former and the fit only sees the latter.
 >
 > **The eleven component heads** are built too — 74 fits, **0 divergences**, max R̂ 1.0118,
-> 208.6 min of compute. 10,194 player-seasons, 9,403 train / 791 test, validation on 2022-23
+> 305.0 min of compute. 10,194 player-seasons, 9,403 train / 791 test, validation on 2022-23
 > and 2023-24. Three findings, two of which **overturn what the sklearn run above measured**:
 >
 > - **`log(own)` alone is not sufficient under a negative binomial.** The Poisson fit has
@@ -880,6 +899,13 @@ player-seasons, held out on 2024-25/2025-26. Three results bind on everything be
 > - **`linear` is worse than the sklearn run suggested** — held-out R² **−19.00** on `fg3a`
 >   and **−1.393** on `blk`, against 0.520/0.638. Linear-in-raw-rate inside `exp()` is not
 >   merely misspecified, it is unusable.
+> - **⭐ Adopting the shot-attempt basis (2026-08-04) retired the −19.00 case entirely.**
+>   `fg3a` is no longer a count head; `fga` replaces it and is the best-behaved count in the
+>   project — floor **0.9464**, the highest of the seven, selected at **0.9505**, and
+>   `log_own` already at **0.9501**. Where the wrong scale cost `fg3a` a catastrophic
+>   −19.00, it costs `fga` **0.9396**, i.e. 0.0068 R². A total is far less skewed than its
+>   three-point part. `blk` at −1.393 is now the only spectacular linear failure left, and
+>   the `fg3a` figures above are retained as the record of the basis that was retired.
 > - **`fta` now joins `ftm|fta` below its floor** (best fitted 0.8649 against 0.8673), so the
 >   whole free-throw family fails. Unlike `ftm|fta` there is no "pure player skill" argument
 >   for trips to the line, so this deserves a second look rather than acceptance.
@@ -900,7 +926,7 @@ when parameter blocks are distinct, so separate fits are not an approximation �
 identical posterior. Full argument in `CLAUDE.md`; the short version is that `megamodel.stan`
 shared no parameter between any two heads, so its joint fit bought nothing and cost 99% of the
 data. Correlation for the simulator comes from (1) a shared `min` draw, then (2) a residual
-copula if needed — measured off-diagonals average **+0.0121** across the eight counts, max **+0.1422**. Go joint only for a
+copula if needed — measured off-diagonals average **+0.0225** across the seven counts, max **+0.1329**. Go joint only for a
 correlated multivariate player effect, and only after measuring it is worth it (the player random
 effect on rates was largely in-sample leakage). Reparameterize the 3PA/2PA substitution as
 `fga` count × `fg3a | fga` share rather than coupling two Poissons — ✅ **measured 2026-07-30
@@ -1014,7 +1040,7 @@ before shipping; given this repo's record on ceilings, a settled null is the lik
 - ~~**Whether minutes should be fitted per-game at all is open and deliberately deferred**~~
   — **partly answered 2026-07-31.** Of the three options costed under "Fitting strategy",
   the **team-game composition model is built and wins** (`make stan-composition`,
-  `docs/minutes-composition-plan.md`): −0.406 minutes of held-out CRPS against the
+  `docs/minutes-composition-plan.md`): −0.3548 minutes of held-out CRPS against the
   independent per-player draw, and both the individual cap and the team total exact by
   construction. It was an afternoon rather than days, because the season collapse was never
   what made it expensive — the numerics were.

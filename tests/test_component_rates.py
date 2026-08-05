@@ -6,6 +6,7 @@ from src.models.component_rates import (
     ALPHA_VARIANTS,
     COUNT_HEADS,
     CONVERSION_HEADS,
+    DERIVED_COUNTS,
     MIN_PRIOR_MINUTES,
     POISSON_ALPHA,
     _r2,
@@ -46,8 +47,17 @@ def _games(n_players: int = 60, seed: int = 0) -> pd.DataFrame:
                        "played": 1}
                 for c in COUNT_HEADS:
                     row[c] = float(rng.poisson(level * minutes / 12.0))
+                # Walk the conversion chain in order, materializing derived trials as it
+                # goes — under the shot-attempt basis `fg3a` is drawn as a share of `fga`
+                # and `fg2a` is the remainder, so neither is a count head. Written
+                # basis-agnostically so the fixture does not have to be rewritten again.
                 for made, att in CONVERSION_HEADS:
+                    if att not in row and att in DERIVED_COUNTS:
+                        total, part = DERIVED_COUNTS[att]
+                        row[att] = max(row[total] - row[part], 0.0)
                     row[made] = float(rng.binomial(int(row[att]), 0.45))
+                for name, (total, part) in DERIVED_COUNTS.items():
+                    row.setdefault(name, max(row[total] - row[part], 0.0))
                 rows.append(row)
     return pd.DataFrame(rows)
 
@@ -185,6 +195,40 @@ def test_walk_forward_pca_never_sees_the_target_season(tmp_path):
     early = [i for i in early if int(i[1][:4]) <= last]
     assert len(early) > 0
     assert np.allclose(a.loc[early].to_numpy(), b.loc[early].to_numpy())
+
+
+def test_walk_forward_pca_imputes_from_history_only(tmp_path):
+    """The fill median is a fitted quantity too, and it used to come from every season.
+
+    The test above cannot see this: its matrix has no missing values, so the imputation
+    median is never consulted and poisoning the future changes nothing. Put one NaN in an
+    EARLY season's row and the leak becomes reachable — under a whole-matrix median, a
+    later season's values move that row's PC score backwards in time.
+    """
+    n_players = 60
+    games = _games(n_players)
+    design = build_design(games, SEASONS, raw_dir=_write_bios(tmp_path, n_players))
+    design["season_start_year"] = design["season"].str.slice(0, 4).astype(int)
+    matrix = _matrix(SEASONS, n_players)
+    cols = [c for c in matrix.columns if c.startswith("bas_")]
+    first, last = matrix["season_start_year"].min(), matrix["season_start_year"].max()
+
+    holed = matrix.copy()
+    early_rows = holed.index[holed["season_start_year"] == first][:5]
+    holed.loc[early_rows, cols[0]] = np.nan
+
+    poisoned = holed.copy()
+    poisoned.loc[poisoned["season_start_year"] == last, cols] += 500.0
+
+    a, _ = walk_forward_pca(design, holed, n_components=4)
+    b, _ = walk_forward_pca(design, poisoned, n_components=4)
+
+    key = ["player_id", "season"]
+    x = a[a["season_start_year"] <= last].set_index(key)["pc1"].dropna()
+    y = b[b["season_start_year"] <= last].set_index(key)["pc1"].dropna()
+    shared = [i for i in x.index.intersection(y.index) if int(i[1][:4]) <= last]
+    assert len(shared) > 0
+    assert np.allclose(x.loc[shared].to_numpy(), y.loc[shared].to_numpy())
 
 
 def test_matrix_feature_cols_excludes_keys_and_volume():

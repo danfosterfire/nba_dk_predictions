@@ -10,7 +10,7 @@ same identity holds for the binomial conversion heads with a hypergeometric fact
 ## The benchmark this module exists to enforce
 
 **`carry_forward`: prior per-36 rate × actual minutes / 36. No fitting at all.** It scores
-held-out R² of **0.82–0.94** across the eight count heads, and the best fitted model here
+held-out R² of **0.82–0.95** across the seven count heads, and the best fitted model here
 beats it by only +0.001 to +0.019. Any proposed component head must be quoted against it —
 a head that does not clear it is not a model, it is a worse version of arithmetic. This is
 the sharpest available statement of the project's "attempts persist" finding (`fg3a` 0.908
@@ -59,8 +59,27 @@ from src.eda.availability import load_ages, with_lags
 from src.models.availability import _neg_loglik as beta_binomial_nll
 from src.models.availability import fit_dispersion
 
-COUNT_HEADS = ["fg2a", "fg3a", "fta", "reb", "ast", "stl", "blk", "tov"]
-CONVERSION_HEADS = [("fg2m", "fg2a"), ("fg3m", "fg3a"), ("ftm", "fta")]
+# The shot-attempt basis: total attempts as a COUNT and the three-point mix as a SHARE,
+# rather than two independent attempt counts. A three substitutes for a two, so the two
+# counts are not independent, and this basis enforces the substitution by construction
+# instead of leaving it for the residual copula. Adopted 2026-08-03 on the Gate 0
+# measurement in `docs/shot-attempt-basis-plan.md`: -0.493549 nats per player-season on
+# test against the canonical pair at each head's own selected variant, and -0.390814 at
+# the two bases' NO-FIT FLOORS, i.e. the coordinate change alone beats the canonical
+# basis's best fitted configuration.
+#
+# The head count is still ELEVEN. `fg2a` stops being a head and becomes DERIVED
+# (`fga - fg3a`), exactly as `pts` already is — it is still needed as the *trials* for
+# `fg2m | fg2a`, which is why `season_totals` carries it explicitly below.
+COUNT_HEADS = ["fga", "fta", "reb", "ast", "stl", "blk", "tov"]
+# Ordered as the generative chain reaches them: `fga` is drawn, then the share splits it,
+# then `fg2a` falls out, then the makes are drawn on their attempts.
+CONVERSION_HEADS = [("fg3a", "fga"), ("fg2m", "fg2a"), ("fg3m", "fg3a"), ("ftm", "fta")]
+
+# name -> (total, part), with value = total - part. Derived counts are not heads and are
+# never fitted; they exist because a later head needs them as trials. `_draw_components`
+# materializes them in chain order at draw time.
+DERIVED_COUNTS = {"fg2a": ("fga", "fg3a")}
 PER36 = 36.0
 
 # See the module docstring: this is *not* a tuning choice, it is the value at which the
@@ -81,15 +100,43 @@ BIO_COLS = ["age", "age_sq", "career_year"]
 
 # ── Design ────────────────────────────────────────────────────────────────────
 
+def volume_columns() -> list[str]:
+    """Every column that needs a season total: the count heads, plus every make and every
+    set of trials a conversion head references.
+
+    The union matters because **an attempted column need not be a count head**. Under the
+    shot-attempt basis `fg2a` is derived rather than fitted, yet `fg2m | fg2a` still needs
+    it as trials, and `fg3a` is a *make* (of `fga`) that is simultaneously the trials for
+    `fg3m | fg3a`. Deriving the list from both head lists rather than from `COUNT_HEADS`
+    alone is what makes the module basis-agnostic — in the two-count basis every attempted
+    column is already a count head, so this is exactly the old behaviour there.
+    """
+    made = [m for m, _ in CONVERSION_HEADS]
+    attempted = [a for _, a in CONVERSION_HEADS]
+    return list(dict.fromkeys(COUNT_HEADS + made + attempted))
+
+
+def rate_columns() -> list[str]:
+    """Columns that get a per-36 rate — the count heads and every trials column.
+
+    `build_design` asks for `{attempted}_p36_lag1` as each conversion head's volume
+    feature, so a trials column that is not a count head still needs its rate.
+    """
+    return list(dict.fromkeys(COUNT_HEADS + [a for _, a in CONVERSION_HEADS]))
+
+
 def season_totals(targets: pd.DataFrame) -> pd.DataFrame:
     """Collapse player-games to player-seasons: totals, per-36 rates, conversion pcts."""
-    made = [m for m, _ in CONVERSION_HEADS]
-    agg = {c: "sum" for c in COUNT_HEADS + made}
+    agg = {c: "sum" for c in volume_columns()}
     agg |= {"min": "sum", "played": "sum"}
     out = (targets.groupby(["player_id", "season"], as_index=False).agg(agg)
            .rename(columns={"min": "total_minutes", "played": "gp"}))
-    for c in COUNT_HEADS:
+    for c in rate_columns():
         out[f"{c}_p36"] = out[c] / out["total_minutes"].replace(0, np.nan) * PER36
+    # Under the shot-attempt basis this makes `fg3a_pct` the three-point *share of
+    # attempts* (`fg3a / fga`), which is the head's own rate — NOT three-point shooting
+    # percentage, which remains `fg3m_pct` (`fg3m / fg3a`). Two different columns, and the
+    # naming convention `conversion_variants` uses resolves to the right one for each.
     for m, a in CONVERSION_HEADS:
         out[f"{m}_pct"] = out[m] / out[a].replace(0, np.nan)
     out["mpg"] = out["total_minutes"] / out["gp"].replace(0, np.nan)
@@ -105,11 +152,9 @@ def build_design(targets: pd.DataFrame, seasons: list[str],
     since minutes are the exposure.
     """
     s = season_totals(targets)
-    lag_cols = ([f"{c}_p36" for c in COUNT_HEADS]
+    lag_cols = ([f"{c}_p36" for c in rate_columns()]
                 + [f"{m}_pct" for m, _ in CONVERSION_HEADS]
-                + [f"{a}_p36" for _, a in CONVERSION_HEADS]
-                + [m for m, _ in CONVERSION_HEADS]
-                + [a for _, a in CONVERSION_HEADS]
+                + volume_columns()
                 + ["mpg", "total_minutes", "gp"])
     lag_cols = list(dict.fromkeys(lag_cols))
     d = with_lags(s, seasons, lag_cols, max_lag=1)
@@ -278,7 +323,6 @@ def walk_forward_pca(design: pd.DataFrame, matrix: pd.DataFrame,
     m = matrix[["player_id", "season_start_year"] + feats].copy()
     m[feats] = m[feats].apply(pd.to_numeric, errors="coerce")
     m = m.dropna(subset=["season_start_year"])
-    m[feats] = m[feats].fillna(m[feats].median())
 
     design = design.copy()
     design["prior_start_year"] = design["season_start_year"] - 1
@@ -294,10 +338,29 @@ def walk_forward_pca(design: pd.DataFrame, matrix: pd.DataFrame,
             how="left", suffixes=("", "_m"))
         if len(history) <= n_components or rows[feats].isna().all(axis=None):
             continue
+
+        # The imputation median is a FITTED QUANTITY, exactly like the scaler and the
+        # PCA, and it belongs inside this loop for the same reason. It used to be taken
+        # once over the whole matrix before the loop — so a 1998 row's missing column was
+        # filled from a median that had seen 2025. Small in effect (the PCA arm is a
+        # measured +/-0.003 null) and precisely the class of error this function's
+        # docstring exists to warn about, which is why it is fixed rather than noted.
+        # A column with no history at all leaves a NaN median; standardizing a constant
+        # gives 0 in sklearn, so the 0.0 fallback contributes nothing rather than
+        # dropping the row through `keep`.
+        medians = history[feats].median()
+        history = history.assign(**{c: history[c].fillna(medians[c]).fillna(0.0)
+                                    for c in feats})
         scaler = StandardScaler().fit(history[feats].to_numpy(dtype=float))
         pca = PCA(n_components=n_components, random_state=0).fit(
             scaler.transform(history[feats].to_numpy(dtype=float)))
-        X = rows[feats].to_numpy(dtype=float)
+
+        # Only rows that actually matched a prior-season row are imputed. An unmatched
+        # row must stay NaN so `keep` drops it — filling it would invent a whole
+        # league-median stat line for a player who has none.
+        matched = rows["season_start_year_m"].notna().to_numpy()
+        filled = rows[feats].fillna(medians).fillna(0.0).to_numpy(dtype=float)
+        X = np.where(matched[:, None], filled, np.nan)
         keep = ~np.isnan(X).any(axis=1)
         scores = np.full((len(rows), n_components), np.nan)
         if keep.any():
@@ -629,7 +692,7 @@ def run(cfg: dict) -> dict[str, Path]:
               f"{', '.join(f'{h} {v:+.4f}' for h, v in best.items())}\n")
 
     # A single variant losing to the floor is often a real finding — `linear` loses on
-    # six of eight count heads because linear-in-raw-rate inside exp() is misspecified.
+    # most count heads because linear-in-raw-rate inside exp() is misspecified.
     # What would signal the regularization trap is the *best* variant for a head losing.
     fitted = table[table["variant"] != "carry_forward"]
     beaten = sorted(set(table["head"]) - set(fitted.loc[fitted["beats_floor"], "head"]))

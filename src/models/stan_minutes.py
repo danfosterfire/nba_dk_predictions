@@ -71,6 +71,8 @@ import pandas as pd
 import yaml
 from sklearn.preprocessing import SplineTransformer
 
+from src.data.preprocess import (FULL_WINDOW, TRAIN_VAL_WINDOW, fit_window,
+                                 held_out_seasons)
 from src.eda.availability import with_lags
 from src.models.availability import (EPS, FEATURE_COLS, RHO_MAX, RHO_MIN,
                                      fit_dispersion, split_seasons)
@@ -362,11 +364,12 @@ class FloorMinutes:
 # ── Game-level dispersion — a different quantity from the fitted rho ──────────
 
 def game_level_dispersion(targets: pd.DataFrame, lengths: pd.DataFrame,
-                          min_games: int = 20) -> dict:
+                          min_games: int = 20,
+                          window: str = FULL_WINDOW) -> dict:
     """Within-player-season, per-game overdispersion of `min` against its own mean.
 
     The season-collapsed fit cannot see this: a shared season multiplier passes its full
-    relative overdispersion into the season total, while iid per-game noise is diluted by
+    relative overdispersion into the season total, while iid game noise is diluted by
     ~1/G. The simulator draws minutes **per game**, so it needs this number and not the
     fitted season-level `rho` — using the season one would make every simulated game far
     too close to the player's average.
@@ -374,11 +377,17 @@ def game_level_dispersion(targets: pd.DataFrame, lengths: pd.DataFrame,
     Measured in-sample against each player-season's own realized share, which biases the
     estimate slightly *downward* (the mean is fitted from the same rows). It is reported
     as a floor on the game-level dispersion for that reason.
+
+    `window` is the second in-sample question and a different one: this is a **simulator
+    input**, so measuring it over every season would calibrate it on the seasons the
+    simulator is later scored against. `train_val` is the one to consume; `full` ships
+    beside it so the difference is measured rather than assumed.
     """
     keys = ["season", "season_type", "game_id"]
     played = targets[(targets["season_type"] == "regular") & (targets["played"] == 1)]
     merged = played.merge(lengths[keys + ["game_length"]], on=keys, how="inner")
     merged = merged[merged["game_length"] > 0]
+    merged = fit_window(merged, window)
 
     grp = merged.groupby(["player_id", "season"])
     merged = merged.assign(n_games=grp["min"].transform("size"),
@@ -392,7 +401,7 @@ def game_level_dispersion(targets: pd.DataFrame, lengths: pd.DataFrame,
     y = np.minimum(np.rint(merged["min"].to_numpy(float)).astype(int), n)
     rho = fit_dispersion(y, n, mu)
     median_n = float(np.median(n))
-    return {"metric": "game_level_rho", "rho": float(rho),
+    return {"metric": "game_level_rho", "fit_window": window, "rho": float(rho),
             "implied_overdispersion": float(1 + (median_n - 1) * rho),
             "n_player_games": int(len(merged)),
             "note": "in-sample against each player-season's own mean; a floor"}
@@ -528,7 +537,10 @@ def run(cfg: dict) -> dict[str, Path]:
     targets = pd.read_parquet(Path(cfg["data"]["features_dir"])
                               / "component_targets.parquet")
     lengths = pd.read_parquet(Path(cfg["data"]["features_dir"]) / "game_length.parquet")
-    game_rho = game_level_dispersion(targets, lengths)
+    game_rhos = [game_level_dispersion(targets, lengths, window=w)
+                 for w in (FULL_WINDOW, TRAIN_VAL_WINDOW)]
+    game_rho = game_rhos[0]
+    simulator_rho = game_rhos[1]
     season_rho = float(chosen["test_rho"])
     print(f"\nTwo dispersions, and they are different quantities:")
     print(f"  season-level rho (what this fit estimates): {season_rho:.5f}")
@@ -539,13 +551,27 @@ def run(cfg: dict) -> dict[str, Path]:
           "one:\n  iid game noise is diluted by ~1/G while a shared season multiplier "
           "passes through in full.\n  Drawing per-game minutes from the season-level rho "
           "would make every simulated game far\n  too close to the player's average.")
+    held = ", ".join(held_out_seasons(targets))
+    print(f"\n  Both fit windows, because this is a simulator INPUT and calibrating it on "
+          f"the seasons the\n  simulator is scored against is leakage the split cannot "
+          f"catch. Holding out {held}:")
+    print(f"    {FULL_WINDOW:9s} rho {game_rho['rho']:.5f} -> "
+          f"{game_rho['implied_overdispersion']:.2f}x over "
+          f"{game_rho['n_player_games']:,} player-games")
+    print(f"    {TRAIN_VAL_WINDOW:9s} rho {simulator_rho['rho']:.5f} -> "
+          f"{simulator_rho['implied_overdispersion']:.2f}x over "
+          f"{simulator_rho['n_player_games']:,} player-games   <- the one to consume")
 
     diag = diagnostics_frame(diagnostics)
     artifacts = {
         "metrics": (table, out_dir / "stan_minutes_metrics.csv"),
         "diagnostics": (diag, out_dir / "stan_minutes_diagnostics.csv"),
-        "dispersion": (pd.DataFrame([game_rho, {"metric": "season_level_rho",
-                                                "rho": season_rho}]),
+        # The season-level row is tagged `train_val` because that is genuinely the window
+        # it was fitted on: the selected variant's test-side fit trains on `full_train`,
+        # which is train + validation. The game-level rows carry both windows.
+        "dispersion": (pd.DataFrame(game_rhos + [{"metric": "season_level_rho",
+                                                  "fit_window": TRAIN_VAL_WINDOW,
+                                                  "rho": season_rho}]),
                        out_dir / "stan_minutes_dispersion.csv"),
     }
     paths = {}

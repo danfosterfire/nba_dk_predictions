@@ -1,17 +1,19 @@
 # Shot-Attempt Basis Plan: `fga` × `fg3a | fga` instead of two independent counts
 
-A planning doc in the house pattern — the measurement is done and recorded here in full;
-the adoption is specified and **not yet taken**. It closes the re-measurement that
-`README.md`'s *Measured but not adopted* section names as the blocking step for the first
-of its two rows.
+A planning doc in the house pattern — direction first, results filled in as they land.
+**Gate 0 measured it (2026-08-03) and it was adopted the same day**, so this doc carries
+both the measurement that justified the change and the record of what changing it actually
+did. `component_rates.COUNT_HEADS` is now `fga, fta, reb, ast, stl, blk, tov` and
+`CONVERSION_HEADS` is `(fg3a, fga), (fg2m, fg2a), (fg3m, fg3a), (ftm, fta)`.
 
 ## The problem
 
-`component_rates.COUNT_HEADS` fits `fg2a` and `fg3a` as two **independent** negative
-binomial counts. They are not independent: a three-point attempt *substitutes* for a two.
+`component_rates.COUNT_HEADS` **used to fit** `fg2a` and `fg3a` as two **independent**
+negative binomial counts. They are not independent: a three-point attempt *substitutes*
+for a two.
 That coupling is the single largest structural off-diagonal the residual copula would
 otherwise have to carry — `make residual-correlation` measures it at **−0.1248**
-minutes-conditioned, against an off-diagonal mean of **+0.0071** across the eleven heads.
+minutes-conditioned, against an off-diagonal mean of **+0.0070** across the eleven heads.
 
 Coupling two count heads would break the exact posterior factorization the whole
 architecture rests on (`CLAUDE.md`, "fit the Stan heads SEPARATELY"). Reparameterizing does
@@ -51,11 +53,21 @@ Two smaller defects came with it. Arm B was pinned at one variant and never swep
 comparison was "arm A's best-but-one against arm B's first guess". And the share head's
 own-rate column was assembled by hand rather than through `conversion_variants`, because
 that function derives the column by name convention — `f"{made}_pct_lag1"`, which for this
-head resolves to `fg3a_pct_lag1`, three-point **shooting percentage**, not the attempt-mix
-share. The column does not exist, so the call would raise; the hazard is that someone adds
-it, at which point the head silently fits on shooting accuracy and its entire rationale is
-gone. `conversion_variants` now takes an explicit `own=` parameter and a test pins both arms
-of the behaviour.
+head resolves to `fg3a_pct_lag1`. In the two-count basis that column does not exist, so the
+call raises. `conversion_variants` now takes an explicit `own=` parameter and a test pins
+both arms of the behaviour.
+
+> ⚠️ **This doc originally claimed `fg3a_pct_lag1` would be "three-point shooting
+> percentage" and that adopting the basis would make the head silently fit on accuracy
+> instead of mix. Adoption falsified that, and the correction is worth keeping.** Under the
+> new head lists `season_totals` builds each conversion head's own rate as
+> `out[f"{m}_pct"] = out[m] / out[a]`, so with `("fg3a", "fga")` a head the generated column
+> is `fg3a_pct = fg3a / fga` — **the attempt mix, which is exactly right**. Shooting
+> percentage remains `fg3m_pct = fg3m / fg3a`, a different column. Verified on the rebuilt
+> design: `fg3a_pct` means **0.2686** (a 3PA share) against `fg3m_pct` **0.2922** (a 3P%).
+> So the naming convention generalizes after all, and `own=` is now belt-and-braces rather
+> than load-bearing — worth keeping for explicitness, but the hazard it was written against
+> is not real in the shipped basis.
 
 ## Gate 0 — the measurement
 
@@ -160,12 +172,13 @@ the remaining leverage is.
 treedepth-saturated iterations on the spline arms (≤0.6% of draws), which is the recorded
 B-spline conditioning cost and not a convergence problem.
 
-## What adoption requires — specified, not done
+## What adoption required — and what it did
 
-**Stop here for review.** Everything below is the design for the change; no fitting code has
-been repointed.
+Adopted 2026-08-03. Everything in this section was specified before the change and is now
+recorded with the outcome; where the specification was wrong, the correction is inline
+rather than edited away.
 
-### The head count stays eleven
+### The head count stays eleven — it did
 
 Counts become `fga, fta, reb, ast, stl, blk, tov` (**7**) and conversions become
 `fg3a|fga, fg2m|fg2a, fg3m|fg3a, ftm|fta` (**4**). `fg2a` stops being a head and becomes
@@ -176,45 +189,48 @@ is still reassembled from the same eight.
 This matters because `tests/test_residual_correlation.py` asserts `len(COMPONENTS) == 11`,
 and that assertion should keep passing rather than being edited.
 
-### The generic machinery mostly absorbs it
+### The generic machinery mostly absorbed it
 
 With `fga` in `COUNT_HEADS` and `("fg3a", "fga")` in `CONVERSION_HEADS`,
 `component_rates.build_design`'s five lag-column loops produce `fga_p36_lag1`, `fga_lag1`,
 `fg3a_pct_lag1` and `fg3a_lag1` for free, and `count_variants` / `conversion_variants` need
 no changes beyond the `own=` parameter already added.
 
-**One genuine gap.** `season_totals` builds its aggregation as
-`{c: "sum" for c in COUNT_HEADS + made}` — so with `fg2a` out of `COUNT_HEADS` it is no
-longer summed, yet it is still needed as the **trials** for `fg2m|fg2a`, and
-`out[f"{m}_pct"] = out[m] / out[a]` divides by it. `fg2a` has to be added explicitly, as a
-derived column rather than a head.
+**Two genuine gaps, one predicted and one not.** `season_totals` built its aggregation as
+`{c: "sum" for c in COUNT_HEADS + made}`, so with `fg2a` out of `COUNT_HEADS` it stopped
+being summed even though it is still the **trials** for `fg2m|fg2a`. That one was foreseen.
+The second was not: the per-36 loop ran over `COUNT_HEADS` alone, and `build_design` asks
+for `{attempted}_p36_lag1` as every conversion head's volume feature — so `fg2a_p36` and
+`fg3a_p36` also stopped existing, and two of the four conversion heads would have lost their
+volume column.
 
-Note also that `fg3a_pct_lag1` — the column the naming convention would generate — becomes
-*real* under the new head list, since `("fg3a", "fga")` is a conversion head. That is
-precisely the condition under which the `own=` bug becomes silent instead of loud, which is
-why it was fixed before this measurement rather than after.
+Both are fixed by deriving the lists from *both* head lists rather than from `COUNT_HEADS`:
+`volume_columns()` is `COUNT_HEADS + made + attempted` and `rate_columns()` is
+`COUNT_HEADS + attempted`. **In the two-count basis every attempted column is already a
+count head, so both reduce to the old behaviour exactly** — which is what makes the change
+safe to verify against the retired basis before flipping the lists.
 
-### Three sites that would fail silently
+### Three sites that would fail silently — all three now raise
 
-All three degrade rather than raise, which is the failure mode this repo has been bitten by
-before:
+All three degraded rather than raised, which is the failure mode this repo has been bitten
+by before. All three were closed **before** the head lists were flipped:
 
-1. **`season_terms.py:822-823`** — the eleven-head completeness gate does
-   `if any((head, arm) not in models ...): continue`. A missing head drops the whole arm
-   from the season-total table with no message, so a half-migrated head list reads as "that
-   arm was not run".
-2. **`selected_specs` + `LEAGUE_SERIES.get(...) → None → continue`** — a stale
-   `stan_component_metrics.csv` (one written before the migration) makes `specs.get("fga")`
-   miss and silently fall back to `DEFAULT_COUNT_SPEC = "log_own"`. Given that `fg3a` at
-   `log_own` is the exact failure this doc exists to correct, a silent fallback to it is the
-   worst available default.
-3. **`residual_correlation.to_matrix`** filters with `[c for c in COMPONENTS if c in
-   wide.index]`, so an unknown component name is dropped from the matrix rather than
-   reported, and `substitution_r` then degrades to NaN.
+1. **`season_terms.season_total_arms`** — the eleven-head completeness gate did
+   `if any((head, arm) not in models ...): continue`, so a half-migrated head list read as
+   "that arm was not run". It now distinguishes the two cases: **no** heads for an arm is
+   still a skip (the arm was not fitted), but a *partial* arm raises and names the missing
+   heads.
+2. **`selected_specs`** — a stale `stan_component_metrics.csv` written before the migration
+   makes `specs.get("fga")` miss and fall back to `DEFAULT_COUNT_SPEC = "log_own"`. Given
+   that `log_own` on a skewed attempt head is the exact failure this doc exists to correct,
+   a silent fallback to it is the worst available default. It now prints the heads it could
+   not resolve and says to refit.
+3. **`residual_correlation.to_matrix`** filtered with `[c for c in COMPONENTS if c in
+   wide.index]`, so an unknown component was dropped from the matrix rather than reported
+   and `substitution_r` degraded to NaN. It now raises on **either** a missing or an
+   unrecognised name — a matrix missing a head is not a smaller copula, it is a wrong one.
 
-Each should raise on an unrecognised head before the migration lands.
-
-### `season_terms._draw_components` is the load-bearing change
+### `season_terms._draw_components` was the load-bearing change
 
 `_draw_components` (`:738-753`) draws every `COUNT_HEADS` entry independently and then draws
 makes on **the drawn attempts** — `rng.binomial(np.rint(counts[attempted]), ...)` — because
@@ -227,32 +243,70 @@ Under the new basis `counts["fg2a"]` does not exist, so the draw order must beco
 fga  ->  fg3a | fga  ->  fg2a = fga − fg3a  ->  fg2m | fg2a,  fg3m | fg3a,  ftm | fta
 ```
 
-**Nothing in the current code can express that ordering** — a conversion head's output
-becoming another head's exposure is a new kind of edge in the draw graph. This is the one
-place adoption is a design change rather than a list edit, and it is where the review should
-concentrate.
+**Nothing in the old code could express that ordering** — a conversion head's output
+becoming another head's exposure is a new kind of edge in the draw graph. `_draw_components`
+now resolves trials through a `trials_for` helper that walks the chain and materializes
+`DERIVED_COUNTS` on demand, so the two new edges (`fg3a` becoming trials, `fg2a` being a
+difference) are explicit. In the two-count basis every `attempted` is already a fitted
+count, so the helper returns on its first branch and behaviour is byte-identical.
 
-### Open question for the reviewer — flagged, not decided
+One numerical detail the specification missed: `fga` and `fg3a` are drawn from **different
+posteriors**, so nothing forces `fg3a <= fga` on a given draw. The derived `fg2a` is
+therefore clipped at zero. It bites on a vanishing share of draws — the share head's mean is
+nowhere near 1 — and a negative trials count would be an error rather than a small bias.
 
-`residual_correlation.SUBSTITUTION_PAIR = ("fg3a", "fg2a")`. Under the new basis that
-coupling is removed *by construction*, so the cell no longer exists among the modelled
-eleven — the matrix would be over `fga` and `fg3a|fga` instead, and the −0.1248 that
-motivated the whole reparameterization would simply be absent.
+### The open question, and how it was resolved
 
-**Recommendation, not a decision:** move the matrix to the new eleven and keep the old pair
-as an explicit "removed by construction" contrast row, so the artifact still shows what the
-change bought rather than showing nothing where the finding used to be. The alternative —
-dropping the pair silently — would make the copula's own artifact stop recording the reason
-the copula got smaller. This is a judgement about what the artifact is *for*, so it belongs
-to the reviewer.
+`residual_correlation.SUBSTITUTION_PAIR` was `("fg3a", "fg2a")`, and under the new basis
+that coupling is removed by construction, so the cell no longer exists among the modelled
+eleven. The doc flagged this as a reviewer decision with a recommendation attached. **The
+recommendation was taken**: the matrix moved to the new eleven, and the old pair ships as an
+explicit contrast under `basis == "legacy_two_count_basis"` — outside `COMPONENTS`, and
+therefore outside the matrix, which is what lets `to_matrix` be strict about names.
+
+`SUBSTITUTION_PAIR` is now `("fg3a|fga", "fga")` — the coupling the new basis *does* carry —
+and `LEGACY_SUBSTITUTION_PAIR` holds the retired one. `summarize` emits both, side by side,
+so the artifact measures what the change bought instead of going quiet where the finding
+used to be.
+
+### ⭐ What it bought the copula, measured
+
+| | two-count basis | shot-attempt basis |
+|---|---|---|
+| the substitution cell | **−0.1248** (`fg3a`–`fg2a`) | **−0.0836** (`fga`–`fg3a\|fga`) |
+| largest off-diagonal | +0.1422 (`fg2a`–`reb`) | **+0.1329** (`fga`–`reb`) |
+| off-diagonal mean, 11 heads | +0.0071 | **+0.0070** |
+| minimum eigenvalue | +0.7559 | **+0.7853** |
+
+The largest negative coupling shrinks by a third and the matrix becomes **better
+conditioned**. Note what is *not* claimed: the cell does not go to zero. The substitution
+**identity** is gone — one more three is exactly one fewer two, by construction — and what
+remains at −0.0836 is a genuine residual relation between shot *volume* and shot *mix*,
+which is a different fact and one the copula should carry.
+
+### ⚠️ A new finding the two-count basis could not surface
+
+`make serial-correlation` on the new heads: **`fg3a | fga` has a lag-1 excess of +0.101
+(z = 94) and a 10-game block variance inflation of 1.57×** — the largest non-minutes
+dependence in the table, above the `fga` count it splits. The three *shooting* conversion
+heads remain clean nulls (max |excess| 0.0122).
+
+So "conversion head" stopped being a synonym for "shooting head". Shot **selection** drifts
+within a season the way minutes do; shooting **accuracy** does not. The module's summary
+line used to take one maximum over all conversion heads, which after adoption would have
+reported that drift as a hot hand *and* hidden that the shooting heads are still nulls — it
+now reports the two groups separately. `fg3a | fga` is a conversion head by likelihood, not
+by subject matter, and it is the one head besides minutes with a serial story worth a second
+look.
 
 ## What this does NOT deliver
 
-- **It is not adopted.** `COUNT_HEADS` still lists `fg2a` and `fg3a`, `sweep_counts` still
-  iterates that list, and `substitution_arm` still ships beside it as the original ablation.
-  Read the head list, not this doc, when asking what is fitted today.
 - **It says nothing about `fg2m | fg2a` or the other conversion heads**, which are unchanged
   in both bases and cancel out of the comparison entirely.
+- **It does not re-open the season-term verdict.** `make season-terms` is an ablation over
+  whichever heads are shipped, so its artifacts have to be regenerated on the new head
+  list — but the verdict it reached (no head carries a season term except minutes) is about
+  league-level drift, not about the shot basis.
 - **It does not remove the copula.** Ten other off-diagonals remain; this removes the
   largest one and the only structurally-forced one.
 - **No season term**, same as every other head — see the season-term verdict in
@@ -268,6 +322,13 @@ to the reviewer.
 - **Both arm-B factors selected spline variants**, and spline bases are the repo's known
   HMC cost centre. An orthogonalized (QR-whitened) basis is the standing fix if the shipped
   spec ends up carrying two of them.
-- **`fga` is derived, not fetched.** `add_substitution_columns` builds it from `fg2a + fg3a`
-  and their lags, so a change to either upstream column silently changes the head's target.
-  `fga − (fg2a + fg3a) == 0` on all 731,906 rows today and a test pins the additivity.
+- **`fga` is a real fetched column, but `fg2a` is now derived.** `component_targets.parquet`
+  carries `fga` directly from the game logs, and `fga − (fg2a + fg3a) == 0` on all 731,906
+  rows, so the head's target is not reconstructed. The derived side is `fg2a = fga − fg3a`
+  at draw time, which is where the zero-clip lives.
+- **Gate 0 is a measurement of the RETIRED basis and is no longer fully re-runnable.** Arm
+  A's heads are gone from `stan_component_metrics.csv`, so `substitution_sweep` falls back
+  to `LEGACY_ARM_A_SPECS` — pinned constants recording what that artifact selected before
+  adoption — and the best-of-16 grid, which is read from the pre-adoption metrics file,
+  survives only inside the gate's own artifact. That artifact is the record; re-deriving the
+  grid would need the pre-adoption metrics CSV restored.

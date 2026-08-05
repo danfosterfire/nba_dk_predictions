@@ -2,10 +2,15 @@ import pandas as pd
 import pytest
 from src.data.preprocess import (
     ALL_SEASON_TYPES,
+    FULL_WINDOW,
     PLAYOFFS,
     REGULAR_SEASON,
+    TEST_SEASONS,
+    TRAIN_VAL_WINDOW,
     _parse_log_filename,
     clean,
+    fit_window,
+    held_out_seasons,
     load_raw,
 )
 
@@ -120,3 +125,58 @@ def test_clean_carries_season_type_through(tmp_path):
     out = clean(load_raw(tmp_path, season_type=ALL_SEASON_TYPES), min_games=10)
     assert "season_type" in out.columns
     assert set(out["season_type"]) == {REGULAR_SEASON, PLAYOFFS}
+
+
+# ── The fit window, and the split constant it has to agree with ──────────────
+
+def _seasons(labels: list[str]) -> pd.DataFrame:
+    return pd.DataFrame({"season": labels, "value": range(len(labels))})
+
+
+def test_fit_window_drops_the_trailing_seasons():
+    frame = _seasons(["2021-22", "2022-23", "2023-24", "2024-25", "2025-26"])
+    kept = fit_window(frame, TRAIN_VAL_WINDOW)
+    assert sorted(kept["season"]) == ["2021-22", "2022-23", "2023-24"]
+    assert held_out_seasons(frame) == ["2024-25", "2025-26"]
+
+
+def test_full_window_is_the_identity():
+    frame = _seasons(["2021-22", "2022-23", "2023-24"])
+    assert len(fit_window(frame, FULL_WINDOW)) == len(frame)
+
+
+def test_fit_window_rejects_an_unknown_window():
+    with pytest.raises(ValueError, match="unknown fit window"):
+        fit_window(_seasons(["2021-22", "2022-23"]), "trian_val")
+
+
+def test_fit_window_derives_the_held_out_seasons_rather_than_hard_coding_them():
+    """Out-of-order labels and a shorter panel must both still hold out the LAST two."""
+    frame = _seasons(["2023-24", "1999-00", "2001-02"])
+    assert sorted(fit_window(frame, TRAIN_VAL_WINDOW)["season"]) == ["1999-00"]
+
+
+def test_test_seasons_agrees_with_every_model_module_that_defines_its_own():
+    """Two definitions of "which seasons are held out" that can disagree is worse than
+    a duplicated constant, because the disagreement is silent on both sides: the
+    calibration frames would exclude a different set of seasons from the one the heads
+    actually hold out, and nothing downstream would raise.
+    """
+    from src.models.availability import TEST_SEASONS as availability_test_seasons
+    from src.models.component_rates import TEST_SEASONS as rates_test_seasons
+    from src.models.stan_composition import TEST_SEASONS as composition_test_seasons
+
+    assert TEST_SEASONS == availability_test_seasons
+    assert TEST_SEASONS == rates_test_seasons
+    assert TEST_SEASONS == composition_test_seasons
+
+
+def test_fit_window_holds_out_the_same_seasons_as_split_seasons():
+    """The two helpers key on different frames — a calibration frame against a design
+    matrix — so the invariant worth pinning is that they name the same seasons."""
+    from src.models.component_rates import split_seasons
+
+    frame = _seasons(["2020-21", "2021-22", "2022-23", "2023-24", "2024-25", "2025-26"])
+    _, held = split_seasons(frame)
+    assert sorted(set(held["season"])) == held_out_seasons(frame)
+    assert set(fit_window(frame, TRAIN_VAL_WINDOW)["season"]).isdisjoint(held["season"])

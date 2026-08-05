@@ -91,7 +91,7 @@ from src.features.targets import (BONUS_CATEGORIES, BONUS_GAME_OVERDISPERSION,
                                   expected_bonus)
 from src.models.availability import (FEATURE_COLS, LeagueAgeBaseline, crps as gp_crps,
                                      pit_values, split_seasons as split_availability)
-from src.models.component_rates import (CONVERSION_HEADS, COUNT_HEADS,
+from src.models.component_rates import (CONVERSION_HEADS, COUNT_HEADS, DERIVED_COUNTS,
                                         build_design as build_component_design,
                                         split_seasons)
 from src.models.stan_availability import StanAvailability, availability_design
@@ -322,6 +322,17 @@ def selected_specs(predictions_dir: Path) -> tuple[dict[str, str], str]:
         table = pd.read_csv(path)
         for head, block in table[table["selected"]].groupby("head"):
             specs[str(head)] = str(block["variant"].iloc[0])
+        # A *stale* artifact is the dangerous case, not a missing one. If it was written
+        # before a head-list change it resolves for the old heads and silently drops back
+        # to `log_own` for the new ones — and `log_own` is exactly the spec Gate 0 showed
+        # is below its floor on the skewed attempt heads. Name the heads rather than
+        # letting the fallback happen quietly.
+        expected = set(COUNT_HEADS) | {f"{m}|{a}" for m, a in CONVERSION_HEADS}
+        missing = sorted(expected - set(specs))
+        if missing:
+            print(f"  /!\\  {path} selects no variant for {missing} — falling back to "
+                  f"{DEFAULT_COUNT_SPEC}/{DEFAULT_CONVERSION_SPEC}. If the head lists "
+                  f"changed, re-run `make stan-components` before trusting this.")
     minutes_spec = DEFAULT_MINUTES_SPEC
     mpath = predictions_dir / "stan_minutes_metrics.csv"
     if mpath.exists():
@@ -705,7 +716,7 @@ def compose_season_dk(models: dict, frame: pd.DataFrame, arm: str, draws: int,
 
 def _draw_components(models: dict, frame: pd.DataFrame, arm: str, draws: int,
                      seed: int) -> tuple[dict, dict]:
-    """Aligned (draws x rows) samples of the eight counts and three make-counts.
+    """Aligned (draws x rows) samples of the seven counts and four make-counts.
 
     **Each head is scored on its OWN stored design frame, not on the raw one.** Every head
     carries a different set of derived columns — imputation flags, `log(own)`, a spline
@@ -741,6 +752,35 @@ def _draw_components(models: dict, frame: pd.DataFrame, arm: str, draws: int,
         counts[component] = model.predict_samples(stored, seed)
 
     made = {}
+
+    def trials_for(name: str) -> np.ndarray:
+        """The drawn trials for a conversion head, materializing derived counts in order.
+
+        Under the shot-attempt basis the chain is
+        `fga -> fg3a | fga -> fg2a = fga - fg3a -> makes`, so a conversion head's own draw
+        (`fg3a`) becomes a later head's trials, and `fg2a` exists only as the difference.
+        Neither edge existed in the two-count basis, where every `attempted` was already a
+        fitted count — there this returns on the first branch and behaviour is identical.
+
+        Clipped at zero because `fga` and `fg3a` are drawn from *different* posteriors and
+        nothing forces `fg3a <= fga` on a given draw. It bites on a vanishing share of
+        draws (the share head's mean is far from 1), and a negative trials count would be
+        an error rather than a small bias.
+        """
+        if name in counts:
+            return counts[name]
+        if name in made:
+            counts[name] = made[name]
+            return counts[name]
+        if name in DERIVED_COUNTS:
+            total, part = DERIVED_COUNTS[name]
+            counts[name] = np.maximum(trials_for(total) - trials_for(part), 0.0)
+            return counts[name]
+        raise KeyError(
+            f"{name} is needed as trials but is neither a fitted count head, a conversion "
+            f"head drawn earlier in the chain, nor a member of DERIVED_COUNTS — the head "
+            f"lists and the draw order disagree")
+
     for m, attempted in CONVERSION_HEADS:
         model, stored = design_for((f"{m}|{attempted}", arm))
         p, rho = model.p_draws(stored, draws)
@@ -749,7 +789,7 @@ def _draw_components(models: dict, frame: pd.DataFrame, arm: str, draws: int,
         # `makes | attempts`, and conditioning on realized attempts would leak the target
         # and understate the spread, since attempt uncertainty is most of the uncertainty
         # in points.
-        made[m] = rng.binomial(np.rint(counts[attempted]).astype(int),
+        made[m] = rng.binomial(np.rint(trials_for(attempted)).astype(int),
                                rng.beta(a, b)).astype(float)
     return counts, made
 
@@ -817,11 +857,21 @@ def season_total_arms(models: dict, frame: pd.DataFrame, arms: tuple[str, ...],
     shows which.
     """
     y = realized_season_dk(frame)
+    required = COUNT_HEADS + [f"{m}|{a}" for m, a in CONVERSION_HEADS]
     rows = []
     for arm in arms:
-        if any((head, arm) not in models for head in
-               COUNT_HEADS + [f"{m}|{a}" for m, a in CONVERSION_HEADS]):
+        present = [h for h in required if (h, arm) in models]
+        # "This arm was never fitted" and "this arm is missing three of its eleven heads"
+        # are different facts and used to be the same `continue`. A partially-migrated head
+        # list lands squarely in the second case, and skipping it silently would drop the
+        # arm from the table with no message — so an incomplete arm now raises.
+        if not present:
             continue
+        if len(present) != len(required):
+            raise ValueError(
+                f"arm {arm!r} has {len(present)} of {len(required)} heads fitted; "
+                f"missing {sorted(set(required) - set(present))}. The head lists and the "
+                f"fitted models disagree — refit rather than composing a partial chain")
         samples = compose_season_dk(models, frame, arm, draws, seed)
         pred = samples.mean(axis=0)
         rows.append({
@@ -1063,7 +1113,7 @@ def run(cfg: dict) -> dict[str, Path]:
 # change in the rate, so the two are the same quantity only up to a 1/(1-p) factor — the
 # comparison is a sanity check on those rows and a like-for-like one on the counts.
 LEAGUE_SERIES = {c: c for c in COUNT_HEADS} | {
-    "fg2m|fg2a": "fg2m_pct", "fg3m|fg3a": "fg3m_pct", "ftm|fta": "ftm_pct",
+    f"{m}|{a}": f"{m}_pct" for m, a in CONVERSION_HEADS} | {
     "min": "minutes_share", "gp": "gp_share [all]"}
 
 

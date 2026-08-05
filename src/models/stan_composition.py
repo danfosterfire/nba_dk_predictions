@@ -38,6 +38,7 @@ Usage:
     python -m src.models.stan_composition
 """
 
+import pickle
 from pathlib import Path
 
 import numpy as np
@@ -90,7 +91,11 @@ OFFSET_CLIP = (0.02, 0.93)
 # offset finite for end-of-bench players; the upper mirrors RHO_MAX-style guard rails.
 SHARE_CLIP = (EPS, 0.95)
 
-FITTED_VARIANTS = ("binomial", "betabinom", "betabinom_ot", "betabinom_ot_graded")
+# Ordered most-decision-relevant first. `sweep` iterates this order, so at full window
+# the graded arm and its shared-rho twin — the pair the whole graded-vs-shared contrast
+# rests on — land in the first third of the run rather than the last. Selection is
+# order-independent (`mark_selection` uses `idxmin`), so only CSV row order moves.
+FITTED_VARIANTS = ("betabinom_ot_graded", "betabinom_ot", "betabinom", "binomial")
 GROUP_KEYS = ["game_id", "team_id"]
 
 # The dispersion is graded over bins of this column — the prior-season minutes share
@@ -797,8 +802,42 @@ def _iters(cfg_stan: dict, fast: bool) -> dict:
             "samples": int(cfg_stan.get("samples", 1000))}
 
 
+def _checkpoint(ckpt_dir: Path | None, label: str, row: dict,
+                diagnostics: list[dict], models: dict) -> None:
+    """Flush one completed arm to disk: its metric row, its two diagnostics, its draws.
+
+    `run` writes its six CSVs only at the very end, and at full window the sweep is a
+    ~14 h loop — so without this a crash in the last arm loses every fit before it.
+    With it the PPC / joint-NLL / OT-tail tail of `run` can be re-driven from the
+    pickles in minutes. Follows the `data.boxscore_status.flush_every` precedent:
+    append as you go, and never let the flush itself take the run down.
+    """
+    if ckpt_dir is None:
+        return
+    try:
+        ckpt_dir.mkdir(parents=True, exist_ok=True)
+        for name, frame in (("metrics", pd.DataFrame([row])),
+                            ("diagnostics", pd.DataFrame(diagnostics))):
+            dest = ckpt_dir / f"stan_composition_{name}.csv"
+            frame.to_csv(dest, mode="a", header=not dest.exists(), index=False)
+        # ~25 parameters x a few thousand draws — a few hundred KB per arm. The
+        # frames are NOT pickled: they are rebuilt deterministically by `variants`.
+        state = {
+            side: {attr: getattr(models[label][side], attr, None)
+                   for attr in ("alpha_draws", "beta_draws", "rho_draws",
+                                "rho_by_bin", "rho", "scaler", "features",
+                                "dispersed", "n_rho", "predictive_samples")}
+            for side in ("val", "test")}
+        with open(ckpt_dir / f"stan_composition_{label}.pkl", "wb") as fh:
+            pickle.dump(state, fh)
+        print(f"    checkpointed {label} → {ckpt_dir}")
+    except Exception as exc:                                  # pragma: no cover
+        print(f"    /!\\  checkpoint for {label} failed ({exc}); the run continues")
+
+
 def sweep(train: pd.DataFrame, val: pd.DataFrame, test: pd.DataFrame,
-          full_train: pd.DataFrame, cfg_stan: dict, comparator: dict
+          full_train: pd.DataFrame, cfg_stan: dict, comparator: dict,
+          ckpt_dir: Path | None = None
           ) -> tuple[pd.DataFrame, list[dict], dict]:
     """Floor, ladder, incumbent. **Selection reads the validation column only.**"""
     seed = int(cfg_stan.get("seed", 42))
@@ -835,6 +874,7 @@ def sweep(train: pd.DataFrame, val: pd.DataFrame, test: pd.DataFrame,
         models[label] = {"val": v_model, "test": t_model,
                          "val_frame": v_te, "test_frame": t_te}
         rows.append(_row(label, len(t_feats), v, t))
+        _checkpoint(ckpt_dir, label, rows[-1], diagnostics[-2:], models)
 
     comp_val = score_samples(comparator["samples"]["val"], val,
                              "independent_comparator", seed)
@@ -1077,8 +1117,9 @@ def run(cfg: dict) -> dict[str, Path]:
           f"test {comparator['coverage_test']:.1%} of rows from the season head "
           f"(the rest fall back to the carry-forward share)")
 
+    ckpt_dir = Path(cfg["training"]["checkpoint_dir"]) / "stan_composition"
     table, diagnostics, models = sweep(train, val, test, full_train, cfg_stan,
-                                       comparator)
+                                       comparator, ckpt_dir)
     diagnostics.append(probe["diagnostics"])
     diagnostics.append(comparator["diagnostics_val"])
     diagnostics.append(comparator["diagnostics_test"])
@@ -1105,8 +1146,13 @@ def run(cfg: dict) -> dict[str, Path]:
               "CLAUDE.md that is not a model.")
 
     graded = models.get("betabinom_ot_graded")
-    if graded is not None and graded["test"].rho_by_bin is not None:
-        shared = models["betabinom_ot"]["test"].rho
+    twin = models.get("betabinom_ot")
+    # The shared-rho twin is the ONLY comparison that isolates the grading (same
+    # features, same mean function), so it must never be cut from the ladder — but a
+    # bare KeyError here would fire after the whole sweep and before any CSV is
+    # written, which at full window is ~14 h of compute lost to a lookup.
+    if graded is not None and graded["test"].rho_by_bin is not None and twin is not None:
+        shared = twin["test"].rho
         bins = graded["test"].rho_by_bin
         print(f"\nFitted dispersion by prior-share bin (fringe -> star): "
               f"{', '.join(f'{r:.4f}' for r in bins)}")

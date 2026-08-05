@@ -402,7 +402,7 @@ answer is the **opposite** of the component heads'.
 | panel | source |
 |---|---|
 | The output contract from the head side: eight scoring components, three attempt exposures, `min` as trials | narrative |
-| **The no-fit floor is nearly the whole model** — `carry_forward` scores held-out R² 0.82–0.94 and the best of seven fitted variants beats it by +0.0019 to +0.0228. The centrepiece chart: floor vs best fitted per head, with `beats_floor`. | `outputs/predictions/component_rate_metrics.csv` (live, 82 rows) |
+| **The no-fit floor is nearly the whole model** — `carry_forward` scores held-out R² 0.82–0.94 and the best of seven fitted variants beats it by +0.0019 to +0.0203. The centrepiece chart: floor vs best fitted per head, with `beats_floor`. | `outputs/predictions/component_rate_metrics.csv` (live, 82 rows) |
 | **Scale, not curvature** — `log(own)` recovers nearly everything in one term; linear-in-raw-rate inside `exp()` is catastrophic for the skewed heads (`fg3a` 0.520, `blk` 0.638). Splines help only `fg3a` and `blk`. | same |
 | Three `null`s: `age × own` and `mpg × own` interactions · walk-forward PCA of all 156 columns (±0.003) · `ftm\|fta`, where nothing beats the floor because FT% is pure player skill | same |
 | **The `sklearn` alpha card** — `PoissonRegressor` averages deviance by the weight sum, so with `sample_weight = minutes` (Σw ≈ 1e7) `alpha=1.0` crushes every coefficient *silently*. The floor is what caught it, which is why it is now mandatory. | ⏳ `component_rate_metrics.csv` (`alpha_sensitivity` rows — the trap re-run as a permanent ablation) |

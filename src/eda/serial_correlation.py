@@ -37,6 +37,17 @@ The measured answer, and it splits exactly along the attempts/conversion line th
 the *exposure* side is strongly dependent (`min` 2.43x block inflation, shot volume
 ~1.45x on top of minutes). Conversion heads collapse for free; minutes is where a
 sequential model has to go.
+
+## Two fit windows, because the block inflation is a simulator INPUT
+
+Nothing here is fitted, so nothing here is scored on a held-out split — which is exactly
+why this artifact could quietly be measured over every season including the two the heads
+hold out. The block inflation is not a finding the simulator reads *about*, it is a number
+the simulator will be *given*, so calibrating it on 2024-25/2025-26 would tune the
+simulator on the seasons it is later backtested against. Every row is emitted twice, under
+`fit_window` in {`full`, `train_val`}; **consume `train_val`**. `full` stays because the
+difference is worth having on disk rather than assumed, and because the prose in
+`CLAUDE.md` and `docs/` quotes the full-window figures.
 """
 
 from pathlib import Path
@@ -45,12 +56,19 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from src.data.preprocess import (FIT_WINDOWS, FULL_WINDOW, TRAIN_VAL_WINDOW,
+                                 fit_window, held_out_seasons)
+
 # Counts modelled with `min` as exposure. Excludes the makes, which are conditioned on
 # their own attempts and handled as conversions below.
-COUNT_COMPONENTS = ["fg2a", "fg3a", "fta", "reb", "ast", "stl", "blk", "tov"]
+# Mirrors `component_rates.COUNT_HEADS` / `CONVERSION_HEADS` — the shot-attempt basis,
+# so these are the heads that are actually fitted. `fg2a` is derived (`fga - fg3a`) and
+# is not a component here; it survives only as the legacy contrast in
+# `residual_correlation.LEGACY_SUBSTITUTION_PAIR`.
+COUNT_COMPONENTS = ["fga", "fta", "reb", "ast", "stl", "blk", "tov"]
 
-# (made, attempted) — the successes/trials heads.
-CONVERSIONS = [("fg2m", "fg2a"), ("fg3m", "fg3a"), ("ftm", "fta")]
+# (made, attempted) — the successes/trials heads, in chain order.
+CONVERSIONS = [("fg3a", "fga"), ("fg2m", "fg2a"), ("fg3m", "fg3a"), ("ftm", "fta")]
 
 LAGS = [1, 2, 3, 5, 10, 20]
 BLOCK_GAMES = 10
@@ -249,7 +267,17 @@ def run(cfg: dict) -> Path:
           f"{df['ps'].nunique():,} player-seasons "
           f"(played, min >= {MIN_MINUTES:g}, >= {MIN_GAMES} games)")
 
-    table = measure(df)
+    windows = []
+    for window in FIT_WINDOWS:
+        sub = fit_window(df, window)
+        measured = measure(sub)
+        measured.insert(0, "fit_window", window)
+        windows.append(measured)
+        print(f"  {window:9s} {len(sub):,} player-games, "
+              f"{sub['ps'].nunique():,} player-seasons")
+    table = pd.concat(windows, ignore_index=True)
+    full = table[table["fit_window"] == FULL_WINDOW]
+
     out_dir = Path(cfg["eda"]["output_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
     dest = out_dir / "serial_correlation.csv"
@@ -257,20 +285,52 @@ def run(cfg: dict) -> Path:
 
     show = ["component", "kind", "lag1", "lag1_null", "lag1_excess", "lag1_z",
             "block_inflation"]
-    ordered = table.sort_values("block_inflation", ascending=False)
+    ordered = full.sort_values("block_inflation", ascending=False)
     print(ordered[show].to_string(index=False,
                                  float_format=lambda v: f"{v:.4f}"))
 
-    conv = table[table["kind"] == "conversion"]
-    print(f"\n  conversion heads — max |excess| {conv['lag1_excess'].abs().max():.4f}, "
-          f"max block inflation {conv['block_inflation'].max():.3f}: "
-          f"no shooting hot hand, so the successes/trials heads collapse for free.")
-    mins = table[table["component"] == "min"].iloc[0]
-    det = table[table["component"] == "min_detrended"].iloc[0]
+    # "Conversion head" is no longer a synonym for "shooting head". Under the
+    # shot-attempt basis `fg3a | fga` is a beta-binomial like the makes but measures shot
+    # MIX, not accuracy — and mix drifts within a season while accuracy does not. Lumping
+    # them into one max would report the share's dependence as if it were a hot hand and
+    # hide that the shooting heads are still clean nulls.
+    shooting = full[(full["kind"] == "conversion")
+                    & full["component"].str.startswith(("fg2m", "fg3m", "ftm"))]
+    print(f"\n  shooting conversion heads — max |excess| "
+          f"{shooting['lag1_excess'].abs().max():.4f}, max block inflation "
+          f"{shooting['block_inflation'].max():.3f}: no shooting hot hand, so the "
+          f"makes|attempts heads collapse for free.")
+    mix = full[full["component"] == "fg3a|fga"]
+    if len(mix):
+        m = mix.iloc[0]
+        print(f"  the shot-MIX share fg3a|fga is NOT one of them — excess "
+              f"{m['lag1_excess']:+.4f} (z {m['lag1_z']:.0f}), block inflation "
+              f"{m['block_inflation']:.3f}. Shot selection drifts within a season the way "
+              f"minutes\n  do; shooting accuracy does not. It is a conversion head by "
+              f"likelihood, not by subject matter.")
+    mins = full[full["component"] == "min"].iloc[0]
+    det = full[full["component"] == "min_detrended"].iloc[0]
     print(f"  minutes — lag1 {mins['lag1']:.3f} raw against {det['lag1']:.3f} "
           f"detrended, block inflation {mins['block_inflation']:.2f}x: the sequential "
           f"model belongs here, not on twelve heads.")
-    print(f"Serial correlation: {len(table):,} component rows → {dest}")
+
+    # The block inflation is a simulator input, so the window it was calibrated on is a
+    # correctness property and not a footnote. Held out: whatever `fit_window` drops.
+    held = ", ".join(held_out_seasons(df))
+    pivot = table.pivot(index="component", columns="fit_window",
+                        values="block_inflation")[FIT_WINDOWS]
+    pivot["delta"] = pivot[TRAIN_VAL_WINDOW] - pivot[FULL_WINDOW]
+    print(f"\nBlock variance inflation by fit window ({held} held out of `train_val`) — "
+          f"the simulator\nconsumes `train_val`, because a number it is GIVEN must not be "
+          f"calibrated on the seasons\nit is later scored against:")
+    print(pivot.sort_values(FULL_WINDOW, ascending=False)
+          .to_string(float_format=lambda v: f"{v:.4f}"))
+    worst = pivot["delta"].abs().idxmax()
+    print(f"  largest move: {worst} {pivot.loc[worst, FULL_WINDOW]:.4f} -> "
+          f"{pivot.loc[worst, TRAIN_VAL_WINDOW]:.4f} "
+          f"({pivot.loc[worst, 'delta']:+.4f})")
+    print(f"Serial correlation: {len(table):,} component rows "
+          f"({len(FIT_WINDOWS)} fit windows) → {dest}")
     return dest
 
 

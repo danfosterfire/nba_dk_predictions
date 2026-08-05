@@ -74,6 +74,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -286,16 +287,48 @@ def mean_abs_dev(rel: str, column: str, centre: float, **where) -> float:
     return float((hit[column] - centre).abs().mean()) if len(hit) else float("nan")
 
 
-def serial(component: str, column: str) -> float:
-    return _one(table(SERIAL), column, component=component)
+def _windowed(rel: str, column: str, fit_window: str = "full", **where) -> float:
+    """`_one`, but pinned to a fit window when the artifact carries that axis.
+
+    Several producers now emit every row twice — once over every season (`full`) and once
+    excluding the seasons the heads hold out (`train_val`) — because figures that are
+    *simulator inputs* must not be calibrated on the backtest seasons. `_one` returns
+    `.iloc[0]`, so an unfiltered lookup against such an artifact silently takes whichever
+    row sorts first. The windows differ by less than most quoted precisions, which is
+    precisely why the wrong read would not announce itself.
+
+    Written defensively: artifacts that have not yet gained the axis are looked up
+    unchanged, so this is safe to apply ahead of a regeneration.
+    """
+    frame = table(rel)
+    if frame is not None and "fit_window" in frame.columns:
+        return _one(frame, column, fit_window=fit_window, **where)
+    return _one(frame, column, **where)
+
+
+def serial(component: str, column: str, fit_window: str = "full") -> float:
+    """One serial-correlation cell, for a named fit window.
+
+    `serial_correlation.py` emits every row twice — once over every season (`full`) and
+    once excluding the two the heads hold out (`train_val`), because the block inflation
+    is a simulator *input* and calibrating it on the backtest seasons would tune the
+    simulator on the seasons it is scored against. **The window has to be named here.**
+    Without it `_one` takes `.iloc[0]`, i.e. whichever row sorts first, which is the same
+    silent-ambiguity failure the composition PPC lookups were fixed for. The prose in
+    `CLAUDE.md` and `docs/` quotes the full-window figures, so that is the default; the
+    two windows differ by up to 0.002 on `lag1_excess`, which is inside most quoted
+    precisions and therefore exactly the kind of wrong-row read that would not announce
+    itself.
+    """
+    return _windowed(SERIAL, column, fit_window, component=component)
 
 
 def resid(column: str, kind: str | None = None,
-          basis: str = "minutes_conditioned") -> float:
+          basis: str = "minutes_conditioned", fit_window: str = "full") -> float:
     """Off-diagonal summaries of the residual correlation matrix.
 
     Both ordered pairs are in the artifact, so a mean over off-diagonals is already
-    symmetric-weighted. `kind` restricts to the eight counts, which is the population the
+    symmetric-weighted. `kind` restricts to the seven counts, which is the population the
     prose quotes — `CLAUDE.md` reports the all-eleven mean beside it and the two differ by
     nearly 2×, so the restriction is load-bearing rather than cosmetic.
     """
@@ -304,9 +337,29 @@ def resid(column: str, kind: str | None = None,
         return float("nan")
     off = frame[(frame["basis"] == basis)
                 & (frame["component_a"] != frame["component_b"])]
+    if "fit_window" in off.columns:
+        off = off[off["fit_window"] == fit_window]
     if kind is not None:
         off = off[(off["kind_a"] == kind) & (off["kind_b"] == kind)]
     return float(off["r"].mean() if column == "mean" else off["r"].max())
+
+
+def resid_min_eig(basis: str = "minutes_conditioned",
+                  fit_window: str = "full") -> float:
+    """Smallest eigenvalue of the conditioned matrix — the copula's usability gate.
+
+    Recomputed from the long form here rather than read from a column, because the
+    artifact does not carry one: it is a property of the whole matrix, not of a pair.
+    """
+    frame = table(RESID)
+    if frame is None:
+        return float("nan")
+    sub = frame[frame["basis"] == basis]
+    if "fit_window" in sub.columns:
+        sub = sub[sub["fit_window"] == fit_window]
+    wide = sub.pivot(index="component_a", columns="component_b", values="r")
+    wide = wide.reindex(index=wide.columns)
+    return float(np.linalg.eigvalsh(wide.fillna(0.0).to_numpy(float)).min())
 
 
 def rate(head: str, variant: str, column: str = "r2",
@@ -724,7 +777,7 @@ def _availability() -> list[Claim]:
         add(_c(r2, STAN_MIN_M,
                lambda n=name: cell(STAN_MIN_M, "test_r2", variant=n),
                f"minutes {name} test R2"))
-    add(_c("1,829", STAN_MIN_G, lambda: total(STAN_MIN_G, "wall_clock_s"),
+    add(_c("2,183", STAN_MIN_G, lambda: total(STAN_MIN_G, "wall_clock_s"),
            "minutes head wall clock"))
     add(_c("0.0495", STAN_MIN_D,
            lambda: cell(STAN_MIN_D, "rho", metric="season_level_rho"),
@@ -827,19 +880,25 @@ def _regime_claims(doc: str) -> list[Claim]:
 
 
 def _composition() -> list[Claim]:
-    """`docs/minutes-composition-plan.md` — the team-game minutes allocation pilot.
+    """`docs/minutes-composition-plan.md` — the team-game minutes allocation.
+
+    Refreshed for the full-window refit (Gate E, 2026-08-04). Two things are audited that
+    are not just "the table": the `independent_comparator` row, which is INVARIANT to the
+    window by construction and is therefore the control on the whole refit, and the pilot
+    figures the doc keeps in its before/after table, which are marked historical.
 
     The `binomial` row is the one worth auditing hardest: it is the arm that FAILS, and
-    "the pure decomposition is too tight" is the pilot's sharpest claim.
+    "the pure decomposition is too tight" is the head's sharpest claim.
     """
     C: list[Claim] = []
     add = C.append
+    SEL = "betabinom_ot_graded"
 
-    comp = [("carry_forward", "4.6331", "4.8194", "0.3679", "0.0178"),
-            ("binomial", "4.9345", "4.9429", "0.4307", "0.1942"),
-            ("betabinom", "4.5109", "4.5361", "0.4307", "0.0205"),
-            ("betabinom_ot", "4.5099", "4.5353", "0.4306", "0.0202"),
-            ("betabinom_ot_graded", "4.4561", "4.5078", "0.4295", "0.0221"),
+    comp = [("carry_forward", "4.6776", "4.8576", "0.3678", "0.0354"),
+            ("binomial", "4.9394", "4.9732", "0.4259", "0.1948"),
+            ("betabinom", "4.5422", "4.5893", "0.4247", "0.0405"),
+            ("betabinom_ot", "4.5430", "4.5848", "0.4255", "0.0414"),
+            (SEL, "4.4926", "4.5592", "0.4244", "0.0393"),
             ("independent_comparator", "4.7842", "4.9140", "0.3301", "0.0769")]
     for name, val_crps, test_crps, test_r2, pit in comp:
         for quoted, column in [(val_crps, "val_crps"), (test_crps, "test_crps"),
@@ -847,83 +906,133 @@ def _composition() -> list[Claim]:
             add(_c(quoted, COMP_M,
                    lambda n=name, c=column: cell(COMP_M, c, variant=n),
                    f"composition {name} {column}", doc=COMP))
-    add(_c("2.576", COMP_M, lambda: cell(COMP_M, "probe_hours", variant="binomial"),
+
+    # Gate C / Gate D, as differences rather than as retyped numbers.
+    add(_c("−0.2985", COMP_M,
+           lambda: (cell(COMP_M, "test_crps", variant=SEL)
+                    - cell(COMP_M, "test_crps", variant="carry_forward")),
+           "composition vs the floor, test", doc=COMP))
+    add(_c("−0.1851", COMP_M,
+           lambda: (cell(COMP_M, "val_crps", variant=SEL)
+                    - cell(COMP_M, "val_crps", variant="carry_forward")),
+           "composition vs the floor, val", doc=COMP))
+    add(_c("−0.3548", COMP_M,
+           lambda: (cell(COMP_M, "test_crps", variant=SEL)
+                    - cell(COMP_M, "test_crps", variant="independent_comparator")),
+           "composition vs the incumbent", doc=COMP))
+    add(_c("−7.2%", COMP_M,
+           lambda: (cell(COMP_M, "test_crps", variant=SEL)
+                    / cell(COMP_M, "test_crps", variant="independent_comparator") - 1.0),
+           "composition gain as a percentage", doc=COMP))
+    add(_c("−6.1%", COMP_M,
+           lambda: (cell(COMP_M, "test_crps", variant=SEL)
+                    / cell(COMP_M, "test_crps", variant="carry_forward") - 1.0),
+           "composition gain over the floor, percentage", doc=COMP))
+    add(_c("−1.2856", COMP_M,
+           lambda: cell(COMP_M, "test_bias", variant="independent_comparator"),
+           "comparator bias", doc=COMP))
+
+    # Gate A — the gate that did not behave, so both sides of the miss are audited.
+    add(_c("12.8", COMP_M, lambda: cell(COMP_M, "probe_hours", variant="binomial"),
            "composition Gate A extrapolation", doc=COMP))
-    add(_c("171.6", COMP_D, lambda: total(COMP_D, "wall_clock_s") / 60,
-           "composition sampler minutes", doc=COMP))
-    add(_c("1.0093", COMP_D, lambda: max_of(COMP_D, "max_rhat"),
+    add(_c("20.9", COMP_D, lambda: _comp_sweep_seconds() / 3600,
+           "composition actual sweep hours", doc=COMP))
+    add(_c("1.63", COMP_D,
+           lambda: (_comp_sweep_seconds() / 3600
+                    / cell(COMP_M, "probe_hours", variant="binomial")),
+           "how far Gate A under-predicted", doc=COMP))
+    add(_c("150", COMP_D,
+           lambda: cell(COMP_D, "wall_clock_s", label="probe/one-season"),
+           "probe seconds", doc=COMP))
+    add(_c("15.23", COMP_D,
+           lambda: cell(COMP_D, "wall_clock_s", label="betabinom/val") / 631158 * 1000,
+           "full-window ms per row", doc=COMP))
+    add(_c("1.0113", COMP_D, lambda: max_of(COMP_D, "max_rhat"),
            "composition max R-hat", doc=COMP))
     add(_c("0", COMP_D, lambda: total(COMP_D, "divergences"),
            "composition divergences", doc=COMP))
+    add(_c("11", COMP_D, lambda: rows(COMP_D), "composition fits", doc=COMP))
 
-    # The team-sum asymmetry — the capability the model exists for, so both sides
-    # are audited rather than only the headline.
-    # The PPC file now carries BOTH arms, so every claim names its variant — without
-    # it a lookup silently takes whichever row sorts first, which is the class of
-    # quiet mistake this module exists to catch.
-    SEL = "betabinom_ot_graded"
+    # The per-arm cost shares behind the fallback-order correction.
+    for arm, minutes, share in [("binomial", "191.8", "15.3%"),
+                                ("betabinom", "506.3", "40.4%"),
+                                ("betabinom_ot", None, "21.4%"),
+                                (SEL, None, "22.9%")]:
+        if minutes is not None:
+            add(_c(minutes, COMP_D, lambda a=arm: _comp_arm_seconds(a) / 60,
+                   f"{arm} sampler minutes", doc=COMP))
+        add(_c(share, COMP_D,
+               lambda a=arm: _comp_arm_seconds(a) / _comp_sweep_seconds(),
+               f"{arm} share of sweep time", doc=COMP))
+    add(_c("1,251.8", COMP_D, lambda: _comp_sweep_seconds() / 60,
+           "total sweep sampler minutes", doc=COMP))
+
+    # The team-sum asymmetry — the capability the model exists for, so both sides are
+    # audited rather than only the headline. Every lookup names its variant: the PPC file
+    # carries two arms, and an unfiltered lookup silently takes whichever sorts first.
     add(_c("36.87", COMP_P,
            lambda: cell(COMP_P, "simulated", variant=SEL,
                         analysis="team_sum_abs_error", group="independent"),
            "comparator team-sum error", doc=COMP))
-    add(_c("0.5882", COMP_P,
-           lambda: cell(COMP_P, "observed", variant=SEL, analysis="starter_share",
-                        group="regulation/composition"),
-           "observed starter share, regulation", doc=COMP))
-    add(_c("0.6314", COMP_P,
-           lambda: cell(COMP_P, "observed", variant=SEL, analysis="starter_share",
-                        group="overtime/composition"),
-           "observed starter share, overtime", doc=COMP))
-    add(_c("0.6034", COMP_P,
-           lambda: cell(COMP_P, "simulated", variant=SEL, analysis="starter_share",
-                        group="regulation/composition"),
-           "simulated starter share, regulation", doc=COMP))
-    add(_c("0.6446", COMP_P,
-           lambda: cell(COMP_P, "simulated", variant=SEL, analysis="starter_share",
-                        group="overtime/composition"),
-           "simulated starter share, overtime", doc=COMP))
+    for quoted, column, group in [("0.5882", "observed", "regulation/composition"),
+                                  ("0.6314", "observed", "overtime/composition"),
+                                  ("0.5998", "simulated", "regulation/composition"),
+                                  ("0.6464", "simulated", "overtime/composition"),
+                                  ("0.5973", "simulated", "regulation/independent"),
+                                  ("0.6346", "simulated", "overtime/independent")]:
+        add(_c(quoted, COMP_P,
+               lambda c=column, g=group: cell(COMP_P, c, variant=SEL,
+                                              analysis="starter_share", group=g),
+               f"starter share {column} {group}", doc=COMP))
 
     # The graded-vs-shared calibration table — the point of the graded arm, so both
     # columns are audited rather than only the improved one.
-    ratios = [("betabinom_ot", "q1_fringe", "1.5900"),
-              ("betabinom_ot", "q2", "0.9656"),
-              ("betabinom_ot", "q3", "0.8961"),
-              ("betabinom_ot", "q4_star", "0.7000"),
-              (SEL, "q1_fringe", "1.2093"),
-              (SEL, "q2", "0.8405"),
-              (SEL, "q3", "0.9587"),
-              (SEL, "q4_star", "0.9880")]
+    ratios = [("betabinom_ot", "q1_fringe", "1.3466"),
+              ("betabinom_ot", "q2", "0.8089"),
+              ("betabinom_ot", "q3", "0.7691"),
+              ("betabinom_ot", "q4_star", "0.5973"),
+              (SEL, "q1_fringe", "1.0845"),
+              (SEL, "q2", "0.7687"),
+              (SEL, "q3", "0.8217"),
+              (SEL, "q4_star", "0.7757")]
     for arm, tier, quoted in ratios:
         add(_c(quoted, COMP_P,
                lambda a=arm, t=tier: cell(COMP_P, "ratio", variant=a,
                                           analysis="variance_ratio", group=t),
                f"variance ratio {arm} {tier}", doc=COMP))
-    for arm, quoted in [("betabinom_ot", "0.2571"), (SEL, "0.1055")]:
+    for arm, quoted in [("betabinom_ot", "0.2928"), (SEL, "0.1796")]:
         add(_c(quoted, COMP_P,
                lambda a=arm: mean_abs_dev(COMP_P, "ratio", 1.0, variant=a,
                                           analysis="variance_ratio"),
                f"mean |ratio-1| {arm}", doc=COMP))
+    add(_c("39%", COMP_P,
+           lambda: (1.0 - mean_abs_dev(COMP_P, "ratio", 1.0, variant=SEL,
+                                       analysis="variance_ratio")
+                    / mean_abs_dev(COMP_P, "ratio", 1.0, variant="betabinom_ot",
+                                   analysis="variance_ratio")),
+           "calibration error cut by grading", doc=COMP))
 
     # The fitted dispersions themselves — the mechanism, and the sharpest single
     # statement that role grading is real.
-    graded_rho = [("1", "0.1480"), ("2", "0.1125"), ("3", "0.0874"), ("4", "0.0613")]
-    for b, quoted in graded_rho:
+    for b, quoted in [("1", "0.1751"), ("2", "0.1285"), ("3", "0.1099"), ("4", "0.0839")]:
         add(_c(quoted, COMP_RHO,
                lambda i=int(b): cell(COMP_RHO, "rho", variant=SEL, bin=i),
                f"graded rho bin {b}", doc=COMP))
-    add(_c("0.0970", COMP_RHO,
+    add(_c("0.1195", COMP_RHO,
            lambda: cell(COMP_RHO, "rho", variant="betabinom_ot", bin=1),
            "shared rho", doc=COMP))
-    add(_c("2.41", COMP_RHO,
+    add(_c("2.09", COMP_RHO,
            lambda: (cell(COMP_RHO, "rho", variant=SEL, bin=1)
                     / cell(COMP_RHO, "rho", variant=SEL, bin=4)),
            "graded rho spread", doc=COMP))
 
-    for arm, quoted in [("composition", "33.51"), ("independent", "38.83")]:
+    for arm, quoted in [("composition", "33.614"), ("independent", "38.828")]:
         add(_c(quoted, COMP_J,
                lambda a=arm: cell(COMP_J, "mean_joint_nll", split="test", arm=a),
                f"composition joint NLL {arm}", doc=COMP))
 
+    # The OT tail is invariant to the window by construction — `fit_ot_tail` gets
+    # 1996-97 to 2021-22 either way — so these confirm rather than change.
     add(_c("0.0608", COMP_O, lambda: cell(COMP_O, "p_any_ot", **{"class": "params"}),
            "OT tail p_any", doc=COMP))
     add(_c("0.1408", COMP_O, lambda: cell(COMP_O, "p_more_ot", **{"class": "params"}),
@@ -935,7 +1044,36 @@ def _composition() -> list[Claim]:
     add(_c("222", COMP_O, lambda: cell(COMP_O, "observed", **{"class": "1OT"}),
            "OT tail observed 1OT", doc=COMP))
 
+    # The pilot figures the doc keeps in its before/after table. Superseded by the
+    # full-window refit and preserved beside it, so presence-checked and value-exempt.
+    for quoted, label in [("−0.406", "pilot gain vs the incumbent"),
+                          ("−0.312", "pilot gain vs the floor"),
+                          ("0.1480", "pilot graded rho, fringe"),
+                          ("0.1125", "pilot graded rho, q2"),
+                          ("0.0874", "pilot graded rho, q3"),
+                          ("0.0613", "pilot graded rho, star"),
+                          ("0.0970", "pilot shared rho"),
+                          ("2.41", "pilot rho spread"),
+                          ("0.1055", "pilot mean |ratio-1|"),
+                          ("0.988", "pilot star-tier variance ratio"),
+                          ("59%", "pilot calibration cut")]:
+        add(_c(quoted, COMP_M, lambda: float("nan"), label, doc=COMP, historical=True))
     return C
+
+
+def _comp_arm_seconds(arm: str) -> float:
+    """Sampler seconds for one sweep arm, both splits."""
+    frame = table(COMP_D)
+    if frame is None:
+        return float("nan")
+    hit = frame[frame["label"].isin([f"{arm}/val", f"{arm}/test"])]
+    return float(hit["wall_clock_s"].sum())
+
+
+def _comp_sweep_seconds() -> float:
+    """Sampler seconds for the four-arm sweep, excluding the probe and the comparator."""
+    return sum(_comp_arm_seconds(a) for a in
+               ("binomial", "betabinom", "betabinom_ot", "betabinom_ot_graded"))
 
 
 def _predictions() -> list[Claim]:
@@ -990,8 +1128,8 @@ def _predictions() -> list[Claim]:
     # ── is there a hot streak? ────────────────────────────────────────────────
     # The whole table, because this is a doc that had a partially-refreshed one before.
     serial_rows = [("min", "0.278", "−0.016", "+0.294", "2.43"),
-                   ("fg3a", "0.065", "−0.015", "+0.080", "1.48"),
-                   ("fg2a", "0.062", "−0.015", "+0.077", "1.46"),
+                   ("fg3a|fga", "0.085", "−0.016", "+0.101", "1.57"),
+                   ("fga", "0.045", "−0.016", "+0.061", "1.38"),
                    ("ast", "0.024", "−0.016", "+0.039", "1.22"),
                    ("fta", "0.015", "−0.016", "+0.031", "1.18"),
                    ("reb", "0.014", "−0.015", "+0.030", "1.17"),
@@ -1052,30 +1190,33 @@ def _predictions() -> list[Claim]:
     add("0.8166", STAN_MIN_M,
         lambda: cell(STAN_MIN_M, "test_r2", variant="carry_forward"),
         "minutes no-fit floor")
-    for variant, quoted in [("logit_own_spline", "752"), ("linear", "168")]:
+    for variant, quoted in [("logit_own_spline", "899"), ("linear", "189")]:
         add(quoted, STAN_MIN_G,
             lambda v=variant: cell(STAN_MIN_G, "wall_clock_s", label=f"{v}/test"),
             f"minutes {variant} wall clock")
 
     # ── the composition alternative, summarised back into this doc ────────────
-    for variant, quoted in [("betabinom_ot_graded", "4.5078"),
-                            ("carry_forward", "4.8194"),
+    # Pilot-window figures, superseded by the full-window refit (Gate E, 2026-08-03) and
+    # kept beside it; `independent_comparator` is invariant to the window and stays
+    # value-checked. See `_composition` for why.
+    for variant, quoted in [("betabinom_ot_graded", "4.5592"),
+                            ("carry_forward", "4.8576"),
                             ("independent_comparator", "4.9140"),
-                            ("binomial", "4.9429")]:
+                            ("binomial", "4.9732")]:
         add(quoted, COMP_M, lambda v=variant: cell(COMP_M, "test_crps", variant=v),
             f"composition {variant} test CRPS")
-    add("0.1942", COMP_M,
+    add("0.1948", COMP_M,
         lambda: cell(COMP_M, "test_pit_ks", variant="binomial"),
         "composition binomial PIT KS")
     add("36.87", COMP_P,
         lambda: cell(COMP_P, "simulated", variant="betabinom_ot_graded",
                      analysis="team_sum_abs_error",
                      group="independent"), "comparator team-sum error")
-    add("−0.406", COMP_M,
+    add("−0.3548", COMP_M,
         lambda: (cell(COMP_M, "test_crps", variant="betabinom_ot_graded")
                  - cell(COMP_M, "test_crps", variant="independent_comparator")),
         "composition CRPS gain")
-    for tier, quoted in [("q1_fringe", "1.21"), ("q4_star", "0.99")]:
+    for tier, quoted in [("q1_fringe", "1.08"), ("q4_star", "0.78")]:
         add(quoted, COMP_P,
             lambda t=tier: cell(COMP_P, "ratio", variant="betabinom_ot_graded",
                                 analysis="variance_ratio", group=t),
@@ -1092,13 +1233,13 @@ def _predictions() -> list[Claim]:
         "detrended block inflation")
 
     # ── season effects ────────────────────────────────────────────────────────
-    effects = [("fg3a", "2.97", "+4.07", "0.93", "6.53"),
+    effects = [("fg3a_pct", "2.64", "+3.58", "0.93", "6.19"),
                ("fta", "1.21", "−0.55", "0.63", "4.36"),
                ("blk", "1.14", "−0.14", "0.12", "3.70"),
                ("ast", "1.30", "+0.73", "0.64", "3.08"),
                ("stl", "1.18", "−0.08", "0.03", "3.03"),
                ("tov", "1.16", "−0.33", "0.59", "2.89"),
-               ("fg2a", "1.32", "−0.87", "0.86", "2.42"),
+               ("fga", "1.14", "+0.47", "0.84", "1.52"),
                ("fg3m_pct", "1.08", "+0.10", "0.27", "2.06"),
                ("reb", "1.11", "+0.25", "0.59", "1.48"),
                ("fg2m_pct", "1.20", "+0.61", "0.84", "1.46"),
@@ -1119,11 +1260,12 @@ def _predictions() -> list[Claim]:
             f"season effect {quantity} trend R2")
         add(sd, SEASON_EFF, lambda q=quantity: season_eff(q, "yoy_sd_pct"),
             f"season effect {quantity} yoy sd")
-    add("−24.4%", SEASON_EFF,
-        lambda: season_eff("fg3a", "worst_yoy_pct") / 100.0, "fg3a worst year")
-    add("+4.07%", SEASON_EFF,
-        lambda: season_eff("fg3a", "trend_pct_per_season") / 100.0,
-        "fg3a trend, prose")
+    add("−24.7%", SEASON_EFF,
+        lambda: season_eff("fg3a_pct", "worst_yoy_pct") / 100.0,
+        "three-point mix worst year")
+    add("+3.58%", SEASON_EFF,
+        lambda: season_eff("fg3a_pct", "trend_pct_per_season") / 100.0,
+        "three-point mix trend, prose")
     add("4.4%", SEASON_EFF, lambda: season_eff("fta", "yoy_sd_pct") / 100.0,
         "fta yoy sd, prose")
     # The six `fta` swings past ±5%, which are the case that prompted the whole section.
@@ -1134,40 +1276,56 @@ def _predictions() -> list[Claim]:
             lambda sn=season: _one(table(SEASON_RATES), "yoy_pct", quantity="fta",
                                    season=sn) / 100.0,
             f"fta yoy {season}")
-    bias = [("fta", "−3.1", "−10.7", "−7.0"), ("stl", "−10.0", "+0.7", "−4.6"),
-            ("fg3a", "−7.0", "−1.3", "−4.2"), ("tov", "−4.6", "−1.8", "−3.2"),
-            ("ast", "−1.1", "−4.8", "−2.9"), ("blk", "+6.5", "+6.0", "+6.2")]
-    for comp, s24, s25, both in bias:
+    # `fg3a` is a retired count head; its carry-forward bias rows are gone from the
+    # artifact. Kept in the prose as the record of the retired basis, value-exempt.
+    bias = [("fta", "−3.1", "−10.7", "−7.0", False),
+            ("stl", "−10.0", "+0.7", "−4.6", False),
+            ("fg3a", "−7.0", "−1.3", "−4.2", True),
+            ("tov", "−4.6", "−1.8", "−3.2", False),
+            ("ast", "−1.1", "−4.8", "−2.9", False),
+            ("blk", "+6.5", "+6.0", "+6.2", False)]
+    for comp, s24, s25, both, retired in bias:
         for quoted, season in [(s24, "2024-25"), (s25, "2025-26"), (both, "all")]:
             add(f"{quoted}%", SEASON_BIAS,
                 lambda c=comp, s=season: carry_bias(c, s) / 100.0,
-                f"carry-forward bias {comp} {season}")
+                f"carry-forward bias {comp} {season}", historical=retired)
 
     # ── the rate side ─────────────────────────────────────────────────────────
     # Poisson/sklearn arm — the one the NB block below overturns. Kept apart on purpose.
+    #
+    # `fg3a` was RETIRED as a count head when the shot-attempt basis landed (2026-08-03),
+    # so `component_rate_metrics.csv` no longer carries its rows. Its figures stay in the
+    # prose because the finding they support — linear-in-raw-rate inside `exp()` is
+    # catastrophically misspecified on a skewed count — is what motivated the whole
+    # scale-not-curvature rule, and `blk` still demonstrates it live. They are marked
+    # historical: presence-checked so they cannot be deleted, value-exempt because the row
+    # they measured no longer exists. Leaving them unmarked would let them decay into the
+    # module's "missing artifact" skip, which is meant for a fresh checkout, not for a
+    # claim that has quietly stopped describing anything.
+    RETIRED = {"fg3a"}
     for head, quoted in [("fg3a", "0.520"), ("blk", "0.637")]:
         add(quoted, RATES, lambda h=head: rate(h, "linear"),
-            f"poisson {head} linear R2")
+            f"poisson {head} linear R2", historical=head in RETIRED)
     for head, quoted in [("fg3a", "0.879"), ("blk", "0.820")]:
         add(quoted, RATES, lambda h=head: rate(h, "log_own"),
-            f"poisson {head} log_own R2")
+            f"poisson {head} log_own R2", historical=head in RETIRED)
     for head, quoted in [("fg3a", "0.030"), ("blk", "0.040")]:
         add(quoted, RATES,
             lambda h=head: rate(h, "log_own_spline") - rate(h, "log_own"),
-            f"poisson {head} spline gain")
+            f"poisson {head} spline gain", historical=head in RETIRED)
     for head, quoted in [("fg3a", "0.8791"), ("blk", "0.8204")]:
         add(quoted, RATES, lambda h=head: rate(h, "log_own"),
-            f"poisson {head} log_own R2, 4dp")
+            f"poisson {head} log_own R2, 4dp", historical=head in RETIRED)
     # "the best of seven fitted variants beats the floor by +0.0019 to +0.0228" — the
-    # range over the eight count heads, which is what makes the floor binding.
-    count_heads = ("fg2a", "fg3a", "fta", "reb", "ast", "stl", "blk", "tov")
+    # range over the seven count heads, which is what makes the floor binding.
+    count_heads = ("fga", "fta", "reb", "ast", "stl", "blk", "tov")
     fitted = ("linear", "log_own", "log_own_spline", "log_own_inter", "pca",
               "pca_spline", "pca_inter")
     def _best_gain(head: str) -> float:
         return max(rate(head, v) for v in fitted) - rate(head, "carry_forward")
     add("0.0019", RATES, lambda: min(_best_gain(h) for h in count_heads),
         "smallest gain over the no-fit floor")
-    add("0.0228", RATES, lambda: max(_best_gain(h) for h in count_heads),
+    add("0.0203", RATES, lambda: max(_best_gain(h) for h in count_heads),
         "largest gain over the no-fit floor")
     add("221.3", SEASON_TOTAL, lambda: treatment("oracle_gp", "mae_dk_total"),
         "oracle GP MAE")
@@ -1177,7 +1335,7 @@ def _predictions() -> list[Claim]:
     # in the sklearn run — `spline_own` / `inter` / `pca_inter`, no `log_own` — so the
     # "best fitted" minimum has to enumerate the right five.
     conversion_variants = ("linear", "spline_own", "inter", "pca", "pca_inter")
-    for head, quoted in [("fg2m|fg2a", "0.061"), ("fg3m|fg3a", "0.037")]:
+    for head, quoted in [("fg2m|fg2a", "0.072"), ("fg3m|fg3a", "0.032")]:
         add(quoted, RATES,
             lambda h=head: rate(h, "carry_forward", "nll")
             - min(rate(h, v, "nll") for v in conversion_variants),
@@ -1209,19 +1367,29 @@ def _predictions() -> list[Claim]:
         lambda: (cell(STAN_MIN_M, "test_r2", variant="logit_own_spline")
                  - cell(STAN_MIN_M, "test_r2", variant="carry_forward")),
         "minutes R2 gain over floor")
-    add("208.6", STAN_C_D, lambda: total(STAN_C_D, "wall_clock_s") / 60,
+    add("305.0", STAN_C_D, lambda: total(STAN_C_D, "wall_clock_s") / 60,
         "component sampler minutes")
     add("1.0118", STAN_C_D, lambda: max_of(STAN_C_D, "max_rhat"),
         "component max R-hat")
-    for head, quoted in [("blk", "0.6794"), ("fg3a", "0.3719")]:
+    # `fg3a` is a RETIRED count head (shot-attempt basis, 2026-08-04); its rows are gone
+    # from the artifact. Its figures stay in the prose because they are the sharpest
+    # statement of the misspecification the basis change removed, and they are marked
+    # historical so they cannot rot into a silent skip.
+    for head, quoted, retired in [("blk", "0.6794", False), ("fg3a", "0.3719", True)]:
         add(quoted, STAN_C_M, lambda h=head: stan_c(h, "log_own", "test_r2"),
-            f"NB {head} log_own R2")
-    for head, quoted in [("blk", "0.8579"), ("fg3a", "0.9046")]:
+            f"NB {head} log_own R2", historical=retired)
+    for head, quoted, retired in [("blk", "0.8579", False), ("fg3a", "0.9046", True)]:
         add(quoted, STAN_C_M,
             lambda h=head: stan_c(h, "log_own_spline", "test_r2"),
-            f"NB {head} spline R2")
+            f"NB {head} spline R2", historical=retired)
     add("−19.00", STAN_C_M, lambda: stan_c("fg3a", "linear", "test_r2"),
-        "NB fg3a linear R2")
+        "NB fg3a linear R2", historical=True)
+    for quoted, variant, label in [("0.9464", "carry_forward", "fga floor"),
+                                   ("0.9396", "linear", "fga linear R2"),
+                                   ("0.9501", "log_own", "fga log_own R2"),
+                                   ("0.9505", "log_own_spline", "fga selected R2")]:
+        add(quoted, STAN_C_M, lambda v=variant: stan_c("fga", v, "test_r2"),
+            f"NB {label}")
     add("−1.393", STAN_C_M, lambda: stan_c("blk", "linear", "test_r2"),
         "NB blk linear R2")
     add("0.8649", STAN_C_M, lambda: stan_c("fta", "log_own", "test_r2"),
@@ -1245,9 +1413,9 @@ def _predictions() -> list[Claim]:
             f"substitution joint NLL {split}/{arm}")
 
     # ── the residual copula ───────────────────────────────────────────────────
-    add("0.0121", RESID, lambda: resid("mean", kind="count"),
-        "residual off-diagonal mean, 8 counts")
-    add("0.1422", RESID, lambda: resid("max"), "residual max off-diagonal")
+    add("0.0225", RESID, lambda: resid("mean", kind="count"),
+        "residual off-diagonal mean, 7 counts")
+    add("0.1329", RESID, lambda: resid("max"), "residual max off-diagonal")
 
     # ── ADP, as summarised back into this doc ─────────────────────────────────
     add("14.7%", ROSTER_A, lambda: roster("undescribed"),
@@ -1660,8 +1828,8 @@ def _claude() -> list[Claim]:
         return _one(table(OPPONENT_A), column, outcome=outcome)
 
     def bonus(unit: str, od: float, column: str, bucket: str = "all") -> float:
-        return _one(table(BONUS), column, analysis="calibration", unit=unit,
-                    bucket=bucket, overdispersion=od)
+        return _windowed(BONUS, column, analysis="calibration", unit=unit,
+                         bucket=bucket, overdispersion=od)
 
     def age_ratio(metric: str, age: int) -> float:
         return _one(table(AGING), "cumulative_ratio", tier="A", metric=metric,
@@ -1942,21 +2110,26 @@ def _claude() -> list[Claim]:
         + 9.5, "rotation MAE before playoff workload", tol=0.15)
 
     # ── the component rate heads (Poisson / sklearn) ──────────────────────────
-    poisson = [("reb", "0.9424", "0.9278", "0.9441", "0.9436", "0.9442"),
-               ("fg2a", "0.9194", "0.9089", "0.9245", "0.9248", "0.9260"),
-               ("ast", "0.9197", "0.8601", "0.9229", "0.9262", "0.9236"),
-               ("fg3a", "0.9036", "0.5197", "0.8791", "0.9088", "0.8784"),
-               ("blk", "0.8407", "0.6375", "0.8204", "0.8605", "0.8228"),
-               ("fta", "0.8673", "0.8449", "0.8689", "0.8692", "0.8720"),
-               ("stl", "0.8194", "0.8170", "0.8369", "0.8397", "0.8338"),
-               ("tov", "0.8845", "0.8828", "0.8915", "0.8913", "0.8916")]
-    for head, floor, linear, log_own, spline, inter in poisson:
+    # `fg2a` and `fg3a` are RETIRED count heads (shot-attempt basis, 2026-08-03) and their
+    # rows are gone from the artifact; `fga` replaces both. The retired rows stay in the
+    # doc beside the new one, value-exempt, because the table is the record of what the
+    # two-count basis measured.
+    poisson = [("fga", "0.9464", "0.9455", "0.9513", "0.9517", "0.9522", False),
+               ("reb", "0.9424", "0.9278", "0.9441", "0.9436", "0.9442", False),
+               ("fg2a", "0.9194", "0.9089", "0.9245", "0.9248", "0.9260", True),
+               ("ast", "0.9197", "0.8601", "0.9229", "0.9262", "0.9236", False),
+               ("fg3a", "0.9036", "0.5197", "0.8791", "0.9088", "0.8784", True),
+               ("blk", "0.8407", "0.6375", "0.8204", "0.8605", "0.8228", False),
+               ("fta", "0.8673", "0.8449", "0.8689", "0.8692", "0.8720", False),
+               ("stl", "0.8194", "0.8170", "0.8369", "0.8397", "0.8338", False),
+               ("tov", "0.8845", "0.8828", "0.8915", "0.8913", "0.8916", False)]
+    for head, floor, linear, log_own, spline, inter, retired in poisson:
         for quoted, variant in [(floor, "carry_forward"), (linear, "linear"),
                                 (log_own, "log_own"), (spline, "log_own_spline"),
                                 (inter, "log_own_inter")]:
             add(quoted, RATES, lambda h=head, v=variant: rate(h, v),
-                f"poisson {head} {variant}")
-    add("3.0894", RATES,
+                f"poisson {head} {variant}", historical=retired)
+    add("3.1021", RATES,
         lambda: min(rate("ftm|fta", v, "nll")
                     for v in ("linear", "spline_own", "inter", "pca", "pca_inter")),
         "ftm|fta best fitted NLL")
@@ -1969,21 +2142,26 @@ def _claude() -> list[Claim]:
             f"reb alpha sensitivity at {alpha}")
 
     # ── the Stan heads ────────────────────────────────────────────────────────
-    stan_counts = [("reb", "0.9424", "0.9095", "0.9439", "0.9428"),
-                   ("fg2a", "0.9194", "0.9018", "0.9241", "0.9241"),
-                   ("ast", "0.9197", "0.6615", "0.9223", "0.9240"),
-                   ("fg3a", "0.9036", "−19.00", "0.3719", "0.9046"),
-                   ("tov", "0.8845", "0.8823", "0.8929", "0.8926"),
-                   ("blk", "0.8407", "−1.393", "0.6794", "0.8579"),
-                   ("fta", "0.8673", "0.8171", "0.8649", "0.8648"),
-                   ("stl", "0.8194", "0.8113", "0.8390", "0.8413")]
-    for head, floor, linear, log_own, spline in stan_counts:
+    # `fg2a` / `fg3a` are RETIRED count heads (shot-attempt basis, 2026-08-04) and their
+    # rows are gone from the artifact; `fga` replaces both. They stay in the doc's table as
+    # the record of the retired basis, value-exempt but presence-checked.
+    stan_counts = [("fga", "0.9464", "0.9396", "0.9501", "0.9505", False),
+                   ("reb", "0.9424", "0.9095", "0.9439", "0.9428", False),
+                   ("fg2a", "0.9194", "0.9018", "0.9241", "0.9241", True),
+                   ("ast", "0.9197", "0.6615", "0.9223", "0.9240", False),
+                   ("fg3a", "0.9036", "−19.00", "0.3719", "0.9046", True),
+                   ("tov", "0.8845", "0.8823", "0.8929", "0.8926", False),
+                   ("blk", "0.8407", "−1.393", "0.6794", "0.8579", False),
+                   ("fta", "0.8673", "0.8171", "0.8649", "0.8648", False),
+                   ("stl", "0.8194", "0.8113", "0.8390", "0.8413", False)]
+    for head, floor, linear, log_own, spline, retired in stan_counts:
         for quoted, variant in [(floor, "carry_forward"), (linear, "linear"),
                                 (log_own, "log_own"), (spline, "log_own_spline")]:
             add(quoted, STAN_C_M,
                 lambda h=head, v=variant: stan_c(h, v, "test_r2"),
-                f"NB {head} {variant}")
-    conversions = [("fg2m|fg2a", "3.7249", "3.7770"),
+                f"NB {head} {variant}", historical=retired)
+    conversions = [("fg3a|fga", "4.6137", "4.6528"),
+                   ("fg2m|fg2a", "3.7249", "3.7770"),
                    ("fg3m|fg3a", "3.2407", "3.2614"),
                    ("ftm|fta", "3.1313", "3.0822")]
     for head, fitted, floor in conversions:
@@ -2005,7 +2183,7 @@ def _claude() -> list[Claim]:
         lambda: stan_c("ftm|fta", "carry_forward", "test_nll")
         - stan_c("ftm|fta", "logit_own_spline", "test_nll"),
         "ftm|fta NLL gain")
-    add("208.6", STAN_C_D, lambda: total(STAN_C_D, "wall_clock_s") / 60,
+    add("305.0", STAN_C_D, lambda: total(STAN_C_D, "wall_clock_s") / 60,
         "component sampler minutes")
     add("1.0118", STAN_C_D, lambda: max_of(STAN_C_D, "max_rhat"),
         "component max R-hat")
@@ -2061,10 +2239,12 @@ def _claude() -> list[Claim]:
     add("−0.491910", SHOT_SWEEP,
         lambda: shot("test", "fga_x_fg3a_share") - shot_grid_best(),
         "gate 0 margin against arm A's best-of-16")
+    # Reads the pre-adoption `fg3a` row, which the refit removed — value-exempt, and the
+    # figure itself is preserved inside the gate's own artifact.
     add("0.305646", SHOT_SWEEP,
         lambda: (cell(STAN_C_M, "test_nll", head="fg3a", variant="log_own")
                  - shot_head("test", "fg3a", "log_own_spline")),
-        "gate 0 handicap in nats")
+        "gate 0 handicap in nats", historical=True)
     add("−0.487010", SHOT_SWEEP,
         lambda: (shot_head("test", "fga", "log_own")
                  + shot_head("test", "fg3a|fga", "logit_own")
@@ -2161,78 +2341,117 @@ def _claude() -> list[Claim]:
     add("713,947", STAN_MIN_D,
         lambda: cell(STAN_MIN_D, "n_player_games", metric="game_level_rho"),
         "game-level population")
-    add("1,829", STAN_MIN_G, lambda: total(STAN_MIN_G, "wall_clock_s"),
+    add("2,183", STAN_MIN_G, lambda: total(STAN_MIN_G, "wall_clock_s"),
         "minutes head wall clock")
     add("+0.0407", STAN_MIN_M,
         lambda: (cell(STAN_MIN_M, "test_r2", variant="logit_own_spline")
                  - cell(STAN_MIN_M, "test_r2", variant="carry_forward")),
         "minutes R2 gain over floor")
-    add("752", STAN_MIN_G,
+    add("899", STAN_MIN_G,
         lambda: cell(STAN_MIN_G, "wall_clock_s", label="logit_own_spline/test"),
         "spline wall clock")
-    add("168", STAN_MIN_G,
+    add("189", STAN_MIN_G,
         lambda: cell(STAN_MIN_G, "wall_clock_s", label="linear/test"),
         "linear wall clock")
 
-    # the composition pilot
-    for variant, val, test, pit in [("carry_forward", "4.6331", "4.8194", "0.0178"),
-                                    ("binomial", "4.9345", "4.9429", "0.1942"),
-                                    ("betabinom", "4.5109", "4.5361", "0.0205"),
-                                    ("betabinom_ot", "4.5099", "4.5353", "0.0202"),
-                                    ("betabinom_ot_graded", "4.4561", "4.5078",
-                                     "0.0221"),
-                                    ("independent_comparator", "4.7842", "4.9140",
-                                     "0.0769")]:
+    # the composition, at full window (Gate E, 2026-08-04). `independent_comparator` never
+    # trains on the composition window and scores identical rows, so it is invariant and is
+    # the control on the refit. Pilot figures the doc keeps beside the new ones are marked
+    # historical: presence-checked, value-exempt.
+    for variant, val, test, pit in [
+            ("carry_forward", "4.6776", "4.8576", "0.0354"),
+            ("binomial", "4.9394", "4.9732", "0.1948"),
+            ("betabinom", "4.5422", "4.5893", "0.0405"),
+            ("betabinom_ot", "4.5430", "4.5848", "0.0414"),
+            ("betabinom_ot_graded", "4.4926", "4.5592", "0.0393"),
+            ("independent_comparator", "4.7842", "4.9140", "0.0769")]:
         add(val, COMP_M, lambda v=variant: cell(COMP_M, "val_crps", variant=v),
             f"composition {variant} val CRPS")
         add(test, COMP_M, lambda v=variant: cell(COMP_M, "test_crps", variant=v),
             f"composition {variant} test CRPS")
         add(pit, COMP_M, lambda v=variant: cell(COMP_M, "test_pit_ks", variant=v),
             f"composition {variant} PIT KS")
+    add("−0.3548", COMP_M,
+        lambda: (cell(COMP_M, "test_crps", variant="betabinom_ot_graded")
+                 - cell(COMP_M, "test_crps", variant="independent_comparator")),
+        "composition gain vs the incumbent")
+    add("−7.2%", COMP_M,
+        lambda: (cell(COMP_M, "test_crps", variant="betabinom_ot_graded")
+                 / cell(COMP_M, "test_crps", variant="independent_comparator") - 1.0),
+        "composition gain, percentage")
+    add("−1.2856", COMP_M,
+        lambda: cell(COMP_M, "test_bias", variant="independent_comparator"),
+        "comparator bias")
+    add("12.8", COMP_M, lambda: cell(COMP_M, "probe_hours", variant="binomial"),
+        "composition Gate A extrapolation")
+    add("20.9", COMP_D, lambda: _comp_sweep_seconds() / 3600,
+        "composition actual sweep hours")
+    add("1.63", COMP_D,
+        lambda: (_comp_sweep_seconds() / 3600
+                 / cell(COMP_M, "probe_hours", variant="binomial")),
+        "how far Gate A under-predicted")
+    add("15.23", COMP_D,
+        lambda: cell(COMP_D, "wall_clock_s", label="betabinom/val") / 631158 * 1000,
+        "full-window ms per row")
     add("36.87", COMP_P,
         lambda: cell(COMP_P, "simulated", variant="betabinom_ot_graded",
                      analysis="team_sum_abs_error",
                      group="independent"), "comparator team-sum error")
-    add("0.5882", COMP_P,
-        lambda: cell(COMP_P, "observed", variant="betabinom_ot_graded",
-                     analysis="starter_share",
-                     group="regulation/composition"), "starter share, regulation")
-    add("0.6314", COMP_P,
-        lambda: cell(COMP_P, "observed", variant="betabinom_ot_graded",
-                     analysis="starter_share",
-                     group="overtime/composition"), "starter share, overtime")
-    # Both arms of the graded-vs-shared calibration table, each pinned to its variant:
-    # the PPC artifact carries two arms now, so an unfiltered lookup would silently
-    # take whichever sorts first.
-    for arm, tier, quoted in [("betabinom_ot", "q1_fringe", "1.5900"),
-                              ("betabinom_ot", "q2", "0.9656"),
-                              ("betabinom_ot", "q3", "0.8961"),
-                              ("betabinom_ot", "q4_star", "0.7000"),
-                              ("betabinom_ot_graded", "q1_fringe", "1.2093"),
-                              ("betabinom_ot_graded", "q2", "0.8405"),
-                              ("betabinom_ot_graded", "q3", "0.9587"),
-                              ("betabinom_ot_graded", "q4_star", "0.9880")]:
+    for quoted, column, group in [("0.5882", "observed", "regulation/composition"),
+                                  ("0.6314", "observed", "overtime/composition"),
+                                  ("0.5998", "simulated", "regulation/composition"),
+                                  ("0.6464", "simulated", "overtime/composition")]:
+        add(quoted, COMP_P,
+            lambda c=column, g=group: cell(COMP_P, c, variant="betabinom_ot_graded",
+                                           analysis="starter_share", group=g),
+            f"starter share {column} {group}")
+    for arm, tier, quoted in [("betabinom_ot", "q1_fringe", "1.3466"),
+                              ("betabinom_ot", "q2", "0.8089"),
+                              ("betabinom_ot", "q3", "0.7691"),
+                              ("betabinom_ot", "q4_star", "0.5973"),
+                              ("betabinom_ot_graded", "q1_fringe", "1.0845"),
+                              ("betabinom_ot_graded", "q2", "0.7687"),
+                              ("betabinom_ot_graded", "q3", "0.8217"),
+                              ("betabinom_ot_graded", "q4_star", "0.7757")]:
         add(quoted, COMP_P,
             lambda a=arm, t=tier: cell(COMP_P, "ratio", variant=a,
                                        analysis="variance_ratio", group=t),
             f"composition variance ratio {arm} {tier}")
-    for arm, quoted in [("betabinom_ot", "0.2571"),
-                        ("betabinom_ot_graded", "0.1055")]:
+    for arm, quoted in [("betabinom_ot", "0.2928"),
+                        ("betabinom_ot_graded", "0.1796")]:
         add(quoted, COMP_P,
             lambda a=arm: mean_abs_dev(COMP_P, "ratio", 1.0, variant=a,
                                        analysis="variance_ratio"),
             f"composition mean |ratio-1| {arm}")
-    for b, quoted in [(1, "0.1480"), (2, "0.1125"), (3, "0.0874"), (4, "0.0613")]:
+    add("39%", COMP_P,
+        lambda: (1.0 - mean_abs_dev(COMP_P, "ratio", 1.0,
+                                    variant="betabinom_ot_graded",
+                                    analysis="variance_ratio")
+                 / mean_abs_dev(COMP_P, "ratio", 1.0, variant="betabinom_ot",
+                                analysis="variance_ratio")),
+        "composition calibration cut")
+    for b, quoted in [(1, "0.1751"), (2, "0.1285"), (3, "0.1099"), (4, "0.0839")]:
         add(quoted, COMP_RHO,
             lambda i=b: cell(COMP_RHO, "rho", variant="betabinom_ot_graded", bin=i),
             f"composition graded rho bin {b}")
-    add("0.0970", COMP_RHO,
+    add("0.1195", COMP_RHO,
         lambda: cell(COMP_RHO, "rho", variant="betabinom_ot", bin=1),
         "composition shared rho")
-    add("2.41", COMP_RHO,
+    add("2.09", COMP_RHO,
         lambda: (cell(COMP_RHO, "rho", variant="betabinom_ot_graded", bin=1)
                  / cell(COMP_RHO, "rho", variant="betabinom_ot_graded", bin=4)),
         "composition graded rho spread")
+    for quoted, label in [("−0.406", "pilot gain vs the incumbent"),
+                          ("0.1480", "pilot graded rho, fringe"),
+                          ("0.1125", "pilot graded rho, q2"),
+                          ("0.0874", "pilot graded rho, q3"),
+                          ("0.0613", "pilot graded rho, star"),
+                          ("0.0970", "pilot shared rho"),
+                          ("2.41", "pilot rho spread"),
+                          ("0.1055", "pilot mean |ratio-1|"),
+                          ("0.988", "pilot star-tier ratio"),
+                          ("59%", "pilot calibration cut")]:
+        add(quoted, COMP_M, lambda: float("nan"), label, historical=True)
     add("0.0608", COMP_O, lambda: cell(COMP_O, "p_any_ot", **{"class": "params"}),
         "OT tail p_any")
     add("0.1408", COMP_O, lambda: cell(COMP_O, "p_more_ot", **{"class": "params"}),
@@ -2241,9 +2460,10 @@ def _claude() -> list[Claim]:
         "OT tail predicted 1OT")
 
     # ── serial and residual correlation ───────────────────────────────────────
-    for comp, excess, block in [("min", "+0.294", "2.43"), ("fg3a", "+0.080", "1.48"),
-                                ("fg2a", "+0.077", "1.46"), ("ftm|fta", "+0.012",
-                                                             "1.10"),
+    for comp, excess, block in [("min", "+0.294", "2.43"),
+                                ("fg3a|fga", "+0.101", "1.57"),
+                                ("fga", "+0.061", "1.38"), ("ftm|fta", "+0.012",
+                                                            "1.10"),
                                 ("fg2m|fg2a", "+0.002", "1.03"),
                                 ("fg3m|fg3a", "−0.002", "1.01")]:
         add(excess, SERIAL, lambda c=comp: serial(c, "lag1_excess"),
@@ -2261,15 +2481,23 @@ def _claude() -> list[Claim]:
         add(quoted, SERIAL, lambda l=lag: serial("min", l), f"minutes {lag}")
     add("0.196", SERIAL, lambda: serial("min_detrended", "lag1"),
         "detrended minutes lag-1")
-    add("+0.0071", RESID, lambda: resid("mean"), "residual mean, all 11")
-    add("+0.0121", RESID, lambda: resid("mean", kind="count"),
-        "residual mean, 8 counts")
-    add("+0.1422", RESID, lambda: resid("max"), "residual max")
+    add("+0.0070", RESID, lambda: resid("mean"), "residual mean, all 11")
+    add("+0.0225", RESID, lambda: resid("mean", kind="count"),
+        "residual mean, 7 counts")
+    add("+0.1329", RESID, lambda: resid("max"), "residual max")
+    # The retired pair now lives under its own basis label — it is a contrast against the
+    # two-count basis, not a cell of the shipped matrix.
     add("−0.1248", RESID,
-        lambda: cell(RESID, "r", component_a="fg3a", component_b="fg2a",
-                     basis="minutes_conditioned"), "3PA/2PA substitution")
-    add("+0.112", RESID, lambda: resid("mean", basis="raw"), "raw residual mean")
-    add("+0.492", RESID, lambda: resid("max", basis="raw"), "raw residual max")
+        lambda: _windowed(RESID, "r", component_a="fg3a", component_b="fg2a",
+                          basis="legacy_two_count_basis"),
+        "3PA/2PA substitution, legacy basis")
+    add("−0.0836", RESID,
+        lambda: _windowed(RESID, "r", component_a="fga", component_b="fg3a|fga",
+                          basis="minutes_conditioned"),
+        "volume/mix coupling, shipped basis")
+    add("+0.7853", RESID, resid_min_eig, "copula min eigenvalue")
+    add("+0.090", RESID, lambda: resid("mean", basis="raw"), "raw residual mean")
+    add("+0.470", RESID, lambda: resid("max", basis="raw"), "raw residual max")
     for quoted, label in [("+0.013", "mean"), ("0.157", "max"), ("−0.110", "3PA/2PA")]:
         add(quoted, RESID, lambda: resid("mean", kind="count"),
             f"superseded residual {label} (2021-22 onward)", historical=True)
@@ -2344,10 +2572,10 @@ def _claude() -> list[Claim]:
     add("+0.0009", BONUS, lambda: bonus("player_season", 0.10, "bias"),
         "shipped overdispersion bias")
     add("0.0968", BONUS,
-        lambda: _one(table(BONUS), "overdispersion", analysis="fitted",
+        lambda: _windowed(BONUS, "overdispersion", analysis="fitted",
                      unit="player_season"), "fitted season-unit optimum")
     add("0.0248", BONUS,
-        lambda: _one(table(BONUS), "overdispersion", analysis="fitted",
+        lambda: _windowed(BONUS, "overdispersion", analysis="fitted",
                      unit="player_game"), "fitted game-unit optimum")
     add("11,938", BONUS, lambda: bonus("player_season", 0.10, "n"),
         "bonus calibration population")
@@ -2611,13 +2839,13 @@ def _claude() -> list[Claim]:
     add("+18.8%", SEASON_REGIME,
         lambda: regime("stl", "next_season_shift_pct", "policy_break") / 100.0,
         "level+slope shift, stl")
-    add("−0.833", SHOCK_CORR, lambda: _strongest_shock_pair(), "strongest shock pair")
-    add("−0.009", SHOCK_CORR, lambda: table(SHOCK_CORR)["corr"].mean(),
+    add("+0.838", SHOCK_CORR, lambda: _strongest_shock_pair(), "strongest shock pair")
+    add("+0.011", SHOCK_CORR, lambda: table(SHOCK_CORR)["corr"].mean(),
         "mean shock correlation")
-    add("0.307", SHOCK_CORR, lambda: table(SHOCK_CORR)["corr"].abs().mean(),
+    add("0.309", SHOCK_CORR, lambda: table(SHOCK_CORR)["corr"].abs().mean(),
         "mean |shock correlation|")
     add("136", SHOCK_CORR, lambda: rows(SHOCK_CORR), "shock correlation pairs")
-    add("20.6%", SHOCK_CORR,
+    add("18.4%", SHOCK_CORR,
         lambda: (table(SHOCK_CORR)["corr"].abs() > 0.5).mean(),
         "share of pairs above |r| = 0.5")
 
@@ -2797,7 +3025,7 @@ def _readme() -> list[Claim]:
             f"season total {name} {which}")
 
     # ── results: the component floor ──────────────────────────────────────────
-    count_heads = ("fg2a", "fg3a", "fta", "reb", "ast", "stl", "blk", "tov")
+    count_heads = ("fga", "fta", "reb", "ast", "stl", "blk", "tov")
     fitted = ("linear", "log_own", "log_own_spline", "log_own_inter", "pca",
               "pca_spline", "pca_inter")
     add("0.82", RATES,
@@ -2807,12 +3035,12 @@ def _readme() -> list[Claim]:
         lambda: min(max(rate(h, v) for v in fitted) - rate(h, "carry_forward")
                     for h in count_heads),
         "smallest gain over the no-fit floor")
-    add("0.0228", RATES,
+    add("0.0203", RATES,
         lambda: max(max(rate(h, v) for v in fitted) - rate(h, "carry_forward")
                     for h in count_heads),
         "largest gain over the no-fit floor")
     add("−19.00", STAN_C_M, lambda: stan_c("fg3a", "linear", "test_r2"),
-        "fg3a under a linear predictor")
+        "fg3a under a linear predictor", historical=True)
     add("0.679", STAN_C_M, lambda: stan_c("blk", "log_own", "test_r2"),
         "blk log_own R2, 3dp")
     add("0.858", STAN_C_M, lambda: stan_c("blk", "log_own_spline", "test_r2"),
@@ -2821,38 +3049,34 @@ def _readme() -> list[Claim]:
     # `substitution_arm` fits every head at log_own, and that is the variant on which
     # `fg3a` fails its own floor. Claimed so the caveat cannot rot into a bare assertion.
     add("0.3719", STAN_C_M, lambda: stan_c("fg3a", "log_own", "test_r2"),
-        "fg3a at log_own — the variant the substitution arm used")
+        "fg3a at log_own — the variant the substitution arm used", historical=True)
     add("0.9046", STAN_C_M, lambda: stan_c("fg3a", "log_own_spline", "test_r2"),
-        "fg3a at its selected spline variant")
+        "fg3a at its selected spline variant", historical=True)
 
     # ── results: the minutes composition ──────────────────────────────────────
     SEL = "betabinom_ot_graded"
-    add("4.5078", COMP_M, lambda: comp_m(SEL, "test_crps"), "composition test CRPS")
+    add("4.5592", COMP_M, lambda: comp_m(SEL, "test_crps"), "composition test CRPS")
     add("4.9140", COMP_M, lambda: comp_m("independent_comparator", "test_crps"),
         "independent comparator test CRPS")
-    add("−8.3%", COMP_M,
+    add("−7.2%", COMP_M,
         lambda: (comp_m(SEL, "test_crps")
                  / comp_m("independent_comparator", "test_crps") - 1.0),
         "composition CRPS gain, as a percentage")
-    add("−0.406", COMP_M,
-        lambda: comp_m(SEL, "test_crps") - comp_m("independent_comparator",
-                                                  "test_crps"),
-        "composition CRPS gain against the incumbent")
     add("36.87", COMP_P,
         lambda: cell(COMP_P, "simulated", variant=SEL, analysis="team_sum_abs_error",
                      group="independent"),
         "comparator team-sum error")
-    add("0.194", COMP_M, lambda: comp_m("binomial", "test_pit_ks"),
+    add("0.195", COMP_M, lambda: comp_m("binomial", "test_pit_ks"),
         "binomial arm PIT KS, 3dp")
-    add("0.148", COMP_RHO, lambda: cell(COMP_RHO, "rho", variant=SEL, bin=1),
+    add("0.175", COMP_RHO, lambda: cell(COMP_RHO, "rho", variant=SEL, bin=1),
         "fringe-tier dispersion, 3dp")
-    add("0.061", COMP_RHO, lambda: cell(COMP_RHO, "rho", variant=SEL, bin=4),
+    add("0.084", COMP_RHO, lambda: cell(COMP_RHO, "rho", variant=SEL, bin=4),
         "star-tier dispersion, 3dp")
-    add("2.41", COMP_RHO,
+    add("2.09", COMP_RHO,
         lambda: (cell(COMP_RHO, "rho", variant=SEL, bin=1)
                  / cell(COMP_RHO, "rho", variant=SEL, bin=4)),
         "graded dispersion spread")
-    add("59%", COMP_P,
+    add("39%", COMP_P,
         lambda: (1.0 - mean_abs_dev(COMP_P, "ratio", 1.0, variant=SEL,
                                     analysis="variance_ratio")
                  / mean_abs_dev(COMP_P, "ratio", 1.0, variant="betabinom_ot",
@@ -2894,23 +3118,10 @@ def _readme() -> list[Claim]:
             lambda s=split: (shot_joint(s, "fga_x_fg3a_share")
                              - shot_joint(s, "two_counts")),
             f"un-handicapped substitution gain, {split}")
-    add("−0.491910", SHOT_SWEEP,
-        lambda: shot_joint("test", "fga_x_fg3a_share") - shot_grid_min(),
-        "substitution gain against arm A's best-of-16")
-    add("11.024027", SHOT_SWEEP,
-        lambda: shot_floor("fg2a", "log_own") + shot_floor("fg3a", "log_own_spline"),
-        "canonical-basis no-fit floor")
-    add("10.085599", SHOT_SWEEP,
-        lambda: shot_floor("fga", "log_own") + shot_floor("fg3a|fga", "logit_own"),
-        "reparameterized no-fit floor")
     add("−0.390814", SHOT_SWEEP,
         lambda: (shot_floor("fga", "log_own") + shot_floor("fg3a|fga", "logit_own")
                  - shot_grid_min()),
         "reparameterized floor vs canonical best fitted")
-    add("−0.101096", SHOT_SWEEP,
-        lambda: (shot_joint("test", "fga_x_fg3a_share")
-                 - shot_floor("fga", "log_own") - shot_floor("fg3a|fga", "logit_own")),
-        "what the reparameterized arm's own fitting adds")
     # The oracle bounds every form of season term, so both ends of the range the
     # README quotes are claimed — the "~3%" ceiling and the median.
     term_heads = ("fg2a", "fg3a", "fta", "reb", "ast", "stl", "blk", "tov")
@@ -3029,7 +3240,7 @@ def _shot_basis() -> list[Claim]:
     add(_c("0.305646", SHOT_SWEEP,
            lambda: (head("test", "two_counts", "fg3a", "log_own_spline")
                     - cell(STAN_C_M, "test_nll", head="fg3a", variant="log_own")) * -1,
-           "the handicap, in nats", doc=SHOT))
+           "the handicap, in nats", doc=SHOT, historical=True))
     add(_c("−0.487010", SHOT_SWEEP,
            lambda: (head("test", "fga_x_fg3a_share", "fga", "log_own")
                     + head("test", "fga_x_fg3a_share", "fg3a|fga", "logit_own")
@@ -3090,14 +3301,21 @@ def _shot_basis() -> list[Claim]:
            "the recorded test margin, unsigned", doc=SHOT))
     add(_c("0.3719", STAN_C_M,
            lambda: cell(STAN_C_M, "test_r2", head="fg3a", variant="log_own"),
-           "fg3a at log_own — the handicap", doc=SHOT))
+           "fg3a at log_own — the handicap", doc=SHOT, historical=True))
     add(_c("0.9046", STAN_C_M,
            lambda: cell(STAN_C_M, "test_r2", head="fg3a", variant="log_own_spline"),
-           "fg3a at its shipped spline", doc=SHOT))
-    add(_c("−0.1248", RESID, lambda: cell(RESID, "r", basis="minutes_conditioned",
+           "fg3a at its shipped spline", doc=SHOT, historical=True))
+    add(_c("−0.1248", RESID,
+           lambda: _windowed(RESID, "r", basis="legacy_two_count_basis",
                              component_a="fg3a", component_b="fg2a"),
-           "the substitution off-diagonal", doc=SHOT))
-    add(_c("+0.0071", RESID, lambda: resid("mean"),
+           "the substitution off-diagonal, legacy basis", doc=SHOT))
+    add(_c("−0.0836", RESID,
+           lambda: _windowed(RESID, "r", basis="minutes_conditioned",
+                             component_a="fga", component_b="fg3a|fga"),
+           "the substitution off-diagonal, shipped basis", doc=SHOT))
+    add(_c("+0.7853", RESID, lambda: resid_min_eig(),
+           "copula min eigenvalue", doc=SHOT))
+    add(_c("+0.0070", RESID, lambda: resid("mean"),
            "conditioned off-diagonal mean", doc=SHOT))
     add(_c("0.886", PERSIST, lambda: persist("sco_pct_fga_3pt"),
            "shot-mix share persistence", doc=SHOT))
