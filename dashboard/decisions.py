@@ -2206,6 +2206,41 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("specification",),
     ),
     Decision(
+        id="season-term-selection-is-noise-dominated",
+        topic="components",
+        claim="Re-running the season-term ablation on the shot-attempt basis flipped the "
+              "selected arm for **9 of 13 heads**, almost all on margins under **1%** of "
+              "the selection metric. That strengthens the no-season-term verdict rather "
+              "than overturning it.",
+        because="On the July head list nearly every head selected `base`; on the new one "
+                "11 of 13 select a term (`trend` x5, `year` x3, `trend_year` x3, `base` "
+                "only for `reb` and `stl`). Read as a verdict that is a reversal. Read as "
+                "a **replication test** it is the opposite: the flips are 0.05% "
+                "(`fg3a|fga`), 0.01% (`fg3m|fg3a`), 0.09% (`ftm|fta`), 0.11% (`gp`), "
+                "0.20% (`min`), 0.26% (`fga`), 0.35% (`blk`) and 0.79% (`fta`), on a "
+                "change that does not touch most of those heads at all. An ablation whose "
+                "winner is that unstable is measuring noise. Only `ast` (2.21%) and "
+                "`fg2m|fg2a` (1.88%) move enough to be worth a second look, and neither is "
+                "a shot-attempt head. The oracle ceiling is unchanged in kind — median "
+                "**1.71%** of MAE, max `stl` 3.11% — which is why none of it is worth "
+                "adopting. The minutes head is the tell in the other direction: it selects "
+                "`year` and reproduced val 143.81 / test 146.54 **exactly** across the "
+                "basis change, which is what a real selection looks like next to nine "
+                "unstable ones. ⚠️ One recorded argument did weaken: the season total used "
+                "to show `trend` winning MAE while flipping bias to +7.60 (read as "
+                "cross-component cancellation producing a false positive). It now reads "
+                "106.06 / −13.57 against base's 108.56 / −36.89, so `trend` improves both "
+                "and cancellation no longer explains the aggregate win on its own. That "
+                "part needs a human decision, not a doc edit.",
+        status="measured",
+        reproduce="make season-terms → outputs/predictions/season_term_metrics.csv, "
+                  "outputs/predictions/season_term_season_total.csv",
+        source="docs/predictions-plan.md",
+        reviewed="2026-08-04",
+        date="2026-08-04",
+        tags=("methodology", "next"),
+    ),
+    Decision(
         id="shot-attempt-basis-adopted",
         topic="components",
         claim="**Adopted 2026-08-04**: `COUNT_HEADS` is now `fga, fta, reb, ast, stl, blk, "

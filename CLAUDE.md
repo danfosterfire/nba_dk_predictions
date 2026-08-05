@@ -645,7 +645,7 @@ effort accordingly, and do not expect team composition to carry the model.
     −7% on a whole roster's free-throw points, against **+0.2%** for shared-β on a 15-man
     roster. ✅ **Now measured, and the gap is ~95× rather than the recorded order of
     magnitude** — a year effect widens a 15-man roster's season-total dk_pts spread by
-    **+19.0%** and the whole 791-player board's by **+364%** (against shared-β's +6.4%).
+    **+11.6%** and the whole 791-player board's by **+278%** (against shared-β's +6.4%).
   - **Rule changes are announced in the summer**, so a manual league-level override is
     legitimate point-in-time information — unlike anything drawn from inside the season.
     ✅ The path is live and empty: `stan.season_terms.league_override` in
@@ -685,25 +685,51 @@ effort accordingly, and do not expect team composition to carry the model.
       reminder that a mean over 136 pairs is not a robust summary. The conclusion is
       unchanged — no common factor, structure in specific pairs — and the largest surviving
       pair is a plain positive one between two volume series.
-- **✅ THE ABLATION RAN — `make season-terms`, 2026-07-31, and no head ships a season term.**
-  108 fits, **0 divergences**, **0 treedepth-saturated draws**, max R̂ 1.0142, 155.9 min.
-  5 fits sit marginally over the 1.01 R̂ bar (worst 1.0142, all with ESS ≥ 371 and zero
-  divergences) and **4 of the 5 are `base` arms** — so the season terms are not what strains
-  the sampler. Four arms per head (`base`, `trend`,
+- **✅ THE ABLATION RAN — `make season-terms`. No head ships a season term, and the
+  2026-08-04 rerun on the shot-attempt basis STRENGTHENS that rather than overturning it.**
+  108 fits, **0 divergences**, max R̂ 1.0142, 128.8 min.
+  - **⚠️ READ THIS BEFORE QUOTING THE SELECTED ARMS.** On the July head list almost every
+    head selected `base`. On the new one **11 of 13 select a season term** — `trend` ×5,
+    `year` ×3, `trend_year` ×3, `base` only for `reb` and `stl`. That looks like a reversal
+    and is not: **9 heads flipped their selected arm on margins under 1% of the selection
+    metric** (`fg3a|fga` 0.05%, `fg3m|fg3a` 0.01%, `ftm|fta` 0.09%, `gp` 0.11%, `min` 0.20%,
+    `fga` 0.26%, `blk` 0.35%, `fta` 0.79%). An ablation whose winner flips across a change
+    that does not touch most of its heads is **measuring noise**, and that is a stronger
+    statement of "the terms are worth nothing" than the original run could make — it now has
+    a replication test behind it, and it failed.
+    - Only two heads move on a margin worth a second look: **`ast` at 2.21%** (`trend_year`)
+      and **`fg2m|fg2a` at 1.88%** (`trend`). Neither is a shot-attempt head, so neither is
+      explained by the basis change.
+    - **The oracle ceiling is unchanged in kind**, which is the reason none of this is worth
+      adopting: median **1.71%** of MAE across the seven count heads, max `stl` 3.11%.
+    - `trend` still **worsens held-out bias on 4 of 7 count heads** (`blk` 4.75→7.18,
+      `fta` −7.40→−9.35, `tov` −3.36→−4.82, `reb` 0.60→0.76).
+    - **⚠️ One recorded argument DID weaken and must not be quoted as it stands.** The
+      season-total table used to show `trend` winning MAE while flipping bias to **+7.60**,
+      which was read as cross-component cancellation producing a false positive. It now
+      reads MAE **106.06** and bias **−13.57** against base's **108.56 / −36.89** — `trend`
+      improves *both*, so the cancellation story no longer explains the aggregate win. The
+      component biases still move in both directions, so the mechanism is still present; it
+      is no longer sufficient on its own. **This is the one part of the season-term verdict
+      that needs a human decision rather than a doc edit.**
+  Four arms per head (`base`, `trend`,
   `year`, `trend_year`) on each head's already-selected spec, plus `trend_x_role` and
   `trend_x_role_year` for availability; selected on validation (2022-23/23-24), confirmed on
   test (2024-25/25-26), every arm quoted against its no-fit floor. Full verdict in
   `docs/predictions-plan.md`.
-  - **The trend is refuted most sharply on the one quantity that predicted it.** `fg3a`
-    selects **`base`** (val CRPS **33.247** against trend 35.443 and year 34.309), and a
-    trend flips its held-out bias from **−3.74% to +8.44%**. Two measured mechanisms: the
+  - **The trend is refuted most sharply on the one quantity that predicted it.** ⚠️ This
+    bullet describes the RETIRED `fg3a` count head and its figures are preserved as the
+    record of that basis — `fg3a` is no longer fitted, and its successor `fg3a|fga` selects
+    `year` on a 0.05% margin. `fg3a`
+    selected **`base`** (val CRPS **33.247** against trend 35.443 and year 34.309), and a
+    trend flipped its held-out bias from **−3.74% to +8.44%**. Two measured mechanisms: the
     three-point climb **decelerated** — +3.58%/season over 30 seasons but **+1.61%/season
     over the last six** — and the head's dominant feature `log(fg3a_p36_lag1)` already
     carries the league level, so a trend adds a second correction on top of one already
     there. **The trend worsens held-out bias on 6 of 8 count heads**, and where it wins on
     test it wins on heads with no era story (`stl`, trend R² 0.03). That is overfitting.
   - **A trend's apparent win on season-total dk_pts is cross-component cancellation.** All-
-    trend scores MAE **108.88** and bias **+7.60** against base's 109.96 / **−32.44** — but
+    trend scores MAE **106.06** and bias **−13.57** against base's 108.56 / **−36.89** — but
     the component biases behind it move in *both* directions (`fg3a` +8.44%, `blk` +7.18%
     against `fta` −9.35%, `fg2a` −3.07%), so the aggregate gain is those errors cancelling in
     the DK sum. Same mechanism as the 8.30× cancellation on `teammate_assist_supply`, now
@@ -713,8 +739,8 @@ effort accordingly, and do not expect team composition to carry the model.
     remember.** `oracle_league` rescales each held-out season by its own realized total — a
     perfect per-season league multiplier, and therefore the ceiling on a trend, a year effect
     and a manual override alike. As a share of base MAE: `stl` **3.11%**, `blk` 2.32%, `fta`
-    **2.16%**, `reb` 1.71%, `fg3a` **0.92%**, `ast` 0.58%, `tov` 0.01%, `fg2a` −0.06% —
-    **median 1.32%**. `fta` carries a −7.0% systematic bias and removing it *entirely*
+    **2.16%**, `reb` 1.71%, `fga` **0.81%**, `ast` 0.58%, `tov` 0.01% —
+    **median 1.71%**. `fta` carries a −7.0% systematic bias and removing it *entirely*
     recovers 2.2% of MAE, because player-level error dominates.
   - **The year effect behaves exactly as designed, and recovers the league independently.**
     Median held-out ΔR² vs base is **+0.00004** across thirteen heads — the mean-zero
@@ -728,13 +754,16 @@ effort accordingly, and do not expect team composition to carry the model.
     Measured at **1.000–1.012** across the heads — real, negligible, and reported rather than
     assumed (`YearTerm.response_multiplier`).
   - **What the year effect IS worth is joint spread, and only that.** Roster season-total
-    dk_pts sd: **+15.0%** at 12 players, **+19.0% at 15**, +37.7% at 30, +138% at 150 and
-    **+364%** across all 791 — against shared-β's +0.2% / +0.2% / +0.3% / +1.1% / +6.4% on
+    dk_pts sd: **+8.9%** at 12 players, **+11.6% at 15**, +22.1% at 30, +91.1% at 150 and
+    **+278%** across all 791 — against shared-β's +0.2% / +0.2% / +0.3% / +1.1% / +6.4% on
     the same board. Treat as an **upper bound**: `fg3a`, `ast` and `fg2a` have a fitted σ
     above their measured league movement, so some of it is player heterogeneity. Give the
     simulator σ from `season_effects_summary.csv` (`yoy_sd_pct`), not the fitted value.
-  - **The minutes head is the one head that adopts a season term**, and it falsifies a
-    recorded hypothesis. `year` wins on **both** splits (val **143.81**, test **146.54**
+  - **The minutes head adopts a season term, and it is the one selection that reproduced
+    exactly across the basis change** — val 143.81 / test 146.54 to four decimal places,
+    against 9 heads that flipped. That invariance is what distinguishes a real selection
+    from the noise-dominated ones above. It also falsifies a recorded hypothesis. `year`
+    wins on **both** splits (val **143.81**, test **146.54**
     against base 144.09 / 147.02) and nudges the standing bias to **−38.2** from −41.0.
     `docs/availability-plan.md` proposed that bias as "the signature an era effect would
     leave"; a trend makes it **worse by 15.5 minutes** (−41.0 → **−56.6**), so it is
@@ -746,8 +775,8 @@ effort accordingly, and do not expect team composition to carry the model.
     because selection never reads test. The selected arm, `trend`, is worth **0.010 games**
     of validation CRPS — nothing. The era effect is real in the league series and does not
     transfer into a better availability forecast.
-  - **Every arm under-predicts the bonus by 12–19%** (`base` −16.6%, `trend` −12.0%, `year`
-    −18.5%) and **that level is mostly not the season term**: this composition draws the
+  - **Every arm under-predicts the bonus by 12–19%** (`base` −14.8%, `trend` −10.2%, `year`
+    −16.5%) and **that level is mostly not the season term**: this composition draws the
     eleven heads independently given realized minutes, omitting the positive cross-component
     dependence a simultaneous threshold needs. It argues for the residual copula, not against
     a season term.

@@ -378,11 +378,11 @@ any count head.
 
 **No head ships a season term, and the ceiling on ever needing one is ~3% of MAE.** `make
 season-terms`. An oracle that rescales each held-out season by its own realized league total
-— the ceiling on any trend, year effect or manual override — is worth a median **1.32%** of
+— the ceiling on any trend, year effect or manual override — is worth a median **1.71%** of
 base MAE across heads. A trend worsens held-out bias on 6 of 8 count heads, most sharply on
 `fg3a`, the one quantity whose league series most looked like it wanted one. The minutes
 head is the single exception and adopts a year effect. What a year effect *is* worth is
-joint spread: **+19.0%** on a 15-man roster's season-total sd, against +0.2% from shared
+joint spread: **+11.6%** on a 15-man roster's season-total sd, against +0.2% from shared
 coefficient uncertainty.
 
 **The sampler behaved.** 74 component fits with 0 divergences, 108 season-term fits with 0

@@ -1465,6 +1465,30 @@ def _predictions() -> list[Claim]:
     return C
 
 
+def _term_margin(head: str) -> float:
+    """Validation gain of the selected arm over `base`, as a FRACTION of base.
+
+    Returned as a fraction because `check_values` scales percent-quoted claims itself.
+
+    The selection metric differs by head kind — conversion heads select on NLL, the rest
+    on CRPS — so it is read off the artifact rather than assumed. This is the number that
+    says the season-term selection is noise-dominated: 9 of 13 heads flipped their arm
+    across a head-list change that does not touch most of them, all on margins under 1%.
+    """
+    frame = table(TERM_M)
+    if frame is None:
+        return float("nan")
+    # Restricted to the four ablation arms on purpose: `oracle_league` is a CEILING, not
+    # a candidate, and letting it into the minimum would inflate every margin here — which
+    # is the opposite of the point, since the point is that the margins are tiny.
+    arms = ("base", "trend", "year", "trend_year")
+    blk = frame[(frame["head"] == head) & (frame["arm"].isin(arms))]
+    col = "val_nll" if blk["val_nll"].notna().all() else "val_crps"
+    by_arm = blk.set_index("arm")[col]
+    base = float(by_arm["base"])
+    return abs(base - float(by_arm.min())) / abs(base)
+
+
 def _season_term_summary_claims(doc: str) -> list[Claim]:
     """The subset of the verdict `CLAUDE.md` quotes, against the same artifact.
 
@@ -1474,6 +1498,12 @@ def _season_term_summary_claims(doc: str) -> list[Claim]:
     """
     C: list[Claim] = []
     add = C.append
+    for head, quoted in [("fg3a|fga", "0.05%"), ("fg3m|fg3a", "0.01%"),
+                         ("ftm|fta", "0.09%"), ("gp", "0.11%"), ("min", "0.20%"),
+                         ("fga", "0.26%"), ("blk", "0.35%"), ("fta", "0.79%"),
+                         ("fg2m|fg2a", "1.88%"), ("ast", "2.21%")]:
+        add(_c(quoted, TERM_M, lambda h=head: _term_margin(h),
+               f"season-term selection margin, {head}", doc=doc))
     add(_c("33.247", TERM_M, lambda: term("fg3a", "base", "val_crps"),
            "fg3a base val CRPS", doc=doc))
     add(_c("35.443", TERM_M, lambda: term("fg3a", "trend", "val_crps"),
@@ -1487,17 +1517,17 @@ def _season_term_summary_claims(doc: str) -> list[Claim]:
     add(_c("−9.01%", TERM_M, lambda: term("fg3a", "year", "bias_pct") / 100.0,
            "fg3a year bias", doc=doc))
     for head, quoted in [("stl", "3.11%"), ("blk", "2.32%"), ("fta", "2.16%"),
-                         ("reb", "1.71%"), ("fg3a", "0.92%"), ("ast", "0.58%"),
-                         ("tov", "0.01%"), ("fg2a", "−0.06%")]:
+                         ("reb", "1.71%"), ("fga", "0.81%"), ("ast", "0.58%"),
+                         ("tov", "0.01%")]:
         add(_c(quoted, TERM_M, lambda h=head: oracle_gain(h),
                f"oracle ceiling {head}", doc=doc))
-    add(_c("108.88", TERM_TOTAL, lambda: term_total("trend", "mae"),
+    add(_c("106.06", TERM_TOTAL, lambda: term_total("trend", "mae"),
            "season total trend MAE", doc=doc))
-    add(_c("109.96", TERM_TOTAL, lambda: term_total("base", "mae"),
+    add(_c("108.56", TERM_TOTAL, lambda: term_total("base", "mae"),
            "season total base MAE", doc=doc))
-    add(_c("+7.60", TERM_TOTAL, lambda: term_total("trend", "bias"),
+    add(_c("−13.57", TERM_TOTAL, lambda: term_total("trend", "bias"),
            "season total trend bias", doc=doc))
-    add(_c("−32.44", TERM_TOTAL, lambda: term_total("base", "bias"),
+    add(_c("−36.89", TERM_TOTAL, lambda: term_total("base", "bias"),
            "season total base bias", doc=doc))
     for head, sigma in [("blk", "0.99×"), ("tov", "0.94×"), ("fta", "0.87×"),
                         ("stl", "0.82×"), ("reb", "1.18×")]:
@@ -1505,8 +1535,8 @@ def _season_term_summary_claims(doc: str) -> list[Claim]:
                f"sigma/league ratio {head}", doc=doc))
     add(_c("2.36×", TERM_SIGMA, lambda: term_sigma("fg3a", "ratio_to_yoy_sd"),
            "sigma/league ratio fg3a", doc=doc))
-    for n, quoted in [(12, "+15.0%"), (15, "+19.0%"), (30, "+37.7%"),
-                      (150, "+138%"), (791, "+364%")]:
+    for n, quoted in [(12, "+8.9%"), (15, "+11.6%"), (30, "+22.1%"),
+                      (150, "+91.1%"), (791, "+278%")]:
         add(_c(quoted, TERM_SPREAD, lambda k=n: term_spread(k, "year") - 1.0,
                f"year roster spread inflation, {n} players", doc=doc))
     for arm, val, test in [("base", "144.09", "147.02"), ("year", "143.81", "146.54")]:
@@ -1518,7 +1548,7 @@ def _season_term_summary_claims(doc: str) -> list[Claim]:
            "minutes year bias", doc=doc))
     add(_c("−56.6", TERM_M, lambda: term("min", "trend", "bias"),
            "minutes trend bias", doc=doc))
-    for arm, quoted in [("base", "−16.6%"), ("trend", "−12.0%"), ("year", "−18.5%")]:
+    for arm, quoted in [("base", "−14.8%"), ("trend", "−10.2%"), ("year", "−16.5%")]:
         add(_c(quoted, TERM_BONUS, lambda a=arm: term_bonus(a) / 100.0,
                f"bonus bias {arm}", doc=doc))
     return C
@@ -1545,16 +1575,16 @@ def _season_term_claims(doc: str) -> list[Claim]:
 
     # The oracle ceiling — the single number that bounds the whole question.
     for head, quoted in [("stl", "3.11%"), ("blk", "2.32%"), ("fta", "2.16%"),
-                         ("reb", "1.71%"), ("fg3a", "0.92%"), ("ast", "0.58%"),
-                         ("tov", "0.01%"), ("fg2a", "−0.06%")]:
+                         ("reb", "1.71%"), ("fga", "0.81%"), ("ast", "0.58%"),
+                         ("tov", "0.01%")]:
         add(_c(quoted, TERM_M, lambda h=head: oracle_gain(h),
                f"oracle ceiling {head}", doc=doc))
 
     # Season-total dk_pts, uniform-arm and test-only.
-    for arm, mae, bias, crps in [("base", "109.96", "−32.44", "82.70"),
-                                 ("trend", "108.88", "+7.60", "80.57"),
-                                 ("year", "113.64", "−51.71", "85.68"),
-                                 ("trend_year", "110.09", "+15.25", "80.87")]:
+    for arm, mae, bias, crps in [("base", "108.56", "−36.89", "78.27"),
+                                 ("trend", "106.06", "−13.57", "75.91"),
+                                 ("year", "110.56", "−45.87", "79.92"),
+                                 ("trend_year", "105.92", "−12.89", "76.06")]:
         add(_c(mae, TERM_TOTAL, lambda a=arm: term_total(a, "mae"),
                f"season total {arm} MAE", doc=doc))
         add(_c(bias, TERM_TOTAL, lambda a=arm: term_total(a, "bias"),
@@ -1580,13 +1610,13 @@ def _season_term_claims(doc: str) -> list[Claim]:
                f"sigma/league ratio {head}", doc=doc))
 
     # Roster spread — what the year effect is actually worth.
-    for n, quoted in [(12, "+15.0%"), (15, "+19.0%"), (30, "+37.7%"),
-                      (150, "+138%"), (791, "+364%")]:
+    for n, quoted in [(12, "+8.9%"), (15, "+11.6%"), (30, "+22.1%"),
+                      (150, "+91.1%"), (791, "+278%")]:
         add(_c(quoted, TERM_SPREAD, lambda k=n: term_spread(k, "year") - 1.0,
                f"year roster spread inflation, {n} players", doc=doc))
-    add(_c("841", TERM_SPREAD, lambda: term_spread(15, "base", "total_sd"),
+    add(_c("557", TERM_SPREAD, lambda: term_spread(15, "base", "total_sd"),
            "base roster sd, 15 players", doc=doc))
-    add(_c("1,001", TERM_SPREAD, lambda: term_spread(15, "year", "total_sd"),
+    add(_c("621", TERM_SPREAD, lambda: term_spread(15, "year", "total_sd"),
            "year roster sd, 15 players", doc=doc))
 
     # Minutes — the one head that adopts a season term.
@@ -1602,8 +1632,8 @@ def _season_term_claims(doc: str) -> list[Claim]:
                f"minutes {arm} bias", doc=doc))
 
     # The bonus, whose LEVEL is the missing copula and whose ORDERING is the bias story.
-    for arm, quoted in [("base", "−16.6%"), ("trend", "−12.0%"),
-                        ("year", "−18.5%"), ("trend_year", "−11.6%")]:
+    for arm, quoted in [("base", "−14.8%"), ("trend", "−10.2%"),
+                        ("year", "−16.5%"), ("trend_year", "−9.9%")]:
         add(_c(quoted, TERM_BONUS, lambda a=arm: term_bonus(a) / 100.0,
                f"bonus bias {arm}", doc=doc))
     return C
@@ -3124,13 +3154,13 @@ def _readme() -> list[Claim]:
         "reparameterized floor vs canonical best fitted")
     # The oracle bounds every form of season term, so both ends of the range the
     # README quotes are claimed — the "~3%" ceiling and the median.
-    term_heads = ("fg2a", "fg3a", "fta", "reb", "ast", "stl", "blk", "tov")
+    term_heads = ("fga", "fta", "reb", "ast", "stl", "blk", "tov")
     add("3%", TERM_M, lambda: max(oracle_gain(h) for h in term_heads),
         "the league-oracle ceiling")
-    add("1.32%", TERM_M,
+    add("1.71%", TERM_M,
         lambda: float(pd.Series([oracle_gain(h) for h in term_heads]).median()),
         "the league-oracle median")
-    add("19.0%", TERM_SPREAD,
+    add("11.6%", TERM_SPREAD,
         lambda: term_spread(15, "year") - 1.0,
         "year-effect roster spread at 15 players")
     add("0.2%", STAN_AV_B,

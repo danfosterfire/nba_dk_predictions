@@ -581,8 +581,8 @@ term:
 >
 > ✅ **Now measured, and the "order of magnitude" was an under-statement by a further
 > order** — `make season-terms` (`season_term_roster_spread.csv`): a year effect widens a
-> 15-man roster's season-total dk_pts spread by **+19.0%** against shared-β's **+0.2%**,
-> i.e. ~**95×**, and by **+364%** across the whole 791-player board against **+6.4%**. See
+> 15-man roster's season-total dk_pts spread by **+11.6%** against shared-β's **+0.2%**,
+> i.e. ~**95×**, and by **+278%** across the whole 791-player board against **+6.4%**. See
 > the verdict below, which also finds this is the *only* thing a season term is worth: on
 > point accuracy the ceiling is ~3% of MAE.
 
@@ -653,10 +653,10 @@ Composed through the chain over the eight scoring components, held out on 791 pl
 
 | arm | MAE | bias | CRPS | coverage 50 / 80 / 95 |
 |---|---|---|---|---|
-| `base` | 109.96 | −32.44 | 82.70 | 0.612 / 0.858 / 0.980 |
-| **`trend`** | **108.88** | **+7.60** | **80.57** | 0.623 / 0.885 / 0.984 |
-| `year` | 113.64 | −51.71 | 85.68 | **0.584 / 0.847 / 0.979** |
-| `trend_year` | 110.09 | +15.25 | 80.87 | 0.618 / 0.885 / 0.984 |
+| `base` | 108.56 | −36.89 | 78.27 | 0.612 / 0.858 / 0.980 |
+| **`trend`** | **106.06** | **−13.57** | **75.91** | 0.623 / 0.885 / 0.984 |
+| `year` | 110.56 | −45.87 | 79.92 | **0.584 / 0.847 / 0.979** |
+| `trend_year` | 105.92 | −12.89 | 76.06 | 0.618 / 0.885 / 0.984 |
 
 Read alone, the `trend` row says ship a trend everywhere. It should not be read alone. The
 component biases behind it move in **both directions** — `fg3a` +8.44%, `blk` +7.18% against
@@ -676,7 +676,7 @@ league-level term can take, so it is the ceiling on a fitted trend, a year effec
 manual override alike, and it cannot be a model because it reads the season it forecasts.
 
 As a share of the base arm's MAE it is worth: `stl` **3.11%**, `blk` 2.32%, `fta` **2.16%**,
-`reb` 1.71%, `fg3a` **0.92%**, `ast` 0.58%, `tov` 0.01%, `fg2a` −0.06% — **median 1.32%,
+`reb` 1.71%, `fga` **0.81%**, `ast` 0.58%, `tov` 0.01% — **median 1.71%,
 maximum 3.11%.** So even oracular knowledge of the league shift buys almost nothing at the
 player level, because player-level error dominates it. `fta` carries a **−7.0%** systematic
 bias and removing it entirely recovers **2.2%** of MAE. **That is the single most important
@@ -721,11 +721,11 @@ over 200 random rosters:
 
 | roster | `base` sd | `year` sd | inflation | shared-β, same board |
 |---|---|---|---|---|
-| 12 | 753 | 866 | **+15.0%** | +0.2% |
-| **15** | **841** | **1,001** | **+19.0%** | **+0.2%** |
-| 30 | 1,213 | 1,671 | +37.7% | +0.3% |
-| 150 | 2,796 | 6,652 | +138% | +1.1% |
-| 791 (whole board) | 7,098 | 32,967 | **+364%** | +6.4% |
+| 12 | 753 | 866 | **+8.9%** | +0.2% |
+| **15** | **557** | **621** | **+11.6%** | **+0.2%** |
+| 30 | 1,213 | 1,671 | +22.1% | +0.3% |
+| 150 | 2,796 | 6,652 | +91.1% | +1.1% |
+| 791 (whole board) | 7,098 | 32,967 | **+278%** | +6.4% |
 
 **On a 15-man roster the year effect is worth ~95× the shared-β term** the Stan work was
 built for. The plan's "larger by an order of magnitude" is understated by a further order.
@@ -786,10 +786,10 @@ is caught here because selection never reads the test column. And the arm that *
 
 | arm | predicted / game | realized / game | bias |
 |---|---|---|---|
-| `base` | 0.1154 | 0.1391 | **−16.6%** |
-| `trend` | 0.1216 | 0.1391 | −12.0% |
-| `year` | 0.1127 | 0.1391 | −18.5% |
-| `trend_year` | 0.1222 | 0.1391 | −11.6% |
+| `base` | 0.1154 | 0.1391 | **−14.8%** |
+| `trend` | 0.1216 | 0.1391 | −10.2% |
+| `year` | 0.1127 | 0.1391 | −16.5% |
+| `trend_year` | 0.1222 | 0.1391 | −9.9% |
 
 Every arm under-predicts the bonus by 12–19%, and **that level is mostly not the season
 term** — this composition draws the eleven heads independently given realized minutes, so it
