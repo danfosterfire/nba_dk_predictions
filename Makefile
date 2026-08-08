@@ -11,7 +11,8 @@ PIP    := .venv/bin/pip
         adp-status game-length serial-correlation component-rates \
         variance-budget residual-correlation season-effects \
         stan stan-availability stan-minutes stan-components stan-composition \
-        stan-substitution season-terms
+        stan-substitution season-terms games-played stan-games-played \
+        final-evaluation
 
 venv:
 	/opt/homebrew/bin/python3.14 -m venv .venv
@@ -168,6 +169,21 @@ availability-model:
 stan-availability:
 	$(PYTHON) -m src.models.stan_availability
 
+# The games-played spell process — docs/games-played-plan.md. `games-played` is the numpy
+# reference and Gate 0: the collapse, the spell classes, the closed-form beta-geometric
+# fits and the empirical-hazard Monte Carlo that rejects the plain full-window chain. It
+# has NO Stan dependency and runs in seconds, which is the point — a process class is
+# cheaper to reject in numpy than in NUTS.
+games-played:
+	$(PYTHON) -m src.models.games_played
+
+# The fitted arms. Imports `stan_availability`'s head as its permanent floor, so that
+# target has to be ahead of it — the same ordering constraint `stan-composition` has on
+# `stan-minutes`. Held OUT of the `stan` aggregate until Gate D passes, matching how
+# `stan-substitution` and `season-terms` are held out.
+stan-games-played: games-played
+	$(PYTHON) -m src.models.stan_games_played
+
 stan-minutes:
 	$(PYTHON) -m src.models.stan_minutes
 
@@ -193,11 +209,15 @@ stan-composition:
 # that head as the incumbent it is measured against. `stan-minutes` therefore has to be
 # ahead of it, not merely present.
 #
-# BUDGET A DAY. `stan-composition` alone took ~21 h of sampler time at the full window
-# (its own Gate A extrapolated 12.8 h and under-predicted by 1.63x, because per-row cost
-# is superlinear in rows). `stan-components` is ~5 h on top. Each composition arm
+# BUDGET MOST OF A DAY. `stan-composition` alone took 9.9 h of sampler time at the full
+# window on 2026-08-08, down from ~21 h before it went validation-only (its Gate A
+# extrapolated 8.3 h and under-predicted by 1.17x, because per-row cost is superlinear in
+# rows; the two-pass run missed by 1.63x, so the multiplier is not a constant — treat the
+# gate as a lower bound). `stan-components` is ~2.3 h on top. Each composition arm
 # checkpoints to outputs/checkpoints/stan_composition/ as it completes, so a crash costs
-# one arm rather than the run.
+# one arm rather than the run. Sleeping the machine mid-run is safe: the sampler suspends
+# and resumes, and perf_counter does not advance while asleep, so the reported cost stays
+# honest while elapsed wall clock does not.
 stan: stan-availability stan-minutes stan-components stan-composition
 
 # Does any head need a season term, and which kind? A trend covariate and a year-level
@@ -239,6 +259,17 @@ dashboard:
 # the whole point: the alternative is a re-read of six plan docs.
 dashboard-audit:
 	$(PYTHON) -m dashboard.audit
+
+# ── The one reading of the held-out seasons ───────────────────────────────────
+# Every sweep, ablation and gate in this project selects on VALIDATION;
+# src/models/held_out.py locks the test split and raises on anything that reaches it.
+# This target is the only thing that unlocks it: it takes the already-selected spec,
+# refits on train+validation and scores test ONCE.
+#
+# Do not run it to check whether a validation result "held up". If a number from here
+# changes a modelling decision, the split is spent and the estimate is no longer unbiased.
+final-evaluation:
+	$(PYTHON) -m src.final_evaluation
 
 # Every quoted figure in the plan docs, checked against the artifact behind it. Unlike
 # dashboard-audit this one is a GATE — it exits non-zero on a disagreement, because a doc

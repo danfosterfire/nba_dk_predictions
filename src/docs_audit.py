@@ -86,10 +86,21 @@ ADP = "docs/adp-plan.md"
 CLAUDE = "CLAUDE.md"
 SHOT = "docs/shot-attempt-basis-plan.md"
 README = "README.md"
+GAMES = "docs/games-played-plan.md"
+
+GP_GATE = "outputs/predictions/stan_games_played_gate.csv"
+GP_COLLAPSE = "outputs/predictions/stan_games_played_collapse.csv"
+GP_SPELLS = "outputs/predictions/stan_games_played_spells.csv"
+GP_METRICS = "outputs/predictions/stan_games_played_metrics.csv"
+GP_GATES = "outputs/predictions/stan_games_played_gates.csv"
+GP_PROCESS = "outputs/predictions/spell_process.csv"
+GP_DIAG = "outputs/predictions/stan_games_played_diagnostics.csv"
+GP_SHAPE = "outputs/predictions/stan_games_played_spell_shape.csv"
 
 PROFILE = "outputs/eda/availability_profile.csv"
 METRICS = "outputs/predictions/availability_metrics.csv"
 ABLATION = "outputs/predictions/availability_workload_ablation.csv"
+LADDER = "outputs/predictions/availability_ladder_comparison.csv"
 NONLIN = "outputs/predictions/availability_nonlinearity.csv"
 MIN_NONLIN = "outputs/predictions/availability_minutes_nonlinearity.csv"
 STAN_MIN_M = "outputs/predictions/stan_minutes_metrics.csv"
@@ -99,6 +110,7 @@ STAN_AV_M = "outputs/predictions/stan_availability_metrics.csv"
 STAN_AV_D = "outputs/predictions/stan_availability_diagnostics.csv"
 STAN_AV_B = "outputs/predictions/stan_availability_board.csv"
 SEASON_TOTAL = "outputs/predictions/season_total_metrics.csv"
+SEASON_TOTAL_GATE_E = "outputs/predictions/season_total_gate_e.csv"
 REPORT_CAL = "outputs/eda/report_calibration.csv"
 COMP_M = "outputs/predictions/stan_composition_metrics.csv"
 COMP_D = "outputs/predictions/stan_composition_diagnostics.csv"
@@ -222,9 +234,24 @@ def table(rel: str) -> pd.DataFrame | None:
     return _CACHE[rel]
 
 
+class MissingColumn(KeyError):
+    """A claim asks for a column its artifact no longer has.
+
+    Distinct from "no such row", which is a fresh-checkout condition and is *skipped*.
+    A missing column means the artifact's **schema** changed under the claim — a head
+    renaming `test_r2` to `val_r2`, say — and the claim has stopped describing anything.
+    That has to fail loudly: skipping it would leave dozens of figures reading as audited
+    while checking nothing, which is the exact failure `Claim(historical=True)` exists to
+    make impossible.
+    """
+
+
 def _one(frame: pd.DataFrame | None, column: str, **where) -> float:
     if frame is None:
         return float("nan")
+    for col in (*where, column):
+        if col not in frame.columns:
+            raise MissingColumn(col)
     mask = pd.Series(True, index=frame.index)
     for col, val in where.items():
         mask &= frame[col] == val
@@ -371,6 +398,15 @@ def stan_c(head: str, variant: str, column: str) -> float:
     return _one(table(STAN_C_M), column, head=head, variant=variant)
 
 
+# `subst_test` lived here until 2026-08-06. It recovered the handicapped substitution
+# margin's TEST half from the Gate 0 sweep after `stan_component_substitution.csv` went
+# validation-only, so that a superseded figure stayed value-checked rather than becoming a
+# quotation. Then `make stan-substitution` went validation-only too and the last copy went
+# with it. The lesson is worth the comment: preserving a superseded measurement by pointing
+# at a second artifact only holds until that artifact is legitimately rebuilt, and the
+# answer then is to demote the claim to `historical=True`, not to freeze the run.
+
+
 def season_eff(quantity: str, column: str) -> float:
     return _one(table(SEASON_EFF), column, quantity=quantity)
 
@@ -382,14 +418,37 @@ def term(head: str, arm: str, column: str) -> float:
     return _one(table(TERM_M), column, head=head, arm=arm)
 
 
+def _alpha_loss(variant: str, head: str | None = None) -> float:
+    """R2 lost between the shipped alpha and alpha=1.0, median over heads or for one head.
+
+    The alpha curve is a regression guard rather than a finding, so what the docs quote is
+    a summary of it — and a summary of a guard has to be derived from the guard, not typed
+    beside it, or it stops tracking the thing it describes.
+    """
+    frame = table(RATES)
+    if frame is None:
+        return float("nan")
+    sweep = frame[(frame["analysis"] == "alpha_sensitivity")
+                  & (frame["variant"] == variant)]
+    lo = sweep[sweep["alpha"] == sweep["alpha"].min()].set_index("head")["r2"]
+    hi = sweep[sweep["alpha"] == 1.0].set_index("head")["r2"]
+    loss = (lo - hi).dropna()
+    return float(loss[head]) if head else float(loss.median())
+
+
 def oracle_gain(head: str) -> float:
     """The perfect-league-override ceiling as a FRACTION of the base arm's MAE.
 
     A fraction rather than a percentage because the quoted strings carry `%`, which the
     value check re-multiplies. This is the number that bounds every form of season term.
+
+    Read from `val_mae` since 2026-08-07. The ablation no longer scores the held-out
+    seasons at all (`src/models/held_out.py`), so the ceiling is now measured on the rows
+    that select — which is the right frame for it in any case: a bound on what a season
+    term could buy is only useful beside the arms it bounds.
     """
-    base = term(head, "base", "test_mae")
-    return (base - term(head, "oracle_league", "test_mae")) / base
+    base = term(head, "base", "val_mae")
+    return (base - term(head, "oracle_league", "val_mae")) / base
 
 
 def term_total(arm: str, column: str) -> float:
@@ -421,6 +480,33 @@ def carry_bias(component: str, season: str) -> float:
     return _one(table(SEASON_BIAS), "bias_pct", component=component, season=season)
 
 
+def carry_league_move(component: str, season: str) -> float:
+    """That season's own league move, joined onto the bias cell it should oppose.
+
+    Read from the bias artifact rather than from `season_effects_league_rates.csv` so the
+    doc's side-by-side table is checked against the *joined* pair. A claim that took the
+    two halves from two files could pass while the join between them was broken, which is
+    the failure the `opposes_league_move` column exists to make visible.
+    """
+    return _one(table(SEASON_BIAS), "league_yoy_pct", component=component, season=season)
+
+
+def _lag_cells() -> pd.DataFrame:
+    """The per-season bias cells — the `all` rows carry no league move by construction."""
+    t = table(SEASON_BIAS)
+    return t[t["opposes_league_move"].notna()]
+
+
+def _lag_opposing(total: bool = False) -> float:
+    cells = _lag_cells()
+    return float(len(cells)) if total else float(cells["opposes_league_move"].sum())
+
+
+def _lag_corr() -> float:
+    cells = _lag_cells()
+    return float(np.corrcoef(cells["bias_pct"], cells["league_yoy_pct"])[0, 1])
+
+
 def roster(key: str, metric: str = "share_of_minutes",
            window: str = "season_start", scope: str = "league") -> float:
     return _one(table(ROSTER_A), "value", window=window, scope=scope, key=key,
@@ -439,6 +525,16 @@ def persist(feature: str, column: str = "r_within_season",
     """One persistence row. `minutes_weighted` is a *property* of the column rather than a
     choice — counts are weighted and percentages are not — so it is never filtered on."""
     return _one(table(PERSIST), column, tier=tier, feature=feature)
+
+
+def ladder(model: str, column: str, group: str = "all") -> float:
+    """One cell of the availability ladder's paired comparison.
+
+    `group` is required to reach a quartile row rather than defaulting into it, because
+    "the GBM is 0.13 better" and "the GBM is 0.33 worse where it matters" are both true of
+    this artifact and the whole point is that they are different rows.
+    """
+    return _one(table(LADDER), column, model=model, group=group)
 
 
 def adp(section: str, metric: str) -> float:
@@ -460,7 +556,12 @@ def _availability() -> list[Claim]:
     add = C.append
 
     # ── header ────────────────────────────────────────────────────────────────
-    add(_c("260", PROFILE, lambda: rows(PROFILE), "availability_profile row count"))
+    add(_c("284", PROFILE, lambda: rows(PROFILE), "availability_profile row count"))
+    # The pre-`*_rotation` count, kept beside its replacement: the 24 new rows measure the
+    # transition structure on the frame the overdispersion figure uses, and the whole point
+    # of that addition is that the two were never the same frame.
+    add(_c("260", PROFILE, lambda: rows(PROFILE),
+           "availability_profile row count before the rotation keys", historical=True))
     add(_c("1,314,238", PROFILE, lambda: prof("window_bracket", "panel", "rows"),
            "panel player-games"))
 
@@ -624,6 +725,50 @@ def _availability() -> list[Claim]:
            lambda: prof("serial_structure", "spell_shape", "mean_spell_observed", ap),
            "mean spell"))
 
+    # ── the MATCHED frame, which is a different population AND a different window ──
+    # The rows above are the appearance window over all players; these are the full window
+    # over established rotation players — the frame `overdispersion` quotes 22.7x on. The
+    # two were being divided into each other, which is why both now ship.
+    add(_c("0.9443", PROFILE,
+           lambda: prof("serial_structure", "transition_rotation",
+                        "p_play_given_played"),
+           "P(play | played), matched population"))
+    add(_c("0.1333", PROFILE,
+           lambda: prof("serial_structure", "transition_rotation",
+                        "q_play_given_missed"),
+           "P(play | missed), matched population"))
+    add(_c("9.58", PROFILE,
+           lambda: prof("serial_structure", "markov_rotation",
+                        "clustering_variance_inflation"),
+           "clustering C, matched population"))
+    add(_c("9.581", PROFILE,
+           lambda: prof("serial_structure", "markov_rotation",
+                        "clustering_variance_inflation"),
+           "clustering C, matched population (3dp)"))
+    # The additive identity, which is arithmetic on two artifact values rather than a
+    # third measurement: rho = (I - C)/(n - C) and the stacked inflation C + rho*(n - C).
+    add(_c("0.181", PROFILE,
+           lambda: ((prof("overdispersion", "rotation_players", "variance_ratio")
+                     - prof("serial_structure", "markov_rotation",
+                            "clustering_variance_inflation"))
+                    / (82.0 - prof("serial_structure", "markov_rotation",
+                                   "clustering_variance_inflation"))),
+           "residual frailty rho the chain must not double-count"))
+    add(_c("29.55", PROFILE,
+           lambda: (prof("serial_structure", "markov_rotation",
+                         "clustering_variance_inflation")
+                    + 0.2757 * (82.0 - prof("serial_structure", "markov_rotation",
+                                            "clustering_variance_inflation"))),
+           "stacking the incumbent rho on the measured clustering"))
+    add(_c("30.2%", PROFILE,
+           lambda: ((prof("serial_structure", "markov_rotation",
+                          "clustering_variance_inflation")
+                     + 0.2757 * (82.0 - prof("serial_structure", "markov_rotation",
+                                             "clustering_variance_inflation")))
+                    / prof("overdispersion", "rotation_players", "variance_ratio")
+                    - 1.0),
+           "how far stacking overshoots the measured overdispersion"))
+
     # ── the absence-reason decomposition ──────────────────────────────────────
     add(_c("7,673", PROFILE,
            lambda: prof("decomposition", "coverage", "usable_pairs"),
@@ -701,85 +846,102 @@ def _availability() -> list[Claim]:
                f"playoff appearance rate, {key}"))
 
     # ── stage E baselines ─────────────────────────────────────────────────────
-    baselines = [("beta_binomial", "10.795", "15.39", "0.283", "0.096", "23.3"),
-                 ("gbm", "10.888", "15.41", "0.262", "0.079", "19.9"),
-                 ("ridge", "10.896", "15.39", "0.275", "0.103", "22.7"),
-                 ("league_age", "13.614", "18.94", "−0.084", "0.174", "29.5")]
-    for model, crps, mae, r2, ks, od in baselines:
-        for quoted, name in [(crps, "crps_games"), (mae, "mae_games"),
-                             (r2, "r2_gp_share"), (ks, "pit_ks_distance"),
-                             (od, "implied_overdispersion")]:
-            add(_c(quoted, METRICS,
-                   lambda m=model, n=name: metric(METRICS, m, n),
-                   f"{model} {name}"))
-    add(_c("15.0%", METRICS,
+    # Validation-only since 2026-08-08, when the last held-out head was converted. The
+    # ORDERING reversed on the move — the GBM leads on mean CRPS and the GLM still ships —
+    # so the retired column is preserved below and the paired interval that settles it is
+    # claimed as its own block.
+    C += _availability_ladder_claims(AVAIL)
+    add(_c("15.5%", METRICS,
            lambda: metric(METRICS, "beta_binomial", "predicted_share_below_41",
                           "rotation"), "GLM predicted below 41"))
-    add(_c("34.8%", METRICS,
+    add(_c("35.2%", METRICS,
            lambda: metric(METRICS, "beta_binomial", "predicted_share_below_60",
                           "rotation"), "GLM predicted below 60"))
-    add(_c("11.8%", METRICS,
+    add(_c("10.0%", METRICS,
            lambda: metric(METRICS, "beta_binomial", "observed_share_below_41",
                           "rotation"), "observed below 41"))
-    add(_c("36.9%", METRICS,
+    add(_c("32.6%", METRICS,
            lambda: metric(METRICS, "beta_binomial", "observed_share_below_60",
                           "rotation"), "observed below 60"))
-    add(_c("24.8%", METRICS,
+    add(_c("24.1%", METRICS,
            lambda: metric(METRICS, "league_age", "predicted_share_below_41",
                           "rotation"), "baseline predicted below 41"))
-    add(_c("45.0%", METRICS,
+    add(_c("43.9%", METRICS,
            lambda: metric(METRICS, "league_age", "predicted_share_below_60",
                           "rotation"), "baseline predicted below 60"))
+    for quoted, label in [("15.0%", "GLM predicted below 41"),
+                          ("34.8%", "GLM predicted below 60"),
+                          ("11.8%", "observed below 41"),
+                          ("36.9%", "observed below 60"),
+                          ("24.8%", "baseline predicted below 41"),
+                          ("45.0%", "baseline predicted below 60"),
+                          ("0.268", "held-out R2")]:
+        add(_c(quoted, METRICS, lambda: float("nan"),
+               f"pre-lock held-out tail: {label}", historical=True))
 
     # ── workload ablation ─────────────────────────────────────────────────────
-    ablations = [("baseline", "10.914", "0.268"),
-                 ("plus_playoff_workload", "10.795", "0.283"),
-                 ("plus_playoff_only", "10.817", "0.281"),
-                 ("plus_career_minutes_only", "10.883", "0.271")]
-    for variant, crps, r2 in ablations:
-        add(_c(crps, ABLATION,
-               lambda v=variant: cell(ABLATION, "crps_games", variant=v),
-               f"ablation {variant} CRPS"))
-        add(_c(r2, ABLATION,
-               lambda v=variant: cell(ABLATION, "r2_gp_share", variant=v),
-               f"ablation {variant} R2"))
+    C += _workload_ablation_claims(AVAIL)
 
     # ── minutes nonlinearity probe ────────────────────────────────────────────
-    probes = [("linear", "0.6768", "0.6670"), ("quadratic", "0.6914", "0.6746"),
-              ("spline_k4", "0.6930", "0.6736")]
-    for name, val, test in probes:
+    # The `test_r2` / `test_vs_linear` columns went with the conversion, and with them the
+    # `replicates` flag. The val column reproduced to four decimals, which is a determinism
+    # check on the move rather than evidence for the finding.
+    probes = [("linear", "0.6768"), ("quadratic", "0.6914"), ("spline_k4", "0.6930")]
+    for name, val in probes:
         add(_c(val, MIN_NONLIN,
                lambda n=name: cell(MIN_NONLIN, "val_r2", scope="variant", name=n),
                f"MPG probe {name} val R2"))
-        add(_c(test, MIN_NONLIN,
-               lambda n=name: cell(MIN_NONLIN, "test_r2", scope="variant", name=n),
-               f"MPG probe {name} test R2"))
     add(_c("0.0124", MIN_NONLIN,
            lambda: cell(MIN_NONLIN, "val_vs_linear", scope="column",
                         name="minutes_per_game_lag1"), "prior-MPG spline, val"))
-    add(_c("0.0077", MIN_NONLIN,
-           lambda: cell(MIN_NONLIN, "test_vs_linear", scope="column",
-                        name="minutes_per_game_lag1"), "prior-MPG spline, test"))
+    add(_c("0.0008", MIN_NONLIN,
+           lambda: cell(MIN_NONLIN, "val_vs_linear", scope="column",
+                        name="total_minutes_lag1"), "total-minutes spline, val"))
+    add(_c("−0.0008", MIN_NONLIN,
+           lambda: cell(MIN_NONLIN, "val_vs_linear", scope="column", name="age"),
+           "age spline, val"))
+    for quoted, label in [("0.6670", "linear test R2"), ("0.6746", "quadratic test R2"),
+                          ("0.6736", "spline_k4 test R2"),
+                          ("0.0077", "prior-MPG spline, test")]:
+        add(_c(quoted, MIN_NONLIN, lambda: float("nan"),
+               f"pre-lock held-out MPG probe: {label}", historical=True))
 
     # ── the minutes head ──────────────────────────────────────────────────────
-    variants = [("carry_forward", "161.45", "168.24", "0.8166"),
-                ("linear", "144.62", "147.18", "0.8565"),
-                ("logit_own", "145.44", "147.35", "0.8565"),
-                ("logit_own_quadratic", "144.83", "147.21", "0.8574"),
-                ("logit_own_spline", "144.13", "146.85", "0.8572")]
-    for name, val, test, r2 in variants:
-        add(_c(val, STAN_MIN_M,
+    # Validation-only since `make stan-minutes` was re-run under the held-out lock
+    # (2026-08-06). `bias` is claimed per arm rather than left in prose because the *level*
+    # of the bias moved with the split while the fitted-minus-floor **gap** reproduced, and
+    # a prose range cannot express that distinction — see `_MINUTES_PRE_LOCK`.
+    variants = [("carry_forward", "161.45", "0.8536", "213.13", "+23.91"),
+                ("linear", "144.71", "0.8826", "199.54", "−3.26"),
+                ("logit_own", "145.45", "0.8819", "200.90", "−2.97"),
+                ("logit_own_quadratic", "144.54", "0.8827", "200.84", "−13.82"),
+                ("logit_own_spline", "143.93", "0.8835", "199.60", "−14.00")]
+    for name, crps, r2, mae, bias in variants:
+        add(_c(crps, STAN_MIN_M,
                lambda n=name: cell(STAN_MIN_M, "val_crps", variant=n),
                f"minutes {name} val CRPS"))
-        add(_c(test, STAN_MIN_M,
-               lambda n=name: cell(STAN_MIN_M, "test_crps", variant=n),
-               f"minutes {name} test CRPS"))
         add(_c(r2, STAN_MIN_M,
-               lambda n=name: cell(STAN_MIN_M, "test_r2", variant=n),
-               f"minutes {name} test R2"))
-    add(_c("2,183", STAN_MIN_G, lambda: total(STAN_MIN_G, "wall_clock_s"),
+               lambda n=name: cell(STAN_MIN_M, "val_r2", variant=n),
+               f"minutes {name} val R2"))
+        add(_c(mae, STAN_MIN_M,
+               lambda n=name: cell(STAN_MIN_M, "val_mae", variant=n),
+               f"minutes {name} val MAE"))
+        add(_c(bias, STAN_MIN_M,
+               lambda n=name: cell(STAN_MIN_M, "val_bias", variant=n),
+               f"minutes {name} val bias"))
+    add(_c("+0.0299", STAN_MIN_M,
+           lambda: (cell(STAN_MIN_M, "val_r2", variant="logit_own_spline")
+                    - cell(STAN_MIN_M, "val_r2", variant="carry_forward")),
+           "minutes R2 gain over floor"))
+    add(_c("−17.5", STAN_MIN_M,
+           lambda: (cell(STAN_MIN_M, "val_crps", variant="logit_own_spline")
+                    - cell(STAN_MIN_M, "val_crps", variant="carry_forward")),
+           "minutes CRPS gain over floor"))
+    add(_c("1,227", STAN_MIN_G, lambda: total(STAN_MIN_G, "wall_clock_s"),
            "minutes head wall clock"))
-    add(_c("0.0495", STAN_MIN_D,
+    add(_c("1.0054", STAN_MIN_G, lambda: max_of(STAN_MIN_G, "max_rhat"),
+           "minutes head max R-hat"))
+    add(_c("0.05025", STAN_MIN_D,
            lambda: cell(STAN_MIN_D, "rho", metric="season_level_rho"),
            "season-level rho"))
     add(_c("0.0776", STAN_MIN_D,
@@ -791,50 +953,274 @@ def _availability() -> list[Claim]:
     add(_c("713,947", STAN_MIN_D,
            lambda: cell(STAN_MIN_D, "n_player_games", metric="game_level_rho"),
            "game-level population"))
+    C += _minutes_pre_lock_claims(AVAIL)
 
     # ── the Stan availability port ────────────────────────────────────────────
-    ports = [("beta_binomial", "10.7952", "0.2831", "0.0963", "0.2757"),
-             ("stan_plug_in", "10.7947", "0.2832", "0.0952", "0.2759"),
-             ("stan_posterior", "10.7953", "0.2832", "0.0963", "0.2759")]
+    ports = [("beta_binomial", "10.0057", "0.3736", "0.0939", "0.2806"),
+             ("stan_plug_in", "10.0063", "0.3736", "0.0939", "0.2808"),
+             ("stan_posterior", "10.0071", "0.3736", "0.0939", "0.2808")]
     for model, crps, r2, ks, rho in ports:
         for quoted, name in [(crps, "crps_games"), (r2, "r2_gp_share"),
                              (ks, "pit_ks_distance"), (rho, "dispersion_rho")]:
             add(_c(quoted, STAN_AV_M,
                    lambda m=model, n=name: metric(STAN_AV_M, m, n),
                    f"stan {model} {name}"))
-    add(_c("1.0025", STAN_AV_D, lambda: cell(STAN_AV_D, "max_rhat"), "stan R-hat"))
-    add(_c("2,402", STAN_AV_D, lambda: cell(STAN_AV_D, "min_ess_bulk"), "stan min ESS"))
-    add(_c("254", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
+    add(_c("1.0019", STAN_AV_D, lambda: cell(STAN_AV_D, "max_rhat"), "stan R-hat"))
+    add(_c("2,314", STAN_AV_D, lambda: cell(STAN_AV_D, "min_ess_bulk"), "stan min ESS"))
+    add(_c("195", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
            "stan wall clock"))
-    add(_c("219", STAN_AV_B,
-           lambda: cell(STAN_AV_B, "shared_beta_sd", n_players=911),
+    add(_c("223", STAN_AV_B,
+           lambda: cell(STAN_AV_B, "shared_beta_sd", n_players=883),
            "shared-beta sd, full board"))
+    # The held-out port check, preserved beside the validation one it became. Presence-only:
+    # these are the pre-lock figures, and the point of keeping them is that a reversal is the
+    # most useful thing in this file.
+    for quoted, label in [("10.7952", "MLE CRPS"), ("10.7947", "plug-in CRPS"),
+                          ("10.7953", "posterior CRPS"), ("0.2831", "MLE R2"),
+                          ("0.2832", "stan R2"), ("0.0963", "MLE PIT KS"),
+                          ("0.0952", "plug-in PIT KS"), ("0.2757", "MLE rho"),
+                          ("0.2759", "stan rho"), ("0.0127", "coefficient gap"),
+                          ("0.095", "largest gap in sds"), ("1.0025", "R-hat"),
+                          ("2,402", "min ESS"), ("254", "wall clock"),
+                          ("911", "held-out board size"), ("219.1", "board shared-beta sd"),
+                          ("604.0", "board independent sd"), ("6.4%", "board inflation")]:
+        add(_c(quoted, STAN_AV_M, lambda: float("nan"),
+               f"pre-lock held-out availability port: {label}", historical=True))
 
     # ── the season total ──────────────────────────────────────────────────────
-    totals = [("full_season", "646.3", "831.2", "0.141", "541.9"),
-              ("prior_gp", "475.0", "638.5", "0.493", "41.9"),
-              ("league_age", "476.0", "595.8", "0.559", "23.2"),
-              ("beta_binomial", "435.1", "570.8", "0.595", "6.1"),
-              ("oracle_rate", "302.7", "427.7", "0.773", "5.3"),
-              ("oracle_gp", "221.3", "304.2", "0.885", "−33.2")]
-    for name, mae, rmse, r2, bias in totals:
-        for quoted, which in [(mae, "mae_dk_total"), (rmse, "rmse_dk_total"),
-                              (r2, "r2_dk_total"), (bias, "bias_dk_total")]:
-            add(_c(quoted, SEASON_TOTAL,
-                   lambda n=name, w=which: treatment(n, w),
-                   f"season total {name} {which}"))
-    add(_c("651.3", SEASON_TOTAL,
-           lambda: treatment("full_season", "mae_dk_total", "rotation"),
-           "rotation naive MAE"))
-    add(_c("499.4", SEASON_TOTAL,
-           lambda: treatment("beta_binomial", "mae_dk_total", "rotation"),
-           "rotation head MAE"))
+    C += _season_total_claims(AVAIL)
     add(_c("0.469", PROFILE,
            lambda: prof("decomposition", "missed_scratch", "r_persistence_of_column"),
            "missed_scratch persistence"))
 
     C += _regime_claims(AVAIL)
     return C
+
+
+# The six-row ladder plus the spell-process arm, on VALIDATION since 2026-08-05. The whole
+# table was a test evaluation until then; the superseded values ride along as historical
+# claims so a later editor cannot quietly delete the reversal.
+SEASON_TOTAL_ROWS = [("full_season", "610.8", "751.8", "0.374", "523.3"),
+                     ("prior_gp", "417.9", "560.5", "0.652", "19.4"),
+                     ("league_age", "461.6", "565.9", "0.645", "12.9"),
+                     ("beta_binomial", "400.5", "514.0", "0.707", "−3.1"),
+                     ("spell_process", "406.8", "520.3", "0.700", "−16.6"),
+                     ("oracle_rate", "261.9", "367.0", "0.851", "−41.3"),
+                     ("oracle_gp", "214.4", "287.5", "0.908", "2.0")]
+
+SEASON_TOTAL_HISTORICAL = ["646.3", "831.2", "0.141", "541.9", "475.0", "638.5",
+                           "0.493", "41.9", "476.0", "595.8", "0.559", "23.2",
+                           "435.1", "570.8", "0.595", "6.1", "302.7", "427.7",
+                           "0.773", "5.3", "221.3", "304.2", "0.885", "−33.2",
+                           "651.3", "499.4", "213.8", "132.5", "−32.7%", "−39.9",
+                           "−23.3%", "316.9", "340.8", "211.1"]
+
+
+# The four-way model ladder, on VALIDATION since 2026-08-08 — the last held-out head to be
+# converted. The ORDERING reversed: the GBM leads on mean CRPS where the GLM led on test.
+# The retired figures ride along as historical claims so a later editor cannot delete the
+# one reversal in this project whose paired interval was actually computed.
+LADDER_ROWS = [("gbm", "9.876", "14.20", "0.381", "0.070", "20.1"),
+               ("ridge", "10.004", "14.29", "0.376", "0.107", "23.1"),
+               ("beta_binomial", "10.006", "14.46", "0.374", "0.094", "23.7"),
+               ("league_age", "13.387", "18.74", "−0.057", "0.151", "29.7")]
+
+# The retired held-out ladder, listed per doc because each quotes a different slice of it:
+# the plan doc carries the whole table, `CLAUDE.md` the CRPS row plus the pre-block figures,
+# and `README.md` only the CRPS row. A union list would presence-check figures into docs
+# that never had them, which reports a stale claim where nothing is stale.
+LADDER_HISTORICAL = ("10.795", "10.888", "10.896", "13.614", "15.39", "15.41", "18.94",
+                     "0.283", "0.262", "0.275", "−0.084", "0.096", "0.079", "0.103",
+                     "0.174", "23.3", "19.9", "22.7", "29.5", "10.914", "10.98", "11.04",
+                     "0.126", "0.093", "10,361", "911")
+
+
+LADDER_SCOPES = ("table", "summary", "headline")
+
+
+def _availability_ladder_claims(doc: str, scope: str = "table",
+                                historical: tuple[str, ...] = LADDER_HISTORICAL
+                                ) -> list[Claim]:
+    """The availability model ladder and the paired interval that settles it.
+
+    Shared between `CLAUDE.md`, `README.md` and `docs/availability-plan.md` for the reason
+    `_season_total_claims` is: three docs quote one artifact, and a block going stale in one
+    while staying current in another is the failure this file has already caught twice.
+
+    The paired-bootstrap block is claimed at least as hard as the CRPS row, because the
+    ordering reversed on the split move and the *interval* is the entire reason the head did
+    not change with it. A doc that quoted the new ordering without the interval would be
+    reporting a reversal as a verdict — so `headline` still carries the GBM's interval even
+    though it carries nothing else.
+
+    `scope` names how much of the block a doc actually quotes: `table` is the full plan-doc
+    treatment, `summary` is the CRPS row with the intervals and quartiles, `headline` is the
+    CRPS row alone. Claiming more than a doc quotes reports a stale claim where nothing is
+    stale, which is noise in the one report that has to stay readable.
+    """
+    if scope not in LADDER_SCOPES:
+        raise ValueError(f"scope must be one of {LADDER_SCOPES}; got {scope!r}")
+    C: list[Claim] = []
+
+    def add(*a, **k):
+        C.append(_c(*a, **k, doc=doc))
+
+    for model, crps, mae, r2, ks, od in LADDER_ROWS:
+        add(crps, METRICS, lambda m=model: metric(METRICS, m, "crps_games"),
+            f"{model} CRPS")
+        if scope != "table":
+            continue
+        for quoted, name in [(mae, "mae_games"), (r2, "r2_gp_share"),
+                             (ks, "pit_ks_distance"), (od, "implied_overdispersion")]:
+            add(quoted, METRICS, lambda m=model, n=name: metric(METRICS, m, n),
+                f"{model} {name}")
+
+    if scope != "headline":
+        for model, delta, lo, hi, p, share in [
+                ("gbm", "−0.1297", "−0.3154", "+0.0672", "0.906", "62.4%"),
+                ("ridge", "−0.0014", "−0.0546", "+0.0516", "0.515", "60.2%"),
+                ("league_age", "+3.3811", "+2.8567", "+3.9299", "0.000", "28.5%")]:
+            add(delta, LADDER, lambda m=model: ladder(m, "delta_vs_reference"),
+                f"{model} vs the shipped head")
+            add(lo, LADDER, lambda m=model: ladder(m, "ci_lo"), f"{model} CI low")
+            add(hi, LADDER, lambda m=model: ladder(m, "ci_hi"), f"{model} CI high")
+            add(p, LADDER, lambda m=model: ladder(m, "p_better"), f"{model} P(better)")
+            if scope == "table":
+                add(share, LADDER, lambda m=model: ladder(m, "share_rows_better"),
+                    f"{model} share of rows better")
+
+        # The quartile rows are the substantive reason the GLM keeps the head, so they are
+        # claimed rather than left as prose beside a claimed mean.
+        for model, quartiles in [("gbm", ["+0.333", "−0.063", "−0.452", "−0.366"]),
+                                 ("ridge", ["+0.251", "+0.109", "−0.008", "−0.393"])]:
+            for i, quoted in enumerate(quartiles, start=1):
+                add(quoted, LADDER,
+                    lambda m=model, g=f"gp_q{i}": ladder(m, "delta_vs_reference", g),
+                    f"{model} delta in gp_q{i}")
+
+    for quoted in historical:
+        add(quoted, METRICS, lambda: float("nan"),
+            f"pre-lock held-out availability ladder: {quoted}", historical=True)
+    return C
+
+
+# `CLAUDE.md` quotes the CRPS row, the pre-block figures and the workload note; `README.md`
+# quotes only the CRPS row.
+LADDER_HISTORICAL_CLAUDE = ("10.795", "10.888", "10.896", "13.614", "10.914", "10.98",
+                            "11.04", "−0.152", "10,361", "911", "0.268")
+LADDER_HISTORICAL_README = ("10.795", "10.888", "10.896", "13.614")
+
+
+# The playoff/mileage block, on VALIDATION since 2026-08-08. Unlike the ladder beside it
+# this decision survived the move unchanged — same sign, same ordering of all four variants
+# — which is the contrast the docs draw between a block worth a tenth of a game and a
+# model gap of 0.13 that was never distinguishable from zero.
+ABLATION_ROWS = [("baseline", "10.104", "0.363"),
+                 ("plus_playoff_workload", "10.006", "0.374"),
+                 ("plus_playoff_only", "10.015", "0.373"),
+                 ("plus_career_minutes_only", "10.085", "0.365")]
+
+ABLATION_HISTORICAL = ["10.914", "10.795", "10.817", "10.883",
+                       "0.268", "0.283", "0.281", "0.271", "−0.119"]
+
+
+def _workload_ablation_claims(doc: str, gain: bool = True) -> list[Claim]:
+    """The playoff/mileage workload ablation, claimed from whichever doc quotes it."""
+    C: list[Claim] = []
+
+    def add(*a, **k):
+        C.append(_c(*a, **k, doc=doc))
+
+    for variant, crps, r2 in ABLATION_ROWS:
+        add(crps, ABLATION, lambda v=variant: cell(ABLATION, "crps_games", variant=v),
+            f"ablation {variant} CRPS")
+        add(r2, ABLATION, lambda v=variant: cell(ABLATION, "r2_gp_share", variant=v),
+            f"ablation {variant} R2")
+    if gain:
+        add("−0.098", ABLATION,
+            lambda: (cell(ABLATION, "crps_games", variant="plus_playoff_workload")
+                     - cell(ABLATION, "crps_games", variant="baseline")),
+            "playoff-workload CRPS gain")
+    for quoted in ABLATION_HISTORICAL:
+        add(quoted, ABLATION, lambda: float("nan"),
+            f"pre-lock held-out workload ablation: {quoted}", historical=True)
+    return C
+
+
+def _season_total_claims(doc: str, rotation: bool = True) -> list[Claim]:
+    """The season-total ladder, claimed from whichever doc quotes it.
+
+    Shared for the reason `_regime_claims` is: `CLAUDE.md` and
+    `docs/availability-plan.md` carry the same table against the same artifact, and the
+    one failure this repo has already shipped twice is a block going stale in one doc
+    while staying current in the other.
+
+    `rotation` is off for docs that quote only the headline rows.
+    """
+    C: list[Claim] = []
+    add = C.append
+    for name, mae, rmse, r2, bias in SEASON_TOTAL_ROWS:
+        for quoted, which in [(mae, "mae_dk_total"), (rmse, "rmse_dk_total"),
+                              (r2, "r2_dk_total"), (bias, "bias_dk_total")]:
+            add(_c(quoted, SEASON_TOTAL,
+                   lambda n=name, w=which: treatment(n, w),
+                   f"season total {name} {which}", doc=doc))
+    if rotation:
+        add(_c("582.9", SEASON_TOTAL,
+               lambda: treatment("full_season", "mae_dk_total", "rotation"),
+               "rotation naive MAE", doc=doc))
+        add(_c("451.3", SEASON_TOTAL,
+               lambda: treatment("beta_binomial", "mae_dk_total", "rotation"),
+               "rotation head MAE", doc=doc))
+    return C
+
+
+# The minutes head's pre-lock held-out column, kept beside the validation one it became when
+# `make stan-minutes` was re-run under `src/models/held_out.py` on 2026-08-06. Two kinds of
+# figure retire together here and it is worth knowing why: the `test_*` columns because the
+# sweep no longer writes them, and the *old* `val_crps` values because selection was raised
+# from 500/500 to full-length chains at the same time, so even the surviving column is a
+# different measurement. Only the floor's 161.45 is arithmetic and reproduced exactly.
+_MINUTES_PRE_LOCK = (
+    ("144.62", "linear val CRPS, short chains"),
+    ("145.44", "logit_own val CRPS, short chains"),
+    ("144.83", "quadratic val CRPS, short chains"),
+    ("144.13", "spline val CRPS, short chains"),
+    ("168.24", "floor test CRPS"),
+    ("147.18", "linear test CRPS"),
+    ("147.35", "logit_own test CRPS"),
+    ("147.21", "quadratic test CRPS"),
+    ("146.85", "spline test CRPS"),
+    ("0.8166", "floor test R2"),
+    ("0.8565", "linear and logit_own test R2"),
+    ("0.8574", "quadratic test R2"),
+    ("0.8572", "spline test R2"),
+    ("+0.0407", "R2 gain over floor, test"),
+    ("−21.4", "CRPS gain over floor, test"),
+    ("2,183", "wall clock over 8 fits"),
+    ("1.0093", "max R-hat over 8 fits"),
+    ("899", "spline wall clock, test refit"),
+    ("189", "linear wall clock, test refit"),
+    ("−33.1", "linear test bias"),
+    ("−40.9", "spline test bias"),
+    ("−5.69", "floor test bias"),
+)
+
+
+def _minutes_pre_lock_claims(doc: str, keep: tuple[str, ...] | None = None
+                             ) -> list[Claim]:
+    """The retired minutes column, presence-checked from whichever doc still quotes it.
+
+    Shared for the reason `_season_total_claims` is: `CLAUDE.md` and
+    `docs/availability-plan.md` carry the same block, `docs/predictions-plan.md` quotes a
+    subset, and one of them going stale while the others stay current is the failure this
+    module has already caught twice. `keep` narrows the set for a doc that only quotes part
+    of it, so a claim cannot rot into describing nothing.
+    """
+    return [_c(quoted, STAN_MIN_M, lambda: float("nan"),
+               f"pre-lock held-out minutes head: {label}", doc=doc, historical=True)
+            for quoted, label in _MINUTES_PRE_LOCK
+            if keep is None or quoted in keep]
 
 
 def _regime_claims(doc: str) -> list[Claim]:
@@ -879,6 +1265,92 @@ def _regime_claims(doc: str) -> list[Claim]:
     return C
 
 
+_CARRY_BIAS_RETIRED = (
+    ("−3.1%", "fta 2024-25"), ("−10.7%", "fta 2025-26"), ("−7.0%", "fta pooled"),
+    ("−10.0%", "stl 2024-25"), ("+0.7%", "stl 2025-26"), ("−4.6%", "stl pooled"),
+    ("−1.3%", "fg3a 2025-26"), ("−4.2%", "fg3a pooled"),
+    ("−1.8%", "tov 2025-26"), ("−3.2%", "tov pooled"),
+    ("−1.1%", "ast 2024-25"), ("−4.8%", "ast 2025-26"), ("−2.9%", "ast pooled"),
+    ("+6.5%", "blk 2024-25"), ("+6.0%", "blk 2025-26"), ("+6.2%", "blk pooled"),
+    # The retired lag agreement is "10 of 14" in the prose, which is not a single number
+    # and so cannot be a `quoted`. The correlation beside it is unique to that sentence, so
+    # protecting it protects the count: delete the sentence and this claim goes stale.
+    ("−0.865", "retired lag correlation"),
+    ("791", "retired held-out rows"),
+)
+
+
+def _carry_bias_claims(doc: str,
+                       components: tuple[str, ...] = ("fta", "ast", "blk", "stl",
+                                                      "tov", "reb", "fga"),
+                       retired: tuple[str, ...] | None = None) -> list[Claim]:
+    """The no-fit floor's season bias, and the lag test that explains it.
+
+    Shared by `docs/predictions-plan.md` and `CLAUDE.md` against the one artifact, for the
+    reason this file keeps re-learning: the same block current in one doc and stale in the
+    other is the failure that has already happened twice here. `CLAUDE.md` carries only the
+    two components it names, so `components` narrows the cell claims and `retired` narrows
+    the superseded ones, while the lag test — which both docs quote in full — is claimed
+    either way.
+
+    **Each cell is claimed beside its league move on purpose.** The finding is not that any
+    component is biased by some amount; it is that the bias *opposes* that season's league
+    move, which is what makes it a one-season lag rather than a level. Claiming the bias
+    alone would let the pair drift apart silently, and the retired reading is the proof that
+    a bias quoted without its league move gets read as a standing property of the component.
+    """
+    C: list[Claim] = []
+    add = C.append
+    cells = {
+        #          league 2022-23, bias 2022-23, league 2023-24, bias 2023-24, pooled
+        "fta": ("+7.3%", "−4.4%", "−7.5%", "+10.7%", "+2.9%"),
+        "ast": ("+2.5%", "−2.2%", "+5.6%", "−6.2%", "−4.2%"),
+        "blk": ("−1.5%", "+4.3%", "+10.6%", "−5.4%", "−0.8%"),
+        "stl": ("−4.6%", "+5.1%", "+2.7%", "−3.5%", "+0.8%"),
+        "tov": ("+2.7%", "−0.6%", "−3.8%", "+5.6%", "+2.5%"),
+        "reb": ("−2.5%", "+3.8%", "+0.4%", "−0.0%", "+1.9%"),
+        "fga": ("−0.0%", "+1.4%", "+0.9%", "+0.9%", "+1.1%"),
+    }
+    for comp in components:
+        m22, b22, m23, b23, pooled = cells[comp]
+        for season, move, bias in [("2022-23", m22, b22), ("2023-24", m23, b23)]:
+            add(_c(move, SEASON_BIAS,
+                   lambda c=comp, s=season: carry_league_move(c, s) / 100.0,
+                   f"league move {comp} {season}", doc=doc))
+            add(_c(bias, SEASON_BIAS,
+                   lambda c=comp, s=season: carry_bias(c, s) / 100.0,
+                   f"carry-forward bias {comp} {season}", doc=doc))
+        add(_c(pooled, SEASON_BIAS, lambda c=comp: carry_bias(c, "all") / 100.0,
+               f"carry-forward bias {comp} pooled", doc=doc))
+
+    # The lag test itself. "13 of 14" is two claims because the denominator is the thing
+    # that would move if a head were added or retired, and a ratio quoted as a fraction of
+    # a changed denominator is the same silent staleness one level down.
+    add(_c("13", SEASON_BIAS, _lag_opposing, "cells opposing the league move", doc=doc))
+    add(_c("14", SEASON_BIAS, lambda: _lag_opposing(total=True),
+           "per-season bias cells", doc=doc))
+    add(_c("−0.944", SEASON_BIAS, _lag_corr, "bias vs league move correlation", doc=doc))
+    # `blk`'s trend profile is what disqualifies the retired "drift, not noise" reading, so
+    # it is claimed here beside the reversal rather than in the drift table it comes from.
+    add(_c("0.118", SEASON_EFF, lambda: season_eff("blk", "trend_r2"),
+           "blk trend R2, the no-drift check", doc=doc))
+    add(_c("−0.14%", SEASON_EFF,
+           lambda: season_eff("blk", "trend_pct_per_season") / 100.0,
+           "blk trend slope", doc=doc))
+
+    # ── the retired held-out reading ──────────────────────────────────────────
+    # Presence-checked only: the artifact was legitimately rebuilt on validation, so these
+    # rows no longer exist anywhere. That is the same demotion `subst_test` took — a
+    # superseded figure stays value-checked only for as long as some artifact still holds
+    # it, and freezing a run to keep one checkable is the wrong trade.
+    for quoted, label in _CARRY_BIAS_RETIRED:
+        if retired is None or quoted in retired:
+            add(_c(quoted, SEASON_BIAS, lambda: float("nan"),
+                   f"retired held-out carry-forward bias: {label}", doc=doc,
+                   historical=True))
+    return C
+
+
 def _composition() -> list[Claim]:
     """`docs/minutes-composition-plan.md` — the team-game minutes allocation.
 
@@ -894,92 +1366,93 @@ def _composition() -> list[Claim]:
     add = C.append
     SEL = "betabinom_ot_graded"
 
-    comp = [("carry_forward", "4.6776", "4.8576", "0.3678", "0.0354"),
-            ("binomial", "4.9394", "4.9732", "0.4259", "0.1948"),
-            ("betabinom", "4.5422", "4.5893", "0.4247", "0.0405"),
-            ("betabinom_ot", "4.5430", "4.5848", "0.4255", "0.0414"),
-            (SEL, "4.4926", "4.5592", "0.4244", "0.0393"),
-            ("independent_comparator", "4.7842", "4.9140", "0.3301", "0.0769")]
-    for name, val_crps, test_crps, test_r2, pit in comp:
-        for quoted, column in [(val_crps, "val_crps"), (test_crps, "test_crps"),
-                               (test_r2, "test_r2"), (pit, "test_pit_ks")]:
+    # ── the validation ladder, re-measured 2026-08-08 ─────────────────────────
+    # The sweep is validation-only since the held-out lock (src/models/held_out.py) and
+    # the artifact was regenerated on 2026-08-08, so `test_*` no longer exists here. The
+    # retired test column is preserved wholesale at the foot of this builder.
+    comp = [("carry_forward", "4.6776", "0.4442", "0.0496"),
+            ("binomial", "4.9388", "0.4752", "0.1919"),
+            ("betabinom", "4.5417", "0.4699", "0.0496"),
+            ("betabinom_ot", "4.5431", "0.4697", "0.0494"),
+            (SEL, "4.4945", "0.4741", "0.0428"),
+            ("independent_comparator", "4.7842", "0.4024", "0.0483")]
+    for name, val_crps, val_r2, pit in comp:
+        for quoted, column in [(val_crps, "val_crps"), (val_r2, "val_r2"),
+                               (pit, "val_pit_ks")]:
             add(_c(quoted, COMP_M,
                    lambda n=name, c=column: cell(COMP_M, c, variant=n),
                    f"composition {name} {column}", doc=COMP))
 
     # Gate C / Gate D, as differences rather than as retyped numbers.
-    add(_c("−0.2985", COMP_M,
-           lambda: (cell(COMP_M, "test_crps", variant=SEL)
-                    - cell(COMP_M, "test_crps", variant="carry_forward")),
-           "composition vs the floor, test", doc=COMP))
-    add(_c("−0.1851", COMP_M,
+    add(_c("−0.1832", COMP_M,
            lambda: (cell(COMP_M, "val_crps", variant=SEL)
                     - cell(COMP_M, "val_crps", variant="carry_forward")),
            "composition vs the floor, val", doc=COMP))
-    add(_c("−0.3548", COMP_M,
-           lambda: (cell(COMP_M, "test_crps", variant=SEL)
-                    - cell(COMP_M, "test_crps", variant="independent_comparator")),
-           "composition vs the incumbent", doc=COMP))
-    add(_c("−7.2%", COMP_M,
-           lambda: (cell(COMP_M, "test_crps", variant=SEL)
-                    / cell(COMP_M, "test_crps", variant="independent_comparator") - 1.0),
-           "composition gain as a percentage", doc=COMP))
-    add(_c("−6.1%", COMP_M,
-           lambda: (cell(COMP_M, "test_crps", variant=SEL)
-                    / cell(COMP_M, "test_crps", variant="carry_forward") - 1.0),
-           "composition gain over the floor, percentage", doc=COMP))
-    add(_c("−1.2856", COMP_M,
-           lambda: cell(COMP_M, "test_bias", variant="independent_comparator"),
-           "comparator bias", doc=COMP))
+    add(_c("−0.2898", COMP_M,
+           lambda: (cell(COMP_M, "val_crps", variant=SEL)
+                    - cell(COMP_M, "val_crps", variant="independent_comparator")),
+           "composition vs the incumbent, val", doc=COMP))
+    add(_c("−6.06%", COMP_M,
+           lambda: (cell(COMP_M, "val_crps", variant=SEL)
+                    / cell(COMP_M, "val_crps", variant="independent_comparator") - 1.0),
+           "composition gain as a percentage, val", doc=COMP))
+    add(_c("−3.92%", COMP_M,
+           lambda: (cell(COMP_M, "val_crps", variant=SEL)
+                    / cell(COMP_M, "val_crps", variant="carry_forward") - 1.0),
+           "composition gain over the floor, percentage, val", doc=COMP))
+    add(_c("−0.5521", COMP_M,
+           lambda: cell(COMP_M, "val_bias", variant="independent_comparator"),
+           "comparator bias, val", doc=COMP))
 
     # Gate A — the gate that did not behave, so both sides of the miss are audited.
-    add(_c("12.8", COMP_M, lambda: cell(COMP_M, "probe_hours", variant="binomial"),
+    # The one-pass sweep re-measured the miss at 1.17x, well inside the 1.63x the
+    # two-pass run recorded; see the retired block below and `stan_games_played`.
+    add(_c("8.3", COMP_M, lambda: cell(COMP_M, "probe_hours", variant="binomial"),
            "composition Gate A extrapolation", doc=COMP))
-    add(_c("20.9", COMP_D, lambda: _comp_sweep_seconds() / 3600,
+    add(_c("9.78", COMP_D, lambda: _comp_sweep_seconds() / 3600,
            "composition actual sweep hours", doc=COMP))
-    add(_c("1.63", COMP_D,
+    add(_c("1.17", COMP_D,
            lambda: (_comp_sweep_seconds() / 3600
                     / cell(COMP_M, "probe_hours", variant="binomial")),
            "how far Gate A under-predicted", doc=COMP))
-    add(_c("150", COMP_D,
+    add(_c("155", COMP_D,
            lambda: cell(COMP_D, "wall_clock_s", label="probe/one-season"),
            "probe seconds", doc=COMP))
-    add(_c("15.23", COMP_D,
+    add(_c("14.83", COMP_D,
            lambda: cell(COMP_D, "wall_clock_s", label="betabinom/val") / 631158 * 1000,
            "full-window ms per row", doc=COMP))
-    add(_c("1.0113", COMP_D, lambda: max_of(COMP_D, "max_rhat"),
+    add(_c("1.00935", COMP_D, lambda: max_of(COMP_D, "max_rhat"),
            "composition max R-hat", doc=COMP))
     add(_c("0", COMP_D, lambda: total(COMP_D, "divergences"),
            "composition divergences", doc=COMP))
-    add(_c("11", COMP_D, lambda: rows(COMP_D), "composition fits", doc=COMP))
+    add(_c("6", COMP_D, lambda: rows(COMP_D), "composition fits", doc=COMP))
 
     # The per-arm cost shares behind the fallback-order correction.
-    for arm, minutes, share in [("binomial", "191.8", "15.3%"),
-                                ("betabinom", "506.3", "40.4%"),
-                                ("betabinom_ot", None, "21.4%"),
-                                (SEL, None, "22.9%")]:
-        if minutes is not None:
-            add(_c(minutes, COMP_D, lambda a=arm: _comp_arm_seconds(a) / 60,
-                   f"{arm} sampler minutes", doc=COMP))
+    for arm, minutes, share in [("binomial", "120.5", "20.5%"),
+                                ("betabinom", "156.0", "26.6%"),
+                                ("betabinom_ot", "150.2", "25.6%"),
+                                (SEL, "160.2", "27.3%")]:
+        add(_c(minutes, COMP_D, lambda a=arm: _comp_arm_seconds(a) / 60,
+               f"{arm} sampler minutes", doc=COMP))
         add(_c(share, COMP_D,
                lambda a=arm: _comp_arm_seconds(a) / _comp_sweep_seconds(),
                f"{arm} share of sweep time", doc=COMP))
-    add(_c("1,251.8", COMP_D, lambda: _comp_sweep_seconds() / 60,
+    add(_c("586.9", COMP_D, lambda: _comp_sweep_seconds() / 60,
            "total sweep sampler minutes", doc=COMP))
 
     # The team-sum asymmetry — the capability the model exists for, so both sides are
     # audited rather than only the headline. Every lookup names its variant: the PPC file
     # carries two arms, and an unfiltered lookup silently takes whichever sorts first.
-    add(_c("36.87", COMP_P,
+    add(_c("33.89", COMP_P,
            lambda: cell(COMP_P, "simulated", variant=SEL,
                         analysis="team_sum_abs_error", group="independent"),
            "comparator team-sum error", doc=COMP))
-    for quoted, column, group in [("0.5882", "observed", "regulation/composition"),
-                                  ("0.6314", "observed", "overtime/composition"),
-                                  ("0.5998", "simulated", "regulation/composition"),
-                                  ("0.6464", "simulated", "overtime/composition"),
-                                  ("0.5973", "simulated", "regulation/independent"),
-                                  ("0.6346", "simulated", "overtime/independent")]:
+    for quoted, column, group in [("0.6013", "observed", "regulation/composition"),
+                                  ("0.6423", "observed", "overtime/composition"),
+                                  ("0.5912", "simulated", "regulation/composition"),
+                                  ("0.6415", "simulated", "overtime/composition"),
+                                  ("0.5923", "simulated", "regulation/independent"),
+                                  ("0.6280", "simulated", "overtime/independent")]:
         add(_c(quoted, COMP_P,
                lambda c=column, g=group: cell(COMP_P, c, variant=SEL,
                                               analysis="starter_share", group=g),
@@ -987,25 +1460,25 @@ def _composition() -> list[Claim]:
 
     # The graded-vs-shared calibration table — the point of the graded arm, so both
     # columns are audited rather than only the improved one.
-    ratios = [("betabinom_ot", "q1_fringe", "1.3466"),
-              ("betabinom_ot", "q2", "0.8089"),
-              ("betabinom_ot", "q3", "0.7691"),
-              ("betabinom_ot", "q4_star", "0.5973"),
-              (SEL, "q1_fringe", "1.0845"),
-              (SEL, "q2", "0.7687"),
-              (SEL, "q3", "0.8217"),
-              (SEL, "q4_star", "0.7757")]
+    ratios = [("betabinom_ot", "q1_fringe", "1.2224"),
+              ("betabinom_ot", "q2", "0.8430"),
+              ("betabinom_ot", "q3", "0.6589"),
+              ("betabinom_ot", "q4_star", "0.6285"),
+              (SEL, "q1_fringe", "1.0465"),
+              (SEL, "q2", "0.8132"),
+              (SEL, "q3", "0.7071"),
+              (SEL, "q4_star", "0.8136")]
     for arm, tier, quoted in ratios:
         add(_c(quoted, COMP_P,
                lambda a=arm, t=tier: cell(COMP_P, "ratio", variant=a,
                                           analysis="variance_ratio", group=t),
                f"variance ratio {arm} {tier}", doc=COMP))
-    for arm, quoted in [("betabinom_ot", "0.2928"), (SEL, "0.1796")]:
+    for arm, quoted in [("betabinom_ot", "0.2730"), (SEL, "0.1782")]:
         add(_c(quoted, COMP_P,
                lambda a=arm: mean_abs_dev(COMP_P, "ratio", 1.0, variant=a,
                                           analysis="variance_ratio"),
                f"mean |ratio-1| {arm}", doc=COMP))
-    add(_c("39%", COMP_P,
+    add(_c("35%", COMP_P,
            lambda: (1.0 - mean_abs_dev(COMP_P, "ratio", 1.0, variant=SEL,
                                        analysis="variance_ratio")
                     / mean_abs_dev(COMP_P, "ratio", 1.0, variant="betabinom_ot",
@@ -1014,21 +1487,21 @@ def _composition() -> list[Claim]:
 
     # The fitted dispersions themselves — the mechanism, and the sharpest single
     # statement that role grading is real.
-    for b, quoted in [("1", "0.1751"), ("2", "0.1285"), ("3", "0.1099"), ("4", "0.0839")]:
+    for b, quoted in [("1", "0.1768"), ("2", "0.1300"), ("3", "0.1115"), ("4", "0.0855")]:
         add(_c(quoted, COMP_RHO,
                lambda i=int(b): cell(COMP_RHO, "rho", variant=SEL, bin=i),
                f"graded rho bin {b}", doc=COMP))
-    add(_c("0.1195", COMP_RHO,
+    add(_c("0.1211", COMP_RHO,
            lambda: cell(COMP_RHO, "rho", variant="betabinom_ot", bin=1),
            "shared rho", doc=COMP))
-    add(_c("2.09", COMP_RHO,
+    add(_c("2.07", COMP_RHO,
            lambda: (cell(COMP_RHO, "rho", variant=SEL, bin=1)
                     / cell(COMP_RHO, "rho", variant=SEL, bin=4)),
            "graded rho spread", doc=COMP))
 
-    for arm, quoted in [("composition", "33.614"), ("independent", "38.828")]:
+    for arm, quoted in [("composition", "32.862"), ("independent", "37.984")]:
         add(_c(quoted, COMP_J,
-               lambda a=arm: cell(COMP_J, "mean_joint_nll", split="test", arm=a),
+               lambda a=arm: cell(COMP_J, "mean_joint_nll", split="val", arm=a),
                f"composition joint NLL {arm}", doc=COMP))
 
     # The OT tail is invariant to the window by construction — `fit_ot_tail` gets
@@ -1039,10 +1512,73 @@ def _composition() -> list[Claim]:
            "OT tail p_more", doc=COMP))
     add(_c("30,626", COMP_O, lambda: cell(COMP_O, "n_games", **{"class": "params"}),
            "OT tail training games", doc=COMP))
-    add(_c("256.9", COMP_O, lambda: cell(COMP_O, "predicted", **{"class": "1OT"}),
+    add(_c("128.4", COMP_O, lambda: cell(COMP_O, "predicted", **{"class": "1OT"}),
            "OT tail predicted 1OT", doc=COMP))
-    add(_c("222", COMP_O, lambda: cell(COMP_O, "observed", **{"class": "1OT"}),
+    add(_c("120", COMP_O, lambda: cell(COMP_O, "observed", **{"class": "1OT"}),
            "OT tail observed 1OT", doc=COMP))
+
+    # ── the retired TEST column, held for the record ──────────────────────────
+    # Gate E was taken on these on 2026-08-04, before `src/models/held_out.py` locked the
+    # split. The sweep no longer fits or scores test, so no artifact can back them and
+    # they are presence-checked only — which makes DELETION the failure this guards, not
+    # drift. They are kept because the head's whole verdict was once quoted from them.
+    for quoted, label in [("4.8576", "retired test CRPS, carry_forward"),
+                          ("4.9732", "retired test CRPS, binomial"),
+                          ("4.5893", "retired test CRPS, betabinom"),
+                          ("4.5848", "retired test CRPS, betabinom_ot"),
+                          ("4.5592", "retired test CRPS, selected"),
+                          ("4.9140", "retired test CRPS, comparator"),
+                          ("0.3678", "retired test R2, carry_forward"),
+                          ("0.4259", "retired test R2, binomial"),
+                          ("0.4247", "retired test R2, betabinom"),
+                          ("0.4255", "retired test R2, betabinom_ot"),
+                          ("0.4244", "retired test R2, selected"),
+                          ("0.3301", "retired test R2, comparator"),
+                          ("0.0354", "retired test PIT KS, carry_forward"),
+                          ("0.1948", "retired test PIT KS, binomial"),
+                          ("0.0405", "retired test PIT KS, betabinom"),
+                          ("0.0414", "retired test PIT KS, betabinom_ot"),
+                          ("0.0393", "retired test PIT KS, selected"),
+                          ("0.0769", "retired test PIT KS, comparator"),
+                          ("−0.2985", "retired test gain vs the floor"),
+                          ("−0.3548", "retired test gain vs the incumbent"),
+                          ("−7.2%", "retired test gain, percentage"),
+                          ("−1.2856", "retired test comparator bias"),
+                          ("36.87", "retired test comparator team-sum error"),
+                          ("0.5882", "retired test starter share, observed regulation"),
+                          ("0.6314", "retired test starter share, observed overtime"),
+                          ("0.5998", "retired test starter share, simulated regulation"),
+                          ("0.6464", "retired test starter share, simulated overtime"),
+                          ("1.3466", "retired test variance ratio, shared q1"),
+                          ("0.8089", "retired test variance ratio, shared q2"),
+                          ("0.7691", "retired test variance ratio, shared q3"),
+                          ("0.5973", "retired test variance ratio, shared q4"),
+                          ("1.0845", "retired test variance ratio, graded q1"),
+                          ("0.7687", "retired test variance ratio, graded q2"),
+                          ("0.8217", "retired test variance ratio, graded q3"),
+                          ("0.7757", "retired test variance ratio, graded q4"),
+                          ("0.2928", "retired test mean |ratio-1|, shared"),
+                          ("0.1796", "retired test mean |ratio-1|, graded"),
+                          ("39%", "retired test calibration cut"),
+                          ("0.1751", "retired two-pass graded rho, fringe"),
+                          ("0.1285", "retired two-pass graded rho, q2"),
+                          ("0.1099", "retired two-pass graded rho, q3"),
+                          ("0.0839", "retired two-pass graded rho, star"),
+                          ("0.1195", "retired two-pass shared rho"),
+                          ("2.09", "retired two-pass rho spread"),
+                          ("33.614", "retired test joint NLL, composition"),
+                          ("38.828", "retired test joint NLL, independent"),
+                          ("256.9", "retired test OT tail predicted 1OT"),
+                          ("222", "retired test OT tail observed 1OT"),
+                          ("12.8", "retired two-pass Gate A extrapolation"),
+                          ("20.9", "retired two-pass sweep hours"),
+                          ("1.63", "retired two-pass Gate A under-prediction"),
+                          ("15.23", "retired two-pass ms per row"),
+                          ("1.0113", "retired two-pass max R-hat"),
+                          ("191.8", "retired two-pass binomial sampler minutes"),
+                          ("506.3", "retired two-pass betabinom sampler minutes"),
+                          ("1,251.8", "retired two-pass total sampler minutes")]:
+        add(_c(quoted, COMP_M, lambda: float("nan"), label, doc=COMP, historical=True))
 
     # The pilot figures the doc keeps in its before/after table. Superseded by the
     # full-window refit and preserved beside it, so presence-checked and value-exempt.
@@ -1115,7 +1651,7 @@ def _predictions() -> list[Claim]:
             f"superseded appearance rate, {key}", historical=True)
 
     # ── what's already decided ────────────────────────────────────────────────
-    add("211.1", SEASON_TOTAL,
+    add("210.3", SEASON_TOTAL,
         lambda: (treatment("full_season", "mae_dk_total")
                  - treatment("beta_binomial", "mae_dk_total")),
         "availability head vs a full season")
@@ -1184,39 +1720,46 @@ def _predictions() -> list[Claim]:
     add("4.65", STAN_MIN_D,
         lambda: cell(STAN_MIN_D, "implied_overdispersion", metric="game_level_rho"),
         "game-level overdispersion")
-    add("0.8572", STAN_MIN_M,
-        lambda: cell(STAN_MIN_M, "test_r2", variant="logit_own_spline"),
-        "minutes head test R2")
-    add("0.8166", STAN_MIN_M,
-        lambda: cell(STAN_MIN_M, "test_r2", variant="carry_forward"),
+    add("0.8835", STAN_MIN_M,
+        lambda: cell(STAN_MIN_M, "val_r2", variant="logit_own_spline"),
+        "minutes head val R2")
+    add("0.8536", STAN_MIN_M,
+        lambda: cell(STAN_MIN_M, "val_r2", variant="carry_forward"),
         "minutes no-fit floor")
-    for variant, quoted in [("logit_own_spline", "899"), ("linear", "189")]:
+    # The per-game costing extrapolates these two, so they have to be the fits the artifact
+    # actually holds. Since the lock there is only a `/val` fit per variant.
+    for variant, quoted in [("logit_own_spline", "721"), ("linear", "171")]:
         add(quoted, STAN_MIN_G,
-            lambda v=variant: cell(STAN_MIN_G, "wall_clock_s", label=f"{v}/test"),
+            lambda v=variant: cell(STAN_MIN_G, "wall_clock_s", label=f"{v}/val"),
             f"minutes {variant} wall clock")
+    # This doc quotes only the figures it uses, not the whole retired table. `+0.041` is its
+    # own rounding of `+0.0407` and belongs to this doc alone, so it is not in the shared set.
+    C += _minutes_pre_lock_claims(PRED, keep=("0.8572", "0.8166", "899", "189", "−21.4"))
+    add("+0.041", STAN_MIN_M, lambda: float("nan"),
+        "pre-lock held-out minutes head: R2 gain over floor, rounded", historical=True)
 
     # ── the composition alternative, summarised back into this doc ────────────
-    # Pilot-window figures, superseded by the full-window refit (Gate E, 2026-08-03) and
-    # kept beside it; `independent_comparator` is invariant to the window and stays
-    # value-checked. See `_composition` for why.
-    for variant, quoted in [("betabinom_ot_graded", "4.5592"),
-                            ("carry_forward", "4.8576"),
-                            ("independent_comparator", "4.9140"),
-                            ("binomial", "4.9732")]:
-        add(quoted, COMP_M, lambda v=variant: cell(COMP_M, "test_crps", variant=v),
-            f"composition {variant} test CRPS")
-    add("0.1948", COMP_M,
-        lambda: cell(COMP_M, "test_pit_ks", variant="binomial"),
+    # Validation figures since the 2026-08-08 refit; the retired test column lives in
+    # `docs/minutes-composition-plan.md` and is claimed there. `independent_comparator`
+    # is invariant to the window and reproduced to six decimals. See `_composition`.
+    for variant, quoted in [("betabinom_ot_graded", "4.4945"),
+                            ("carry_forward", "4.6776"),
+                            ("independent_comparator", "4.7842"),
+                            ("binomial", "4.9388")]:
+        add(quoted, COMP_M, lambda v=variant: cell(COMP_M, "val_crps", variant=v),
+            f"composition {variant} val CRPS")
+    add("0.1919", COMP_M,
+        lambda: cell(COMP_M, "val_pit_ks", variant="binomial"),
         "composition binomial PIT KS")
-    add("36.87", COMP_P,
+    add("33.89", COMP_P,
         lambda: cell(COMP_P, "simulated", variant="betabinom_ot_graded",
                      analysis="team_sum_abs_error",
                      group="independent"), "comparator team-sum error")
-    add("−0.3548", COMP_M,
-        lambda: (cell(COMP_M, "test_crps", variant="betabinom_ot_graded")
-                 - cell(COMP_M, "test_crps", variant="independent_comparator")),
+    add("−0.2898", COMP_M,
+        lambda: (cell(COMP_M, "val_crps", variant="betabinom_ot_graded")
+                 - cell(COMP_M, "val_crps", variant="independent_comparator")),
         "composition CRPS gain")
-    for tier, quoted in [("q1_fringe", "1.08"), ("q4_star", "0.78")]:
+    for tier, quoted in [("q1_fringe", "1.05"), ("q4_star", "0.81")]:
         add(quoted, COMP_P,
             lambda t=tier: cell(COMP_P, "ratio", variant="betabinom_ot_graded",
                                 analysis="variance_ratio", group=t),
@@ -1276,19 +1819,7 @@ def _predictions() -> list[Claim]:
             lambda sn=season: _one(table(SEASON_RATES), "yoy_pct", quantity="fta",
                                    season=sn) / 100.0,
             f"fta yoy {season}")
-    # `fg3a` is a retired count head; its carry-forward bias rows are gone from the
-    # artifact. Kept in the prose as the record of the retired basis, value-exempt.
-    bias = [("fta", "−3.1", "−10.7", "−7.0", False),
-            ("stl", "−10.0", "+0.7", "−4.6", False),
-            ("fg3a", "−7.0", "−1.3", "−4.2", True),
-            ("tov", "−4.6", "−1.8", "−3.2", False),
-            ("ast", "−1.1", "−4.8", "−2.9", False),
-            ("blk", "+6.5", "+6.0", "+6.2", False)]
-    for comp, s24, s25, both, retired in bias:
-        for quoted, season in [(s24, "2024-25"), (s25, "2025-26"), (both, "all")]:
-            add(f"{quoted}%", SEASON_BIAS,
-                lambda c=comp, s=season: carry_bias(c, s) / 100.0,
-                f"carry-forward bias {comp} {season}", historical=retired)
+    C.extend(_carry_bias_claims(PRED))
 
     # ── the rate side ─────────────────────────────────────────────────────────
     # Poisson/sklearn arm — the one the NB block below overturns. Kept apart on purpose.
@@ -1302,20 +1833,20 @@ def _predictions() -> list[Claim]:
     # they measured no longer exists. Leaving them unmarked would let them decay into the
     # module's "missing artifact" skip, which is meant for a fresh checkout, not for a
     # claim that has quietly stopped describing anything.
-    RETIRED = {"fg3a"}
-    for head, quoted in [("fg3a", "0.520"), ("blk", "0.637")]:
-        add(quoted, RATES, lambda h=head: rate(h, "linear"),
-            f"poisson {head} linear R2", historical=head in RETIRED)
-    for head, quoted in [("fg3a", "0.879"), ("blk", "0.820")]:
-        add(quoted, RATES, lambda h=head: rate(h, "log_own"),
-            f"poisson {head} log_own R2", historical=head in RETIRED)
-    for head, quoted in [("fg3a", "0.030"), ("blk", "0.040")]:
-        add(quoted, RATES,
-            lambda h=head: rate(h, "log_own_spline") - rate(h, "log_own"),
-            f"poisson {head} spline gain", historical=head in RETIRED)
-    for head, quoted in [("fg3a", "0.8791"), ("blk", "0.8204")]:
-        add(quoted, RATES, lambda h=head: rate(h, "log_own"),
-            f"poisson {head} log_own R2, 4dp", historical=head in RETIRED)
+    # `blk` is the live demonstration and `fg3a` is the retired one; since 2026-08-05 the
+    # live figures are also on a different split from the recorded ones, so this block
+    # carries three generations of the same claim and only the newest is value-checked.
+    add("0.651", RATES, lambda: rate("blk", "linear"), "poisson blk linear R2")
+    add("0.775", RATES, lambda: rate("blk", "log_own"), "poisson blk log_own R2")
+    add("0.054", RATES,
+        lambda: rate("blk", "log_own_spline") - rate("blk", "log_own"),
+        "poisson blk spline gain")
+    add("0.7748", RATES, lambda: rate("blk", "log_own"),
+        "poisson blk log_own R2, 4dp")
+    for quoted in ("0.520", "0.879", "0.030", "0.8791",     # the retired fg3a head
+                   "0.637", "0.820", "0.040", "0.8204"):    # blk on the retired split
+        add(quoted, RATES, lambda: float("nan"),
+            f"superseded poisson figure: {quoted}", historical=True)
     # "the best of seven fitted variants beats the floor by +0.0019 to +0.0228" — the
     # range over the seven count heads, which is what makes the floor binding.
     count_heads = ("fga", "fta", "reb", "ast", "stl", "blk", "tov")
@@ -1323,94 +1854,125 @@ def _predictions() -> list[Claim]:
               "pca_spline", "pca_inter")
     def _best_gain(head: str) -> float:
         return max(rate(head, v) for v in fitted) - rate(head, "carry_forward")
-    add("0.0019", RATES, lambda: min(_best_gain(h) for h in count_heads),
+    add("0.0013", RATES, lambda: min(_best_gain(h) for h in count_heads),
         "smallest gain over the no-fit floor")
-    add("0.0203", RATES, lambda: max(_best_gain(h) for h in count_heads),
+    add("0.0334", RATES, lambda: max(_best_gain(h) for h in count_heads),
         "largest gain over the no-fit floor")
-    add("221.3", SEASON_TOTAL, lambda: treatment("oracle_gp", "mae_dk_total"),
+    add("214.4", SEASON_TOTAL, lambda: treatment("oracle_gp", "mae_dk_total"),
         "oracle GP MAE")
-    add("302.7", SEASON_TOTAL, lambda: treatment("oracle_rate", "mae_dk_total"),
+    add("261.9", SEASON_TOTAL, lambda: treatment("oracle_rate", "mae_dk_total"),
         "oracle rate MAE")
     # The conversion heads' fitted variants are named differently from the count heads'
     # in the sklearn run — `spline_own` / `inter` / `pca_inter`, no `log_own` — so the
     # "best fitted" minimum has to enumerate the right five.
     conversion_variants = ("linear", "spline_own", "inter", "pca", "pca_inter")
-    for head, quoted in [("fg2m|fg2a", "0.072"), ("fg3m|fg3a", "0.032")]:
+    for head, quoted in [("fg2m|fg2a", "0.079"), ("fg3m|fg3a", "0.028")]:
         add(quoted, RATES,
             lambda h=head: rate(h, "carry_forward", "nll")
             - min(rate(h, v, "nll") for v in conversion_variants),
             f"poisson {head} NLL gain")
 
     # ── the built Stan block (negative binomial) ──────────────────────────────
-    add("10.7947", STAN_AV_M, lambda: metric(STAN_AV_M, "stan_plug_in", "crps_games"),
+    add("10.0063", STAN_AV_M, lambda: metric(STAN_AV_M, "stan_plug_in", "crps_games"),
         "stan availability CRPS")
-    add("10.7952", STAN_AV_M,
+    add("10.0057", STAN_AV_M,
         lambda: metric(STAN_AV_M, "beta_binomial", "crps_games"), "MLE CRPS")
-    add("0.2759", STAN_AV_M,
+    add("0.2808", STAN_AV_M,
         lambda: metric(STAN_AV_M, "stan_plug_in", "dispersion_rho"), "stan rho")
-    add("0.2757", STAN_AV_M,
+    add("0.2806", STAN_AV_M,
         lambda: metric(STAN_AV_M, "beta_binomial", "dispersion_rho"), "MLE rho")
-    add("1.0025", STAN_AV_D, lambda: cell(STAN_AV_D, "max_rhat"), "stan R-hat")
-    add("254", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
+    add("1.0019", STAN_AV_D, lambda: cell(STAN_AV_D, "max_rhat"), "stan R-hat")
+    add("195", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
         "stan wall clock")
     add("0.2%", STAN_AV_B,
         lambda: cell(STAN_AV_B, "inflation", n_players=15) - 1.0,
         "board inflation, 15 players")
-    add("6.4%", STAN_AV_B,
-        lambda: cell(STAN_AV_B, "inflation", n_players=911) - 1.0,
-        "board inflation, all 911")
-    add("−21.4", STAN_MIN_M,
-        lambda: (cell(STAN_MIN_M, "test_crps", variant="logit_own_spline")
-                 - cell(STAN_MIN_M, "test_crps", variant="carry_forward")),
+    add("6.7%", STAN_AV_B,
+        lambda: cell(STAN_AV_B, "inflation", n_players=883) - 1.0,
+        "board inflation, all 883")
+    for quoted in ("10.7947", "10.7952", "0.2759", "0.2757", "1.0025", "254",
+                   "6.4%", "911"):
+        add(quoted, STAN_AV_M, lambda: float("nan"),
+            f"pre-lock held-out availability port: {quoted}", historical=True)
+    add("−17.5", STAN_MIN_M,
+        lambda: (cell(STAN_MIN_M, "val_crps", variant="logit_own_spline")
+                 - cell(STAN_MIN_M, "val_crps", variant="carry_forward")),
         "minutes CRPS gain over floor")
-    add("+0.041", STAN_MIN_M,
-        lambda: (cell(STAN_MIN_M, "test_r2", variant="logit_own_spline")
-                 - cell(STAN_MIN_M, "test_r2", variant="carry_forward")),
+    add("+0.030", STAN_MIN_M,
+        lambda: (cell(STAN_MIN_M, "val_r2", variant="logit_own_spline")
+                 - cell(STAN_MIN_M, "val_r2", variant="carry_forward")),
         "minutes R2 gain over floor")
-    add("305.0", STAN_C_D, lambda: total(STAN_C_D, "wall_clock_s") / 60,
+    add("137.4", STAN_C_D, lambda: total(STAN_C_D, "wall_clock_s") / 60,
         "component sampler minutes")
-    add("1.0118", STAN_C_D, lambda: max_of(STAN_C_D, "max_rhat"),
+    add("305.0", STAN_C_D, lambda: total(STAN_C_D, "wall_clock_s") / 60,
+        "component sampler minutes, both splits", historical=True)
+    add("1.0076", STAN_C_D, lambda: max_of(STAN_C_D, "max_rhat"),
         "component max R-hat")
-    # `fg3a` is a RETIRED count head (shot-attempt basis, 2026-08-04); its rows are gone
-    # from the artifact. Its figures stay in the prose because they are the sharpest
-    # statement of the misspecification the basis change removed, and they are marked
-    # historical so they cannot rot into a silent skip.
-    for head, quoted, retired in [("blk", "0.6794", False), ("fg3a", "0.3719", True)]:
-        add(quoted, STAN_C_M, lambda h=head: stan_c(h, "log_own", "test_r2"),
+    add("1.0118", STAN_C_D, lambda: max_of(STAN_C_D, "max_rhat"),
+        "component max R-hat, half-length selection fits", historical=True)
+    # Two retirements are layered here and they are NOT the same thing. `fg3a` is a retired
+    # count HEAD (shot-attempt basis, 2026-08-04) whose rows left the artifact; `test_r2` is
+    # a retired COLUMN (held-out lock, 2026-08-06) that left every head at once. Both are
+    # carried as historical, so a reader can see which basis and which split a figure came
+    # from rather than finding one number where two measurements used to be.
+    for head, quoted, retired in [("blk", "0.6730", False), ("fg3a", "0.3719", True)]:
+        add(quoted, STAN_C_M, lambda h=head: stan_c(h, "log_own", "val_r2"),
             f"NB {head} log_own R2", historical=retired)
-    for head, quoted, retired in [("blk", "0.8579", False), ("fg3a", "0.9046", True)]:
+    add("0.6794", STAN_C_M, lambda: stan_c("blk", "log_own", "val_r2"),
+        "NB blk log_own R2, on test", historical=True)
+    for head, quoted, retired in [("blk", "0.8309", False), ("fg3a", "0.9046", True)]:
         add(quoted, STAN_C_M,
-            lambda h=head: stan_c(h, "log_own_spline", "test_r2"),
+            lambda h=head: stan_c(h, "log_own_spline", "val_r2"),
             f"NB {head} spline R2", historical=retired)
-    add("−19.00", STAN_C_M, lambda: stan_c("fg3a", "linear", "test_r2"),
+    add("0.8579", STAN_C_M, lambda: stan_c("blk", "log_own_spline", "val_r2"),
+        "NB blk spline R2, on test", historical=True)
+    add("−19.00", STAN_C_M, lambda: stan_c("fg3a", "linear", "val_r2"),
         "NB fg3a linear R2", historical=True)
+    for quoted, variant, label in [("0.9514", "carry_forward", "fga floor"),
+                                   ("0.9489", "linear", "fga linear R2"),
+                                   ("0.9581", "log_own", "fga log_own R2"),
+                                   ("0.9584", "log_own_spline", "fga selected R2")]:
+        add(quoted, STAN_C_M, lambda v=variant: stan_c("fga", v, "val_r2"),
+            f"NB {label}")
     for quoted, variant, label in [("0.9464", "carry_forward", "fga floor"),
                                    ("0.9396", "linear", "fga linear R2"),
                                    ("0.9501", "log_own", "fga log_own R2"),
                                    ("0.9505", "log_own_spline", "fga selected R2")]:
-        add(quoted, STAN_C_M, lambda v=variant: stan_c("fga", v, "test_r2"),
-            f"NB {label}")
-    add("−1.393", STAN_C_M, lambda: stan_c("blk", "linear", "test_r2"),
+        add(quoted, STAN_C_M, lambda v=variant: stan_c("fga", v, "val_r2"),
+            f"NB {label}, on test", historical=True)
+    add("−0.2744", STAN_C_M, lambda: stan_c("blk", "linear", "val_r2"),
         "NB blk linear R2")
-    add("0.8649", STAN_C_M, lambda: stan_c("fta", "log_own", "test_r2"),
-        "NB fta best fitted R2")
-    add("0.8673", STAN_C_M, lambda: stan_c("fta", "carry_forward", "test_r2"),
+    add("−1.393", STAN_C_M, lambda: stan_c("blk", "linear", "val_r2"),
+        "NB blk linear R2, on test", historical=True)
+    # The reversal this conversion turned up: `fta` failed its floor by 0.0024 on test and
+    # clears it by 0.0144 on validation. Both readings are claimed — the live pair against
+    # the artifact, the test pair for the record — because the finding it retired ("the
+    # whole free-throw family fails") is only legible next to the numbers that produced it.
+    add("0.8909", STAN_C_M, lambda: stan_c("fta", "log_own", "val_r2"),
+        "NB fta selected R2")
+    add("0.8765", STAN_C_M, lambda: stan_c("fta", "carry_forward", "val_r2"),
         "NB fta floor")
-    add("−0.79", STAN_C_S,
-        lambda: cell(STAN_C_S, "reparam_minus_canonical", split="test",
-                     arm="two_counts"), "substitution gain, rounded")
-    for split, quoted in [("val", "−0.771"), ("test", "−0.793")]:
+    add("0.8649", STAN_C_M, lambda: stan_c("fta", "log_own", "val_r2"),
+        "NB fta best fitted R2, on test", historical=True)
+    add("0.8673", STAN_C_M, lambda: stan_c("fta", "carry_forward", "val_r2"),
+        "NB fta floor, on test", historical=True)
+    # The validation half comes from `stan_component_substitution.csv`, which the 2026-08-06
+    # refit rewrote and which reproduced it to the quoted precision. The test half is
+    # history: it outlived that refit inside the Gate 0 sweep, and then that sweep went
+    # validation-only too. Presence-checked only — there is no artifact left to check it
+    # against, which is the honest state rather than a gap.
+    add("−0.771", STAN_C_S,
+        lambda: cell(STAN_C_S, "reparam_minus_canonical", split="val",
+                     arm="two_counts"), "substitution gain, val")
+    add("−0.793", SHOT_SWEEP, lambda: float("nan"),
+        "substitution gain, test", historical=True)
+    for arm, quoted in [("two_counts", "10.797"), ("fga_x_fg3a_share", "10.026")]:
         add(quoted, STAN_C_S,
-            lambda s=split: cell(STAN_C_S, "reparam_minus_canonical", split=s,
-                                 arm="two_counts"),
-            f"substitution gain, {split}")
-    for split, arm, quoted in [("val", "two_counts", "10.797"),
-                               ("val", "fga_x_fg3a_share", "10.026"),
-                               ("test", "two_counts", "10.784"),
-                               ("test", "fga_x_fg3a_share", "9.991")]:
-        add(quoted, STAN_C_S,
-            lambda s=split, a=arm: cell(STAN_C_S, "mean_joint_nll", split=s, arm=a),
-            f"substitution joint NLL {split}/{arm}")
+            lambda a=arm: cell(STAN_C_S, "mean_joint_nll", split="val", arm=a),
+            f"substitution joint NLL val/{arm}")
+    for arm, quoted in [("two_counts", "10.784"), ("fga_x_fg3a_share", "9.991")]:
+        add(quoted, SHOT_SWEEP, lambda: float("nan"),
+            f"substitution joint NLL test/{arm}", historical=True)
 
     # ── the residual copula ───────────────────────────────────────────────────
     add("0.0225", RESID, lambda: resid("mean", kind="count"),
@@ -1470,10 +2032,18 @@ def _term_margin(head: str) -> float:
 
     Returned as a fraction because `check_values` scales percent-quoted claims itself.
 
-    The selection metric differs by head kind — conversion heads select on NLL, the rest
-    on CRPS — so it is read off the artifact rather than assumed. This is the number that
-    says the season-term selection is noise-dominated: 9 of 13 heads flipped their arm
-    across a head-list change that does not touch most of them, all on margins under 1%.
+    The selection metric differs by head kind — `season_terms._finalize` is called with
+    `val_nll` for the conversion sweep and `val_crps` for the counts, minutes and
+    availability — so this keys on **`kind`**, which is what decides it.
+
+    **It used to key on whether `val_nll` was populated, and the 2026-08-07 re-run broke
+    that.** The count sweep now writes `val_nll` where it previously left the column NaN,
+    so the "is it populated" heuristic silently switched the count heads onto a metric they
+    are not selected on. The visible symptom was `stl` reporting a 0.0081% margin while its
+    selected arm was `base` — an arm that is the minimum by construction can only have a
+    margin of zero, so a nonzero one meant the margin and the selection were reading
+    different columns. Keying on `kind` cannot drift that way: a column can gain values,
+    but a conversion head cannot stop being a conversion head.
     """
     frame = table(TERM_M)
     if frame is None:
@@ -1483,7 +2053,7 @@ def _term_margin(head: str) -> float:
     # is the opposite of the point, since the point is that the margins are tiny.
     arms = ("base", "trend", "year", "trend_year")
     blk = frame[(frame["head"] == head) & (frame["arm"].isin(arms))]
-    col = "val_nll" if blk["val_nll"].notna().all() else "val_crps"
+    col = "val_nll" if (blk["kind"] == "conversion").all() else "val_crps"
     by_arm = blk.set_index("arm")[col]
     base = float(by_arm["base"])
     return abs(base - float(by_arm.min())) / abs(base)
@@ -1504,53 +2074,87 @@ def _season_term_summary_claims(doc: str) -> list[Claim]:
                          ("fg2m|fg2a", "1.88%"), ("ast", "2.21%")]:
         add(_c(quoted, TERM_M, lambda h=head: _term_margin(h),
                f"season-term selection margin, {head}", doc=doc))
-    add(_c("33.247", TERM_M, lambda: term("fg3a", "base", "val_crps"),
-           "fg3a base val CRPS", doc=doc))
-    add(_c("35.443", TERM_M, lambda: term("fg3a", "trend", "val_crps"),
-           "fg3a trend val CRPS", doc=doc))
-    add(_c("34.309", TERM_M, lambda: term("fg3a", "year", "val_crps"),
-           "fg3a year val CRPS", doc=doc))
-    add(_c("−3.74%", TERM_M, lambda: term("fg3a", "base", "bias_pct") / 100.0,
-           "fg3a base bias", doc=doc))
-    add(_c("+8.44%", TERM_M, lambda: term("fg3a", "trend", "bias_pct") / 100.0,
-           "fg3a trend bias", doc=doc))
-    add(_c("−9.01%", TERM_M, lambda: term("fg3a", "year", "bias_pct") / 100.0,
-           "fg3a year bias", doc=doc))
-    for head, quoted in [("stl", "3.11%"), ("blk", "2.32%"), ("fta", "2.16%"),
-                         ("reb", "1.71%"), ("fga", "0.81%"), ("ast", "0.58%"),
-                         ("tov", "0.01%")]:
+    # `fg3a` is a RETIRED head — the shot-attempt basis replaced it with `fga` x `fg3a|fga`
+    # on 2026-08-03, so none of these have a row to check any more. They are historical
+    # rather than deleted because this head is the whole argument against a trend, and the
+    # argument is only legible with its figures attached. Marking them historical also
+    # takes them off the schema: a value-checked claim on a retired head degrades to a
+    # `no-such-row` skip today and to a hard `schema-change` failure the moment its column
+    # is renamed, which is a failure about the artifact's shape rather than about the doc.
+    for quoted, label in [("33.247", "fg3a base val CRPS"),
+                          ("35.443", "fg3a trend val CRPS"),
+                          ("34.309", "fg3a year val CRPS"),
+                          ("−3.74%", "fg3a base bias"),
+                          ("+8.44%", "fg3a trend bias"),
+                          ("−9.01%", "fg3a year bias")]:
+        add(_c(quoted, TERM_M, lambda: float("nan"), label, doc=doc, historical=True))
+    # The oracle ceiling, now on `val_mae`. Its ORDERING reshuffled completely across the
+    # split move while its SIZE did not, which is the same noise argument the margins make.
+    for head, quoted in [("fta", "4.97%"), ("reb", "2.58%"), ("tov", "2.36%"),
+                         ("ast", "1.29%"), ("blk", "1.17%"), ("stl", "0.36%")]:
         add(_c(quoted, TERM_M, lambda h=head: oracle_gain(h),
                f"oracle ceiling {head}", doc=doc))
-    add(_c("106.06", TERM_TOTAL, lambda: term_total("trend", "mae"),
-           "season total trend MAE", doc=doc))
-    add(_c("108.56", TERM_TOTAL, lambda: term_total("base", "mae"),
+    for quoted, label in [("3.11%", "oracle ceiling stl"), ("2.32%", "oracle ceiling blk"),
+                          ("2.16%", "oracle ceiling fta"), ("1.71%", "oracle ceiling reb"),
+                          ("0.81%", "oracle ceiling fga"), ("0.58%", "oracle ceiling ast"),
+                          ("0.01%", "oracle ceiling tov")]:
+        add(_c(quoted, TERM_M, lambda: float("nan"),
+               f"{label}, held-out reading", doc=doc, historical=True))
+    add(_c("105.71", TERM_TOTAL, lambda: term_total("base", "mae"),
            "season total base MAE", doc=doc))
-    add(_c("−13.57", TERM_TOTAL, lambda: term_total("trend", "bias"),
-           "season total trend bias", doc=doc))
-    add(_c("−36.89", TERM_TOTAL, lambda: term_total("base", "bias"),
+    add(_c("105.76", TERM_TOTAL, lambda: term_total("trend", "mae"),
+           "season total trend MAE", doc=doc))
+    add(_c("−16.44", TERM_TOTAL, lambda: term_total("base", "bias"),
            "season total base bias", doc=doc))
-    for head, sigma in [("blk", "0.99×"), ("tov", "0.94×"), ("fta", "0.87×"),
-                        ("stl", "0.82×"), ("reb", "1.18×")]:
+    add(_c("+10.21", TERM_TOTAL, lambda: term_total("trend", "bias"),
+           "season total trend bias", doc=doc))
+    for quoted, label in [("106.06", "season total trend MAE"),
+                          ("108.56", "season total base MAE"),
+                          ("−13.57", "season total trend bias"),
+                          ("−36.89", "season total base bias")]:
+        add(_c(quoted, TERM_TOTAL, lambda: float("nan"),
+               f"{label}, held-out reading", doc=doc, historical=True))
+    # `sigma_year` moved because the old column was the TEST arm's fit (27 training
+    # seasons) sitting in a row whose CRPS came from the validation arm (25). Same head,
+    # two different models, one row. Now both come from the validation fit.
+    for head, sigma in [("blk", "0.85×"), ("tov", "0.89×"), ("reb", "1.07×")]:
         add(_c(sigma, TERM_SIGMA, lambda h=head: term_sigma(h, "ratio_to_yoy_sd"),
                f"sigma/league ratio {head}", doc=doc))
-    add(_c("2.36×", TERM_SIGMA, lambda: term_sigma("fg3a", "ratio_to_yoy_sd"),
-           "sigma/league ratio fg3a", doc=doc))
-    for n, quoted in [(12, "+8.9%"), (15, "+11.6%"), (30, "+22.1%"),
-                      (150, "+91.1%"), (791, "+278%")]:
+    for quoted, label in [("0.99×", "blk"), ("0.94×", "tov"), ("0.87×", "fta"),
+                          ("0.82×", "stl"), ("1.18×", "reb"), ("2.36×", "fg3a")]:
+        add(_c(quoted, TERM_SIGMA, lambda: float("nan"),
+               f"sigma/league ratio {label}, test-arm reading", doc=doc, historical=True))
+    # The whole-board row is keyed on the board SIZE, so the validation board's 773 is a
+    # different lookup from the test board's 791 — a stale key here would degrade to a
+    # silent `no-such-row` skip rather than a mismatch, which is why it is requoted.
+    for n, quoted in [(12, "+7.95%"), (15, "+10.4%"), (30, "+21.0%"),
+                      (150, "+83.5%"), (773, "+254%")]:
         add(_c(quoted, TERM_SPREAD, lambda k=n: term_spread(k, "year") - 1.0,
                f"year roster spread inflation, {n} players", doc=doc))
-    for arm, val, test in [("base", "144.09", "147.02"), ("year", "143.81", "146.54")]:
+    for quoted, label in [("+8.9%", "12"), ("+11.6%", "15"), ("+22.1%", "30"),
+                          ("+91.1%", "150"), ("+278%", "791")]:
+        add(_c(quoted, TERM_SPREAD, lambda: float("nan"),
+               f"year roster spread inflation, {label} players, test board",
+               doc=doc, historical=True))
+    for arm, val in [("base", "144.09"), ("year", "143.81")]:
         add(_c(val, TERM_M, lambda a=arm: term("min", a, "val_crps"),
                f"minutes {arm} val CRPS", doc=doc))
-        add(_c(test, TERM_M, lambda a=arm: term("min", a, "test_crps"),
-               f"minutes {arm} test CRPS", doc=doc))
-    add(_c("−38.2", TERM_M, lambda: term("min", "year", "bias"),
-           "minutes year bias", doc=doc))
-    add(_c("−56.6", TERM_M, lambda: term("min", "trend", "bias"),
-           "minutes trend bias", doc=doc))
-    for arm, quoted in [("base", "−14.8%"), ("trend", "−10.2%"), ("year", "−16.5%")]:
+    for quoted, label in [("147.02", "base"), ("146.54", "year")]:
+        add(_c(quoted, TERM_M, lambda: float("nan"),
+               f"minutes {label} test CRPS", doc=doc, historical=True))
+    add(_c("−13.0", TERM_M, lambda: term("min", "year", "val_bias"),
+           "minutes year val bias", doc=doc))
+    add(_c("−25.0", TERM_M, lambda: term("min", "trend", "val_bias"),
+           "minutes trend val bias", doc=doc))
+    for quoted, label in [("−38.2", "year"), ("−56.6", "trend")]:
+        add(_c(quoted, TERM_M, lambda: float("nan"),
+               f"minutes {label} bias, held-out reading", doc=doc, historical=True))
+    for arm, quoted in [("base", "−11.7%"), ("trend", "−7.6%"), ("year", "−12.8%")]:
         add(_c(quoted, TERM_BONUS, lambda a=arm: term_bonus(a) / 100.0,
                f"bonus bias {arm}", doc=doc))
+    for quoted, label in [("−14.8%", "base"), ("−10.2%", "trend"), ("−16.5%", "year")]:
+        add(_c(quoted, TERM_BONUS, lambda: float("nan"),
+               f"bonus bias {label}, held-out reading", doc=doc, historical=True))
     return C
 
 
@@ -1559,48 +2163,70 @@ def _season_term_claims(doc: str) -> list[Claim]:
     C: list[Claim] = []
     add = C.append
 
-    # `fg3a` — the head that refutes the trend, and the reason the verdict is what it is.
+    # `fg3a` — the head that refuted the trend, and the reason the verdict is what it is.
+    # RETIRED with the two-count basis on 2026-08-03 and no longer fitted, so every figure
+    # here is a record of that basis rather than a live measurement. Held historical for the
+    # same reason the doc still carries the block: this is the sharpest evidence against a
+    # trend the project ever produced, and its successor `fg3a|fga` cannot restate it — the
+    # mix head selects `year` on a margin too small to mean anything.
     for arm, val, test, bias in [("base", "33.247", "33.723", "−3.74%"),
                                  ("trend", "35.443", "33.900", "+8.44%"),
                                  ("year", "34.309", "35.408", "−9.01%"),
                                  ("trend_year", "36.108", "34.706", "+11.48%")]:
-        add(_c(val, TERM_M, lambda a=arm: term("fg3a", a, "val_crps"),
-               f"fg3a {arm} val CRPS", doc=doc))
-        add(_c(test, TERM_M, lambda a=arm: term("fg3a", a, "test_crps"),
-               f"fg3a {arm} test CRPS", doc=doc))
-        add(_c(bias, TERM_M, lambda a=arm: term("fg3a", a, "bias_pct") / 100.0,
-               f"fg3a {arm} bias", doc=doc))
-    add(_c("38.747", TERM_M, lambda: term("fg3a", "carry_forward", "test_crps"),
-           "fg3a floor CRPS", doc=doc))
+        for quoted, what in [(val, "val CRPS"), (test, "test CRPS"), (bias, "bias")]:
+            add(_c(quoted, TERM_M, lambda: float("nan"),
+                   f"fg3a {arm} {what}", doc=doc, historical=True))
+    add(_c("38.747", TERM_M, lambda: float("nan"),
+           "fg3a floor CRPS", doc=doc, historical=True))
 
-    # The oracle ceiling — the single number that bounds the whole question.
-    for head, quoted in [("stl", "3.11%"), ("blk", "2.32%"), ("fta", "2.16%"),
-                         ("reb", "1.71%"), ("fga", "0.81%"), ("ast", "0.58%"),
-                         ("tov", "0.01%")]:
+    # The oracle ceiling — the single number that bounds the whole question. On `val_mae`
+    # since 2026-08-07. `fga` is quoted as a NEGATIVE gain and needs its own claim: a
+    # perfect per-season rescale making MAE very slightly worse is a real property of a
+    # head whose seasons barely move, not a defect, and rounding it to "0.0%" would hide
+    # the sign.
+    for head, quoted in [("fta", "4.97%"), ("reb", "2.58%"), ("tov", "2.36%"),
+                         ("ast", "1.29%"), ("blk", "1.17%"), ("stl", "0.36%"),
+                         ("fga", "−0.00%")]:
         add(_c(quoted, TERM_M, lambda h=head: oracle_gain(h),
                f"oracle ceiling {head}", doc=doc))
+    for quoted, label in [("3.11%", "stl"), ("2.32%", "blk"), ("2.16%", "fta"),
+                          ("1.71%", "reb"), ("0.81%", "fga"), ("0.58%", "ast"),
+                          ("0.01%", "tov")]:
+        add(_c(quoted, TERM_M, lambda: float("nan"),
+               f"oracle ceiling {label}, held-out reading", doc=doc, historical=True))
 
-    # Season-total dk_pts, uniform-arm and test-only.
-    for arm, mae, bias, crps in [("base", "108.56", "−36.89", "78.27"),
-                                 ("trend", "106.06", "−13.57", "75.91"),
-                                 ("year", "110.56", "−45.87", "79.92"),
-                                 ("trend_year", "105.92", "−12.89", "76.06")]:
+    # Season-total dk_pts, uniform-arm, now on the 773-row VALIDATION frame.
+    for arm, mae, bias, crps in [("base", "105.71", "−16.44", "76.05"),
+                                 ("trend", "105.76", "+10.21", "75.67"),
+                                 ("year", "106.52", "−23.40", "76.68"),
+                                 ("trend_year", "105.00", "+9.22", "75.46")]:
         add(_c(mae, TERM_TOTAL, lambda a=arm: term_total(a, "mae"),
                f"season total {arm} MAE", doc=doc))
         add(_c(bias, TERM_TOTAL, lambda a=arm: term_total(a, "bias"),
                f"season total {arm} bias", doc=doc))
         add(_c(crps, TERM_TOTAL, lambda a=arm: term_total(a, "crps"),
                f"season total {arm} CRPS", doc=doc))
+    for mae, bias, crps, arm in [("108.56", "−36.89", "78.27", "base"),
+                                 ("106.06", "−13.57", "75.91", "trend"),
+                                 ("110.56", "−45.87", "79.92", "year"),
+                                 ("105.92", "−12.89", "76.06", "trend_year")]:
+        for quoted, what in [(mae, "MAE"), (bias, "bias"), (crps, "CRPS")]:
+            add(_c(quoted, TERM_TOTAL, lambda: float("nan"),
+                   f"season total {arm} {what}, held-out reading",
+                   doc=doc, historical=True))
 
-    # `sigma_year` against the independently measured league movement.
-    for head, sigma, league, ratio in [("blk", "3.66%", "3.70%", "0.99"),
-                                       ("tov", "2.71%", "2.89%", "0.94"),
-                                       ("fta", "3.78%", "4.36%", "0.87"),
-                                       ("stl", "2.49%", "3.03%", "0.82"),
-                                       ("reb", "1.75%", "1.48%", "1.18"),
-                                       ("fg2a", "3.03%", "2.42%", "1.25"),
-                                       ("ast", "4.46%", "3.08%", "1.45"),
-                                       ("fg3a", "15.43%", "6.53%", "2.36")]:
+    # `sigma_year` against the independently measured league movement. Every value moved,
+    # and NOT because the sampler is noisy: the old `year_*` columns were written from the
+    # TEST arm's fit (27 training seasons) into a row whose CRPS came from the validation
+    # arm (25). `year_n_train_seasons` is the column that shows it.
+    for head, sigma, league, ratio in [("blk", "3.15%", "3.70%", "0.85"),
+                                       ("tov", "2.56%", "2.89%", "0.89"),
+                                       ("fta", "3.23%", "4.36%", "0.74"),
+                                       ("stl", "2.30%", "3.03%", "0.76"),
+                                       ("reb", "1.58%", "1.48%", "1.07"),
+                                       ("fga", "2.10%", "1.52%", "1.38"),
+                                       ("ast", "4.32%", "3.08%", "1.40"),
+                                       ("fg3a|fga", "11.42%", "6.19%", "1.84")]:
         add(_c(sigma, TERM_SIGMA, lambda h=head: term_sigma(h, "sigma_year_pct") / 100.0,
                f"sigma_year {head}", doc=doc))
         add(_c(league, TERM_SIGMA,
@@ -1608,34 +2234,78 @@ def _season_term_claims(doc: str) -> list[Claim]:
                f"league yoy sd {head}, beside sigma", doc=doc))
         add(_c(ratio, TERM_SIGMA, lambda h=head: term_sigma(h, "ratio_to_yoy_sd"),
                f"sigma/league ratio {head}", doc=doc))
+    for sigma, league, ratio, head in [("3.66%", "3.70%", "0.99", "blk"),
+                                       ("2.71%", "2.89%", "0.94", "tov"),
+                                       ("3.78%", "4.36%", "0.87", "fta"),
+                                       ("2.49%", "3.03%", "0.82", "stl"),
+                                       ("1.75%", "1.48%", "1.18", "reb"),
+                                       ("3.03%", "2.42%", "1.25", "fg2a"),
+                                       ("4.46%", "3.08%", "1.45", "ast"),
+                                       ("15.43%", "6.53%", "2.36", "fg3a")]:
+        for quoted, what in [(sigma, "sigma_year"), (league, "league yoy sd"),
+                             (ratio, "ratio")]:
+            add(_c(quoted, TERM_SIGMA, lambda: float("nan"),
+                   f"{what} {head}, test-arm reading", doc=doc, historical=True))
 
-    # Roster spread — what the year effect is actually worth.
-    for n, quoted in [(12, "+8.9%"), (15, "+11.6%"), (30, "+22.1%"),
-                      (150, "+91.1%"), (791, "+278%")]:
+    # Roster spread — what the year effect is actually worth. Keyed on board SIZE, so the
+    # validation board's 773 is a different row from the test board's 791.
+    for n, quoted in [(12, "+7.95%"), (15, "+10.4%"), (30, "+21.0%"),
+                      (150, "+83.5%"), (773, "+254%")]:
         add(_c(quoted, TERM_SPREAD, lambda k=n: term_spread(k, "year") - 1.0,
                f"year roster spread inflation, {n} players", doc=doc))
-    add(_c("557", TERM_SPREAD, lambda: term_spread(15, "base", "total_sd"),
+    add(_c("594", TERM_SPREAD, lambda: term_spread(15, "base", "total_sd"),
            "base roster sd, 15 players", doc=doc))
-    add(_c("621", TERM_SPREAD, lambda: term_spread(15, "year", "total_sd"),
+    add(_c("655", TERM_SPREAD, lambda: term_spread(15, "year", "total_sd"),
            "year roster sd, 15 players", doc=doc))
+    for quoted, label in [("+8.9%", "12 players"), ("+11.6%", "15 players"),
+                          ("+22.1%", "30 players"), ("+91.1%", "150 players"),
+                          ("+278%", "791 players"), ("557", "base sd, 15"),
+                          ("621", "year sd, 15")]:
+        add(_c(quoted, TERM_SPREAD, lambda: float("nan"),
+               f"roster spread {label}, test board", doc=doc, historical=True))
 
-    # Minutes — the one head that adopts a season term.
-    for arm, val, test, bias in [("carry_forward", "161.45", "168.24", "−5.69"),
-                                 ("base", "144.09", "147.02", "−41.05"),
-                                 ("trend", "144.44", "148.78", "−56.59"),
-                                 ("year", "143.81", "146.54", "−38.19")]:
+    # Minutes — the one head that adopts a season term. `val_crps` reproduced to four
+    # decimals across the conversion; `val_bias` is a genuinely new quantity, since the old
+    # bare `bias` column was the held-out one.
+    for arm, val, bias in [("carry_forward", "161.45", "+23.9"),
+                           ("base", "144.09", "−14.2"),
+                           ("trend", "144.44", "−25.0"),
+                           ("year", "143.81", "−13.0")]:
         add(_c(val, TERM_M, lambda a=arm: term("min", a, "val_crps"),
                f"minutes {arm} val CRPS", doc=doc))
-        add(_c(test, TERM_M, lambda a=arm: term("min", a, "test_crps"),
-               f"minutes {arm} test CRPS", doc=doc))
-        add(_c(bias, TERM_M, lambda a=arm: term("min", a, "bias"),
-               f"minutes {arm} bias", doc=doc))
+        add(_c(bias, TERM_M, lambda a=arm: term("min", a, "val_bias"),
+               f"minutes {arm} val bias", doc=doc))
+    for test, bias, arm in [("168.24", "−5.69", "carry_forward"),
+                            ("147.02", "−41.05", "base"),
+                            ("148.78", "−56.59", "trend"),
+                            ("146.54", "−38.19", "year")]:
+        for quoted, what in [(test, "test CRPS"), (bias, "bias")]:
+            add(_c(quoted, TERM_M, lambda: float("nan"),
+                   f"minutes {arm} {what}, held-out reading", doc=doc, historical=True))
+
+    # Availability — the role-interaction arms. Their whole finding was a val/test
+    # DISAGREEMENT, so the test half is now historical and the doc keeps it as the record
+    # of a false positive that selection caught.
+    for arm, val in [("carry_forward", "13.387"), ("base", "10.007"), ("trend", "9.997"),
+                     ("year", "10.015"), ("trend_year", "10.005"),
+                     ("trend_x_role", "10.078"), ("trend_x_role_year", "10.087")]:
+        add(_c(val, TERM_M, lambda a=arm: term("gp", a, "val_crps"),
+               f"availability {arm} val CRPS", doc=doc))
+    for quoted, arm in [("13.614", "carry_forward"), ("10.797", "base"),
+                        ("10.765", "trend"), ("10.813", "year"), ("10.757", "trend_year"),
+                        ("10.742", "trend_x_role"), ("10.736", "trend_x_role_year")]:
+        add(_c(quoted, TERM_M, lambda: float("nan"),
+               f"availability {arm} test CRPS", doc=doc, historical=True))
 
     # The bonus, whose LEVEL is the missing copula and whose ORDERING is the bias story.
-    for arm, quoted in [("base", "−14.8%"), ("trend", "−10.2%"),
-                        ("year", "−16.5%"), ("trend_year", "−9.9%")]:
+    for arm, quoted in [("base", "−11.7%"), ("trend", "−7.6%"),
+                        ("year", "−12.8%"), ("trend_year", "−6.9%")]:
         add(_c(quoted, TERM_BONUS, lambda a=arm: term_bonus(a) / 100.0,
                f"bonus bias {arm}", doc=doc))
+    for quoted, arm in [("−14.8%", "base"), ("−10.2%", "trend"),
+                        ("−16.5%", "year"), ("−9.9%", "trend_year")]:
+        add(_c(quoted, TERM_BONUS, lambda: float("nan"),
+               f"bonus bias {arm}, held-out reading", doc=doc, historical=True))
     return C
 
 
@@ -2098,243 +2768,307 @@ def _claude() -> list[Claim]:
     add("0.159", PROFILE,
         lambda: prof("predictor_r2", "prior_mpg", "r2_in_sample_unweighted"),
         "prior MPG ceiling")
-    for model, quoted in [("beta_binomial", "10.795"), ("gbm", "10.888"),
-                          ("ridge", "10.896"), ("league_age", "13.614")]:
-        add(quoted, METRICS, lambda m=model: metric(METRICS, m, "crps_games"),
-            f"{model} CRPS")
-    add("0.268", ABLATION,
-        lambda: cell(ABLATION, "r2_gp_share", variant="baseline"),
-        "held-out R2 before playoff workload")
-    add("10.914", ABLATION,
-        lambda: cell(ABLATION, "crps_games", variant="baseline"),
-        "baseline CRPS")
+    C += _availability_ladder_claims(CLAUDE, scope="summary",
+                                     historical=LADDER_HISTORICAL_CLAUDE)
+    add("0.374", METRICS, lambda: metric(METRICS, "beta_binomial", "r2_gp_share"),
+        "validation R2 of the shipped head")
 
     # ── the season total ──────────────────────────────────────────────────────
-    totals = [("full_season", "646.3", "831.2", "0.141", "541.9"),
-              ("prior_gp", "475.0", "638.5", "0.493", "41.9"),
-              ("league_age", "476.0", "595.8", "0.559", "23.2"),
-              ("beta_binomial", "435.1", "570.8", "0.595", "6.1"),
-              ("oracle_rate", "302.7", "427.7", "0.773", "5.3"),
-              ("oracle_gp", "221.3", "304.2", "0.885", "−33.2")]
-    for name, mae, rmse, r2, bias in totals:
-        for quoted, which in [(mae, "mae_dk_total"), (rmse, "rmse_dk_total"),
-                              (r2, "r2_dk_total"), (bias, "bias_dk_total")]:
-            add(quoted, SEASON_TOTAL,
-                lambda n=name, w=which: treatment(n, w),
-                f"season total {name} {which}")
-    add("211.1", SEASON_TOTAL,
+    C += _season_total_claims(CLAUDE)
+    add("210.3", SEASON_TOTAL,
         lambda: (treatment("full_season", "mae_dk_total")
                  - treatment("beta_binomial", "mae_dk_total")),
         "head vs a full season")
-    add("651.3", SEASON_TOTAL,
-        lambda: treatment("full_season", "mae_dk_total", "rotation"),
-        "rotation naive MAE")
-    add("499.4", SEASON_TOTAL,
-        lambda: treatment("beta_binomial", "mae_dk_total", "rotation"),
-        "rotation head MAE")
-    add("441.3", ABLATION,
-        lambda: treatment("beta_binomial", "mae_dk_total")
-        + 6.2, "season total before playoff workload", tol=0.15)
-    add("508.9", SEASON_TOTAL,
-        lambda: treatment("beta_binomial", "mae_dk_total", "rotation")
-        + 9.5, "rotation MAE before playoff workload", tol=0.15)
+    # The playoff-workload ablation's season-total figures were never re-measured — its
+    # own artifact is still a test evaluation — so all four are historical rather than
+    # derived from the current ladder. Deleting them would erase the only record of the
+    # pre-workload run.
+    for quoted, label in [("441.3", "season total before playoff workload"),
+                          ("508.9", "rotation MAE before playoff workload"),
+                          ("+6.2", "workload gain on the season total"),
+                          ("−9.5", "workload gain on rotation players")]:
+        add(quoted, ABLATION, lambda: float("nan"), label, historical=True)
 
     # ── the component rate heads (Poisson / sklearn) ──────────────────────────
     # `fg2a` and `fg3a` are RETIRED count heads (shot-attempt basis, 2026-08-03) and their
     # rows are gone from the artifact; `fga` replaces both. The retired rows stay in the
     # doc beside the new one, value-exempt, because the table is the record of what the
     # two-count basis measured.
-    poisson = [("fga", "0.9464", "0.9455", "0.9513", "0.9517", "0.9522", False),
-               ("reb", "0.9424", "0.9278", "0.9441", "0.9436", "0.9442", False),
-               ("fg2a", "0.9194", "0.9089", "0.9245", "0.9248", "0.9260", True),
-               ("ast", "0.9197", "0.8601", "0.9229", "0.9262", "0.9236", False),
-               ("fg3a", "0.9036", "0.5197", "0.8791", "0.9088", "0.8784", True),
-               ("blk", "0.8407", "0.6375", "0.8204", "0.8605", "0.8228", False),
-               ("fta", "0.8673", "0.8449", "0.8689", "0.8692", "0.8720", False),
-               ("stl", "0.8194", "0.8170", "0.8369", "0.8397", "0.8338", False),
-               ("tov", "0.8845", "0.8828", "0.8915", "0.8913", "0.8916", False)]
-    for head, floor, linear, log_own, spline, inter, retired in poisson:
+    poisson = [("fga", "0.9514", "0.9544", "0.9586", "0.9589", "0.9591"),
+               ("reb", "0.9505", "0.9181", "0.9514", "0.9497", "0.9512"),
+               ("ast", "0.9195", "0.8569", "0.9222", "0.9255", "0.9225"),
+               ("blk", "0.8103", "0.6510", "0.7748", "0.8291", "0.7799"),
+               ("fta", "0.8765", "0.7993", "0.8922", "0.8817", "0.8932"),
+               ("stl", "0.8386", "0.8556", "0.8682", "0.8693", "0.8693"),
+               ("tov", "0.8966", "0.9091", "0.9171", "0.9162", "0.9173")]
+    for head, floor, linear, log_own, spline, inter in poisson:
         for quoted, variant in [(floor, "carry_forward"), (linear, "linear"),
                                 (log_own, "log_own"), (spline, "log_own_spline"),
                                 (inter, "log_own_inter")]:
             add(quoted, RATES, lambda h=head, v=variant: rate(h, v),
-                f"poisson {head} {variant}", historical=retired)
-    add("3.1021", RATES,
+                f"poisson {head} {variant}")
+    # The superseded TEST table, kept whole beside the validation one. Two supersessions
+    # are stacked here and they are different: the `fg2a` / `fg3a` rows are the retired
+    # two-count BASIS, the rest are the retired SPLIT.
+    for quoted in ("0.9464", "0.9455", "0.9513", "0.9517", "0.9522",
+                   "0.9424", "0.9278", "0.9441", "0.9436", "0.9442",
+                   "0.9194", "0.9089", "0.9245", "0.9248", "0.9260",
+                   "0.9197", "0.8601", "0.9229", "0.9262", "0.9236",
+                   "0.9036", "0.5197", "0.8791", "0.9088", "0.8784",
+                   "0.8407", "0.6375", "0.8204", "0.8605", "0.8228",
+                   "0.8673", "0.8449", "0.8689", "0.8692", "0.8720",
+                   "0.8194", "0.8170", "0.8369", "0.8397", "0.8338",
+                   "0.8845", "0.8828", "0.8915", "0.8913", "0.8916"):
+        add(quoted, RATES, lambda: float("nan"),
+            f"pre-lock held-out component rate: {quoted}", historical=True)
+    add("3.0569", RATES,
         lambda: min(rate("ftm|fta", v, "nll")
                     for v in ("linear", "spline_own", "inter", "pca", "pca_inter")),
         "ftm|fta best fitted NLL")
-    add("3.0822", RATES, lambda: rate("ftm|fta", "carry_forward", "nll"),
+    add("3.0541", RATES, lambda: rate("ftm|fta", "carry_forward", "nll"),
         "ftm|fta floor NLL")
-    for alpha, quoted in [(1e-8, "0.9278"), (0.01, "0.9322"), (1.0, "0.6620")]:
+    add("4.6317", RATES,
+        lambda: min(rate("fg3a|fga", v, "nll")
+                    for v in ("linear", "spline_own", "inter", "pca", "pca_inter")),
+        "fg3a|fga best fitted NLL under sklearn")
+    add("4.6191", RATES, lambda: rate("fg3a|fga", "carry_forward", "nll"),
+        "fg3a|fga floor NLL under sklearn")
+    for quoted in ("3.1021", "3.0822"):
+        add(quoted, RATES, lambda: float("nan"),
+            f"pre-lock held-out ftm|fta NLL: {quoted}", historical=True)
+    for alpha, quoted in [(1e-8, "0.9181"), (0.01, "0.9267"), (1.0, "0.6619")]:
         add(quoted, RATES,
             lambda a=alpha: _one(table(RATES), "r2", analysis="alpha_sensitivity",
                                  head="reb", variant="linear", alpha=a),
             f"reb alpha sensitivity at {alpha}")
+    for quoted in ("0.9322", "0.6620"):
+        add(quoted, RATES, lambda: float("nan"),
+            f"pre-lock held-out reb alpha figure: {quoted}", historical=True)
+    add("14", RATES,
+        lambda: float((~table(RATES)[
+            (table(RATES)["analysis"] == "alpha_sensitivity")
+            & (table(RATES)["alpha"] == 10.0)]["beats_floor"]).sum()),
+        "fits below the floor at alpha=10")
+    add("0.200", RATES, lambda: _alpha_loss("linear"),
+        "median alpha=1.0 loss, linear")
+    add("0.305", RATES, lambda: _alpha_loss("log_own"),
+        "median alpha=1.0 loss, log_own")
+    add("0.497", RATES, lambda: _alpha_loss("log_own", head="blk"),
+        "worst alpha=1.0 loss")
 
     # ── the Stan heads ────────────────────────────────────────────────────────
     # `fg2a` / `fg3a` are RETIRED count heads (shot-attempt basis, 2026-08-04) and their
     # rows are gone from the artifact; `fga` replaces both. They stay in the doc's table as
     # the record of the retired basis, value-exempt but presence-checked.
-    stan_counts = [("fga", "0.9464", "0.9396", "0.9501", "0.9505", False),
-                   ("reb", "0.9424", "0.9095", "0.9439", "0.9428", False),
+    # The live table, on validation. `retired` marks a head the shot-attempt basis removed;
+    # the superseded TEST reading of every surviving head follows below, so the two axes a
+    # figure can move along — which basis, which split — stay separately legible.
+    stan_counts = [("fga", "0.9514", "0.9489", "0.9581", "0.9584", False),
+                   ("reb", "0.9505", "0.8889", "0.9513", "0.9511", False),
                    ("fg2a", "0.9194", "0.9018", "0.9241", "0.9241", True),
-                   ("ast", "0.9197", "0.6615", "0.9223", "0.9240", False),
+                   ("ast", "0.9195", "0.6418", "0.9198", "0.9255", False),
                    ("fg3a", "0.9036", "−19.00", "0.3719", "0.9046", True),
-                   ("tov", "0.8845", "0.8823", "0.8929", "0.8926", False),
-                   ("blk", "0.8407", "−1.393", "0.6794", "0.8579", False),
-                   ("fta", "0.8673", "0.8171", "0.8649", "0.8648", False),
-                   ("stl", "0.8194", "0.8113", "0.8390", "0.8413", False)]
+                   ("tov", "0.8966", "0.9048", "0.9170", "0.9169", False),
+                   ("blk", "0.8103", "−0.2744", "0.6730", "0.8309", False),
+                   ("fta", "0.8765", "0.5741", "0.8909", "0.8893", False),
+                   ("stl", "0.8386", "0.8492", "0.8674", "0.8695", False)]
     for head, floor, linear, log_own, spline, retired in stan_counts:
         for quoted, variant in [(floor, "carry_forward"), (linear, "linear"),
                                 (log_own, "log_own"), (spline, "log_own_spline")]:
             add(quoted, STAN_C_M,
-                lambda h=head, v=variant: stan_c(h, v, "test_r2"),
+                lambda h=head, v=variant: stan_c(h, v, "val_r2"),
                 f"NB {head} {variant}", historical=retired)
-    conversions = [("fg3a|fga", "4.6137", "4.6528"),
-                   ("fg2m|fg2a", "3.7249", "3.7770"),
-                   ("fg3m|fg3a", "3.2407", "3.2614"),
-                   ("ftm|fta", "3.1313", "3.0822")]
+    stan_counts_on_test = [("fga", "0.9464", "0.9396", "0.9501", "0.9505"),
+                           ("reb", "0.9424", "0.9095", "0.9439", "0.9428"),
+                           ("ast", "0.9197", "0.6615", "0.9223", "0.9240"),
+                           ("tov", "0.8845", "0.8823", "0.8929", "0.8926"),
+                           ("blk", "0.8407", "−1.393", "0.6794", "0.8579"),
+                           ("fta", "0.8673", "0.8171", "0.8649", "0.8648"),
+                           ("stl", "0.8194", "0.8113", "0.8390", "0.8413")]
+    for head, floor, linear, log_own, spline in stan_counts_on_test:
+        for quoted, variant in [(floor, "carry_forward"), (linear, "linear"),
+                                (log_own, "log_own"), (spline, "log_own_spline")]:
+            add(quoted, STAN_C_M,
+                lambda h=head, v=variant: stan_c(h, v, "val_r2"),
+                f"NB {head} {variant}, on test", historical=True)
+    conversions = [("fg3a|fga", "4.6157", "4.6191"),
+                   ("fg2m|fg2a", "3.8046", "3.8442"),
+                   ("fg3m|fg3a", "3.1677", "3.1851"),
+                   ("ftm|fta", "3.0804", "3.0541")]
     for head, fitted, floor in conversions:
         add(fitted, STAN_C_M,
-            lambda h=head: stan_c(h, "logit_own_spline", "test_nll"),
+            lambda h=head: stan_c(h, "logit_own_spline", "val_nll"),
             f"NB {head} fitted NLL")
         add(floor, STAN_C_M,
-            lambda h=head: stan_c(h, "carry_forward", "test_nll"),
+            lambda h=head: stan_c(h, "carry_forward", "val_nll"),
             f"NB {head} floor NLL")
-    add("0.0521", STAN_C_M,
-        lambda: stan_c("fg2m|fg2a", "carry_forward", "test_nll")
-        - stan_c("fg2m|fg2a", "logit_own_spline", "test_nll"),
+    for head, fitted, floor in [("fg3a|fga", "4.6137", "4.6528"),
+                                ("fg2m|fg2a", "3.7249", "3.7770"),
+                                ("fg3m|fg3a", "3.2407", "3.2614"),
+                                ("ftm|fta", "3.1313", "3.0822")]:
+        add(fitted, STAN_C_M,
+            lambda h=head: stan_c(h, "logit_own_spline", "val_nll"),
+            f"NB {head} fitted NLL, on test", historical=True)
+        add(floor, STAN_C_M,
+            lambda h=head: stan_c(h, "carry_forward", "val_nll"),
+            f"NB {head} floor NLL, on test", historical=True)
+    add("+0.0034", STAN_C_M,
+        lambda: stan_c("fg3a|fga", "carry_forward", "val_nll")
+        - stan_c("fg3a|fga", "logit_own_spline", "val_nll"),
+        "fg3a|fga NLL gain")
+    add("+0.0396", STAN_C_M,
+        lambda: stan_c("fg2m|fg2a", "carry_forward", "val_nll")
+        - stan_c("fg2m|fg2a", "logit_own_spline", "val_nll"),
         "fg2m|fg2a NLL gain")
-    add("0.0208", STAN_C_M,
-        lambda: stan_c("fg3m|fg3a", "carry_forward", "test_nll")
-        - stan_c("fg3m|fg3a", "logit_own_spline", "test_nll"),
+    add("+0.0173", STAN_C_M,
+        lambda: stan_c("fg3m|fg3a", "carry_forward", "val_nll")
+        - stan_c("fg3m|fg3a", "logit_own_spline", "val_nll"),
         "fg3m|fg3a NLL gain")
-    add("−0.0491", STAN_C_M,
-        lambda: stan_c("ftm|fta", "carry_forward", "test_nll")
-        - stan_c("ftm|fta", "logit_own_spline", "test_nll"),
+    add("−0.0263", STAN_C_M,
+        lambda: stan_c("ftm|fta", "carry_forward", "val_nll")
+        - stan_c("ftm|fta", "logit_own_spline", "val_nll"),
         "ftm|fta NLL gain")
-    add("305.0", STAN_C_D, lambda: total(STAN_C_D, "wall_clock_s") / 60,
+    for quoted, label in [("+0.0391", "fg3a|fga"), ("+0.0521", "fg2m|fg2a"),
+                          ("+0.0208", "fg3m|fg3a"), ("−0.0491", "ftm|fta")]:
+        add(quoted, STAN_C_M,
+            lambda h=label: stan_c(h, "carry_forward", "val_nll")
+            - stan_c(h, "logit_own_spline", "val_nll"),
+            f"{label} NLL gain, on test", historical=True)
+    add("137.4", STAN_C_D, lambda: total(STAN_C_D, "wall_clock_s") / 60,
         "component sampler minutes")
-    add("1.0118", STAN_C_D, lambda: max_of(STAN_C_D, "max_rhat"),
+    add("305.0", STAN_C_D, lambda: total(STAN_C_D, "wall_clock_s") / 60,
+        "component sampler minutes, both splits", historical=True)
+    add("1.0076", STAN_C_D, lambda: max_of(STAN_C_D, "max_rhat"),
         "component max R-hat")
-    # The handicapped margins, kept in the doc beside their correction. They remain
-    # exactly true of `stan_component_substitution.csv` — a weaker experiment, not a
-    # stale value — so they are value-checked rather than flagged historical.
+    add("1.0118", STAN_C_D, lambda: max_of(STAN_C_D, "max_rhat"),
+        "component max R-hat, half-length selection fits", historical=True)
+    # The handicapped margins, kept in the doc beside their correction. The validation one
+    # remains exactly true of `stan_component_substitution.csv` — a weaker experiment, not a
+    # stale value — so it stays value-checked. Its test twin does not: it survived that
+    # file's conversion inside the Gate 0 sweep, and the 2026-08-06 re-run of that sweep took
+    # the last copy. Demoted rather than frozen, because freezing a run to keep a claim
+    # checkable is the tail wagging the dog.
     add("−0.771", STAN_C_S,
         lambda: cell(STAN_C_S, "reparam_minus_canonical", split="val",
                      arm="two_counts"), "substitution gain, val (handicapped)")
-    add("−0.793", STAN_C_S,
-        lambda: cell(STAN_C_S, "reparam_minus_canonical", split="test",
-                     arm="two_counts"), "substitution gain, test (handicapped)")
-    add("0.792657", STAN_C_S,
-        lambda: -cell(STAN_C_S, "reparam_minus_canonical", split="test",
-                      arm="two_counts"), "the handicapped test margin, unsigned")
+    add("−0.793", SHOT_SWEEP, lambda: float("nan"),
+        "substitution gain, test (handicapped)", historical=True)
+    add("0.792657", SHOT_SWEEP, lambda: float("nan"),
+        "the handicapped test margin, unsigned", historical=True)
     # The four joint-NLL cells the doc used to quote are gone from the prose, replaced by
     # Gate 0's. `10.797` was deliberately NOT re-pointed: the string survives elsewhere in
     # this doc as an unrelated availability CRPS, so a presence check on it would pass for
     # the wrong reason — the exact false-negative `check_presence` exists to avoid.
-    def shot(split: str, arm: str) -> float:
+    # Gate 0 is validation-only since the 2026-08-06 re-run. `CLAUDE.md` carries the summary
+    # and `docs/shot-attempt-basis-plan.md` carries the full retired test block, so the two
+    # test figures kept here are the two the summary sentence actually names — the margin the
+    # adoption was decided on and the best-of-16 it was checked against. Both presence-only.
+    def shot(arm: str) -> float:
         frame = table(SHOT_SWEEP)
         if frame is None:
             return float("nan")
-        sub = frame[(frame["analysis"] == "joint") & (frame["split"] == split)
+        sub = frame[(frame["analysis"] == "joint") & (frame["split"] == "val")
                     & (frame["arm"] == arm) & frame["selected"].astype(bool)]
         return float(sub["mean_nll"].iloc[0])
 
-    def shot_head(split: str, name: str, variant: str, column: str = "mean_nll") -> float:
+    def shot_head(name: str, variant: str, column: str = "mean_nll") -> float:
         arm = "two_counts" if name in ("fg2a", "fg3a") else "fga_x_fg3a_share"
-        return cell(SHOT_SWEEP, column, analysis="head", split=split, arm=arm,
+        return cell(SHOT_SWEEP, column, analysis="head", split="val", arm=arm,
                     head=name, variant=variant)
 
-    def shot_floor_total(names, variants, split: str = "test") -> float:
-        return sum(shot_head(split, n, v, "floor_nll") for n, v in zip(names, variants))
+    def shot_floor_total(names, variants) -> float:
+        return sum(shot_head(n, v, "floor_nll") for n, v in zip(names, variants))
 
-    def shot_grid_best() -> float:
-        frame = table(SHOT_SWEEP)
-        if frame is None:
-            return float("nan")
-        return float(frame[frame["analysis"] == "arm_a_grid"]["mean_nll"].min())
-
-    for split, canonical, reparam, margin in [
-            ("val", "10.504935", "10.004153", "−0.500782"),
-            ("test", "10.478052", "9.984503", "−0.493549")]:
-        add(canonical, SHOT_SWEEP, lambda s=split: shot(s, "two_counts"),
-            f"gate 0 arm A joint NLL, {split}")
-        add(reparam, SHOT_SWEEP, lambda s=split: shot(s, "fga_x_fg3a_share"),
-            f"gate 0 arm B joint NLL, {split}")
-        add(margin, SHOT_SWEEP,
-            lambda s=split: shot(s, "fga_x_fg3a_share") - shot(s, "two_counts"),
-            f"gate 0 margin, {split}")
-    add("10.476413", SHOT_SWEEP, shot_grid_best, "gate 0 arm A best-of-16")
-    add("−0.491910", SHOT_SWEEP,
-        lambda: shot("test", "fga_x_fg3a_share") - shot_grid_best(),
-        "gate 0 margin against arm A's best-of-16")
-    # Reads the pre-adoption `fg3a` row, which the refit removed — value-exempt, and the
-    # figure itself is preserved inside the gate's own artifact.
-    add("0.305646", SHOT_SWEEP,
-        lambda: (cell(STAN_C_M, "test_nll", head="fg3a", variant="log_own")
-                 - shot_head("test", "fg3a", "log_own_spline")),
-        "gate 0 handicap in nats", historical=True)
-    add("−0.487010", SHOT_SWEEP,
-        lambda: (shot_head("test", "fga", "log_own")
-                 + shot_head("test", "fg3a|fga", "logit_own")
-                 - shot("test", "two_counts")),
-        "gate 0 margin before arm B was swept")
-    add("−0.006539", SHOT_SWEEP,
-        lambda: (shot("test", "fga_x_fg3a_share")
-                 - shot_head("test", "fga", "log_own")
-                 - shot_head("test", "fg3a|fga", "logit_own")),
+    add("10.505159", SHOT_SWEEP, lambda: shot("two_counts"), "gate 0 arm A joint NLL")
+    add("10.004118", SHOT_SWEEP, lambda: shot("fga_x_fg3a_share"),
+        "gate 0 arm B joint NLL")
+    add("−0.501041", SHOT_SWEEP,
+        lambda: shot("fga_x_fg3a_share") - shot("two_counts"), "gate 0 margin")
+    add("−0.493549", SHOT_SWEEP, lambda: float("nan"),
+        "gate 0 margin, on test — what adoption was decided on", historical=True)
+    add("10.476413", SHOT_SWEEP, lambda: float("nan"),
+        "gate 0 arm A best-of-16, on test", historical=True)
+    # The handicap decomposition, live on validation since the 2026-08-06 re-run. Its test
+    # predecessors sit beside it in the doc and are presence-checked only.
+    add("10.797078", STAN_C_S,
+        lambda: cell(STAN_C_S, "mean_joint_nll", split="val", arm="two_counts"),
+        "gate 0 handicapped arm A")
+    add("0.291919", SHOT_SWEEP,
+        lambda: cell(STAN_C_S, "mean_joint_nll", split="val",
+                     arm="two_counts") - shot("two_counts"),
+        "gate 0 handicap in nats, on validation")
+    add("−0.021832", SHOT_SWEEP,
+        lambda: shot("fga_x_fg3a_share") - shot_head("fga", "log_own")
+        - shot_head("fg3a|fga", "logit_own"),
         "gate 0 value of sweeping arm B")
-    add("9.991042", SHOT_SWEEP,
-        lambda: (shot_head("test", "fga", "log_own")
-                 + shot_head("test", "fg3a|fga", "logit_own")),
-        "gate 0 reproduces the recorded joint NLL")
-    # The headline: the coordinate change beats the fitting.
+    add("−0.771128", STAN_C_S,
+        lambda: cell(STAN_C_S, "reparam_minus_canonical", split="val",
+                     arm="two_counts"), "gate 0 recorded margin, full precision")
+    add("65%", SHOT_SWEEP,
+        lambda: (shot("fga_x_fg3a_share") - shot("two_counts"))
+        / cell(STAN_C_S, "reparam_minus_canonical", split="val", arm="two_counts"),
+        "gate 0 share of the recorded margin surviving the correction")
+    # Claimed from both artifacts against one string: they are the same quantity computed by
+    # different code, and the whole point is that they cannot drift apart.
+    add("10.025950", SHOT_SWEEP,
+        lambda: shot_head("fga", "log_own") + shot_head("fg3a|fga", "logit_own"),
+        "gate 0 arm B pinned")
+    add("10.025950", STAN_C_S,
+        lambda: cell(STAN_C_S, "mean_joint_nll", split="val", arm="fga_x_fg3a_share"),
+        "…and substitution_arm computes it identically")
+    for quoted, label in [("0.305646", "the handicap"),
+                          ("−0.487010", "margin before arm B was swept"),
+                          ("−0.006539", "what sweeping arm B added")]:
+        add(quoted, SHOT_SWEEP, lambda: float("nan"),
+            f"gate 0 {label}, on test", historical=True)
+    # The headline: the coordinate change beats the fitting. On validation the gap is wider
+    # than the test figures it replaces, so the finding survives the move with room to spare.
     ARM_A_F = (("fg2a", "fg3a"), ("log_own", "log_own_spline"))
     ARM_B_F = (("fga", "fg3a|fga"), ("log_own", "logit_own"))
-    add("11.024027", SHOT_SWEEP, lambda: shot_floor_total(*ARM_A_F),
+    add("11.174424", SHOT_SWEEP, lambda: shot_floor_total(*ARM_A_F),
         "gate 0 arm A no-fit floor total")
-    add("10.085599", SHOT_SWEEP, lambda: shot_floor_total(*ARM_B_F),
+    add("10.064318", SHOT_SWEEP, lambda: shot_floor_total(*ARM_B_F),
         "gate 0 arm B no-fit floor total")
-    add("−0.938427", SHOT_SWEEP,
+    add("−1.110105", SHOT_SWEEP,
         lambda: shot_floor_total(*ARM_B_F) - shot_floor_total(*ARM_A_F),
         "gate 0 floor-to-floor gain")
-    add("−0.390814", SHOT_SWEEP,
-        lambda: shot_floor_total(*ARM_B_F) - shot_grid_best(),
-        "gate 0 arm B floor vs arm A best fitted")
-    add("−0.101096", SHOT_SWEEP,
-        lambda: shot("test", "fga_x_fg3a_share") - shot_floor_total(*ARM_B_F),
+    add("−0.440841", SHOT_SWEEP,
+        lambda: shot_floor_total(*ARM_B_F) - shot("two_counts"),
+        "gate 0 arm B floor vs arm A fitted")
+    add("−0.060200", SHOT_SWEEP,
+        lambda: shot("fga_x_fg3a_share") - shot_floor_total(*ARM_B_F),
         "gate 0 what arm B's own fitting adds")
-    # The share head's floor failure on validation — the reason it needs its spline.
-    for quoted, name, variant, column, split in [
-            ("4.636033", "fg3a|fga", "logit_own", "mean_nll", "val"),
-            ("4.619109", "fg3a|fga", "logit_own", "floor_nll", "val"),
-            ("4.615620", "fg3a|fga", "logit_own_spline", "mean_nll", "val"),
-            ("5.388533", "fga", "log_own_spline", "mean_nll", "val"),
-            ("5.390057", "fga", "log_own", "mean_nll", "val")]:
+    # The share head's floor failure on validation — the reason it needs its spline. This is
+    # the pair the split move protected: on test `logit_own` cleared this floor.
+    for quoted, name, variant, column in [
+            ("4.636018", "fg3a|fga", "logit_own", "mean_nll"),
+            ("4.619109", "fg3a|fga", "logit_own", "floor_nll"),
+            ("4.615622", "fg3a|fga", "logit_own_spline", "mean_nll"),
+            ("5.388496", "fga", "log_own_spline", "mean_nll"),
+            ("5.389932", "fga", "log_own", "mean_nll")]:
         add(quoted, SHOT_SWEEP,
-            lambda n=name, v=variant, c=column, s=split: shot_head(s, n, v, c),
-            f"gate 0 {name}@{variant} {column} {split}")
-    add("1.0087", SHOT_D, lambda: max_of(SHOT_D, "max_rhat"), "gate 0 max R-hat")
-    add("46.5", SHOT_D, lambda: total(SHOT_D, "wall_clock_s") / 60,
+            lambda n=name, v=variant, c=column: shot_head(n, v, c),
+            f"gate 0 {name}@{variant} {column}")
+    add("1.0047", SHOT_D, lambda: max_of(SHOT_D, "max_rhat"), "gate 0 max R-hat")
+    add("26.8", SHOT_D, lambda: total(SHOT_D, "wall_clock_s") / 60,
         "gate 0 sampler minutes")
 
     # the availability port and the board decomposition
-    for model, crps, rho in [("beta_binomial", "10.7952", "0.2757"),
-                             ("stan_plug_in", "10.7947", "0.2759"),
-                             ("stan_posterior", "10.7953", "0.2759")]:
+    for model, crps, rho in [("beta_binomial", "10.0057", "0.2806"),
+                             ("stan_plug_in", "10.0063", "0.2808"),
+                             ("stan_posterior", "10.0071", "0.2808")]:
         add(crps, STAN_AV_M, lambda m=model: metric(STAN_AV_M, m, "crps_games"),
             f"stan {model} CRPS")
         add(rho, STAN_AV_M,
             lambda m=model: metric(STAN_AV_M, m, "dispersion_rho"),
             f"stan {model} rho")
-    add("1.0025", STAN_AV_D, lambda: cell(STAN_AV_D, "max_rhat"), "stan R-hat")
-    add("2,402", STAN_AV_D, lambda: cell(STAN_AV_D, "min_ess_bulk"), "stan min ESS")
-    add("254", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
+    add("1.0019", STAN_AV_D, lambda: cell(STAN_AV_D, "max_rhat"), "stan R-hat")
+    add("2,314", STAN_AV_D, lambda: cell(STAN_AV_D, "min_ess_bulk"), "stan min ESS")
+    add("195", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
         "stan wall clock")
-    board_rows = [(12, "69.4", "4.0", "0.2%"), (15, "77.6", "4.8", "0.2%"),
-                  (30, "109.5", "8.4", "0.3%"), (150, "245.0", "37.2", "1.1%"),
-                  (911, "604.0", "219.1", "6.4%")]
+    board_rows = [(12, "69.9", "4.2", "0.2%"), (15, "78.0", "5.0", "0.2%"),
+                  (30, "110.3", "8.8", "0.3%"), (150, "246.4", "39.1", "1.2%"),
+                  (883, "597.8", "222.8", "6.7%")]
     for n, indep, shared, infl in board_rows:
         add(indep, STAN_AV_B,
             lambda k=n: cell(STAN_AV_B, "independent_sd", n_players=k),
@@ -2345,22 +3079,36 @@ def _claude() -> list[Claim]:
         add(infl, STAN_AV_B,
             lambda k=n: cell(STAN_AV_B, "inflation", n_players=k) - 1.0,
             f"board inflation, {n}")
+    for quoted in ("10.7952", "10.7947", "10.7953", "0.2757", "0.2759", "1.0025",
+                   "2,402", "254", "0.0127", "0.095", "69.4", "4.0", "604.0",
+                   "219.1", "6.4%", "911"):
+        add(quoted, STAN_AV_M, lambda: float("nan"),
+            f"pre-lock held-out availability port: {quoted}", historical=True)
 
-    # the minutes head
-    minutes = [("carry_forward", "161.45", "168.24", "0.8166"),
-               ("linear", "144.62", "147.18", "0.8565"),
-               ("logit_own", "145.44", "147.35", "0.8565"),
-               ("logit_own_quadratic", "144.83", "147.21", "0.8574"),
-               ("logit_own_spline", "144.13", "146.85", "0.8572")]
-    for name, val, test, r2 in minutes:
-        add(val, STAN_MIN_M, lambda n=name: cell(STAN_MIN_M, "val_crps", variant=n),
+    # the minutes head — validation only since the 2026-08-06 re-run under the lock
+    minutes = [("carry_forward", "161.45", "0.8536", "213.13", "+23.91"),
+               ("linear", "144.71", "0.8826", "199.54", "−3.26"),
+               ("logit_own", "145.45", "0.8819", "200.90", "−2.97"),
+               ("logit_own_quadratic", "144.54", "0.8827", "200.84", "−13.82"),
+               ("logit_own_spline", "143.93", "0.8835", "199.60", "−14.00")]
+    for name, crps, r2, mae, bias in minutes:
+        add(crps, STAN_MIN_M, lambda n=name: cell(STAN_MIN_M, "val_crps", variant=n),
             f"minutes {name} val CRPS")
-        add(test, STAN_MIN_M,
-            lambda n=name: cell(STAN_MIN_M, "test_crps", variant=n),
-            f"minutes {name} test CRPS")
-        add(r2, STAN_MIN_M, lambda n=name: cell(STAN_MIN_M, "test_r2", variant=n),
-            f"minutes {name} test R2")
-    add("0.0495", STAN_MIN_D,
+        add(r2, STAN_MIN_M, lambda n=name: cell(STAN_MIN_M, "val_r2", variant=n),
+            f"minutes {name} val R2")
+        add(mae, STAN_MIN_M, lambda n=name: cell(STAN_MIN_M, "val_mae", variant=n),
+            f"minutes {name} val MAE")
+        add(bias, STAN_MIN_M, lambda n=name: cell(STAN_MIN_M, "val_bias", variant=n),
+            f"minutes {name} val bias")
+    # The fitted-minus-floor bias gap, which is what reproduced across the split move while
+    # the level did not. Derived from two cells rather than quoted flat, so it cannot drift
+    # away from the rows it is a difference of.
+    for name, quoted in [("linear", "−27.2"), ("logit_own_spline", "−37.9")]:
+        add(quoted, STAN_MIN_M,
+            lambda n=name: (cell(STAN_MIN_M, "val_bias", variant=n)
+                            - cell(STAN_MIN_M, "val_bias", variant="carry_forward")),
+            f"minutes {name} bias below the floor")
+    add("0.05025", STAN_MIN_D,
         lambda: cell(STAN_MIN_D, "rho", metric="season_level_rho"),
         "season-level rho")
     add("0.0776", STAN_MIN_D,
@@ -2371,107 +3119,125 @@ def _claude() -> list[Claim]:
     add("713,947", STAN_MIN_D,
         lambda: cell(STAN_MIN_D, "n_player_games", metric="game_level_rho"),
         "game-level population")
-    add("2,183", STAN_MIN_G, lambda: total(STAN_MIN_G, "wall_clock_s"),
+    add("1,227", STAN_MIN_G, lambda: total(STAN_MIN_G, "wall_clock_s"),
         "minutes head wall clock")
-    add("+0.0407", STAN_MIN_M,
-        lambda: (cell(STAN_MIN_M, "test_r2", variant="logit_own_spline")
-                 - cell(STAN_MIN_M, "test_r2", variant="carry_forward")),
+    add("1.0054", STAN_MIN_G, lambda: max_of(STAN_MIN_G, "max_rhat"),
+        "minutes head max R-hat")
+    add("+0.0299", STAN_MIN_M,
+        lambda: (cell(STAN_MIN_M, "val_r2", variant="logit_own_spline")
+                 - cell(STAN_MIN_M, "val_r2", variant="carry_forward")),
         "minutes R2 gain over floor")
-    add("899", STAN_MIN_G,
-        lambda: cell(STAN_MIN_G, "wall_clock_s", label="logit_own_spline/test"),
+    add("−17.5", STAN_MIN_M,
+        lambda: (cell(STAN_MIN_M, "val_crps", variant="logit_own_spline")
+                 - cell(STAN_MIN_M, "val_crps", variant="carry_forward")),
+        "minutes CRPS gain over floor")
+    add("721", STAN_MIN_G,
+        lambda: cell(STAN_MIN_G, "wall_clock_s", label="logit_own_spline/val"),
         "spline wall clock")
-    add("189", STAN_MIN_G,
-        lambda: cell(STAN_MIN_G, "wall_clock_s", label="linear/test"),
+    add("171", STAN_MIN_G,
+        lambda: cell(STAN_MIN_G, "wall_clock_s", label="linear/val"),
         "linear wall clock")
+    C += _minutes_pre_lock_claims(CLAUDE)
 
     # the composition, at full window (Gate E, 2026-08-04). `independent_comparator` never
     # trains on the composition window and scores identical rows, so it is invariant and is
     # the control on the refit. Pilot figures the doc keeps beside the new ones are marked
     # historical: presence-checked, value-exempt.
-    for variant, val, test, pit in [
-            ("carry_forward", "4.6776", "4.8576", "0.0354"),
-            ("binomial", "4.9394", "4.9732", "0.1948"),
-            ("betabinom", "4.5422", "4.5893", "0.0405"),
-            ("betabinom_ot", "4.5430", "4.5848", "0.0414"),
-            ("betabinom_ot_graded", "4.4926", "4.5592", "0.0393"),
-            ("independent_comparator", "4.7842", "4.9140", "0.0769")]:
+    for variant, val, pit in [
+            ("carry_forward", "4.6776", "0.0496"),
+            ("binomial", "4.9388", "0.1919"),
+            ("betabinom", "4.5417", "0.0496"),
+            ("betabinom_ot", "4.5431", "0.0494"),
+            ("betabinom_ot_graded", "4.4945", "0.0428"),
+            ("independent_comparator", "4.7842", "0.0483")]:
         add(val, COMP_M, lambda v=variant: cell(COMP_M, "val_crps", variant=v),
             f"composition {variant} val CRPS")
-        add(test, COMP_M, lambda v=variant: cell(COMP_M, "test_crps", variant=v),
-            f"composition {variant} test CRPS")
-        add(pit, COMP_M, lambda v=variant: cell(COMP_M, "test_pit_ks", variant=v),
+        add(pit, COMP_M, lambda v=variant: cell(COMP_M, "val_pit_ks", variant=v),
             f"composition {variant} PIT KS")
-    add("−0.3548", COMP_M,
-        lambda: (cell(COMP_M, "test_crps", variant="betabinom_ot_graded")
-                 - cell(COMP_M, "test_crps", variant="independent_comparator")),
+    add("−0.2898", COMP_M,
+        lambda: (cell(COMP_M, "val_crps", variant="betabinom_ot_graded")
+                 - cell(COMP_M, "val_crps", variant="independent_comparator")),
         "composition gain vs the incumbent")
-    add("−7.2%", COMP_M,
-        lambda: (cell(COMP_M, "test_crps", variant="betabinom_ot_graded")
-                 / cell(COMP_M, "test_crps", variant="independent_comparator") - 1.0),
+    add("−6.06%", COMP_M,
+        lambda: (cell(COMP_M, "val_crps", variant="betabinom_ot_graded")
+                 / cell(COMP_M, "val_crps", variant="independent_comparator") - 1.0),
         "composition gain, percentage")
-    add("−1.2856", COMP_M,
-        lambda: cell(COMP_M, "test_bias", variant="independent_comparator"),
+    add("−0.5521", COMP_M,
+        lambda: cell(COMP_M, "val_bias", variant="independent_comparator"),
         "comparator bias")
-    add("12.8", COMP_M, lambda: cell(COMP_M, "probe_hours", variant="binomial"),
+    add("8.3", COMP_M, lambda: cell(COMP_M, "probe_hours", variant="binomial"),
         "composition Gate A extrapolation")
-    add("20.9", COMP_D, lambda: _comp_sweep_seconds() / 3600,
+    add("9.78", COMP_D, lambda: _comp_sweep_seconds() / 3600,
         "composition actual sweep hours")
-    add("1.63", COMP_D,
+    add("1.17", COMP_D,
         lambda: (_comp_sweep_seconds() / 3600
                  / cell(COMP_M, "probe_hours", variant="binomial")),
         "how far Gate A under-predicted")
-    add("15.23", COMP_D,
+    add("14.83", COMP_D,
         lambda: cell(COMP_D, "wall_clock_s", label="betabinom/val") / 631158 * 1000,
         "full-window ms per row")
-    add("36.87", COMP_P,
+    add("33.89", COMP_P,
         lambda: cell(COMP_P, "simulated", variant="betabinom_ot_graded",
                      analysis="team_sum_abs_error",
                      group="independent"), "comparator team-sum error")
-    for quoted, column, group in [("0.5882", "observed", "regulation/composition"),
-                                  ("0.6314", "observed", "overtime/composition"),
-                                  ("0.5998", "simulated", "regulation/composition"),
-                                  ("0.6464", "simulated", "overtime/composition")]:
+    for quoted, column, group in [("0.6013", "observed", "regulation/composition"),
+                                  ("0.6423", "observed", "overtime/composition"),
+                                  ("0.5912", "simulated", "regulation/composition"),
+                                  ("0.6415", "simulated", "overtime/composition")]:
         add(quoted, COMP_P,
             lambda c=column, g=group: cell(COMP_P, c, variant="betabinom_ot_graded",
                                            analysis="starter_share", group=g),
             f"starter share {column} {group}")
-    for arm, tier, quoted in [("betabinom_ot", "q1_fringe", "1.3466"),
-                              ("betabinom_ot", "q2", "0.8089"),
-                              ("betabinom_ot", "q3", "0.7691"),
-                              ("betabinom_ot", "q4_star", "0.5973"),
-                              ("betabinom_ot_graded", "q1_fringe", "1.0845"),
-                              ("betabinom_ot_graded", "q2", "0.7687"),
-                              ("betabinom_ot_graded", "q3", "0.8217"),
-                              ("betabinom_ot_graded", "q4_star", "0.7757")]:
+    for arm, tier, quoted in [("betabinom_ot", "q1_fringe", "1.2224"),
+                              ("betabinom_ot", "q2", "0.8430"),
+                              ("betabinom_ot", "q3", "0.6589"),
+                              ("betabinom_ot", "q4_star", "0.6285"),
+                              ("betabinom_ot_graded", "q1_fringe", "1.0465"),
+                              ("betabinom_ot_graded", "q2", "0.8132"),
+                              ("betabinom_ot_graded", "q3", "0.7071"),
+                              ("betabinom_ot_graded", "q4_star", "0.8136")]:
         add(quoted, COMP_P,
             lambda a=arm, t=tier: cell(COMP_P, "ratio", variant=a,
                                        analysis="variance_ratio", group=t),
             f"composition variance ratio {arm} {tier}")
-    for arm, quoted in [("betabinom_ot", "0.2928"),
-                        ("betabinom_ot_graded", "0.1796")]:
+    for arm, quoted in [("betabinom_ot", "0.2730"),
+                        ("betabinom_ot_graded", "0.1782")]:
         add(quoted, COMP_P,
             lambda a=arm: mean_abs_dev(COMP_P, "ratio", 1.0, variant=a,
                                        analysis="variance_ratio"),
             f"composition mean |ratio-1| {arm}")
-    add("39%", COMP_P,
+    add("35%", COMP_P,
         lambda: (1.0 - mean_abs_dev(COMP_P, "ratio", 1.0,
                                     variant="betabinom_ot_graded",
                                     analysis="variance_ratio")
                  / mean_abs_dev(COMP_P, "ratio", 1.0, variant="betabinom_ot",
                                 analysis="variance_ratio")),
         "composition calibration cut")
-    for b, quoted in [(1, "0.1751"), (2, "0.1285"), (3, "0.1099"), (4, "0.0839")]:
+    for b, quoted in [(1, "0.1768"), (2, "0.1300"), (3, "0.1115"), (4, "0.0855")]:
         add(quoted, COMP_RHO,
             lambda i=b: cell(COMP_RHO, "rho", variant="betabinom_ot_graded", bin=i),
             f"composition graded rho bin {b}")
-    add("0.1195", COMP_RHO,
+    add("0.1211", COMP_RHO,
         lambda: cell(COMP_RHO, "rho", variant="betabinom_ot", bin=1),
         "composition shared rho")
-    add("2.09", COMP_RHO,
+    add("2.07", COMP_RHO,
         lambda: (cell(COMP_RHO, "rho", variant="betabinom_ot_graded", bin=1)
                  / cell(COMP_RHO, "rho", variant="betabinom_ot_graded", bin=4)),
         "composition graded rho spread")
-    for quoted, label in [("−0.406", "pilot gain vs the incumbent"),
+    # The retired test / two-pass figures CLAUDE.md keeps beside their replacements. The
+    # full retired block lives in `docs/minutes-composition-plan.md`; this is the subset
+    # the summary quotes, claimed from here so it cannot go stale in one doc only.
+    for quoted, label in [("4.5592", "retired test CRPS, selected"),
+                          ("4.9140", "retired test CRPS, comparator"),
+                          ("0.1948", "retired test PIT KS, binomial"),
+                          ("−0.3548", "retired test gain vs the incumbent"),
+                          ("−7.2%", "retired test gain, percentage"),
+                          ("−1.2856", "retired test comparator bias"),
+                          ("36.87", "retired test comparator team-sum error"),
+                          ("20.9", "retired two-pass sweep hours"),
+                          ("1.63", "retired two-pass Gate A under-prediction"),
+                          ("12.8", "retired two-pass Gate A extrapolation"),
+                          ("−0.406", "pilot gain vs the incumbent"),
                           ("0.1480", "pilot graded rho, fringe"),
                           ("0.1125", "pilot graded rho, q2"),
                           ("0.0874", "pilot graded rho, q3"),
@@ -2486,7 +3252,7 @@ def _claude() -> list[Claim]:
         "OT tail p_any")
     add("0.1408", COMP_O, lambda: cell(COMP_O, "p_more_ot", **{"class": "params"}),
         "OT tail p_more")
-    add("256.9", COMP_O, lambda: cell(COMP_O, "predicted", **{"class": "1OT"}),
+    add("128.4", COMP_O, lambda: cell(COMP_O, "predicted", **{"class": "1OT"}),
         "OT tail predicted 1OT")
 
     # ── serial and residual correlation ───────────────────────────────────────
@@ -2704,77 +3470,119 @@ def _claude() -> list[Claim]:
         lambda: prof("serial_structure", "spell_shape", "mean_spell_observed", ap),
         "mean spell")
 
+    # The matched frame, claimed from CLAUDE.md as well as from the plan doc against the
+    # one artifact — this exact block has already gone stale in one doc while current in
+    # another, twice, which is why both sides are pinned.
+    add("0.9443", PROFILE,
+        lambda: prof("serial_structure", "transition_rotation", "p_play_given_played"),
+        "P(play | played), matched population")
+    add("0.1333", PROFILE,
+        lambda: prof("serial_structure", "transition_rotation", "q_play_given_missed"),
+        "P(play | missed), matched population")
+    add("9.58", PROFILE,
+        lambda: prof("serial_structure", "markov_rotation",
+                     "clustering_variance_inflation"),
+        "clustering C, matched population")
+    add("0.181", PROFILE,
+        lambda: ((prof("overdispersion", "rotation_players", "variance_ratio")
+                  - prof("serial_structure", "markov_rotation",
+                         "clustering_variance_inflation"))
+                 / (82.0 - prof("serial_structure", "markov_rotation",
+                                "clustering_variance_inflation"))),
+        "residual frailty rho")
+    add("29.55", PROFILE,
+        lambda: (prof("serial_structure", "markov_rotation",
+                      "clustering_variance_inflation")
+                 + 0.2757 * (82.0 - prof("serial_structure", "markov_rotation",
+                                         "clustering_variance_inflation"))),
+        "stacked inflation")
+    add("30.2%", PROFILE,
+        lambda: ((prof("serial_structure", "markov_rotation",
+                       "clustering_variance_inflation")
+                  + 0.2757 * (82.0 - prof("serial_structure", "markov_rotation",
+                                          "clustering_variance_inflation")))
+                 / prof("overdispersion", "rotation_players", "variance_ratio") - 1.0),
+        "stacking overshoot")
+
     # ── the nonlinearity ablations ────────────────────────────────────────────
-    for variant, val, test in [("linear", "10.006", None),
-                               ("quadratic", "10.037", "10.749"),
-                               ("spline_k4", "10.041", "10.761"),
-                               ("spline_k5", "10.054", "10.751")]:
+    # Validation-only since 2026-08-08. Every val figure reproduced to five decimals on the
+    # move, because `selection_split` returns exactly the frames this ablation's own inner
+    # split used to carve — a determinism check, not a replication.
+    for variant, val, r2 in [("linear", "10.006", "0.374"),
+                             ("quadratic", "10.037", "0.370"),
+                             ("spline_k4", "10.041", "0.367"),
+                             ("spline_k5", "10.054", "0.366")]:
         add(val, NONLIN,
             lambda v=variant: cell(NONLIN, "val_crps_games", variant=v),
             f"nonlinearity {variant} val CRPS")
-        if test:
-            add(test, NONLIN,
-                lambda v=variant: cell(NONLIN, "test_crps_games", variant=v),
-                f"nonlinearity {variant} test CRPS")
-    for name, val, test in [("linear", "0.6768", "0.6670"),
-                            ("quadratic", "0.6914", "0.6746"),
-                            ("spline_k4", "0.6930", "0.6736")]:
+        add(r2, NONLIN,
+            lambda v=variant: cell(NONLIN, "val_r2_gp_share", variant=v),
+            f"nonlinearity {variant} val R2")
+    for quoted in ("10.795", "10.749", "10.761", "10.751"):
+        add(quoted, NONLIN, lambda: float("nan"),
+            f"pre-lock held-out nonlinearity CRPS: {quoted}", historical=True)
+    for name, val in [("linear", "0.6768"), ("quadratic", "0.6914"),
+                      ("spline_k4", "0.6930")]:
         add(val, MIN_NONLIN,
             lambda n=name: cell(MIN_NONLIN, "val_r2", scope="variant", name=n),
             f"MPG probe {name} val R2")
-        add(test, MIN_NONLIN,
-            lambda n=name: cell(MIN_NONLIN, "test_r2", scope="variant", name=n),
-            f"MPG probe {name} test R2")
-    for column, quoted in [("minutes_per_game_lag1", ("0.0124", "0.0077")),
-                           ("total_minutes_lag1", ("0.0008", "0.0011")),
-                           ("age", ("−0.0008", "−0.0007")),
-                           ("career_minutes_lag1", ("0.0005", "−0.0006"))]:
-        add(quoted[0], MIN_NONLIN,
+    for column, quoted in [("minutes_per_game_lag1", "0.0124"),
+                           ("total_minutes_lag1", "0.0008"),
+                           ("career_year", "0.0007"),
+                           ("age", "−0.0008"),
+                           ("playoff_minutes_share_lag1", "−0.0016")]:
+        add(quoted, MIN_NONLIN,
             lambda c=column: cell(MIN_NONLIN, "val_vs_linear", scope="column",
                                   name=c), f"{column} spline, val")
-        add(quoted[1], MIN_NONLIN,
-            lambda c=column: cell(MIN_NONLIN, "test_vs_linear", scope="column",
-                                  name=c), f"{column} spline, test")
+    # `0.0005` is deliberately absent: it was `career_minutes_lag1`'s *validation* delta,
+    # which is still live in the artifact — the doc simply stopped quoting that row. A
+    # historical claim protects a superseded figure from deletion and would be the wrong
+    # instrument for a current one.
+    for quoted in ("0.6670", "0.6746", "0.6736", "0.0077", "0.0011", "−0.0007",
+                   "−0.0006"):
+        add(quoted, MIN_NONLIN, lambda: float("nan"),
+            f"pre-lock held-out MPG probe: {quoted}", historical=True)
 
     # ── the workload ablation ─────────────────────────────────────────────────
-    for variant, crps, r2 in [("baseline", "10.914", "0.268"),
-                              ("plus_playoff_workload", "10.795", "0.283"),
-                              ("plus_playoff_only", "10.817", "0.281"),
-                              ("plus_career_minutes_only", "10.883", "0.271")]:
-        add(crps, ABLATION, lambda v=variant: cell(ABLATION, "crps_games", variant=v),
-            f"ablation {variant} CRPS")
-        add(r2, ABLATION, lambda v=variant: cell(ABLATION, "r2_gp_share", variant=v),
-            f"ablation {variant} R2")
-    add("−0.119", ABLATION,
-        lambda: (cell(ABLATION, "crps_games", variant="plus_playoff_workload")
-                 - cell(ABLATION, "crps_games", variant="baseline")),
-        "playoff-workload CRPS gain")
+    C += _workload_ablation_claims(CLAUDE)
 
     # ── the season total, derived ─────────────────────────────────────────────
-    add("316.9", SEASON_TOTAL, lambda: treatment("beta_binomial", "crps_dk_total"),
+    add("287.3", SEASON_TOTAL, lambda: treatment("beta_binomial", "crps_dk_total"),
         "head season-total CRPS")
-    add("340.8", SEASON_TOTAL, lambda: treatment("league_age", "crps_dk_total"),
+    add("329.1", SEASON_TOTAL, lambda: treatment("league_age", "crps_dk_total"),
         "baseline season-total CRPS")
-    add("213.8", SEASON_TOTAL,
+    add("186.1", SEASON_TOTAL,
         lambda: (treatment("beta_binomial", "mae_dk_total")
                  - treatment("oracle_gp", "mae_dk_total")),
         "availability's share of the remaining error")
-    add("132.5", SEASON_TOTAL,
+    add("138.5", SEASON_TOTAL,
         lambda: (treatment("beta_binomial", "mae_dk_total")
                  - treatment("oracle_rate", "mae_dk_total")),
         "the rate's share of the remaining error")
-    add("−32.7%", SEASON_TOTAL,
+    add("−34.4%", SEASON_TOTAL,
         lambda: (treatment("beta_binomial", "mae_dk_total")
                  / treatment("full_season", "mae_dk_total") - 1.0),
         "head vs a full season, relative")
-    add("−39.9", SEASON_TOTAL,
+    add("−17.4", SEASON_TOTAL,
         lambda: (treatment("beta_binomial", "mae_dk_total")
                  - treatment("prior_gp", "mae_dk_total")),
         "head vs carrying prior GP forward")
-    add("−23.3%", SEASON_TOTAL,
+    add("−22.6%", SEASON_TOTAL,
         lambda: (treatment("beta_binomial", "mae_dk_total", "rotation")
                  / treatment("full_season", "mae_dk_total", "rotation") - 1.0),
         "rotation-player gain, relative")
+    # Gate E, which ran here for the first time on 2026-08-05 and failed.
+    add("406.8", SEASON_TOTAL, lambda: cell(SEASON_TOTAL_GATE_E, "mae"),
+        "Gate E spell-process MAE")
+    add("291.8", SEASON_TOTAL, lambda: cell(SEASON_TOTAL_GATE_E, "crps"),
+        "Gate E spell-process CRPS")
+    # The superseded TEST ladder, preserved beside the validation one. Presence-only, so
+    # the failure this guards is deletion of the reversal rather than drift in it.
+    for quoted in ("646.3", "475.0", "476.0", "435.1", "302.7", "221.3", "213.8",
+                   "132.5", "651.3", "499.4", "−23.3%", "441.3", "508.9",
+                   "435.1053", "435.1352"):
+        add(quoted, SEASON_TOTAL, lambda: float("nan"),
+            f"pre-lock held-out season total: {quoted}", historical=True)
 
     # ── target dispersion and the first-k ladder ──────────────────────────────
     def dist(metric_name: str, bucket: str, column: str,
@@ -2841,6 +3649,13 @@ def _claude() -> list[Claim]:
     # claims it from. Both, deliberately: this file's copy of a block going stale while the
     # plan doc's stayed current is the exact failure that has already happened twice here.
     C += _season_term_summary_claims(CLAUDE)
+
+    # Same arrangement for the carry-forward bias, restricted to the two components this
+    # file names. It was the plan doc's alone until 2026-08-08, which is precisely the
+    # unguarded shape described above — the block lived in both docs and only one was
+    # checked.
+    C += _carry_bias_claims(CLAUDE, components=("fta", "blk"),
+                            retired=("−7.0%", "−10.7%", "+6.2%", "−0.865"))
 
     # The regime block, restricted to what this file's summary quotes — the availability
     # plan carries the full five-row table and claims all of it.
@@ -3041,72 +3856,97 @@ def _readme() -> list[Claim]:
         "sequence features above their shuffled null")
 
     # ── results: availability ─────────────────────────────────────────────────
-    for model, quoted in [("beta_binomial", "10.795"), ("gbm", "10.888"),
-                          ("ridge", "10.896"), ("league_age", "13.614")]:
-        add(quoted, METRICS, lambda m=model: metric(METRICS, m, "crps_games"),
-            f"{model} CRPS")
-    for name, which, quoted in [("full_season", "mae_dk_total", "646.3"),
-                                ("beta_binomial", "mae_dk_total", "435.1"),
-                                ("full_season", "bias_dk_total", "541.9"),
-                                ("beta_binomial", "bias_dk_total", "6.1"),
-                                ("oracle_gp", "mae_dk_total", "221.3"),
-                                ("oracle_rate", "mae_dk_total", "302.7")]:
+    # The overview quotes the CRPS column and the paired interval, not the full ladder —
+    # `full=False` claims exactly that subset rather than forcing the README to carry every
+    # cell of a table it deliberately summarizes.
+    C += _availability_ladder_claims(README, scope="headline",
+                                     historical=LADDER_HISTORICAL_README)
+    add("−0.1297", LADDER, lambda: ladder("gbm", "delta_vs_reference"),
+        "GBM vs the shipped head")
+    add("−0.3154", LADDER, lambda: ladder("gbm", "ci_lo"), "GBM CI low")
+    add("+0.0672", LADDER, lambda: ladder("gbm", "ci_hi"), "GBM CI high")
+    add("+0.333", LADDER, lambda: ladder("gbm", "delta_vs_reference", "gp_q1"),
+        "GBM delta on the worst games quartile")
+    for name, which, quoted in [("full_season", "mae_dk_total", "610.8"),
+                                ("beta_binomial", "mae_dk_total", "400.5"),
+                                ("full_season", "bias_dk_total", "523.3"),
+                                ("beta_binomial", "bias_dk_total", "−3.1"),
+                                ("oracle_gp", "mae_dk_total", "214.4"),
+                                ("oracle_rate", "mae_dk_total", "261.9")]:
         add(quoted, SEASON_TOTAL, lambda n=name, w=which: treatment(n, w),
             f"season total {name} {which}")
+    add("−210", SEASON_TOTAL,
+        lambda: (treatment("beta_binomial", "mae_dk_total")
+                 - treatment("full_season", "mae_dk_total")),
+        "head vs a full season, rounded")
+    for quoted in ("646.3", "435.1", "221.3", "302.7"):
+        add(quoted, SEASON_TOTAL, lambda: float("nan"),
+            f"pre-lock held-out season total: {quoted}", historical=True)
 
     # ── results: the component floor ──────────────────────────────────────────
     count_heads = ("fga", "fta", "reb", "ast", "stl", "blk", "tov")
     fitted = ("linear", "log_own", "log_own_spline", "log_own_inter", "pca",
               "pca_spline", "pca_inter")
-    add("0.82", RATES,
+    add("0.81", RATES,
         lambda: min(rate(h, "carry_forward") for h in count_heads),
         "weakest no-fit floor across the count heads")
-    add("0.0019", RATES,
+    add("0.0013", RATES,
         lambda: min(max(rate(h, v) for v in fitted) - rate(h, "carry_forward")
                     for h in count_heads),
         "smallest gain over the no-fit floor")
-    add("0.0203", RATES,
+    add("0.0334", RATES,
         lambda: max(max(rate(h, v) for v in fitted) - rate(h, "carry_forward")
                     for h in count_heads),
         "largest gain over the no-fit floor")
-    add("−19.00", STAN_C_M, lambda: stan_c("fg3a", "linear", "test_r2"),
+    add("−19.00", STAN_C_M, lambda: stan_c("fg3a", "linear", "val_r2"),
         "fg3a under a linear predictor", historical=True)
-    add("0.679", STAN_C_M, lambda: stan_c("blk", "log_own", "test_r2"),
+    # Rounded to 3dp here on purpose — this is the overview, and `implied_tolerance`
+    # handles the rounding. The 3dp form is what makes the README's copy independently
+    # checkable rather than a transcription of CLAUDE.md's 4dp table.
+    add("0.673", STAN_C_M, lambda: stan_c("blk", "log_own", "val_r2"),
         "blk log_own R2, 3dp")
-    add("0.858", STAN_C_M, lambda: stan_c("blk", "log_own_spline", "test_r2"),
+    add("0.831", STAN_C_M, lambda: stan_c("blk", "log_own_spline", "val_r2"),
         "blk spline R2, 3dp")
+    add("0.679", STAN_C_M, lambda: stan_c("blk", "log_own", "val_r2"),
+        "blk log_own R2, 3dp, on test", historical=True)
+    add("0.858", STAN_C_M, lambda: stan_c("blk", "log_own_spline", "val_r2"),
+        "blk spline R2, 3dp, on test", historical=True)
+    add("+0.0144", STAN_C_M,
+        lambda: stan_c("fta", "log_own", "val_r2") - stan_c("fta", "carry_forward",
+                                                            "val_r2"),
+        "fta clears its floor — the reversal the split move produced")
     # The two figures behind "the substitution arm's canonical side was handicapped":
     # `substitution_arm` fits every head at log_own, and that is the variant on which
     # `fg3a` fails its own floor. Claimed so the caveat cannot rot into a bare assertion.
-    add("0.3719", STAN_C_M, lambda: stan_c("fg3a", "log_own", "test_r2"),
+    add("0.3719", STAN_C_M, lambda: stan_c("fg3a", "log_own", "val_r2"),
         "fg3a at log_own — the variant the substitution arm used", historical=True)
-    add("0.9046", STAN_C_M, lambda: stan_c("fg3a", "log_own_spline", "test_r2"),
+    add("0.9046", STAN_C_M, lambda: stan_c("fg3a", "log_own_spline", "val_r2"),
         "fg3a at its selected spline variant", historical=True)
 
     # ── results: the minutes composition ──────────────────────────────────────
     SEL = "betabinom_ot_graded"
-    add("4.5592", COMP_M, lambda: comp_m(SEL, "test_crps"), "composition test CRPS")
-    add("4.9140", COMP_M, lambda: comp_m("independent_comparator", "test_crps"),
-        "independent comparator test CRPS")
-    add("−7.2%", COMP_M,
-        lambda: (comp_m(SEL, "test_crps")
-                 / comp_m("independent_comparator", "test_crps") - 1.0),
+    add("4.4945", COMP_M, lambda: comp_m(SEL, "val_crps"), "composition val CRPS")
+    add("4.7842", COMP_M, lambda: comp_m("independent_comparator", "val_crps"),
+        "independent comparator val CRPS")
+    add("−6.06%", COMP_M,
+        lambda: (comp_m(SEL, "val_crps")
+                 / comp_m("independent_comparator", "val_crps") - 1.0),
         "composition CRPS gain, as a percentage")
-    add("36.87", COMP_P,
+    add("33.89", COMP_P,
         lambda: cell(COMP_P, "simulated", variant=SEL, analysis="team_sum_abs_error",
                      group="independent"),
         "comparator team-sum error")
-    add("0.195", COMP_M, lambda: comp_m("binomial", "test_pit_ks"),
+    add("0.192", COMP_M, lambda: comp_m("binomial", "val_pit_ks"),
         "binomial arm PIT KS, 3dp")
-    add("0.175", COMP_RHO, lambda: cell(COMP_RHO, "rho", variant=SEL, bin=1),
+    add("0.177", COMP_RHO, lambda: cell(COMP_RHO, "rho", variant=SEL, bin=1),
         "fringe-tier dispersion, 3dp")
-    add("0.084", COMP_RHO, lambda: cell(COMP_RHO, "rho", variant=SEL, bin=4),
+    add("0.085", COMP_RHO, lambda: cell(COMP_RHO, "rho", variant=SEL, bin=4),
         "star-tier dispersion, 3dp")
-    add("2.09", COMP_RHO,
+    add("2.07", COMP_RHO,
         lambda: (cell(COMP_RHO, "rho", variant=SEL, bin=1)
                  / cell(COMP_RHO, "rho", variant=SEL, bin=4)),
         "graded dispersion spread")
-    add("39%", COMP_P,
+    add("35%", COMP_P,
         lambda: (1.0 - mean_abs_dev(COMP_P, "ratio", 1.0, variant=SEL,
                                     analysis="variance_ratio")
                  / mean_abs_dev(COMP_P, "ratio", 1.0, variant="betabinom_ot",
@@ -3114,53 +3954,51 @@ def _readme() -> list[Claim]:
         "calibration error cut by grading")
 
     # ── results: substitution and season terms ────────────────────────────────
-    # Both splits, because the README's claim is that it *replicates* — quoting only the
-    # test figure would leave the word "replicates" describing nothing auditable. The
-    # handicapped pair stays claimed against the artifact it is still true of; the
-    # un-handicapped pair is claimed against Gate 0's.
-    for split, quoted in [("test", "−0.793"), ("val", "−0.771")]:
-        add(quoted, STAN_C_S,
-            lambda s=split: cell(STAN_C_S, "reparam_minus_canonical", split=s,
-                                 arm="two_counts"),
-            f"substitution gain, {split} (handicapped)")
+    # The README's claim used to be that the gain *replicates across splits*. Gate 0 is
+    # validation-only since 2026-08-06, so there is no second split to replicate on and the
+    # word is gone from the prose. What replaces it is a different and better-founded
+    # replication: the margin survived a doubling of chain length. The test figures stay in
+    # the README as the record of what the adoption was decided on, presence-checked only.
+    add("−0.771", STAN_C_S,
+        lambda: cell(STAN_C_S, "reparam_minus_canonical", split="val",
+                     arm="two_counts"),
+        "substitution gain, val (handicapped)")
+    add("−0.793", SHOT_SWEEP, lambda: float("nan"),
+        "substitution gain, test (handicapped)", historical=True)
+    add("−0.493549", SHOT_SWEEP, lambda: float("nan"),
+        "un-handicapped substitution gain, test", historical=True)
 
-    def shot_joint(split: str, arm: str) -> float:
+    def shot_joint(arm: str) -> float:
         frame = table(SHOT_SWEEP)
         if frame is None:
             return float("nan")
-        sub = frame[(frame["analysis"] == "joint") & (frame["split"] == split)
+        sub = frame[(frame["analysis"] == "joint") & (frame["split"] == "val")
                     & (frame["arm"] == arm) & frame["selected"].astype(bool)]
         return float(sub["mean_nll"].iloc[0])
 
     def shot_floor(name: str, variant: str) -> float:
         arm = "two_counts" if name in ("fg2a", "fg3a") else "fga_x_fg3a_share"
-        return cell(SHOT_SWEEP, "floor_nll", analysis="head", split="test", arm=arm,
+        return cell(SHOT_SWEEP, "floor_nll", analysis="head", split="val", arm=arm,
                     head=name, variant=variant)
 
-    def shot_grid_min() -> float:
-        frame = table(SHOT_SWEEP)
-        if frame is None:
-            return float("nan")
-        return float(frame[frame["analysis"] == "arm_a_grid"]["mean_nll"].min())
-
-    for split, quoted in [("test", "−0.493549"), ("val", "−0.500782")]:
-        add(quoted, SHOT_SWEEP,
-            lambda s=split: (shot_joint(s, "fga_x_fg3a_share")
-                             - shot_joint(s, "two_counts")),
-            f"un-handicapped substitution gain, {split}")
-    add("−0.390814", SHOT_SWEEP,
+    add("−0.501041", SHOT_SWEEP,
+        lambda: shot_joint("fga_x_fg3a_share") - shot_joint("two_counts"),
+        "un-handicapped substitution gain, val")
+    add("−0.440841", SHOT_SWEEP,
         lambda: (shot_floor("fga", "log_own") + shot_floor("fg3a|fga", "logit_own")
-                 - shot_grid_min()),
-        "reparameterized floor vs canonical best fitted")
+                 - shot_joint("two_counts")),
+        "reparameterized floor vs canonical fitted")
     # The oracle bounds every form of season term, so both ends of the range the
     # README quotes are claimed — the "~3%" ceiling and the median.
     term_heads = ("fga", "fta", "reb", "ast", "stl", "blk", "tov")
-    add("3%", TERM_M, lambda: max(oracle_gain(h) for h in term_heads),
+    add("5%", TERM_M, lambda: max(oracle_gain(h) for h in term_heads),
         "the league-oracle ceiling")
-    add("1.71%", TERM_M,
+    add("1.29%", TERM_M,
         lambda: float(pd.Series([oracle_gain(h) for h in term_heads]).median()),
         "the league-oracle median")
-    add("11.6%", TERM_SPREAD,
+    add("4.97%", TERM_M, lambda: max(oracle_gain(h) for h in term_heads),
+        "the league-oracle maximum")
+    add("10.4%", TERM_SPREAD,
         lambda: term_spread(15, "year") - 1.0,
         "year-effect roster spread at 15 players")
     add("0.2%", STAN_AV_B,
@@ -3193,147 +4031,170 @@ def _shot_basis() -> list[Claim]:
     C: list[Claim] = []
     add = C.append
 
-    def head(split: str, arm: str, name: str, variant: str,
-             column: str = "mean_nll") -> float:
-        return cell(SHOT_SWEEP, column, analysis="head", split=split, arm=arm,
+    def head(name: str, variant: str, column: str = "mean_nll") -> float:
+        arm = "two_counts" if name in ("fg2a", "fg3a") else "fga_x_fg3a_share"
+        return cell(SHOT_SWEEP, column, analysis="head", split="val", arm=arm,
                     head=name, variant=variant)
 
-    def joint(split: str, arm: str) -> float:
+    def joint(arm: str) -> float:
         frame = table(SHOT_SWEEP)
         if frame is None:
             return float("nan")
-        sub = frame[(frame["analysis"] == "joint") & (frame["split"] == split)
+        sub = frame[(frame["analysis"] == "joint") & (frame["split"] == "val")
                     & (frame["arm"] == arm) & frame["selected"].astype(bool)]
         return float(sub["mean_nll"].iloc[0])
 
-    def grid_best() -> float:
-        frame = table(SHOT_SWEEP)
-        if frame is None:
-            return float("nan")
-        return float(frame[frame["analysis"] == "arm_a_grid"]["mean_nll"].min())
+    def retired(quoted: str, label: str) -> None:
+        """A test-split figure the doc keeps as a record, with nothing left to check it.
 
-    # ── the regression check, which is what licenses every other figure here ──
-    add(_c("5.229492", SHOT_SWEEP, lambda: head("test", "two_counts", "fg2a", "log_own"),
-           "fg2a@log_own reproduces the July fit", doc=SHOT))
-    add(_c("5.248561", SHOT_SWEEP,
-           lambda: head("test", "two_counts", "fg3a", "log_own_spline"),
-           "fg3a@log_own_spline reproduces the July fit", doc=SHOT))
-    add(_c("9.991042", SHOT_SWEEP,
-           lambda: (head("test", "fga_x_fg3a_share", "fga", "log_own")
-                    + head("test", "fga_x_fg3a_share", "fg3a|fga", "logit_own")),
-           "refactored share arm reproduces the recorded joint NLL", doc=SHOT))
+        These were value-checked until 2026-08-06, when `make stan-substitution` was re-run
+        validation-only. The doc keeps them in one clearly-marked block; the audit keeps
+        them presence-checked, so the failure they still guard is deletion.
+        """
+        add(_c(quoted, SHOT_SWEEP, lambda: float("nan"), label, doc=SHOT,
+               historical=True))
 
-    # ── the per-factor table, both splits, every variant, against its floor ───
+    # ── the per-factor table, every variant against its own no-fit floor ──────
     per_factor = [
-        ("two_counts", "fg2a", "log_own", "5.262971", "5.229492"),
-        ("two_counts", "fg3a", "log_own_spline", "5.241963", "5.248561"),
-        ("fga_x_fg3a_share", "fga", "linear", "5.407438", "5.426520"),
-        ("fga_x_fg3a_share", "fga", "log_own", "5.390057", "5.379640"),
-        ("fga_x_fg3a_share", "fga", "log_own_spline", "5.388533", "5.376766"),
-        ("fga_x_fg3a_share", "fg3a|fga", "linear", "4.912507", "4.929134"),
-        ("fga_x_fg3a_share", "fg3a|fga", "logit_own", "4.636033", "4.611402"),
-        ("fga_x_fg3a_share", "fg3a|fga", "logit_own_spline", "4.615620", "4.607737"),
+        ("fg2a", "log_own", "5.263114"),
+        ("fg3a", "log_own_spline", "5.242045"),
+        ("fga", "linear", "5.407505"),
+        ("fga", "log_own", "5.389932"),
+        ("fga", "log_own_spline", "5.388496"),
+        ("fg3a|fga", "linear", "4.912709"),
+        ("fg3a|fga", "logit_own", "4.636018"),
+        ("fg3a|fga", "logit_own_spline", "4.615622"),
     ]
-    for arm, name, variant, val, test in per_factor:
-        for quoted, split in ((val, "val"), (test, "test")):
-            add(_c(quoted, SHOT_SWEEP,
-                   lambda s=split, a=arm, h=name, v=variant: head(s, a, h, v),
-                   f"{h_label(arm)} {name}@{variant} {split} NLL", doc=SHOT))
-    floors = [("fg2a", "log_own", "two_counts", "5.271028", "5.292842"),
-              ("fg3a", "log_own_spline", "two_counts", "5.903396", "5.731185"),
-              ("fga", "log_own", "fga_x_fg3a_share", "5.445210", "5.432802"),
-              ("fg3a|fga", "logit_own", "fga_x_fg3a_share", "4.619109", "4.652797")]
-    for name, variant, arm, val, test in floors:
-        for quoted, split in ((val, "val"), (test, "test")):
-            add(_c(quoted, SHOT_SWEEP,
-                   lambda s=split, a=arm, h=name, v=variant: head(s, a, h, v,
-                                                                  "floor_nll"),
-                   f"{name} no-fit floor, {split}", doc=SHOT))
+    for name, variant, quoted in per_factor:
+        add(_c(quoted, SHOT_SWEEP,
+               lambda h=name, v=variant: head(h, v),
+               f"{name}@{variant} validation NLL", doc=SHOT))
+    # The floors are pure arithmetic — a shrunk carry-forward with `k` fitted on train — so
+    # they are the one part of this gate that reproduces to the digit across a refit, and
+    # `stan_component_metrics.csv` independently agrees on the two arm-B rows.
+    floors = [("fg2a", "log_own", "5.271028"),
+              ("fg3a", "log_own_spline", "5.903396"),
+              ("fga", "log_own", "5.445210"),
+              ("fg3a|fga", "logit_own", "4.619109")]
+    for name, variant, quoted in floors:
+        add(_c(quoted, SHOT_SWEEP,
+               lambda h=name, v=variant: head(h, v, "floor_nll"),
+               f"{name} no-fit floor", doc=SHOT))
 
     # ── the verdict ──────────────────────────────────────────────────────────
-    for split, canonical, reparam, margin in [
-            ("val", "10.504935", "10.004153", "−0.500782"),
-            ("test", "10.478052", "9.984503", "−0.493549")]:
-        add(_c(canonical, SHOT_SWEEP, lambda s=split: joint(s, "two_counts"),
-               f"arm A joint NLL, {split}", doc=SHOT))
-        add(_c(reparam, SHOT_SWEEP, lambda s=split: joint(s, "fga_x_fg3a_share"),
-               f"arm B joint NLL, {split}", doc=SHOT))
-        add(_c(margin, SHOT_SWEEP,
-               lambda s=split: joint(s, "fga_x_fg3a_share") - joint(s, "two_counts"),
-               f"reparameterization margin, {split}", doc=SHOT))
+    add(_c("10.505159", SHOT_SWEEP, lambda: joint("two_counts"),
+           "arm A joint NLL", doc=SHOT))
+    add(_c("10.004118", SHOT_SWEEP, lambda: joint("fga_x_fg3a_share"),
+           "arm B joint NLL", doc=SHOT))
+    add(_c("−0.501041", SHOT_SWEEP,
+           lambda: joint("fga_x_fg3a_share") - joint("two_counts"),
+           "reparameterization margin", doc=SHOT))
 
-    add(_c("10.476413", SHOT_SWEEP, grid_best, "arm A best-of-16", doc=SHOT))
-    add(_c("−0.491910", SHOT_SWEEP,
-           lambda: joint("test", "fga_x_fg3a_share") - grid_best(),
-           "arm B against arm A's best-of-16", doc=SHOT))
-    # The handicap decomposition: how much of the recorded margin was the straw man.
-    add(_c("0.305646", SHOT_SWEEP,
-           lambda: (head("test", "two_counts", "fg3a", "log_own_spline")
-                    - cell(STAN_C_M, "test_nll", head="fg3a", variant="log_own")) * -1,
-           "the handicap, in nats", doc=SHOT, historical=True))
-    add(_c("−0.487010", SHOT_SWEEP,
-           lambda: (head("test", "fga_x_fg3a_share", "fga", "log_own")
-                    + head("test", "fga_x_fg3a_share", "fg3a|fga", "logit_own")
-                    - joint("test", "two_counts")),
-           "margin before arm B was swept", doc=SHOT))
-    add(_c("−0.006539", SHOT_SWEEP,
-           lambda: (joint("test", "fga_x_fg3a_share")
-                    - head("test", "fga_x_fg3a_share", "fga", "log_own")
-                    - head("test", "fga_x_fg3a_share", "fg3a|fga", "logit_own")),
+    # The handicap decomposition, now entirely on validation — it needed the test column
+    # until 2026-08-06. `pinned` is arm B at the single variant `substitution_arm` used, so
+    # the rows below split the recorded margin into "what un-handicapping arm A cost" and
+    # "what sweeping arm B added on top", and the two must sum back to it.
+    def pinned() -> float:
+        return head("fga", "log_own") + head("fg3a|fga", "logit_own")
+
+    def handicapped(arm: str) -> float:
+        return cell(STAN_C_S, "mean_joint_nll", split="val", arm=arm)
+
+    add(_c("10.797078", STAN_C_S, lambda: handicapped("two_counts"),
+           "arm A with both heads at log_own — the handicapped arm", doc=SHOT))
+    add(_c("0.291919", SHOT_SWEEP,
+           lambda: handicapped("two_counts") - joint("two_counts"),
+           "the handicap, in nats — on validation", doc=SHOT))
+    add(_c("−0.771128", STAN_C_S,
+           lambda: cell(STAN_C_S, "reparam_minus_canonical", split="val",
+                        arm="two_counts"),
+           "the recorded handicapped margin, full precision", doc=SHOT))
+    add(_c("−0.021832", SHOT_SWEEP, lambda: joint("fga_x_fg3a_share") - pinned(),
            "what sweeping arm B added", doc=SHOT))
+    add(_c("65%", SHOT_SWEEP,
+           lambda: (joint("fga_x_fg3a_share") - joint("two_counts"))
+           / cell(STAN_C_S, "reparam_minus_canonical", split="val", arm="two_counts"),
+           "share of the recorded margin that survives the correction", doc=SHOT))
+    # The regression check: the gate's pinned arm B and `substitution_arm`'s arm B are the
+    # same quantity computed by different code in different modules. Claimed from both
+    # artifacts against the one quoted string, so they cannot drift apart silently.
+    add(_c("10.025950", SHOT_SWEEP, pinned,
+           "arm B pinned at (log_own, logit_own)", doc=SHOT))
+    add(_c("10.025950", STAN_C_S, lambda: handicapped("fga_x_fg3a_share"),
+           "…and `substitution_arm` computes it identically", doc=SHOT))
 
     # ── the headline: the coordinate change beats the fitting ─────────────────
-    def floor_total(arm: str, names: tuple[str, str], variants: tuple[str, str]) -> float:
-        return sum(head("test", arm, n, v, "floor_nll")
-                   for n, v in zip(names, variants))
+    def floor_total(names: tuple[str, str], variants: tuple[str, str]) -> float:
+        return sum(head(n, v, "floor_nll") for n, v in zip(names, variants))
 
-    arm_a_floor = ("two_counts", ("fg2a", "fg3a"), ("log_own", "log_own_spline"))
-    arm_b_floor = ("fga_x_fg3a_share", ("fga", "fg3a|fga"), ("log_own", "logit_own"))
-    add(_c("11.024027", SHOT_SWEEP, lambda: floor_total(*arm_a_floor),
+    arm_a_floor = (("fg2a", "fg3a"), ("log_own", "log_own_spline"))
+    arm_b_floor = (("fga", "fg3a|fga"), ("log_own", "logit_own"))
+    add(_c("11.174424", SHOT_SWEEP, lambda: floor_total(*arm_a_floor),
            "arm A no-fit floor total", doc=SHOT))
-    add(_c("10.085599", SHOT_SWEEP, lambda: floor_total(*arm_b_floor),
+    add(_c("10.064318", SHOT_SWEEP, lambda: floor_total(*arm_b_floor),
            "arm B no-fit floor total", doc=SHOT))
-    add(_c("−0.938427", SHOT_SWEEP,
+    add(_c("−1.110105", SHOT_SWEEP,
            lambda: floor_total(*arm_b_floor) - floor_total(*arm_a_floor),
            "floor-to-floor gain from the coordinate change", doc=SHOT))
-    add(_c("−0.390814", SHOT_SWEEP,
-           lambda: floor_total(*arm_b_floor) - grid_best(),
-           "arm B's floor against arm A's best fitted", doc=SHOT))
-    add(_c("−0.101096", SHOT_SWEEP,
-           lambda: joint("test", "fga_x_fg3a_share") - floor_total(*arm_b_floor),
+    add(_c("−0.440841", SHOT_SWEEP,
+           lambda: floor_total(*arm_b_floor) - joint("two_counts"),
+           "arm B's floor against arm A fitted", doc=SHOT))
+    add(_c("−0.060200", SHOT_SWEEP,
+           lambda: joint("fga_x_fg3a_share") - floor_total(*arm_b_floor),
            "what arm B's own fitting adds", doc=SHOT))
 
     # ── population and sampler ────────────────────────────────────────────────
-    add(_c("791", SHOT_SWEEP,
-           lambda: head("test", "two_counts", "fg2a", "log_own", "n"),
-           "test rows", doc=SHOT))
-    add(_c("773", SHOT_SWEEP,
-           lambda: head("val", "two_counts", "fg2a", "log_own", "n"),
+    add(_c("773", SHOT_SWEEP, lambda: head("fg2a", "log_own", "n"),
            "validation rows", doc=SHOT))
-    add(_c("52", SHOT_SWEEP, lambda: rows(SHOT_SWEEP), "sweep artifact rows", doc=SHOT))
-    add(_c("1.0087", SHOT_D, lambda: max_of(SHOT_D, "max_rhat"), "max R-hat", doc=SHOT))
+    add(_c("18", SHOT_SWEEP, lambda: rows(SHOT_SWEEP), "sweep artifact rows", doc=SHOT))
+    add(_c("1.0047", SHOT_D, lambda: max_of(SHOT_D, "max_rhat"), "max R-hat", doc=SHOT))
     add(_c("0", SHOT_D, lambda: total(SHOT_D, "divergences"), "divergences", doc=SHOT))
-    add(_c("46.5", SHOT_D, lambda: total(SHOT_D, "wall_clock_s") / 60,
+    add(_c("26.8", SHOT_D, lambda: total(SHOT_D, "wall_clock_s") / 60,
            "sampler minutes", doc=SHOT))
-    add(_c("16", SHOT_D, lambda: rows(SHOT_D), "fits", doc=SHOT))
+    add(_c("8", SHOT_D, lambda: rows(SHOT_D), "fits", doc=SHOT))
 
-    # The recorded (handicapped) margins, preserved beside their correction. These are
-    # still exactly true of `stan_component_substitution.csv`, which this session does not
-    # rebuild — so they are value-checked rather than flagged historical.
-    for split, quoted in (("val", "−0.771"), ("test", "−0.793")):
-        add(_c(quoted, STAN_C_S,
-               lambda s=split: cell(STAN_C_S, "reparam_minus_canonical", split=s,
-                                    arm="two_counts"),
-               f"the recorded handicapped margin, {split}", doc=SHOT))
-    add(_c("0.792657", STAN_C_S,
-           lambda: -cell(STAN_C_S, "reparam_minus_canonical", split="test",
-                         arm="two_counts"),
-           "the recorded test margin, unsigned", doc=SHOT))
+    # ── the retired test half, kept as a record ───────────────────────────────
+    # Every figure below was value-checked until the 2026-08-06 validation-only re-run.
+    # They stay in the doc's "what the re-run retired" block and stay presence-checked.
+    for quoted, label in [
+            ("5.229492", "fg2a@log_own"), ("5.248561", "fg3a@log_own_spline"),
+            ("5.426520", "fga@linear"), ("5.379640", "fga@log_own"),
+            ("5.376766", "fga@log_own_spline"), ("4.929134", "fg3a|fga@linear"),
+            ("4.611402", "fg3a|fga@logit_own"),
+            ("4.607737", "fg3a|fga@logit_own_spline"),
+            ("5.292842", "fg2a floor"), ("5.731185", "fg3a floor"),
+            ("5.432802", "fga floor"), ("4.652797", "fg3a|fga floor"),
+            ("10.478052", "arm A joint"), ("9.984503", "arm B joint"),
+            ("−0.493549", "the margin the adoption was decided on"),
+            ("10.476413", "arm A best-of-16"),
+            ("−0.491910", "arm B against the best-of-16"),
+            ("0.001640", "what the best-of-16 bought over arm A's selected pair"),
+            ("0.305646", "the handicap, in nats"),
+            ("−0.487010", "margin before arm B was swept"),
+            ("−0.006539", "what sweeping arm B added"),
+            ("9.991042", "the refactored share arm's regression check"),
+            ("11.024027", "arm A no-fit floor total"),
+            ("10.085599", "arm B no-fit floor total"),
+            ("−0.938427", "floor-to-floor gain"),
+            ("−0.390814", "arm B's floor against arm A's best fitted"),
+            ("−0.101096", "what arm B's own fitting adds"),
+            ("791", "test rows"), ("52", "sweep artifact rows"),
+            ("16", "fits"), ("1.0087", "max R-hat"), ("46.5", "sampler minutes"),
+            ("−0.793", "the recorded handicapped margin"),
+            ("0.792657", "the recorded handicapped margin, unsigned")]:
+        retired(quoted, f"retired test-split figure: {label}")
+
+    # The validation half of the handicapped pair is still live, in the one artifact that
+    # still carries it.
+    add(_c("−0.771", STAN_C_S,
+           lambda: cell(STAN_C_S, "reparam_minus_canonical", split="val",
+                        arm="two_counts"),
+           "the recorded handicapped margin, val", doc=SHOT))
     add(_c("0.3719", STAN_C_M,
-           lambda: cell(STAN_C_M, "test_r2", head="fg3a", variant="log_own"),
+           lambda: cell(STAN_C_M, "val_r2", head="fg3a", variant="log_own"),
            "fg3a at log_own — the handicap", doc=SHOT, historical=True))
     add(_c("0.9046", STAN_C_M,
-           lambda: cell(STAN_C_M, "test_r2", head="fg3a", variant="log_own_spline"),
+           lambda: cell(STAN_C_M, "val_r2", head="fg3a", variant="log_own_spline"),
            "fg3a at its shipped spline", doc=SHOT, historical=True))
     add(_c("−0.1248", RESID,
            lambda: _windowed(RESID, "r", basis="legacy_two_count_basis",
@@ -3358,11 +4219,480 @@ def h_label(arm: str) -> str:
     return "arm A" if arm == "two_counts" else "arm B"
 
 
+def gp_gate(arm: str, metric: str, column: str = "simulated") -> float:
+    return _one(table(GP_GATE), column, arm=arm, metric=metric)
+
+
+def gp_gate_z(arm: str) -> float:
+    """The gate's own statistic: how many standard errors of the OBSERVED proportion the
+    simulated left tail sits from it. Recomputed here rather than read, because the
+    artifact carries the two proportions and the row count and the z is arithmetic on
+    them — so a claim on it is a claim on the gate's logic and not only on its output."""
+    o = gp_gate(arm, "p_below_41", "observed")
+    s = gp_gate(arm, "p_below_41", "simulated")
+    n = _one(table(GP_GATE), "n", arm=arm, metric="p_below_41")
+    return (s - o) / np.sqrt(o * (1 - o) / n)
+
+
+def gp_collapse(column: str, window: str = "full") -> float:
+    return _one(table(GP_COLLAPSE), column, window=window)
+
+
+def gp_spell(column: str, **where) -> float:
+    return _one(table(GP_SPELLS), column, **where)
+
+
+def gp_metric(variant: str, column: str) -> float:
+    return _one(table(GP_METRICS), column, variant=variant)
+
+
+def gp_gates(gate: str, column: str, arm: str | None = None) -> float:
+    """One gate row. `arm` is required for Gate D, which has one row per candidate —
+    the selected fitted arm and the closed-form fallback — because quoting a Gate D
+    figure without naming which candidate it belongs to is the same class of error as
+    quoting a variance-budget share without its basis."""
+    where = {"gate": gate}
+    if arm is not None:
+        where["arm"] = arm
+    return _one(table(GP_GATES), column, **where)
+
+
+def gp_process(component: str, statistic: str) -> float:
+    return _one(table(GP_PROCESS), "value", component=component, statistic=statistic)
+
+
+def _games_played() -> list[Claim]:
+    """`docs/games-played-plan.md` — the spell process."""
+    C: list[Claim] = []
+
+    def add(quoted: str, artifact: str, actual: Callable[[], float], label: str,
+            historical: bool = False) -> None:
+        C.append(_c(quoted, artifact, actual, label, doc=GAMES,
+                    historical=historical))
+
+    # ── the collapse ──────────────────────────────────────────────────────────
+    add("32,944", GP_COLLAPSE, lambda: gp_collapse("collapsed_binomial_rows"),
+        "collapsed binomial rows")
+    add("1,297,766", GP_COLLAPSE, lambda: gp_collapse("transitions"),
+        "full-window transitions")
+    add("942,597", GP_COLLAPSE, lambda: gp_collapse("transitions", "appearance"),
+        "appearance-window transitions")
+    add("39.4", GP_COLLAPSE, lambda: gp_collapse("collapse_ratio"), "collapse ratio")
+    add("28.6", GP_COLLAPSE, lambda: gp_collapse("collapse_ratio", "appearance"),
+        "appearance collapse ratio")
+    for window, on, at_risk, hazard, rec, at_miss in [
+            ("full", "75,838", "727,246", "0.1043", "75,496", "570,520"),
+            ("appearance", "68,530", "719,938", "0.0952", "68,530", "222,659")]:
+        add(on, GP_COLLAPSE, lambda w=window: gp_collapse("onsets", w),
+            f"{window} onsets")
+        add(at_risk, GP_COLLAPSE, lambda w=window: gp_collapse("at_risk_played", w),
+            f"{window} at-risk transitions")
+        add(hazard, GP_COLLAPSE, lambda w=window: gp_collapse("onset_hazard", w),
+            f"{window} onset hazard")
+        add(rec, GP_COLLAPSE, lambda w=window: gp_collapse("recoveries", w),
+            f"{window} recoveries")
+        add(at_miss, GP_COLLAPSE, lambda w=window: gp_collapse("at_risk_missed", w),
+            f"{window} at-risk missed")
+    add("0.1323", GP_COLLAPSE, lambda: gp_collapse("recovery_hazard"),
+        "full recovery hazard")
+    add("0.3078", GP_COLLAPSE,
+        lambda: gp_collapse("recovery_hazard", "appearance"),
+        "appearance recovery hazard")
+
+    # ── spell classes ─────────────────────────────────────────────────────────
+    for name, spells, missed, mean, share_s, share_m, nr in [
+            ("interior", "68,530", "222,659", "3.25", "82.8%", "38.5%", "0.010"),
+            ("left_truncated", "6,966", "189,668", "27.23", "8.4%", "32.8%", "0.587"),
+            ("right_censored", "7,308", "165,501", "22.65", "8.8%", "28.6%", "0.462")]:
+        add(spells, GP_SPELLS, lambda k=name: gp_spell("spells", spell_class=k),
+            f"{name} spells")
+        add(missed, GP_SPELLS,
+            lambda k=name: gp_spell("missed_games", spell_class=k),
+            f"{name} missed games")
+        add(mean, GP_SPELLS, lambda k=name: gp_spell("mean_length", spell_class=k),
+            f"{name} mean length")
+        add(share_s, GP_SPELLS,
+            lambda k=name: gp_spell("share_of_spells", spell_class=k),
+            f"{name} share of spells")
+        add(share_m, GP_SPELLS,
+            lambda k=name: gp_spell("share_of_missed", spell_class=k),
+            f"{name} share of missed games")
+        add(nr, GP_SPELLS,
+            lambda k=name: gp_spell("not_rostered_share", spell_class=k),
+            f"{name} not_rostered share")
+    add("82,804", GP_SPELLS,
+        lambda: gp_spell("n_spells", treatment="proper_censoring"), "total spells")
+
+    # ── the censoring bias, and the two derived columns that were corrected ───
+    # Not named `treatment` — that is a module-level accessor, and assigning to the name
+    # anywhere in this function would make every reference to it local.
+    for how, a, b, p26 in [("drop_censored", "1.088", "1.323", "0.0398"),
+                           ("censored_as_complete", "0.917", "1.252", "0.0598"),
+                           ("proper_censoring", "0.721", "0.978", "0.0861")]:
+        add(a, GP_SPELLS, lambda t=how: gp_spell("a", treatment=t), f"{how} a")
+        add(b, GP_SPELLS, lambda t=how: gp_spell("b", treatment=t), f"{how} b")
+        add(p26, GP_SPELLS, lambda t=how: gp_spell("p_ge_26", treatment=t),
+            f"{how} P(T>=26)")
+    add("16.03", GP_SPELLS,
+        lambda: gp_spell("mean_spell", treatment="drop_censored"),
+        "drop_censored E[T]")
+    add("2.16", GP_SPELLS,
+        lambda: (gp_spell("p_ge_26", treatment="proper_censoring")
+                 / gp_spell("p_ge_26", treatment="drop_censored")),
+        "how far dropping censored spells understates the tail")
+    add("1.44", GP_SPELLS,
+        lambda: (gp_spell("p_ge_26", treatment="proper_censoring")
+                 / gp_spell("p_ge_26", treatment="censored_as_complete")),
+        "how far treating censored as complete understates the tail")
+    # The superseded derived columns, kept beside their corrections. The FITTED
+    # parameters reproduced exactly across two implementations; only the arithmetic on
+    # top of them moved, which is what makes these a reversal worth preserving.
+    for quoted, label in [("5.84", "planning E[T], drop_censored"),
+                          ("7.68", "planning E[T], censored as complete"),
+                          ("9.95", "planning E[T], proper censoring"),
+                          ("0.0377", "planning P(T>=26), drop_censored"),
+                          ("0.0549", "planning P(T>=26), censored as complete"),
+                          ("0.0741", "planning P(T>=26), proper censoring")]:
+        add(quoted, GP_SPELLS,
+            lambda: gp_spell("p_ge_26", treatment="proper_censoring"), label,
+            historical=True)
+
+    # ── the duration candidates ───────────────────────────────────────────────
+    add("126,171.9", GP_SPELLS, lambda: gp_spell("nll", model="beta_geometric"),
+        "beta-geometric nll")
+    add("252,347.7", GP_SPELLS, lambda: gp_spell("aic", model="beta_geometric"),
+        "beta-geometric AIC")
+    add("137,450.3", GP_SPELLS, lambda: gp_spell("nll", model="geometric"),
+        "geometric nll")
+    add("274,902.6", GP_SPELLS, lambda: gp_spell("aic", model="geometric"),
+        "geometric AIC")
+    add("1.762", GP_SPELLS, lambda: gp_spell("a", model="beta_geometric"),
+        "fitted a on interior spells")
+    add("1.926", GP_SPELLS, lambda: gp_spell("b", model="beta_geometric"),
+        "fitted b on interior spells")
+    add("0.4777", GP_SPELLS, lambda: gp_spell("p_eq_1", model="beta_geometric"),
+        "beta-geometric P(T=1)")
+    add("0.4829", GP_SPELLS, lambda: gp_spell("p_eq_1", model="observed"),
+        "observed P(T=1)")
+    add("0.0635", GP_SPELLS, lambda: gp_spell("p_ge_10", model="observed"),
+        "observed P(T>=10)")
+    add("0.0106", GP_SPELLS, lambda: gp_spell("p_ge_26", model="observed"),
+        "observed P(T>=26)")
+    add("11,278", GP_SPELLS,
+        lambda: gp_spell("nll", model="geometric") - gp_spell("nll",
+                                                              model="beta_geometric"),
+        "log-likelihood the geometric gives up")
+    # Quoted in README.md too — the same figure from two docs against the one artifact,
+    # because "current in one doc and stale in the other" is the failure that has already
+    # happened twice in this repo.
+    C.append(_c("11,278", GP_SPELLS,
+                lambda: gp_spell("nll", model="geometric")
+                - gp_spell("nll", model="beta_geometric"),
+                "log-likelihood the geometric gives up", doc=README))
+
+    # ── left truncation ───────────────────────────────────────────────────────
+    add("−1.7042", GP_SPELLS,
+        lambda: gp_spell("open_shift", analysis="left_truncation"),
+        "fitted in-progress offset")
+    add("0.1367", GP_SPELLS,
+        lambda: gp_spell("mu_open_fitted", analysis="left_truncation"),
+        "fitted in-progress mu")
+    add("0.3027", GP_SPELLS,
+        lambda: gp_spell("mu_open_predicted", analysis="left_truncation"),
+        "size-biased identity's prediction")
+    add("2.2", GP_SPELLS,
+        lambda: (gp_spell("mu_open_predicted", analysis="left_truncation")
+                 / gp_spell("mu_open_fitted", analysis="left_truncation")),
+        "how far in-progress spells exceed renewal")
+
+    # ── the hazard-by-streak curve ────────────────────────────────────────────
+    for streak, hazard, at_risk in [("1", "0.2976", "81,525"), ("2", "0.1912", "55,387"),
+                                    ("3", "0.1386", "43,601"), ("4", "0.1067", "36,694"),
+                                    ("5", "0.0926", "32,125"),
+                                    ("6-10", "0.0672", "120,539"),
+                                    ("11-20", "0.0463", "142,519"),
+                                    ("21-41", "0.0338", "133,322"),
+                                    ("42-10000", "0.0208", "74,226")]:
+        add(hazard, GP_SPELLS,
+            lambda s=streak: gp_spell("hazard", analysis="hazard_by_streak", streak=s),
+            f"onset hazard at streak {streak}")
+        add(at_risk, GP_SPELLS,
+            lambda s=streak: gp_spell("at_risk", analysis="hazard_by_streak", streak=s),
+            f"at-risk transitions at streak {streak}")
+    add("14.3", GP_SPELLS,
+        lambda: (gp_spell("hazard", analysis="hazard_by_streak", streak="1")
+                 / gp_spell("hazard", analysis="hazard_by_streak", streak="42-10000")),
+        "how far the onset hazard falls across the streak range")
+    for quoted, label in [("0.3164", "planning hazard at streak 1"),
+                          ("0.0265", "planning hazard past 41"),
+                          ("11.9", "planning hazard fall")]:
+        add(quoted, GP_SPELLS,
+            lambda: gp_spell("hazard", analysis="hazard_by_streak", streak="1"),
+            label, historical=True)
+
+    # ── the structural proxy against the box-score status ─────────────────────
+    add("82.7%", GP_SPELLS,
+        lambda: gp_spell("value", analysis="status_agreement", statistic="agreement"),
+        "structural proxy vs not_rostered agreement")
+    add("16.74%", GP_SPELLS,
+        lambda: gp_spell("value", analysis="status_agreement",
+                         statistic="missed_outside_window_while_rostered"),
+        "missed outside the window while still rostered")
+    add("98.5%", GP_SPELLS,
+        lambda: gp_spell("value", analysis="status_agreement",
+                         statistic="not_rostered_persistence"),
+        "not_rostered per-game persistence")
+    add("422,219", GP_SPELLS,
+        lambda: gp_spell("n", analysis="status_agreement", statistic="agreement"),
+        "missed games from 2006-07 with covered status")
+    add("16.75%", GP_SPELLS,
+        lambda: gp_spell("value", analysis="status_agreement",
+                         statistic="missed_outside_window_while_rostered"),
+        "planning rounding of the rostered-but-absent cell", historical=True)
+
+    # ── Gate 0 ────────────────────────────────────────────────────────────────
+    add("4,667", GP_GATE, lambda: _one(table(GP_GATE), "n",
+                                       arm="tenure_decomposition",
+                                       metric="p_below_41"),
+        "Gate 0 population")
+    for arm, mean, sd, over, p41, p60 in [
+            ("full_window_chain", "0.7988", "0.2399", "29.37", "0.1356", "0.3189"),
+            ("tenure_decomposition", "0.8132", "0.2197", "26.05", "0.1155",
+             "0.3009")]:
+        add(mean, GP_GATE, lambda a=arm: gp_gate(a, "mean_gp_share"), f"{arm} mean")
+        add(sd, GP_GATE, lambda a=arm: gp_gate(a, "sd_gp_share"), f"{arm} sd")
+        add(over, GP_GATE, lambda a=arm: gp_gate(a, "overdispersion"),
+            f"{arm} overdispersion")
+        add(p41, GP_GATE, lambda a=arm: gp_gate(a, "p_below_41"), f"{arm} P(GP<41)")
+        add(p60, GP_GATE, lambda a=arm: gp_gate(a, "p_below_60"), f"{arm} P(GP<60)")
+    add("0.8070", GP_GATE,
+        lambda: gp_gate("tenure_decomposition", "mean_gp_share", "observed"),
+        "observed mean")
+    add("0.2120", GP_GATE,
+        lambda: gp_gate("tenure_decomposition", "sd_gp_share", "observed"),
+        "observed sd")
+    add("23.66", GP_GATE,
+        lambda: gp_gate("tenure_decomposition", "overdispersion", "observed"),
+        "observed overdispersion")
+    add("0.1112", GP_GATE,
+        lambda: gp_gate("tenure_decomposition", "p_below_41", "observed"),
+        "observed P(GP<41)")
+    add("0.3107", GP_GATE,
+        lambda: gp_gate("tenure_decomposition", "p_below_60", "observed"),
+        "observed P(GP<60)")
+    add("21.9%", GP_GATE,
+        lambda: (gp_gate("full_window_chain", "p_below_41")
+                 / gp_gate("full_window_chain", "p_below_41", "observed") - 1.0),
+        "plain chain tail over-prediction")
+    add("3.8%", GP_GATE,
+        lambda: (gp_gate("tenure_decomposition", "p_below_41")
+                 / gp_gate("tenure_decomposition", "p_below_41", "observed") - 1.0),
+        "tenure decomposition tail error")
+    add("+5.29", GP_GATE, lambda: gp_gate_z("full_window_chain"),
+        "plain chain z on the left tail")
+    add("+0.93", GP_GATE, lambda: gp_gate_z("tenure_decomposition"),
+        "tenure decomposition z on the left tail")
+    add("0.0046", GP_GATE,
+        lambda: np.sqrt(gp_gate("tenure_decomposition", "p_below_41", "observed")
+                        * (1 - gp_gate("tenure_decomposition", "p_below_41",
+                                       "observed"))
+                        / _one(table(GP_GATE), "n", arm="tenure_decomposition",
+                               metric="p_below_41")),
+        "standard error of the observed left tail")
+
+    # ── the arm ladder, VALIDATION only ───────────────────────────────────────
+    # There is no test column any more: `src/models/held_out.py` locks the held-out split
+    # and the sweep never reaches it. The end-of-project figures live in
+    # `final_evaluation.csv` and are claimed only once that has been run.
+    ladder = [("floor", "10.0057", "10.0057", "0.0939", "23.7251", "0.0406"),
+              ("within_tenure", "7.2265", "10.0992", "0.1232", "11.4526", "0.0091"),
+              ("full_window", "10.2705", "10.0057", "0.0733", "22.1365", "0.0495"),
+              ("three_state", "10.3484", "10.0501", "0.1171", "20.3721", "0.0041"),
+              ("duration_covariates", "10.1625", "10.0057", "0.0672", "22.0664",
+               "0.0537"),
+              ("calibrated_fallback", "10.0207", "10.0057", "0.1017", "23.7251",
+               "0.0440"),
+              ("hybrid", "10.0057", "10.0057", "0.0939", "23.7251", "0.0406")]
+    for arm, val, floor, pit, od, tail in ladder:
+        add(val, GP_METRICS, lambda a=arm: gp_metric(a, "val_crps"), f"{arm} val CRPS")
+        add(floor, GP_METRICS, lambda a=arm: gp_metric(a, "floor_val_crps"),
+            f"{arm} floor")
+        add(pit, GP_METRICS, lambda a=arm: gp_metric(a, "val_pit_ks"), f"{arm} PIT KS")
+        add(od, GP_METRICS, lambda a=arm: gp_metric(a, "val_implied_overdispersion"),
+            f"{arm} implied overdispersion")
+        add(tail, GP_METRICS, lambda a=arm: gp_metric(a, "val_tail_error"),
+            f"{arm} tail error")
+    for arm, quoted in [("within_tenure", "−2.8726"), ("full_window", "+0.2647"),
+                        ("three_state", "+0.2983"),
+                        ("duration_covariates", "+0.1568"),
+                        ("calibrated_fallback", "+0.0149")]:
+        add(quoted, GP_METRICS, lambda a=arm: gp_metric(a, "crps_vs_floor"),
+            f"{arm} vs its floor")
+
+    # ── the gates, all on validation ──────────────────────────────────────────
+    add("0.79", GP_GATES, lambda: gp_gates("A", "extrapolated_hours"),
+        "Gate A corrected estimate")
+    add("−0.350239", GP_GATES, lambda: gp_gates("B", "floor_loglik_per_transition"),
+        "Gate B floor")
+    add("−0.330658", GP_GATES, lambda: gp_gates("B", "head_loglik_per_transition"),
+        "Gate B fitted head")
+    add("+0.019580", GP_GATES, lambda: gp_gates("B", "gain"), "Gate B gain")
+    add("48.1", GP_GATES, lambda: gp_gates("B", "floor_shrinkage_k"),
+        "Gate B floor shrinkage")
+    add("0.0741", GP_GATES, lambda: gp_gates("B", "floor_league_rate"),
+        "Gate B league onset rate")
+    for arm, crps, pit, p41, p60, tail in [
+            ("duration_covariates", "10.1625", "0.0672", "0.1597", "0.3740", "0.0537"),
+            ("calibrated_fallback", "10.0207", "0.1017", "0.1499", "0.3643", "0.0440"),
+            ("hybrid", "10.0057", "0.0939", "0.1553", "0.3521", "0.0406")]:
+        add(crps, GP_GATES, lambda a=arm: gp_gates("D", "crps", a), f"Gate D {arm} CRPS")
+        add(pit, GP_GATES, lambda a=arm: gp_gates("D", "pit_ks", a),
+            f"Gate D {arm} PIT KS")
+        add(p41, GP_GATES, lambda a=arm: gp_gates("D", "predicted_below_41", a),
+            f"Gate D {arm} P(GP<41)")
+        add(p60, GP_GATES, lambda a=arm: gp_gates("D", "predicted_below_60", a),
+            f"Gate D {arm} P(GP<60)")
+        add(tail, GP_GATES, lambda a=arm: gp_gates("D", "tail_error", a),
+            f"Gate D {arm} tail error")
+    add("0.1003", GP_GATES, lambda: gp_gates("D", "observed_below_41", "hybrid"),
+        "Gate D observed P(GP<41)")
+    add("0.3259", GP_GATES, lambda: gp_gates("D", "observed_below_60", "hybrid"),
+        "Gate D observed P(GP<60)")
+
+    # ── the spell shape: the metric no marginal score can see ─────────────────
+    shape = [("observed", "0.4924", "0.0581", "0.0079", "3.0857", None),
+             ("hybrid", "0.4904", "0.0572", "0.0202", "3.8220", "0.5310"),
+             ("calibrated_fallback", "0.1171", "0.3544", "0.0799", "10.0594", "5.0082"),
+             ("full_window", "0.4534", "0.1052", "0.0419", "4.9653", "1.7408"),
+             ("duration_covariates", "0.4435", "0.1083", "0.0430", "5.0581", "1.8105")]
+    for arm, p1, p10, p26, mean, err in shape:
+        for quoted, col in ((p1, "p_eq_1"), (p10, "p_ge_10"), (p26, "p_ge_26"),
+                            (mean, "mean_spell")):
+            add(quoted, GP_SHAPE,
+                lambda a=arm, c=col: _one(table(GP_SHAPE), c, arm=a),
+                f"spell shape {arm} {col}")
+        if err:
+            add(err, GP_SHAPE,
+                lambda a=arm: _one(table(GP_SHAPE), "mean_abs_rel_error", arm=a),
+                f"spell shape {arm} mean abs rel error")
+
+    # ── the fallback's parameters ─────────────────────────────────────────────
+    # `rho_markov` is historical because the row it read no longer exists, and the reason is
+    # worth stating: `spell_process.csv` carries the *shipping* arm's parameters, and the
+    # calibrated block is written only when the fallback is that arm. It was, on the test
+    # split. On validation no arm ships and the file describes `duration_covariates`, so the
+    # claim went from passing to skipping without anything drifting. Demote rather than
+    # freeze the run — the same call the retired `subst_test` comment above describes — and
+    # the figure stays presence-checked, so the retired block in the plan doc that carries it
+    # cannot be tidied away. `clustering_C` stays live: the fallback rows are written
+    # whichever arm ships, because the calibration is reported either way.
+    add("0.8110", GP_PROCESS, lambda: float("nan"), "fallback rho_markov",
+        historical=True)
+    add("9.5806", GP_PROCESS, lambda: gp_process("fallback", "clustering_C"),
+        "fallback clustering C")
+
+    # ── the sampler ───────────────────────────────────────────────────────────
+    add("13", GP_DIAG, lambda: float(len(table(GP_DIAG))), "fits in the sweep")
+    return C
+
+
+def _games_played_in_claude() -> list[Claim]:
+    """The games-played block as `CLAUDE.md` quotes it, against the same artifacts.
+
+    A block quoted in two docs is claimed from both, because "current in one doc and stale
+    in the other" is the failure that has already happened twice here. `CLAUDE.md` carries a
+    summary and `docs/games-played-plan.md` the full version, so this claims the subset the
+    summary quotes rather than forcing it to carry every cell.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, artifact: str, actual: Callable[[], float],
+            label: str) -> None:
+        C.append(_c(quoted, artifact, actual, label, doc=CLAUDE))
+
+    add("+5.29", GP_GATE, lambda: gp_gate_z("full_window_chain"),
+        "plain chain z on the left tail")
+    add("+0.93", GP_GATE, lambda: gp_gate_z("tenure_decomposition"),
+        "tenure decomposition z")
+    add("21.9%", GP_GATE,
+        lambda: (gp_gate("full_window_chain", "p_below_41")
+                 / gp_gate("full_window_chain", "p_below_41", "observed") - 1.0),
+        "plain chain tail over-prediction")
+    add("3.8%", GP_GATE,
+        lambda: (gp_gate("tenure_decomposition", "p_below_41")
+                 / gp_gate("tenure_decomposition", "p_below_41", "observed") - 1.0),
+        "tenure decomposition tail error")
+    add("7.2265", GP_METRICS, lambda: gp_metric("within_tenure", "val_crps"),
+        "oracle-tenure CRPS")
+    add("10.0992", GP_METRICS, lambda: gp_metric("within_tenure", "floor_val_crps"),
+        "oracle-tenure floor")
+    add("10.0057", GP_METRICS, lambda: gp_metric("floor", "val_crps"),
+        "incumbent CRPS")
+    add("10.1625", GP_METRICS, lambda: gp_metric("duration_covariates", "val_crps"),
+        "best fitted arm CRPS")
+    add("+0.1568", GP_METRICS,
+        lambda: gp_metric("duration_covariates", "crps_vs_floor"),
+        "best fitted arm vs floor")
+    add("0.0406", GP_METRICS, lambda: gp_metric("floor", "val_tail_error"),
+        "incumbent tail error")
+    add("0.5310", GP_SHAPE,
+        lambda: _one(table(GP_SHAPE), "mean_abs_rel_error", arm="hybrid"),
+        "hybrid spell-shape error")
+    add("1.8105", GP_SHAPE,
+        lambda: _one(table(GP_SHAPE), "mean_abs_rel_error", arm="duration_covariates"),
+        "arm A spell-shape error")
+    add("5.0082", GP_SHAPE,
+        lambda: _one(table(GP_SHAPE), "mean_abs_rel_error", arm="calibrated_fallback"),
+        "fallback spell-shape error")
+    add("9.5806", GP_PROCESS, lambda: gp_process("fallback", "clustering_C"),
+        "matched clustering C")
+    add("1,297,766", GP_COLLAPSE, lambda: gp_collapse("transitions"), "transitions")
+    add("32,944", GP_COLLAPSE, lambda: gp_collapse("collapsed_binomial_rows"),
+        "collapsed rows")
+    add("39.4", GP_COLLAPSE, lambda: gp_collapse("collapse_ratio"), "collapse ratio")
+    add("16.74%", GP_SPELLS,
+        lambda: gp_spell("value", analysis="status_agreement",
+                         statistic="missed_outside_window_while_rostered"),
+        "rostered-but-absent share")
+    add("82.7%", GP_SPELLS,
+        lambda: gp_spell("value", analysis="status_agreement", statistic="agreement"),
+        "structural proxy agreement")
+    add("11,278", GP_SPELLS,
+        lambda: (gp_spell("nll", model="geometric")
+                 - gp_spell("nll", model="beta_geometric")),
+        "beta-geometric over geometric")
+    add("2.16", GP_SPELLS,
+        lambda: (gp_spell("p_ge_26", treatment="proper_censoring")
+                 / gp_spell("p_ge_26", treatment="drop_censored")),
+        "censoring understatement")
+    add("0.721", GP_SPELLS, lambda: gp_spell("a", treatment="proper_censoring"),
+        "censored fit a")
+    add("14.3", GP_SPELLS,
+        lambda: (gp_spell("hazard", analysis="hazard_by_streak", streak="1")
+                 / gp_spell("hazard", analysis="hazard_by_streak",
+                            streak="42-10000")),
+        "hazard fall across the streak range")
+    return C
+
+
+def _tail_standard_error(metric: str) -> float:
+    """`sqrt(p(1-p)/n)` on the rotation subpopulation — how well the Gate D *target* is
+    known. Comparable in size to the differences between candidates, which is why the doc
+    refuses to quote "closer to observed" as though the truth were known exactly."""
+    frame = table(STAN_AV_M)
+    if frame is None:
+        return float("nan")
+    p = _one(frame, "value", model="beta_binomial", group="rotation", metric=metric)
+    n = _one(frame, "n", model="beta_binomial", group="rotation", metric=metric)
+    return float(np.sqrt(p * (1 - p) / n))
+
+
 def _build() -> tuple[Claim, ...]:
     """Every claim, in doc order. One builder per doc — the registry is long enough that
     a single function made it hard to see which doc a section belonged to."""
     return tuple(_availability() + _composition() + _predictions() + _adp()
-                 + _claude() + _readme() + _shot_basis())
+                 + _claude() + _readme() + _shot_basis() + _games_played()
+                 + _games_played_in_claude())
 
 
 CLAIMS: tuple[Claim, ...] = _build()
@@ -3400,7 +4730,16 @@ def check_values(claims: tuple[Claim, ...] = CLAIMS,
             skipped.append(Finding("missing-artifact", claim.doc, claim.label,
                                    f"`{claim.artifact}` not built"))
             continue
-        actual = float(claim.actual())
+        try:
+            actual = float(claim.actual())
+        except MissingColumn as exc:
+            bad.append(Finding(
+                "schema-change", claim.doc, claim.label,
+                f"`{claim.artifact}` has no column {exc.args[0]!r} — the artifact's "
+                f"schema moved under this claim, so it is checking nothing. Requote "
+                f"from the column that replaced it and keep the old value as "
+                f"Claim(historical=True)."))
+            continue
         if actual != actual:                      # NaN — the lookup found no row
             skipped.append(Finding("no-such-row", claim.doc, claim.label,
                                    f"no row in `{claim.artifact}`"))

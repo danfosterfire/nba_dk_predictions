@@ -72,19 +72,30 @@ both arms of the behaviour.
 ## Gate 0 — the measurement
 
 `make stan-substitution` (`stan_components.substitution_sweep` →
-`outputs/predictions/stan_component_substitution_sweep.csv`, 52 rows). Its own target and
+`outputs/predictions/stan_component_substitution_sweep.csv`, 18 rows). Its own target and
 its own artifact, deliberately: `substitution_arm` is called from inside
 `stan_components.run()`, which writes all three component CSVs together, so refreshing this
-comparison through `make stan-components` would cost that target's 209 minutes *and* rewrite
-`stan_component_metrics.csv` — the artifact this sweep reads arm A's selected specs and
-best-of-16 grid from. Sixteen fits against seventy-four.
+comparison through `make stan-components` would cost that target's whole sweep *and* rewrite
+`stan_component_metrics.csv` — the artifact this sweep reads arm A's selected specs from.
+Eight fits against thirty-seven.
 
-10,194 player-seasons; 9,403 train / **791** test (2024-25, 2025-26), validation split
-8,630 fit / **773** select (2022-23, 2023-24). Selection reads validation only.
+**Validation only, since 2026-08-06.** `src/models/held_out.py` made the test split a
+capability rather than a convention, and this gate went through it with every other head:
+the test seasons are neither fitted nor scored here, and the end-of-project reading is
+`make final-evaluation`'s job. The gate was *already* selecting on validation and reporting
+test as confirmation, so nothing about the verdict turns on the change — but it removes a
+column a reader could mistake for a replication, and on this gate specifically it removes a
+live hazard, because `logit_own` clears its floor on test and fails it on validation. What
+the re-run retired is recorded in full below.
 
-- **Arm A** at each head's own validation-selected variant, read via
-  `season_terms.selected_specs()` from the artifact that chose it rather than re-derived —
-  `fg2a @ log_own`, `fg3a @ log_own_spline`.
+10,194 player-seasons; 8,630 fit / **773** select (2022-23, 2023-24 as validation).
+
+- **Arm A** at each head's own selected variant, read via `season_terms.selected_specs()`
+  from the artifact that chose it rather than re-derived — `fg2a @ log_own`,
+  `fg3a @ log_own_spline`. Adoption removed both heads from that artifact, so the lookup
+  now falls back to `LEGACY_ARM_A_SPECS`, which pins exactly those two variants. That
+  fallback is load-bearing: without it the specs default to `log_own`, which is precisely
+  the handicap this gate exists to remove.
 - **Arm B** swept for real: `fga` over (`linear`, `log_own`, `log_own_spline`) and
   `fg3a | fga` over (`linear`, `logit_own`, `logit_own_spline`). **Additive separability
   makes this 3 + 3 fits, not 9 combinations**: the joint density factors as
@@ -92,44 +103,62 @@ best-of-16 grid from. Sixteen fits against seventy-four.
   exactly minimising each term. `_g0_select` picks per factor and a test pins that the joint
   row it marks is the pair of per-factor winners.
 
-**The regression check passed to full precision, which is what licenses everything below.**
-Refitting arm A's test side reproduces `stan_component_metrics.csv` exactly — `fg2a@log_own`
-at **5.229492** and `fg3a@log_own_spline` at **5.248561** — and the refactored share arm at
-`(log_own, logit_own)` reproduces the recorded **9.991042**, to nine decimal places. Nothing
-upstream drifted between July and this measurement, so the corrected margin is a correction
-and not a different experiment.
+**The regression check is exact, and that is what licenses everything below.** Pinning arm B
+at the single `(log_own, logit_own)` configuration reproduces `substitution_arm`'s own arm B
+— **10.025950** against **10.025950**, a difference of **1.78e-15**, i.e. floating-point
+identity. The two are computed by different code in different modules from different entry
+points, so this is the strongest form the check can take, and it is stronger than the
+retired one it replaces: that compared this gate's *test* side against a July figure, where
+this compares two current measurements on the same rows.
+
+Three weaker corroborations behind it. The retired run fitted the validation side at
+500/500 and with the test half gone every fit runs 1000/1000; **no per-factor NLL below
+moved by more than 2.0e-04** across that doubling — the fourth decimal, against a margin of
+−0.501041, so the quantity being decided is ~2,500× the largest movement the refit produced.
+The four no-fit floors are pure arithmetic and reproduce to the digit. And `make
+stan-components` fits `fga` and `fg3a|fga` through a *different* code path — the
+`{made}_pct_lag1` naming convention rather than this gate's explicit `own=` — agreeing to
+within **1.7e-04** on all six of their shared cells, the same order as the gate's own
+sampling noise.
 
 ### Per-factor NLL, against each factor's own no-fit floor
 
-Held-out mean negative log-likelihood per player-season; lower is better. Conversion floors
-are **shrunk** carry-forwards with `k` fitted on train only, per `CLAUDE.md`.
+Validation mean negative log-likelihood per player-season; lower is better. Conversion
+floors are **shrunk** carry-forwards with `k` fitted on train only, per `CLAUDE.md`.
 
-| arm | factor | variant | val NLL | test NLL | val floor | test floor | selected |
-|---|---|---|---|---|---|---|---|
-| A | `fg2a` | `log_own` | 5.262971 | 5.229492 | 5.271028 | 5.292842 | ✓ |
-| A | `fg3a` | `log_own_spline` | 5.241963 | 5.248561 | 5.903396 | 5.731185 | ✓ |
-| B | `fga` | `linear` | 5.407438 | 5.426520 | 5.445210 | 5.432802 | |
-| B | `fga` | `log_own` | 5.390057 | 5.379640 | 5.445210 | 5.432802 | |
-| B | **`fga`** | **`log_own_spline`** | **5.388533** | **5.376766** | 5.445210 | 5.432802 | **✓** |
-| B | `fg3a\|fga` | `linear` | 4.912507 | 4.929134 | 4.619109 | 4.652797 | *fails floor* |
-| B | `fg3a\|fga` | `logit_own` | 4.636033 | 4.611402 | 4.619109 | 4.652797 | *fails floor on val* |
-| B | **`fg3a\|fga`** | **`logit_own_spline`** | **4.615620** | **4.607737** | 4.619109 | 4.652797 | **✓** |
+| arm | factor | variant | val NLL | val floor | selected |
+|---|---|---|---|---|---|
+| A | `fg2a` | `log_own` | 5.263114 | 5.271028 | ✓ |
+| A | `fg3a` | `log_own_spline` | 5.242045 | 5.903396 | ✓ |
+| B | `fga` | `linear` | 5.407505 | 5.445210 | |
+| B | `fga` | `log_own` | 5.389932 | 5.445210 | |
+| B | **`fga`** | **`log_own_spline`** | **5.388496** | 5.445210 | **✓** |
+| B | `fg3a\|fga` | `linear` | 4.912709 | 4.619109 | *fails floor* |
+| B | `fg3a\|fga` | `logit_own` | 4.636018 | 4.619109 | *fails floor* |
+| B | **`fg3a\|fga`** | **`logit_own_spline`** | **4.615622** | 4.619109 | **✓** |
 
 ### The verdict
 
-| split | arm A (selected) | arm B (selected) | margin |
-|---|---|---|---|
-| validation | 10.504935 | **10.004153** | **−0.500782** |
-| test | 10.478052 | **9.984503** | **−0.493549** |
+| arm A (selected) | arm B (selected) | margin |
+|---|---|---|
+| 10.505159 | **10.004118** | **−0.501041** |
 
-**Gate 0 passes.** Arm B wins on both splits, by more than the un-handicapping alone
-predicted: 0.305646 of the recorded 0.792657-nat test margin was the handicap, leaving
-−0.487010, and sweeping arm B recovers a further −0.006539 for **−0.493549**.
+**Gate 0 passes**, and the whole handicap decomposition is now measurable on the one split,
+where it used to need the test column. `substitution_arm` fits *both* arm-A heads at
+`log_own` and scores **10.797078**; fitting `fg3a` at the `log_own_spline` it actually
+selects brings arm A to **10.505159**, so **the handicap is 0.291919 nats**. Arm B pinned at
+`(log_own, logit_own)` is 10.025950 and swept is 10.004118, worth a further **−0.021832**.
+The recorded −0.771128 margin therefore decomposes exactly:
 
-**Against arm A's most favourable configuration it still wins by −0.491910.** The best of
-all sixteen (`fg2a` variant × `fg3a` variant) combinations in `stan_component_metrics.csv`
-is `log_own_spline + log_own_spline` at **10.476413** — published from the artifact at zero
-extra fits. So the result does not depend on which variant arm A is granted.
+```
+−0.771128  (recorded, both arms handicapped)
+ +0.291919  un-handicapping arm A — the correction, and it costs arm B most of its lead
+ −0.021832  sweeping arm B
+ ─────────
+ −0.501041  Gate 0
+```
+
+The gate survives its own correction with 65% of the recorded margin intact.
 
 ### ⭐ The finding worth remembering: the coordinate change beats the fitting
 
@@ -138,13 +167,18 @@ count, shrunk carry-forward for the share, no features anywhere:
 
 | | arm A | arm B | difference |
 |---|---|---|---|
-| no-fit floor, test | 11.024027 | **10.085599** | **−0.938427** |
-| best fitted, test | 10.476413 | 9.984503 | −0.491910 |
+| no-fit floor | 11.174424 | **10.064318** | **−1.110105** |
+| fitted (selected) | 10.505159 | 10.004118 | −0.501041 |
 
-**Arm B's no-fit floor beats arm A's best fitted configuration by −0.390814 nats.** Writing
-the identity in the right basis is worth more than everything the canonical basis's fitting
-buys, and it is ~79% of the total margin: arm B's own fitted heads add only **−0.101096**
+**Arm B's no-fit floor beats arm A's fitted configuration by −0.440841 nats.** Writing the
+identity in the right basis is worth more than everything the canonical basis's fitting
+buys, and it is ~88% of the total margin: arm B's own fitted heads add only **−0.060200**
 on top of its floor.
+
+The floors are the one part of this gate that is arithmetic all the way down, so this table
+is the most stable thing in the doc — and the gap it reports is **wider** on validation than
+the −0.938427 the retired test column showed. Since the floors themselves reproduce exactly,
+the widening is the fitted side moving, not the benchmark.
 
 That reframes the result. This is not "a better model of shot attempts" — it is the same
 information written in coordinates where the dependence is structural instead of residual.
@@ -155,22 +189,82 @@ the remaining leverage is.
 ### Two secondary results
 
 - **The share head needs its spline to clear its floor, and `logit_own` alone does not.**
-  On validation `logit_own` reads 4.636033 against a floor of 4.619109 — *below* the floor —
-  and only `logit_own_spline` clears it, at 4.615620. On test `logit_own` does clear
-  (4.611402 vs 4.652797), so **a test-only reading would have shipped a variant that fails
-  its floor on the split that selects.** Same shape as the NB-vs-Poisson result on the count
-  heads and the `binomial` arm on the composition: the flexible term is not a refinement,
-  it is the difference between a model and a failure. `linear` fails on both splits.
-- **For `fga` the spline is nearly free and nearly pointless** — 5.388533 against
-  `log_own`'s 5.390057 on validation, a margin of 0.0015. Unlike `fg3a`, where the spline is
+  On validation `logit_own` reads 4.636018 against a floor of 4.619109 — *below* the floor —
+  and only `logit_own_spline` clears it, at 4.615622. **This is the one place in this gate
+  where the split move changes what would ship**: on test `logit_own` cleared (4.611402
+  against a 4.652797 floor), so a reader taking the test column would have selected a
+  variant that fails its floor on the split that selects. Same shape as the NB-vs-Poisson
+  result on the count heads and the `binomial` arm on the composition: the flexible term is
+  not a refinement, it is the difference between a model and a failure. `linear` fails
+  outright.
+- **For `fga` the spline is nearly free and nearly pointless** — 5.388496 against
+  `log_own`'s 5.389932 on validation, a margin of 0.0014. Unlike `fg3a`, where the spline is
   decisive, `fga` is a well-behaved total and the log scale is essentially the whole answer.
   It is selected because validation selects it, not because it matters.
 
 ### Sampler
 
-16 fits, **max R̂ 1.0087**, **0 divergences**, 46.5 minutes total. A handful of
-treedepth-saturated iterations on the spline arms (≤0.6% of draws), which is the recorded
-B-spline conditioning cost and not a convergence problem.
+8 fits, **max R̂ 1.0047**, **0 divergences**, **26.8** minutes total, and **0** treedepth
+saturations. Dropping the test half halved the fit count while every remaining fit went from
+half-length to full-length chains, and the sampler is *better behaved* for it on both
+counts: max R̂ falls from 1.0087 to 1.0047, and the 5 saturated iterations the retired run
+logged on `fg3a@log_own_spline` are gone. The spline arms remain the cost centre —
+`fg3a|fga@logit_own_spline` alone is 9.7 of the 26.8 minutes.
+
+### ⚠️ What the validation-only re-run retired, 2026-08-06
+
+Everything in this block is a **superseded measurement kept as a record**, not a live figure.
+`src/models/held_out.py` locked the test split, `substitution_sweep` stopped fitting or
+scoring it, and this gate's artifact was rebuilt with the validation half only. No artifact
+verifies these numbers any more, so `src/docs_audit.py` carries them as
+`Claim(historical=True)` — presence-checked, so they cannot be tidied away, and exempt from
+the value check, because there is nothing left to check them against. **The figures above
+are the live ones; every figure below is history.**
+
+The retired run scored **791** test rows against the validation half's 773, over **52**
+artifact rows and **16** fits (max R̂ **1.0087**, 0 divergences, **46.5** minutes) — the
+test side being the majority of that compute, at double the sampler iterations.
+
+| arm | factor | variant | test NLL | test floor |
+|---|---|---|---|---|
+| A | `fg2a` | `log_own` | 5.229492 | 5.292842 |
+| A | `fg3a` | `log_own_spline` | 5.248561 | 5.731185 |
+| B | `fga` | `linear` | 5.426520 | 5.432802 |
+| B | `fga` | `log_own` | 5.379640 | 5.432802 |
+| B | `fga` | `log_own_spline` | 5.376766 | 5.432802 |
+| B | `fg3a\|fga` | `linear` | 4.929134 | 4.652797 |
+| B | `fg3a\|fga` | `logit_own` | 4.611402 | 4.652797 |
+| B | `fg3a\|fga` | `logit_own_spline` | 4.607737 | 4.652797 |
+
+The test verdict was arm A **10.478052** against arm B **9.984503**, a margin of
+**−0.493549** — the figure the adoption decision was written against. Its decomposition:
+**0.305646** of the recorded 0.792657-nat margin was the handicap, leaving **−0.487010**,
+and sweeping arm B added a further **−0.006539**. The `(log_own, logit_own)` cell summed to
+**9.991042**, which is what made it the regression check against `substitution_arm`.
+
+Two things retired with the test column that the validation half cannot replace:
+
+- **Arm A's best-of-16.** The grid was read out of `stan_component_metrics.csv`'s `test_nll`
+  at zero extra fits; adoption removed `fg2a` and `fg3a` from that file and the split move
+  removed the column, so `_arm_a_grid` now returns empty by both routes. Its minimum was
+  `log_own_spline + log_own_spline` at **10.476413**, against which arm B won by
+  **−0.491910**. **The loss costs the argument 0.001640 nats** — that is the whole distance
+  between the grid minimum and arm A's *own selected* configuration (10.478052), which the
+  gate still fits. "Arm B wins even against arm A's most favourable configuration" and "arm
+  B wins against arm A as it would actually be fitted" were never meaningfully different
+  claims here, and only the second one needs the grid.
+- **The floor comparison on test**, which read **11.024027** against **10.085599** for a
+  **−0.938427** gap, putting arm B's floor **−0.390814** ahead of arm A's best fitted and
+  arm B's own fitting at **−0.101096** on top of its floor. The validation table above is
+  the live version of this and the gap is *wider* there, so the finding survives the move
+  with room to spare.
+
+The handicapped pair that motivated the whole gate — **−0.771** on validation and **−0.793**
+on test, the latter unsigned as **0.792657** — is now half live and half history.
+`stan_component_substitution.csv` still carries the validation figure and it is still
+value-checked there. The test figure had been recovered from *this* artifact's test rows
+after that file went validation-only on 2026-08-06; this re-run removed that last copy, so
+it is a presence-checked record now like the rest of this block.
 
 ## What adoption required — and what it did
 
@@ -314,11 +408,15 @@ look.
 
 ## Risks
 
-- **The margin is per player-season on 791 test rows**, and no paired bootstrap has been run
-  on it. The repo has one recorded false positive that survived a paired interval
+- **The margin is per player-season on 773 validation rows**, and no paired bootstrap has
+  been run on it. The repo has one recorded false positive that survived a paired interval
   (the minutes-head nonlinearity arm, 95% CI [−0.079, −0.015] and it did not replicate), so
-  the defence here is that the result replicates across splits and survives arm A's
-  best-of-16 — not the interval.
+  the interval was never the defence. **What the defence used to be — that the result
+  replicates across splits — is gone with the test column**, and that is the honest cost of
+  the move. What replaces it is weaker in kind but not nothing: the margin survived a
+  doubling of chain length in the fifth decimal, it is ~25× the largest movement any
+  refit has produced, and the floor-to-floor comparison that carries most of it involves no
+  sampling at all.
 - **Both arm-B factors selected spline variants**, and spline bases are the repo's known
   HMC cost centre. An orthogonalized (QR-whitened) basis is the standing fix if the shipped
   spec ends up carrying two of them.
@@ -329,6 +427,9 @@ look.
 - **Gate 0 is a measurement of the RETIRED basis and is no longer fully re-runnable.** Arm
   A's heads are gone from `stan_component_metrics.csv`, so `substitution_sweep` falls back
   to `LEGACY_ARM_A_SPECS` — pinned constants recording what that artifact selected before
-  adoption — and the best-of-16 grid, which is read from the pre-adoption metrics file,
-  survives only inside the gate's own artifact. That artifact is the record; re-deriving the
-  grid would need the pre-adoption metrics CSV restored.
+  adoption. The best-of-16 grid is worse off than that: it was read from the pre-adoption
+  metrics file's `test_nll`, and **both** halves of that lookup are now gone — the head rows
+  to adoption, the column to the split move — so `_arm_a_grid` returns empty by two
+  independent routes and re-deriving it would need the pre-adoption metrics CSV restored
+  *and* the test split unlocked. It is worth 0.001640 nats, so this is a bookkeeping loss
+  rather than an evidential one.

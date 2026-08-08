@@ -26,11 +26,11 @@ so it was thirteen independent GLMs in one file paying the full joint-fit price.
 in the model.
 
 The correlation the simulator needs enters at **draw** time: one `min` draw pushed through
-all eleven heads as exposure (minutes is 18.6% of within-player residual variance, by far
+all eleven heads as exposure (minutes is **46.4%** of within-player residual variance, by far
 the largest common factor), then a Gaussian copula for the remainder if needed —
 conditioning minutes out, the residual off-diagonals average **+0.007** with a max of
-+0.142. The one structural exception was the 3PA/2PA substitution, and the shot-attempt
-basis removes it from the copula entirely rather than coupling two count heads.
+**+0.1329** (`fga`-`reb`). The one structural exception was the 3PA/2PA substitution, and the
+shot-attempt basis removes it from the copula entirely rather than coupling two count heads.
 `substitution_arm` below now measures the RETIRED two-count basis against the shipped one.
 
 ## Season-collapsed, which is also an identity
@@ -49,8 +49,17 @@ not a model. `beats_floor` is on every output row. The conversion floor has to b
 *shrunk* carry-forward: a player who went 0-for-3 from three has a prior 3P% of exactly
 0.000, and carrying that onto 200 attempts gives a beta-binomial NLL of 1.3e9.
 
-**A validation split.** Variants are selected on a split carved out of train; the test
-column is confirmation only. The measured expectation (`make component-rates`) is that
+**A validation split, and only that.** Variants are selected on a split carved out of
+train, and since 2026-08-05 the test seasons are neither fitted nor scored here —
+`src/models/held_out.py` raises on anything that reaches for them, and
+`src/final_evaluation.py` takes the held-out reading once. Removing the test column removed
+two things at once: the standing invitation to select on it, and a confound, because the
+test side used to **refit on train + validation at double the sampler iterations**, so a
+val/test disagreement conflated the evaluation rows with the training data and the chain
+length and could not serve as the replication check it looked like. Selection now runs at
+full-length chains, since there is no longer a cheap side to trade against.
+
+The measured expectation (`make component-rates`) is that
 **scale beats curvature**: `log E[rate] = beta*log(prior rate)` makes the model
 `rate ~ prior_rate^beta`, which is the right shape, while linear-in-raw-rate inside `exp()`
 is badly misspecified — R^2 0.520 on `fg3a` and 0.638 on `blk` under Poisson, and far worse
@@ -74,7 +83,8 @@ from src.models.component_rates import (BIO_COLS, CONTEXT_COLS, CONVERSION_HEADS
                                         COUNT_HEADS, add_log, add_spline,
                                         build_design, carry_forward,
                                         carry_forward_conversion, fit_nb_dispersion,
-                                        impute, nb_nll, split_seasons)
+                                        impute, nb_nll)
+from src.models.held_out import selection_split
 from src.models.stan_utils import (YearTerm, compile_model, crps_from_samples,
                                    diagnostics_frame, ks_uniform,
                                    pit_from_samples, posterior,
@@ -381,59 +391,59 @@ def conversion_floor(train: pd.DataFrame, test: pd.DataFrame, made: str,
 
 # ── Sweeps ────────────────────────────────────────────────────────────────────
 
-def _iters(cfg_stan: dict, fast: bool) -> dict:
-    if fast:
-        return {"warmup": int(cfg_stan.get("select_warmup", 500)),
-                "samples": int(cfg_stan.get("select_samples", 500))}
+def _iters(cfg_stan: dict) -> dict:
+    """Full-length chains for every fit.
+
+    There used to be a `fast` arm at half the iterations for the selection side, paid for
+    by the test side running long. With the test side gone there is nothing to trade
+    against — and the split budget was a second difference sitting inside a comparison that
+    was being read as a replication check.
+    """
     return {"warmup": int(cfg_stan.get("warmup", 1000)),
             "samples": int(cfg_stan.get("samples", 1000))}
 
 
-def sweep_counts(train, val, test, full_train, cfg_stan, n_knots
-                 ) -> tuple[pd.DataFrame, list[dict]]:
-    """Every count head x variant on both splits. Selection reads validation only."""
+def _metric_columns(scored: dict) -> dict:
+    """Every metric from `score_count` / `score_conversion`, prefixed `val_`.
+
+    Prefixed even though there is only one split now, because these column names are read
+    by `season_terms.selected_specs`, `substitution_sweep` and the docs auditor, and a bare
+    `r2` would be indistinguishable from the `test_r2` this artifact used to carry.
+    """
+    return {f"val_{k}": v for k, v in scored.items()}
+
+
+def sweep_counts(train, val, cfg_stan, n_knots) -> tuple[pd.DataFrame, list[dict]]:
+    """Every count head x variant, on the VALIDATION split only.
+
+    Halves the fit count and doubles what each fit is worth: the old sweep ran each variant
+    twice, once short against `val` and once long against `test`, and only the first of
+    those was ever allowed to decide anything.
+    """
     seed = int(cfg_stan.get("seed", 42))
     chains = int(cfg_stan.get("chains", 4))
     rows, diagnostics = [], []
 
     for component in COUNT_HEADS:
         floor_val = count_floor(train, val, component, seed)
-        floor_test = count_floor(full_train, test, component, seed)
         rows.append({"head": component, "kind": "count", "variant": "carry_forward",
-                     "n_features": 0, "val_r2": floor_val["r2"],
-                     "val_crps": floor_val["crps"],
-                     **{f"test_{k}": v for k, v in floor_test.items()}})
+                     "n_features": 0, **_metric_columns(floor_val)})
 
-        val_variants = count_variants(train, val, component, n_knots)
-        test_variants = count_variants(full_train, test, component, n_knots)
-        for label in val_variants:
-            v_tr, v_te, v_features = val_variants[label]
+        for label, (v_tr, v_te, v_features) in count_variants(
+                train, val, component, n_knots).items():
             v_model = StanCount(v_features, component, name=f"{component}/{label}/val",
                                 chains=chains, seed=seed,
-                                **_iters(cfg_stan, True)).fit(v_tr)
+                                **_iters(cfg_stan)).fit(v_tr)
             diagnostics.append(v_model.diagnostics)
             v_y = v_te[component].to_numpy(float)
             v = score_count(v_y, v_model.predict_mean(v_te),
                             v_model.predict_samples(v_te, seed), v_model.phi, seed)
-
-            t_tr, t_te, t_features = test_variants[label]
-            t_model = StanCount(t_features, component, name=f"{component}/{label}/test",
-                                chains=chains, seed=seed,
-                                **_iters(cfg_stan, False)).fit(t_tr)
-            diagnostics.append(t_model.diagnostics)
-            t_y = t_te[component].to_numpy(float)
-            t = score_count(t_y, t_model.predict_mean(t_te),
-                            t_model.predict_samples(t_te, seed), t_model.phi, seed)
-
             rows.append({"head": component, "kind": "count", "variant": label,
-                         "n_features": len(t_features), "val_r2": v["r2"],
-                         "val_crps": v["crps"],
-                         **{f"test_{k}": val for k, val in t.items()}})
-    return _finalize(pd.DataFrame(rows), "val_r2", "test_r2", higher_is_better=True), diagnostics
+                         "n_features": len(v_features), **_metric_columns(v)})
+    return _finalize(pd.DataFrame(rows), "val_r2", higher_is_better=True), diagnostics
 
 
-def sweep_conversions(train, val, test, full_train, cfg_stan, n_knots
-                      ) -> tuple[pd.DataFrame, list[dict]]:
+def sweep_conversions(train, val, cfg_stan, n_knots) -> tuple[pd.DataFrame, list[dict]]:
     seed = int(cfg_stan.get("seed", 42))
     chains = int(cfg_stan.get("chains", 4))
     rows, diagnostics = [], []
@@ -441,35 +451,19 @@ def sweep_conversions(train, val, test, full_train, cfg_stan, n_knots
     for made, attempted in CONVERSION_HEADS:
         head = f"{made}|{attempted}"
         floor_val = conversion_floor(train, val, made, attempted, seed)
-        floor_test = conversion_floor(full_train, test, made, attempted, seed)
         rows.append({"head": head, "kind": "conversion", "variant": "carry_forward",
-                     "n_features": 0, "val_nll": floor_val["nll"],
-                     "val_crps": floor_val["crps"],
-                     **{f"test_{k}": v for k, v in floor_test.items()}})
+                     "n_features": 0, **_metric_columns(floor_val)})
 
-        val_variants = conversion_variants(train, val, made, attempted, n_knots)
-        test_variants = conversion_variants(full_train, test, made, attempted, n_knots)
-        for label in val_variants:
-            v_tr, v_te, v_features = val_variants[label]
+        for label, (v_tr, v_te, v_features) in conversion_variants(
+                train, val, made, attempted, n_knots).items():
             v_model = StanConversion(v_features, made, attempted,
                                      name=f"{head}/{label}/val", chains=chains,
-                                     seed=seed, **_iters(cfg_stan, True)).fit(v_tr)
+                                     seed=seed, **_iters(cfg_stan)).fit(v_tr)
             diagnostics.append(v_model.diagnostics)
             v = _score_conv(v_model, v_te, made, attempted, seed)
-
-            t_tr, t_te, t_features = test_variants[label]
-            t_model = StanConversion(t_features, made, attempted,
-                                     name=f"{head}/{label}/test", chains=chains,
-                                     seed=seed, **_iters(cfg_stan, False)).fit(t_tr)
-            diagnostics.append(t_model.diagnostics)
-            t = _score_conv(t_model, t_te, made, attempted, seed)
-
             rows.append({"head": head, "kind": "conversion", "variant": label,
-                         "n_features": len(t_features), "val_nll": v["nll"],
-                         "val_crps": v["crps"],
-                         **{f"test_{k}": val for k, val in t.items()}})
-    return _finalize(pd.DataFrame(rows), "val_nll", "test_nll",
-                     higher_is_better=False), diagnostics
+                         "n_features": len(v_features), **_metric_columns(v)})
+    return _finalize(pd.DataFrame(rows), "val_nll", higher_is_better=False), diagnostics
 
 
 def _score_conv(model: StanConversion, frame: pd.DataFrame, made: str, attempted: str,
@@ -482,15 +476,21 @@ def _score_conv(model: StanConversion, frame: pd.DataFrame, made: str, attempted
                             model.predict_samples(live, seed), model.rho, seed)
 
 
-def _finalize(table: pd.DataFrame, val_col: str, test_col: str,
+def _finalize(table: pd.DataFrame, val_col: str,
               higher_is_better: bool) -> pd.DataFrame:
     """Mark the validation-selected variant per head, and whether it clears the floor.
 
-    Two separate flags on purpose. `selected` answers "which variant would I ship", and it
-    is decided on validation. `beats_floor` answers "is this a model at all", and it is a
-    held-out fact about the shipped variant. A head can be selected and still fail the
-    floor — `ftm|fta` is the known case, and reporting it as a win would be the error this
-    column exists to prevent.
+    Two separate flags on purpose. `selected` answers "which variant would I ship";
+    `beats_floor` answers "is this a model at all". A head can be selected and still fail
+    the floor — `ftm|fta` is the known case, and reporting it as a win would be the error
+    this column exists to prevent.
+
+    **Both now read the same column, and that is the change worth noticing.** `beats_floor`
+    used to be a *held-out* fact while `selected` was a validation one, so the artifact
+    carried a head that had been chosen on one split and certified on another. Since the
+    test side is no longer scored here, the floor comparison is the honest one it should
+    always have been: does the variant I would ship beat arithmetic on the rows I chose it
+    with? The end-of-project certification is `src/final_evaluation.py`'s job.
     """
     out = table.copy()
     out["selected"] = False
@@ -501,8 +501,8 @@ def _finalize(table: pd.DataFrame, val_col: str, test_col: str,
             continue
         best = (fitted[val_col].idxmax() if higher_is_better else fitted[val_col].idxmin())
         out.loc[best, "selected"] = True
-        floor = block[block["variant"] == "carry_forward"][test_col].iloc[0]
-        better = (block[test_col] > floor) if higher_is_better else (block[test_col] < floor)
+        floor = block[block["variant"] == "carry_forward"][val_col].iloc[0]
+        better = (block[val_col] > floor) if higher_is_better else (block[val_col] < floor)
         out.loc[block.index, "beats_floor"] = better
         out.loc[block[block["variant"] == "carry_forward"].index, "beats_floor"] = True
     return out
@@ -531,7 +531,7 @@ def add_substitution_columns(design: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def substitution_arm(train, val, test, full_train, cfg_stan, n_knots
+def substitution_arm(train, val, cfg_stan, n_knots
                      ) -> tuple[pd.DataFrame, list[dict]]:
     """Two Poissons vs `fga` count x `fg3a | fga` share — compared as joint densities.
 
@@ -547,15 +547,18 @@ def substitution_arm(train, val, test, full_train, cfg_stan, n_knots
     **The comparison is legitimate because the map is a bijection.** `(fg2a, fg3a)` and
     `(fga = fg2a + fg3a, fg3a)` are the same point in different coordinates, with unit
     Jacobian on the integers, so the two joint log-densities are directly comparable. Mean
-    joint NLL over the test rows is therefore an apples-to-apples number and not a
+    joint NLL over the scored rows is therefore an apples-to-apples number and not a
     scale-mismatched one.
+
+    Validation only since 2026-08-05. The `for split in {...}` loop is kept with one entry
+    rather than unrolled, because `split` is a column of the artifact and `_g0_select`
+    keys on it — the shape stays right if a second frame is ever legitimately added.
     """
     seed = int(cfg_stan.get("seed", 42))
     chains = int(cfg_stan.get("chains", 4))
     rows, diagnostics = [], []
 
-    for split, (tr, te) in {"val": (train, val), "test": (full_train, test)}.items():
-        fast = split == "val"
+    for split, (tr, te) in {"val": (train, val)}.items():
         tr, te = add_substitution_columns(tr), add_substitution_columns(te)
 
         # Arm A — the canonical pair, two independent count heads.
@@ -565,7 +568,7 @@ def substitution_arm(train, val, test, full_train, cfg_stan, n_knots
             v_tr, v_te, features = variants["log_own"]
             model = StanCount(features, component, name=f"subst/{component}/{split}",
                               chains=chains, seed=seed,
-                              **_iters(cfg_stan, fast)).fit(v_tr)
+                              **_iters(cfg_stan)).fit(v_tr)
             diagnostics.append(model.diagnostics)
             nll_a += nb_nll(v_te[component].to_numpy(float),
                             np.clip(model.predict_mean(v_te), 1e-6, None), model.phi)
@@ -574,7 +577,7 @@ def substitution_arm(train, val, test, full_train, cfg_stan, n_knots
         variants = count_variants(tr, te, "fga", n_knots)
         v_tr, v_te, features = variants["log_own"]
         fga_model = StanCount(features, "fga", name=f"subst/fga/{split}", chains=chains,
-                              seed=seed, **_iters(cfg_stan, fast)).fit(v_tr)
+                              seed=seed, **_iters(cfg_stan)).fit(v_tr)
         diagnostics.append(fga_model.diagnostics)
         nll_b = nb_nll(v_te["fga"].to_numpy(float),
                        np.clip(fga_model.predict_mean(v_te), 1e-6, None), fga_model.phi)
@@ -589,7 +592,7 @@ def substitution_arm(train, val, test, full_train, cfg_stan, n_knots
         s_tr, s_te, share_features = share_variants["logit_own"]
         share_model = StanConversion(share_features, "fg3a", "fga",
                                      name=f"subst/fg3a|fga/{split}", chains=chains,
-                                     seed=seed, **_iters(cfg_stan, fast)).fit(s_tr)
+                                     seed=seed, **_iters(cfg_stan)).fit(s_tr)
         diagnostics.append(share_model.diagnostics)
         n = np.rint(s_te["fga"].to_numpy(float)).astype(int)
         y = np.minimum(np.rint(s_te["fg3a"].to_numpy(float)).astype(int), n)
@@ -647,7 +650,7 @@ def _share_nll(model: "StanConversion", frame: pd.DataFrame, made: str,
     return out
 
 
-def substitution_sweep(train, val, test, full_train, cfg_stan, n_knots,
+def substitution_sweep(train, val, cfg_stan, n_knots,
                        predictions_dir: Path) -> tuple[pd.DataFrame, list[dict]]:
     """Gate 0 — the same comparison as `substitution_arm`, with both arms un-handicapped.
 
@@ -663,11 +666,14 @@ def substitution_sweep(train, val, test, full_train, cfg_stan, n_knots,
     `p(fga) · p(fg3a | fga)`, and the two factors share no parameters, so they select
     **independently** — 3 + 3 fits per split, not 9 combinations.
 
-    Selection reads validation only; the test column is confirmation. `val_nll` is empty
-    for count heads in `stan_component_metrics.csv`, so arm A's validation side genuinely
-    has to be refitted — and refitting its test side too makes the artifact
-    self-contained *and* doubles as the falsification that the design has not drifted
-    since July: `fg2a @ log_own` must come back at the recorded 5.229492.
+    **Validation only since 2026-08-05, re-run 2026-08-06.** The gate was already selecting
+    on validation and reporting test as confirmation; the test half is now simply not run,
+    which halves the fits and removes the column a reader could mistake for a replication.
+    It also removes a real hazard specific to this gate, and that one is measured rather
+    than hypothetical: `fg3a|fga @ logit_own` **clears** its no-fit floor on test (4.611402
+    against 4.652797) and **fails** it on validation (4.635963 against 4.619109). A reader
+    taking the test column would have shipped a variant that loses to arithmetic on the
+    split that selects. Only `logit_own_spline` clears on both.
 
     The comparison stays legitimate for the same reason it always was: `(fg2a, fg3a)` and
     `(fga, fg3a)` are the same point in different coordinates, a bijection with unit
@@ -686,8 +692,7 @@ def substitution_sweep(train, val, test, full_train, cfg_stan, n_knots,
     print(f"  arm A specs read from stan_component_metrics.csv: "
           f"{', '.join(f'{h}@{specs[h]}' for h in SUBSTITUTION_PAIR)}")
 
-    for split, (tr, te) in {"val": (train, val), "test": (full_train, test)}.items():
-        fast = split == "val"
+    for split, (tr, te) in {"val": (train, val)}.items():
         tr, te = add_substitution_columns(tr), add_substitution_columns(te)
         per_head: dict[tuple[str, str], np.ndarray] = {}
 
@@ -699,7 +704,7 @@ def substitution_sweep(train, val, test, full_train, cfg_stan, n_knots,
             model = StanCount(features, component,
                               name=f"gate0/{component}/{spec}/{split}",
                               chains=chains, seed=seed,
-                              **_iters(cfg_stan, fast)).fit(v_tr)
+                              **_iters(cfg_stan)).fit(v_tr)
             diagnostics.append(model.diagnostics)
             nll = nb_nll(v_te[component].to_numpy(float),
                          np.clip(model.predict_mean(v_te), 1e-6, None), model.phi)
@@ -715,7 +720,7 @@ def substitution_sweep(train, val, test, full_train, cfg_stan, n_knots,
             v_tr, v_te, features = fga_variants[label]
             model = StanCount(features, "fga", name=f"gate0/fga/{label}/{split}",
                               chains=chains, seed=seed,
-                              **_iters(cfg_stan, fast)).fit(v_tr)
+                              **_iters(cfg_stan)).fit(v_tr)
             diagnostics.append(model.diagnostics)
             nll = nb_nll(v_te["fga"].to_numpy(float),
                          np.clip(model.predict_mean(v_te), 1e-6, None), model.phi)
@@ -734,7 +739,7 @@ def substitution_sweep(train, val, test, full_train, cfg_stan, n_knots,
             model = StanConversion(features, "fg3a", "fga",
                                    name=f"gate0/fg3a|fga/{label}/{split}",
                                    chains=chains, seed=seed,
-                                   **_iters(cfg_stan, fast)).fit(s_tr)
+                                   **_iters(cfg_stan)).fit(s_tr)
             diagnostics.append(model.diagnostics)
             nll = _share_nll(model, s_te, "fg3a", "fga")
             per_head[("fga_x_fg3a_share", f"fg3a|fga/{label}")] = nll
@@ -805,11 +810,27 @@ def _arm_a_grid(predictions_dir: Path) -> pd.DataFrame:
     *minimum*: it turns "we removed the handicap" into "arm B wins even against arm A's
     most favourable configuration", which is the version that cannot be argued with.
     Missing artifact returns empty, matching the module's skip-don't-fail convention.
+
+    **It returns empty now, by two independent routes, and neither is a defect.** Adoption
+    removed `fg2a` and `fg3a` from `stan_component_metrics.csv`, so there are no rows to
+    grid over; the held-out conversion removed `test_nll`, so there is no column to grid on
+    either. Both guards are below and both fire.
+
+    **The recorded best-of-16 is therefore gone from every artifact**, including this
+    gate's own, which was rebuilt validation-only on 2026-08-06. It is preserved as a
+    presence-checked figure in `docs/shot-attempt-basis-plan.md` and nothing verifies it.
+    That is an acceptable loss and the reason is worth stating: the grid minimum
+    (`log_own_spline + log_own_spline`, 10.476413) beat arm A's *own selected* pair
+    (10.478052) by **0.001640 nats**, so "arm B wins even against arm A's most favourable
+    configuration" and "arm B wins against arm A as it would actually be fitted" were never
+    materially different claims, and the gate still measures the second one.
     """
     path = Path(predictions_dir) / "stan_component_metrics.csv"
     if not path.exists():
         return pd.DataFrame()
     table = pd.read_csv(path)
+    if "test_nll" not in table.columns:
+        return pd.DataFrame()
     per = {c: table[table["head"] == c].set_index("variant")["test_nll"].to_dict()
            for c in SUBSTITUTION_PAIR}
     if not all(per.values()):
@@ -835,29 +856,27 @@ def run(cfg: dict) -> dict[str, Path]:
 
     targets = pd.read_parquet(features_dir / "component_targets.parquet")
     design = build_design(targets, cfg["data"]["seasons"], cfg["data"]["raw_dir"])
-    full_train, test = split_seasons(design, test_seasons)
-    order = sorted(full_train["season"].unique())
-    train, val = split_seasons(full_train, min(test_seasons, len(order) - 1))
+    train, val = selection_split(design, test_seasons)
 
     print(f"Stan component heads: {len(design):,} player-seasons, "
           f"{design['season'].nunique()} target seasons")
-    print(f"  {len(full_train):,} train / {len(test):,} test "
-          f"({', '.join(sorted(test['season'].unique()))} held out)")
-    print(f"  validation split: {len(train):,} fit / {len(val):,} select "
-          f"({', '.join(sorted(val['season'].unique()))})")
+    print(f"  The test split is LOCKED — this sweep fits and scores VALIDATION only\n"
+          f"  (src/models/held_out.py). The held-out reading is taken once, by "
+          f"`make final-evaluation`.")
+    print(f"  {len(train):,} fit / {len(val):,} select "
+          f"({', '.join(sorted(val['season'].unique()))} as validation)")
     print(f"  {len(COUNT_HEADS)} count heads + {len(CONVERSION_HEADS)} conversion heads, "
           f"fitted SEPARATELY — the chain factorizes the joint posterior exactly.\n")
 
-    counts, diag_counts = sweep_counts(train, val, test, full_train, cfg_stan, n_knots)
-    print("Count heads — held-out R^2 on the season total (higher is better):")
-    print(counts.pivot_table(index="head", columns="variant", values="test_r2")
+    counts, diag_counts = sweep_counts(train, val, cfg_stan, n_knots)
+    print("Count heads — validation R^2 on the season total (higher is better):")
+    print(counts.pivot_table(index="head", columns="variant", values="val_r2")
           .reindex(columns=["carry_forward", "linear", "log_own", "log_own_spline"])
           .round(4).to_string())
 
-    conversions, diag_conv = sweep_conversions(train, val, test, full_train, cfg_stan,
-                                               n_knots)
-    print("\nConversion heads — held-out beta-binomial NLL per row (lower is better):")
-    print(conversions.pivot_table(index="head", columns="variant", values="test_nll")
+    conversions, diag_conv = sweep_conversions(train, val, cfg_stan, n_knots)
+    print("\nConversion heads — validation beta-binomial NLL per row (lower is better):")
+    print(conversions.pivot_table(index="head", columns="variant", values="val_nll")
           .reindex(columns=["carry_forward", "linear", "logit_own", "logit_own_spline"])
           .round(4).to_string())
 
@@ -867,8 +886,8 @@ def run(cfg: dict) -> dict[str, Path]:
     for _, row in chosen.iterrows():
         floor = table[(table["head"] == row["head"])
                       & (table["variant"] == "carry_forward")].iloc[0]
-        metric, better = ("test_r2", row["test_r2"] - floor["test_r2"]) \
-            if row["kind"] == "count" else ("test_nll", floor["test_nll"] - row["test_nll"])
+        metric, better = ("val_r2", row["val_r2"] - floor["val_r2"]) \
+            if row["kind"] == "count" else ("val_nll", floor["val_nll"] - row["val_nll"])
         mark = "" if row["beats_floor"] else "   <-- DOES NOT CLEAR THE FLOOR"
         print(f"  {row['head']:<12} {row['variant']:<18} {metric} "
               f"{row[metric]:8.4f} vs floor {floor[metric]:8.4f} "
@@ -885,8 +904,7 @@ def run(cfg: dict) -> dict[str, Path]:
     else:
         print("\nEvery head has a variant clearing the no-fit floor.")
 
-    substitution, diag_subst = substitution_arm(train, val, test, full_train, cfg_stan,
-                                                n_knots)
+    substitution, diag_subst = substitution_arm(train, val, cfg_stan, n_knots)
     print("\n3PA/2PA substitution — two count heads vs `fga` count x `fg3a | fga` share:")
     print(substitution.round(4).to_string(index=False))
     print("  Comparable because the map is a bijection with unit Jacobian on the integers:\n"
@@ -921,9 +939,9 @@ def run_substitution_sweep(cfg: dict) -> dict[str, Path]:
 
     Deliberately a separate entry point from `run`. `substitution_arm` is called from
     inside `run`, which writes all three component CSVs together, so refreshing the
-    substitution comparison through it would cost the full 209-minute sweep and would
-    also rewrite `stan_component_metrics.csv` — the artifact this sweep *reads* arm A's
-    selected specs and best-of-16 grid from. Sixteen fits against seventy-four.
+    substitution comparison through it would cost that target's full sweep and would also
+    rewrite `stan_component_metrics.csv` — the artifact this sweep *reads* arm A's selected
+    specs from. Eight fits against thirty-seven.
     """
     features_dir = Path(cfg["data"]["features_dir"])
     out_dir = Path(cfg["evaluation"]["predictions_dir"])
@@ -933,14 +951,12 @@ def run_substitution_sweep(cfg: dict) -> dict[str, Path]:
 
     targets = pd.read_parquet(features_dir / "component_targets.parquet")
     design = build_design(targets, cfg["data"]["seasons"], cfg["data"]["raw_dir"])
-    full_train, test = split_seasons(design, 2)
-    order = sorted(full_train["season"].unique())
-    train, val = split_seasons(full_train, min(2, len(order) - 1))
-    print(f"Gate 0 — {len(design):,} player-seasons, {len(full_train):,} train / "
-          f"{len(test):,} test, validation split {len(train):,} / {len(val):,}")
+    train, val = selection_split(design, 2)
+    print(f"Gate 0 — {len(design):,} player-seasons, {len(train):,} fit / "
+          f"{len(val):,} select ({', '.join(sorted(val['season'].unique()))} as "
+          f"validation).\n  The test split is LOCKED (src/models/held_out.py).")
 
-    table, diagnostics = substitution_sweep(train, val, test, full_train, cfg_stan,
-                                            n_knots, out_dir)
+    table, diagnostics = substitution_sweep(train, val, cfg_stan, n_knots, out_dir)
     heads = table[table["analysis"] == "head"]
     print("\nPer-factor NLL (lower is better; selection reads validation only):")
     print(heads[["split", "arm", "head", "variant", "n_features", "mean_nll",

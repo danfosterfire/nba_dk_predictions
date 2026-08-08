@@ -43,6 +43,29 @@ forward only, so every historical row would have to be filled from a current-sta
 source — which encodes the resolved outcome. The ablation that measures the snapshot's
 value has to wait for the archive to cover a season boundary.
 
+## Which rows every number here is measured on
+
+**Validation**, since 2026-08-08. This module was the last head in the project still
+scoring the held-out seasons, and it is the one where that mattered most: it does not
+merely report, it *decides*. The four-way model ladder picks which mean function ships,
+`workload_ablation` decides a feature block, and `nonlinearity_ablation` decides a basis.
+Three decisions taken on the split that exists to measure them.
+
+`split_seasons` still lives here — it is the choke point `src/models/held_out.py` wraps —
+but nothing in this module calls it any more. `run` reaches the frames through
+`held_out.selection_split`, so the test seasons are never materialized and the printed
+ladder is a validation ladder.
+
+Two functions lost a column in the move, and it is worth being plain about what that cost.
+`nonlinearity_ablation` and `minutes_nonlinearity_probe` used to carve their own inner
+validation split out of `train` and report val *and* test. The val column is unchanged —
+`selection_split` hands back exactly the frames that inner split produced — but the test
+column is gone, and with it the minutes probe's `replicates` flag. That flag was never the
+replication check it looked like: the two columns differed in training data as well as in
+evaluation rows, which is the confound `src/models/held_out.py` was written to stop being
+read as agreement. What survives is what was always the honest half — the *contrast between
+the two targets*, both measured on the same validation frame.
+
 Usage:
     python -m src.models.availability
 """
@@ -62,6 +85,7 @@ from src.eda.availability import load_ages, with_lags
 from src.eda.feature_diagnostics import above_null
 from src.features.availability import (attach_workload, build_panel,
                                        playoff_workload, season_availability)
+from src.models.held_out import selection_split
 
 # Season S-1 quantities. Lag 2 and 3 are kept because the profile's ladder shows them
 # adding a little (R² 0.214 → 0.223), and filled from lag 1 when a player has no third
@@ -102,7 +126,47 @@ FEATURE_COLS = [
 # minutes into the total mixes team quality into what was a clean regular-season workload
 # measure. Keep the two effects in separate columns.
 
+class _HeldOut(pd.DataFrame):
+    """A DataFrame that refuses to be read while the held-out split is locked.
+
+    Subclassing rather than wrapping so it stays a DataFrame everywhere — the final
+    evaluation unlocks and uses it exactly as before. Only the accessors that actually
+    surface data are guarded; `len()` and `.columns` stay free, because reporting how many
+    rows are held out is not the same as reading them.
+    """
+
+    _metadata: list = []
+
+    @property
+    def _constructor(self):
+        return _HeldOut
+
+    def _check(self):
+        from src.models.held_out import assert_unlocked
+        assert_unlocked("the held-out frame from `split_seasons`")
+
+    def __getitem__(self, key):
+        self._check()
+        return pd.DataFrame(self)[key]
+
+    def to_numpy(self, *a, **k):
+        self._check()
+        return pd.DataFrame(self).to_numpy(*a, **k)
+
+    def merge(self, *a, **k):
+        self._check()
+        return pd.DataFrame(self).merge(*a, **k)
+
+
 TEST_SEASONS = 2
+
+# The head every downstream consumer holds: `stan_availability` ports it, `season_total`
+# composes it, `stan_games_played` uses it as its permanent floor. The ladder is scored
+# *against* it rather than against whichever row happens to have the lowest CRPS, because
+# "is the leader distinguishable from the incumbent" is the question a selection has to
+# answer and "who leads" is not.
+SHIPPED_MODEL = "beta_binomial"
+
 AGE_SHRINKAGE = 50.0      # pseudo-observations pulling each age toward the league mean
 RIDGE_ALPHA = 100.0
 EPS = 1e-3
@@ -188,10 +252,23 @@ def assert_point_in_time(design: pd.DataFrame) -> pd.DataFrame:
 
 def split_seasons(design: pd.DataFrame, test_seasons: int = TEST_SEASONS
                   ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Temporal walk-forward: the last `test_seasons` target seasons are held out."""
+    """Temporal walk-forward: the last `test_seasons` target seasons are held out.
+
+    **The second frame is the held-out split and is guarded.** `split_seasons` is the one
+    choke point every head goes through to reach it, so the lock lives here rather than at
+    each call site — a new head cannot forget to add it. Callers that only want the
+    selection frames should use `held_out.selection_split`, which never materializes the
+    held-out rows at all.
+
+    The guard is on *use*, not on the split itself: carving the frame is how a module
+    discovers what to exclude. `_HeldOut` therefore raises when the rows are read rather
+    than when they are separated, so `train, _ = split_seasons(...)` stays legal and
+    `score(model, test)` does not.
+    """
     order = sorted(design["season"].unique())
     held = set(order[-test_seasons:])
-    return design[~design["season"].isin(held)], design[design["season"].isin(held)]
+    kept = design[~design["season"].isin(held)]
+    return kept, _HeldOut(design[design["season"].isin(held)])
 
 
 # ── The predictive distribution ───────────────────────────────────────────────
@@ -469,9 +546,15 @@ def _row(model: str, group: str, metric: str, value: float, n: int) -> dict:
     return {"model": model, "group": group, "metric": metric, "n": n, "value": value}
 
 
-def evaluate(model: AvailabilityModel, test: pd.DataFrame, max_games: int,
+def evaluate(model: AvailabilityModel, frame: pd.DataFrame, max_games: int,
              seed: int = 42) -> tuple[list[dict], pd.DataFrame]:
-    """CRPS, PIT and the tail — plus MAE and R² for continuity."""
+    """CRPS, PIT and the tail — plus MAE and R² for continuity.
+
+    Takes whatever frame it is handed rather than naming it `test`: `run` scores
+    validation, `src/final_evaluation.py` scores the held-out seasons once, and both go
+    through this function so the two readings are the same measurement on different rows.
+    """
+    test = frame
     y = test["gp"].to_numpy()
     n = test["team_games"].to_numpy()
     mu = model.predict_mean(test)
@@ -534,7 +617,7 @@ def evaluate(model: AvailabilityModel, test: pd.DataFrame, max_games: int,
     return rows, predictions
 
 
-def gbm_shuffled_null(train: pd.DataFrame, test: pd.DataFrame, max_games: int,
+def gbm_shuffled_null(train: pd.DataFrame, val: pd.DataFrame, max_games: int,
                       n_shuffles: int = 5, seed: int = 42) -> dict:
     """The GBM's CRPS against its own chance level, permuting the target.
 
@@ -546,8 +629,8 @@ def gbm_shuffled_null(train: pd.DataFrame, test: pd.DataFrame, max_games: int,
         shuffled = train.copy()
         shuffled["gp"] = values["gp"]
         model = GBMAvailability(seed=seed).fit(shuffled)
-        return -float(crps(model.predict_pmf(test, max_games),
-                           test["gp"].to_numpy()).mean())
+        return -float(crps(model.predict_pmf(val, max_games),
+                           val["gp"].to_numpy()).mean())
 
     out = above_null(statistic, {"gp": train["gp"].to_numpy()}, "gp",
                      n_shuffles=n_shuffles, seed=seed)
@@ -558,9 +641,78 @@ def gbm_shuffled_null(train: pd.DataFrame, test: pd.DataFrame, max_games: int,
             "n_shuffles": out["n_shuffles"]}
 
 
-def workload_ablation(train: pd.DataFrame, test: pd.DataFrame, max_games: int,
+# Resamples for the ladder's paired interval. 4,000 puts the Monte Carlo error on a 95%
+# endpoint well inside the last digit the docs quote.
+BOOTSTRAP_DRAWS = 4000
+GP_QUARTILES = 4
+
+
+def ladder_comparison(predictions: pd.DataFrame, reference: str = "beta_binomial",
+                      draws: int = BOOTSTRAP_DRAWS, seed: int = 42) -> pd.DataFrame:
+    """Each candidate's CRPS against the shipped one, paired row by row.
+
+    The ladder is a **selection**, so the margin between its top two rows decides which
+    mean function ships, and a difference of means over 883 player-seasons is not evidence
+    on its own. This is what says whether an ordering is real: the same rows scored by both
+    models, resampled together, so the player-to-player variation that dominates CRPS
+    cancels instead of being counted twice.
+
+    It earns its place because the ordering *reversed* when this head moved off the test
+    split on 2026-08-08 — the GBM went from third to first — and the interval is what turns
+    that from a new verdict into a measured non-result.
+
+    The realized-GP quartile rows are the second half of the answer and the more useful
+    one. A mean over the whole frame hides *where* a model is better, and this head exists
+    for the left tail: a candidate that wins overall by predicting ordinary seasons well
+    and loses on the seasons that fell apart is not the one to ship, whatever its mean.
+    """
+    wide = predictions.pivot_table(index=["season", "player_id"], columns="model",
+                                   values="crps_games")
+    if reference not in wide.columns:
+        raise ValueError(f"no {reference!r} row to compare against; got "
+                         f"{sorted(wide.columns)}")
+    gp = (predictions[predictions["model"] == reference]
+          .set_index(["season", "player_id"])["gp"].reindex(wide.index))
+    # Quartiles of the *realized* outcome, not of the prediction: the question is how a
+    # model does on the seasons that actually went badly.
+    quartile = pd.qcut(gp, GP_QUARTILES, labels=False, duplicates="drop")
+
+    rng = np.random.default_rng(seed)
+    n = len(wide)
+    index = rng.integers(0, n, size=(draws, n))
+    rows = []
+    for model in sorted(wide.columns):
+        delta = (wide[model] - wide[reference]).to_numpy()
+        boot = delta[index].mean(axis=1)
+        rows.append({
+            "model": model, "group": "all", "n": n,
+            "crps_games": float(wide[model].mean()),
+            "delta_vs_reference": float(delta.mean()),
+            "ci_lo": float(np.percentile(boot, 2.5)),
+            "ci_hi": float(np.percentile(boot, 97.5)),
+            "p_better": float((boot < 0).mean()),
+            "share_rows_better": float((delta < 0).mean()),
+        })
+        for q in sorted(pd.unique(quartile.dropna())):
+            rows_q = (quartile == q).to_numpy()
+            rows.append({
+                "model": model, "group": f"gp_q{int(q) + 1}", "n": int(rows_q.sum()),
+                "crps_games": float(wide[model].to_numpy()[rows_q].mean()),
+                "delta_vs_reference": float(delta[rows_q].mean()),
+                "ci_lo": np.nan, "ci_hi": np.nan, "p_better": np.nan,
+                "share_rows_better": float((delta[rows_q] < 0).mean()),
+            })
+    out = pd.DataFrame(rows)
+    out["reference"] = reference
+    # An interval straddling zero is the whole point of computing one, so it is a column
+    # rather than something a reader has to derive from two others.
+    out["distinguishable"] = (out["ci_lo"] > 0) | (out["ci_hi"] < 0)
+    return out
+
+
+def workload_ablation(train: pd.DataFrame, val: pd.DataFrame, max_games: int,
                       seed: int = 42) -> pd.DataFrame:
-    """Held-out CRPS with and without the playoff/mileage block, on one fitted head.
+    """Validation CRPS with and without the playoff/mileage block, on one fitted head.
 
     The plan's decision rule is a proper distributional metric, not in-sample R², so a
     feature block gets added only if it moves CRPS. Everything is held fixed except the
@@ -569,6 +721,10 @@ def workload_ablation(train: pd.DataFrame, test: pd.DataFrame, max_games: int,
     Split three ways because the two halves of the block have opposite mechanisms:
     playoff participation marks a good player on a good team (selection), while
     cumulative mileage points the way fatigue would.
+
+    **This decides a feature block, so it reads validation.** It decided one on the test
+    split until 2026-08-08, which is the class of thing `src/models/held_out.py` exists to
+    prevent — the block was adopted on a held-out CRPS margin of −0.119 games.
     """
     base = [c for c in FEATURE_COLS if c not in WORKLOAD_COLS]
     variants = {
@@ -580,7 +736,7 @@ def workload_ablation(train: pd.DataFrame, test: pd.DataFrame, max_games: int,
     rows = []
     for label, features in variants.items():
         model = BetaBinomialGLM(features=features).fit(train)
-        model_rows, _ = evaluate(model, test, max_games, seed)
+        model_rows, _ = evaluate(model, val, max_games, seed)
         keep = {r["metric"]: r["value"] for r in model_rows if r["group"] == "all"}
         rows.append({"variant": label, "n_features": len(features),
                      "crps_games": keep["crps_games"], "mae_games": keep["mae_games"],
@@ -639,21 +795,6 @@ def expand_basis(train: pd.DataFrame, test: pd.DataFrame, cols: list[str],
     return tr, te, names
 
 
-def _inner_split(train: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Carve a validation split out of `train`, leaving at least one season to fit on.
-
-    `split_seasons(train, TEST_SEASONS)` empties the fitting half whenever `train` holds
-    only `TEST_SEASONS` seasons — which never happens on the real 30-season panel and
-    happens immediately on a small synthetic one. The symptom is a `SplineTransformer`
-    complaining about 0 samples, several frames away from the cause.
-    """
-    n_seasons = train["season"].nunique()
-    if n_seasons < 2:
-        raise ValueError(
-            f"need at least 2 training seasons to carve a validation split; got {n_seasons}")
-    return split_seasons(train, test_seasons=min(TEST_SEASONS, n_seasons - 1))
-
-
 def _nonlinear_variants(train: pd.DataFrame, test: pd.DataFrame, cols: list[str]
                         ) -> dict[str, tuple[pd.DataFrame, pd.DataFrame, list[str]]]:
     """The linear baseline plus quadratic and spline expansions of `cols`."""
@@ -668,18 +809,23 @@ def _nonlinear_variants(train: pd.DataFrame, test: pd.DataFrame, cols: list[str]
     return out
 
 
-def nonlinearity_ablation(train: pd.DataFrame, test: pd.DataFrame, max_games: int,
+def nonlinearity_ablation(train: pd.DataFrame, val: pd.DataFrame, max_games: int,
                           seed: int = 42, cols: list[str] | None = None) -> pd.DataFrame:
     """Does a nonlinear response in age / mileage / prior minutes buy anything?
 
-    **Selection happens on a validation split carved out of `train`, and the test column
-    is reported for confirmation only.** That protocol is the entire point of this
-    function. Measured on the real data, a *paired* bootstrap on the test rows says the
-    quadratic expansion improves CRPS by −0.047 with a 95% interval of
-    [−0.079, −0.015] and P(Δ<0) = 99.7% — and it does not replicate: on the validation
-    split the linear model wins outright. A paired interval says a difference is
-    consistent *within one sample*; it says nothing about whether the sample was lucky.
-    Reporting only the test column here would have shipped a false positive.
+    **Selection happens on validation, and there is no longer a test column to be tempted
+    by.** That protocol was always this function's point; until 2026-08-08 it made the
+    point while still printing the test column beside it, which is a weaker way to make it.
+    The rows this fits and scores are unchanged — `held_out.selection_split` hands back
+    exactly the frames the private inner split used to carve — so every validation figure
+    is bit-for-bit what it was.
+
+    The lesson the retired column taught is worth keeping in prose, because it is the
+    sharpest case in the project. On the held-out rows a *paired* bootstrap put the
+    quadratic expansion's CRPS gain at −0.047, 95% interval [−0.079, −0.015],
+    P(Δ<0) = 99.7% — and it was still a false positive, because on validation the linear
+    model wins outright. A paired interval says a difference is consistent *within one
+    sample*; it says nothing about whether the sample was representative.
 
     The answer for **games played is a null** — the GBM arm reaching the same verdict from
     a different direction (a fully nonparametric learner on the same features still loses
@@ -687,32 +833,20 @@ def nonlinearity_ablation(train: pd.DataFrame, test: pd.DataFrame, max_games: in
     and `minutes_per_game_lag1` carries essentially all of it; see `CLAUDE.md`.
     """
     cols = cols or [c for c in NONLINEAR_CANDIDATES if c in train.columns]
-    inner, val = _inner_split(train)
-    val_variants = _nonlinear_variants(inner, val, cols)
-    test_variants = _nonlinear_variants(train, test, cols)
+    variants = _nonlinear_variants(train, val, cols)
 
     rows = []
-    for label in val_variants:
-        v_tr, v_te, v_features = val_variants[label]
+    for label, (v_tr, v_te, v_features) in variants.items():
         model = BetaBinomialGLM(features=v_features).fit(v_tr)
-        v_n = np.maximum(v_te["team_games"].to_numpy(int), v_te["gp"].to_numpy(int))
-        v_pmf = predictive_pmf(v_n, model.predict_mean(v_te), model.rho, max_games + 1)
-        val_crps = float(crps(v_pmf, v_te["gp"].to_numpy(int)).mean())
-
-        t_tr, t_te, t_features = test_variants[label]
-        t_model = BetaBinomialGLM(features=t_features).fit(t_tr)
-        t_rows, _ = evaluate(t_model, t_te, max_games, seed)
-        keep = {r["metric"]: r["value"] for r in t_rows if r["group"] == "all"}
-        rows.append({"variant": label, "n_features": len(t_features),
-                     "val_crps_games": val_crps, "test_crps_games": keep["crps_games"],
-                     "test_r2_gp_share": keep["r2_gp_share"]})
+        model_rows, _ = evaluate(model, v_te, max_games, seed)
+        keep = {r["metric"]: r["value"] for r in model_rows if r["group"] == "all"}
+        rows.append({"variant": label, "n_features": len(v_features),
+                     "val_crps_games": keep["crps_games"],
+                     "val_r2_gp_share": keep["r2_gp_share"]})
 
     out = pd.DataFrame(rows)
     base_val = float(out.loc[out["variant"] == "linear", "val_crps_games"].iloc[0])
-    base_test = float(out.loc[out["variant"] == "linear", "test_crps_games"].iloc[0])
     out["val_vs_linear"] = out["val_crps_games"] - base_val
-    out["test_vs_linear"] = out["test_crps_games"] - base_test
-    # Only a variant that wins on validation is a candidate at all.
     out["selected"] = out["val_crps_games"] == out["val_crps_games"].min()
     return out
 
@@ -732,7 +866,7 @@ def _ridge_r2(train: pd.DataFrame, test: pd.DataFrame, features: list[str],
     return float(1 - ((y - pred) ** 2).sum() / ((y - y.mean()) ** 2).sum())
 
 
-def minutes_nonlinearity_probe(train: pd.DataFrame, test: pd.DataFrame,
+def minutes_nonlinearity_probe(train: pd.DataFrame, val: pd.DataFrame,
                                cols: list[str] | None = None) -> pd.DataFrame:
     """The same nonlinearity question, asked of **minutes per game** instead of games.
 
@@ -742,44 +876,40 @@ def minutes_nonlinearity_probe(train: pd.DataFrame, test: pd.DataFrame,
     A plain ridge stands in, so the R² here is not a claim about how good a minutes head
     can be — only about whether a curved response beats a straight one.
 
-    Unlike the games-played arm this is **not** a null, and it replicates across validation
-    and test. The per-column rows say where it comes from, and it is not the career arc: a
-    spline on `age` is *worse* than the existing `age + age_sq`, while
-    `minutes_per_game_lag1` carries essentially all of the gain. The mechanism is a floor,
-    not a ceiling — mean reversion from a low prior MPG is far steeper than from a high one.
+    Unlike the games-played arm this is **not** a null. The per-column rows say where it
+    comes from, and it is not the career arc: a spline on `age` is *worse* than the
+    existing `age + age_sq`, while `minutes_per_game_lag1` carries essentially all of the
+    gain. The mechanism is a floor, not a ceiling — mean reversion from a low prior MPG is
+    far steeper than from a high one.
+
+    **The `replicates` column is gone with the test column, and it was never what its name
+    claimed.** It required val and test to move the same way, but those two differed in
+    training data as well as in scored rows, so agreement between them was not a
+    replication and disagreement was not a refutation — the confound
+    `src/models/held_out.py` was written to stop being read as one. The contrast that
+    carries the finding is between the two *targets* on one frame: games played is a null
+    here and minutes per game is not, and both are now measured on the same validation rows
+    by the same code.
     """
     cols = cols or [c for c in NONLINEAR_CANDIDATES if c in train.columns]
-    inner, val = _inner_split(train)
     rows = []
 
-    val_variants = _nonlinear_variants(inner, val, cols)
-    test_variants = _nonlinear_variants(train, test, cols)
-    for label in val_variants:
-        v_tr, v_te, v_features = val_variants[label]
-        t_tr, t_te, t_features = test_variants[label]
-        rows.append({"scope": "variant", "name": label, "n_features": len(t_features),
-                     "val_r2": _ridge_r2(v_tr, v_te, v_features, MINUTES_TARGET),
-                     "test_r2": _ridge_r2(t_tr, t_te, t_features, MINUTES_TARGET)})
+    for label, (v_tr, v_te, v_features) in _nonlinear_variants(train, val, cols).items():
+        rows.append({"scope": "variant", "name": label, "n_features": len(v_features),
+                     "val_r2": _ridge_r2(v_tr, v_te, v_features, MINUTES_TARGET)})
 
     # One column at a time, so the gain is attributed rather than just observed.
-    base_val = _ridge_r2(inner, val, list(FEATURE_COLS), MINUTES_TARGET)
-    base_test = _ridge_r2(train, test, list(FEATURE_COLS), MINUTES_TARGET)
+    base_val = _ridge_r2(train, val, list(FEATURE_COLS), MINUTES_TARGET)
     for col in cols:
         drop = {col} | ({"age_sq"} if col == "age" else set())
         keep = [c for c in FEATURE_COLS if c not in drop]
-        v_tr, v_te, names = expand_basis(inner, val, [col], "spline")
-        t_tr, t_te, _ = expand_basis(train, test, [col], "spline")
+        v_tr, v_te, names = expand_basis(train, val, [col], "spline")
         rows.append({"scope": "column", "name": col, "n_features": len(keep + names),
-                     "val_r2": _ridge_r2(v_tr, v_te, keep + names, MINUTES_TARGET),
-                     "test_r2": _ridge_r2(t_tr, t_te, keep + names, MINUTES_TARGET)})
+                     "val_r2": _ridge_r2(v_tr, v_te, keep + names, MINUTES_TARGET)})
 
     out = pd.DataFrame(rows)
     out["val_vs_linear"] = np.where(out["scope"] == "column",
                                     out["val_r2"] - base_val, np.nan)
-    out["test_vs_linear"] = np.where(out["scope"] == "column",
-                                     out["test_r2"] - base_test, np.nan)
-    # A gain counts only if both splits move the same way.
-    out["replicates"] = (out["val_vs_linear"] > 0) & (out["test_vs_linear"] > 0)
     return out
 
 
@@ -798,12 +928,16 @@ def run(cfg: dict) -> dict[str, Path]:
     panel = build_panel(seasons, raw_dir)
     frame = season_availability(panel, "full")
     design = build_design(frame, seasons, raw_dir, season_start_dates(panel))
-    train, test = split_seasons(design, test_seasons)
+    train, val = selection_split(design, test_seasons)
     max_games = int(design["team_games"].max())
 
     print(f"Availability design: {len(design):,} player-seasons, "
-          f"{len(train):,} train / {len(test):,} test "
-          f"({', '.join(sorted(test['season'].unique()))} held out)")
+          f"{len(train):,} train / {len(val):,} validation "
+          f"({', '.join(sorted(val['season'].unique()))})")
+    print("  The test split is LOCKED (src/models/held_out.py). This module picks the mean "
+          "function,\n  a feature block and a basis — three decisions — so it reads "
+          "VALIDATION and nothing else.\n  The held-out reading is taken once, by "
+          "`make final-evaluation`.")
     print(f"  as_of_date range {design['as_of_date'].min().date()} → "
           f"{design['as_of_date'].max().date()}, every row before its own season start")
     print("  Unweighted by design — see CLAUDE.md; minutes weighting halves the ceiling "
@@ -812,7 +946,7 @@ def run(cfg: dict) -> dict[str, Path]:
     rows, pit_frames, prediction_frames = [], [], []
     for model in candidates(cfg_av):
         model.fit(train)
-        model_rows, predictions = evaluate(model, test, max_games, seed)
+        model_rows, predictions = evaluate(model, val, max_games, seed)
         rows += model_rows
         prediction_frames.append(predictions)
         pit_frames.append(pit_table(predictions["pit"].to_numpy(), model.name))
@@ -822,7 +956,7 @@ def run(cfg: dict) -> dict[str, Path]:
              .pivot_table(index="model", columns="metric", values="value"))
     order = ["crps_games", "mae_games", "r2_gp_share", "pit_ks_distance",
              "implied_overdispersion"]
-    print("\nHeld-out scores (CRPS in games, lower is better):")
+    print("\nValidation scores (CRPS in games, lower is better):")
     print(table[order].sort_values("crps_games").round(4).to_string())
 
     best = table["crps_games"].idxmin()
@@ -830,15 +964,33 @@ def run(cfg: dict) -> dict[str, Path]:
     gain = baseline_crps - float(table.loc[best, "crps_games"])
     print(f"\nBest: {best} (CRPS {table.loc[best, 'crps_games']:.4f}) against the "
           f"league/age baseline's {baseline_crps:.4f} — {gain:+.4f} games")
-    print("  R² here is held out and not season-absorbed, so it is NOT comparable to the "
-          "profile's\n  in-sample season-absorbed ceiling of 0.236 — a different "
+    print("  R² here is out of sample and not season-absorbed, so it is NOT comparable to "
+          "the profile's\n  in-sample season-absorbed ceiling of 0.236 — a different "
           "quantity, not a ceiling beaten.")
 
-    null = gbm_shuffled_null(train, test, max_games, n_shuffles, seed)
-    rows += [_row("gbm", "null", "crps_shuffled_target", null["null_crps"], len(test)),
+    ladder = ladder_comparison(pd.concat(prediction_frames, ignore_index=True),
+                               reference=SHIPPED_MODEL, seed=seed)
+    print(f"\nPaired against the shipped head ({SHIPPED_MODEL}) on the same rows — "
+          f"the ORDERING is not the finding:")
+    print(ladder[ladder["group"] == "all"]
+          .drop(columns=["group", "reference"]).round(4).to_string(index=False))
+    print(f"  A ladder is a selection, so a difference of means over {len(val):,} "
+          f"player-seasons decides\n  nothing on its own. An interval that straddles zero "
+          f"says the ordering is not evidence.")
+    print("\n  The same deltas by REALIZED games-played quartile (negative = better than "
+          "the shipped head):")
+    print(ladder[ladder["group"] != "all"]
+          .pivot_table(index="model", columns="group", values="delta_vs_reference")
+          .round(3).to_string())
+    print("  q1 is the population this head exists for. A candidate that wins overall on "
+          "ordinary\n  seasons and loses on the seasons that fell apart is not the one to "
+          "ship.")
+
+    null = gbm_shuffled_null(train, val, max_games, n_shuffles, seed)
+    rows += [_row("gbm", "null", "crps_shuffled_target", null["null_crps"], len(val)),
              _row("gbm", "null", "crps_improvement_over_null", null["improvement"],
-                  len(test)),
-             _row("gbm", "null", "null_sd", null["null_sd"], len(test))]
+                  len(val)),
+             _row("gbm", "null", "null_sd", null["null_sd"], len(val))]
     print(f"GBM shuffled-target null: CRPS {null['null_crps']:.4f} "
           f"(sd {null['null_sd']:.4f}) — the GBM improves on chance by "
           f"{null['improvement']:.4f} games")
@@ -851,27 +1003,28 @@ def run(cfg: dict) -> dict[str, Path]:
     print("  A model that matches the mean by never predicting a lost season shows up "
           "here as a\n  predicted share far below the observed one.")
 
-    ablation = workload_ablation(train, test, max_games, seed)
+    ablation = workload_ablation(train, val, max_games, seed)
     print("\nPlayoff / mileage workload ablation (beta-binomial head, CRPS in games):")
     print(ablation.round(4).to_string(index=False))
     print("  Playoff participation predicts *better* next-season availability, not "
           "worse — selection\n  (good player on a good team) beats fatigue. "
           "`career_minutes` is the one column that\n  points the way fatigue would.")
 
-    nonlinear = nonlinearity_ablation(train, test, max_games, seed)
+    nonlinear = nonlinearity_ablation(train, val, max_games, seed)
     print("\nNonlinear response (quadratic / spline) on games played:")
     print(nonlinear.round(4).to_string(index=False))
-    print("  Selection is on the VALIDATION column. The test column is confirmation only —\n"
-          "  it prefers every curved variant, and none of them replicate. A paired\n"
-          "  bootstrap on test puts the quadratic gain at −0.047 [−0.079, −0.015], and it\n"
-          "  is still a false positive. Games played stays linear.")
+    print("  A null: no curved variant beats linear on validation. The retired test column "
+          "preferred\n  every one of them, and a paired bootstrap on those rows put the "
+          "quadratic gain at\n  −0.047 [−0.079, −0.015] — a false positive with a "
+          "convincing interval around it.\n  Games played stays linear.")
 
-    minutes = minutes_nonlinearity_probe(train, test)
+    minutes = minutes_nonlinearity_probe(train, val)
     print("\nThe same question on MINUTES PER GAME (ridge probe; the head is not built):")
     print(minutes.round(4).to_string(index=False))
-    print("  Here it is NOT a null and it does replicate — and it is not the career arc:\n"
-          "  splining `age` is worse than the existing age + age_sq, while\n"
-          "  `minutes_per_game_lag1` carries essentially all of it.")
+    print("  Here it is NOT a null — the contrast between the two targets on the SAME rows "
+          "is the\n  finding. And it is not the career arc: splining `age` is worse than "
+          "the existing\n  age + age_sq, while `minutes_per_game_lag1` carries essentially "
+          "all of it.")
 
     print("\nPIT calibration (share per decile; 0.100 is uniform):")
     pit = pd.concat(pit_frames, ignore_index=True)
@@ -880,6 +1033,7 @@ def run(cfg: dict) -> dict[str, Path]:
 
     artifacts = {
         "metrics": (pd.DataFrame(rows), out_dir / "availability_metrics.csv"),
+        "ladder": (ladder, out_dir / "availability_ladder_comparison.csv"),
         "ablation": (ablation, out_dir / "availability_workload_ablation.csv"),
         "nonlinearity": (nonlinear, out_dir / "availability_nonlinearity.csv"),
         "minutes_nonlinearity": (minutes,

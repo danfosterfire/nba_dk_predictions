@@ -85,7 +85,7 @@ def fit_window(frame: pd.DataFrame, window: str = TRAIN_VAL_WINDOW,
     # An empty fitting half is the failure this repo has already shipped once in another
     # costume — a frame that silently shrank rather than raising. Every downstream
     # statistic here degrades to NaN, which reads as "no dependence" rather than as "no
-    # data", so it has to be loud. `models.availability._inner_split` raises for the same
+    # data", so it has to be loud. `models.held_out.selection_split` raises for the same
     # reason on the same shape of input.
     if len(order) <= test_seasons:
         raise ValueError(

@@ -262,20 +262,20 @@ def _baselines(ctx: Ctx) -> None:
     crps = _metric_frame(metrics, "crps_games").sort_values("value")
     stat_tiles([
         ("Beta-binomial GLM", f"{_value(crps, model='beta_binomial'):.3f}",
-         "Held-out CRPS in games (2024-25 / 2025-26). Lower is better."),
+         "Validation CRPS in games (2022-23 / 2023-24). Lower is better. **Ships.**"),
         ("Gradient boosting", f"{_value(crps, model='gbm'):.3f}",
-         "A fully nonparametric learner on the same features."),
+         "A fully nonparametric learner on the same features. Leads on the mean."),
         ("Ridge", f"{_value(crps, model='ridge'):.3f}", "A linear point predictor."),
         ("League/age baseline", f"{_value(crps, model='league_age'):.3f}",
          "No player history at all."),
     ])
     st.plotly_chart(
         fig_bars(crps, "model", ["value"], ctx.th,
-                 "Held-out CRPS in games", axis_title="CRPS (games)", height=280,
+                 "Validation CRPS in games", axis_title="CRPS (games)", height=280,
                  emphasis="beta_binomial"),
         width="stretch")
-    note("**Gradient boosting does not beat a 19-feature GLM, so the plan's own "
-         "stopping rule says stop.** Two things confirm the *distribution* is the "
+    _ladder(ctx)
+    note("Two things confirm the *distribution* is the "
          "working part rather than the mean: the fitted dispersion independently "
          "recovers the ~20× overdispersion measured above, and PIT is near-uniform.")
 
@@ -312,11 +312,66 @@ def _baselines(ctx: Ctx) -> None:
         note("Implied overdispersion recovered by each fit — " + " · ".join(
             f"{r.model} {r.value:.1f}×" for r in disp.itertuples()))
 
-    with detail("Every held-out metric, all four models"):
+    with detail("Every validation metric, all four models"):
         st.dataframe(metrics.round(4), width="stretch", hide_index=True)
     provenance("`make availability-model` → "
                "`outputs/predictions/availability_metrics.csv`, "
-               "`outputs/predictions/availability_pit.csv`")
+               "`outputs/predictions/availability_pit.csv`, "
+               "`outputs/predictions/availability_ladder_comparison.csv`")
+
+
+def _ladder(ctx: Ctx) -> None:
+    """The paired interval, and why an ordering is not a verdict.
+
+    Rendered directly under the CRPS bars because that chart now shows the GBM in front,
+    and a reader who stops there would take the wrong conclusion away from this tab.
+    """
+    lad = optional(ctx.predictions("availability_ladder_comparison.csv"),
+                   target="make availability-model")
+    if lad is None:
+        return
+
+    overall = lad[(lad["group"] == "all") & (lad["model"] != "beta_binomial")]
+    gbm = overall[overall["model"] == "gbm"]
+    st.warning(
+        "**The ordering reversed when this head moved off the test split on 2026-08-08, "
+        "and the head did not.** On the held-out seasons the GLM led at 10.795 against a "
+        "GBM's 10.888; on validation the GBM leads. It does not take the head, for two "
+        "measured reasons.\n\n"
+        "**One — the margin is not distinguishable from zero.** Paired over the same 883 "
+        "rows, the GBM is "
+        f"{float(gbm['delta_vs_reference'].iloc[0]):+.4f} CRPS with a 95% interval of "
+        f"[{float(gbm['ci_lo'].iloc[0]):+.4f}, {float(gbm['ci_hi'].iloc[0]):+.4f}]. The "
+        "ridge's "
+        f"{float(overall.loc[overall['model'] == 'ridge', 'delta_vs_reference'].iloc[0]):+.4f}"
+        " is the same order as the 0.0013-CRPS margin that decided the games-played Gate "
+        "D, reversed, and wrote `src/models/held_out.py`.\n\n"
+        "**Two — the challengers lose where this head exists to work.** By *realized* "
+        "games-played quartile they beat the GLM on seasons that went normally and lose "
+        "on the seasons that fell apart.")
+
+    left, right = st.columns(2)
+    with left:
+        st.plotly_chart(
+            fig_bars(overall, "model", ["delta_vs_reference"], ctx.th,
+                     "Δ CRPS against the shipped head (paired)",
+                     axis_title="Δ CRPS (games) — negative is better", height=280),
+            width="stretch")
+    with right:
+        # One series per challenger, so the two curves are read against each other; the
+        # league/age row is dropped because its q1 delta is ~36× the others' and would
+        # flatten the comparison that matters.
+        quart = (lad[(lad["group"] != "all")
+                     & lad["model"].isin(["gbm", "ridge"])]
+                 .pivot_table(index="group", columns="model",
+                              values="delta_vs_reference")
+                 .reset_index())
+        st.plotly_chart(
+            fig_bars(quart, "group", [c for c in ("gbm", "ridge") if c in quart],
+                     ctx.th, "Δ CRPS by realized games-played quartile",
+                     axis_title="Δ CRPS (games) — q1 is the fewest games", height=280),
+            width="stretch")
+    table_view(lad.round(4), "Paired ladder comparison — table view")
 
 
 # ── What it is worth on the deliverable ───────────────────────────────────────
@@ -404,7 +459,7 @@ def _ablations(ctx: Ctx) -> None:
         if abl is not None:
             st.plotly_chart(
                 fig_bars(abl.sort_values("crps_games"), "variant", ["crps_games"],
-                         ctx.th, "Held-out CRPS by feature set",
+                         ctx.th, "Validation CRPS by feature set",
                          axis_title="CRPS (games)", height=280,
                          emphasis="plus_playoff_workload"),
                 width="stretch")
@@ -413,7 +468,10 @@ def _ablations(ctx: Ctx) -> None:
                  "because playoff participation marks a good player on a good team "
                  "and that selection effect beats fatigue outright. The only column "
                  "pointing the way fatigue would is `career_minutes` — cumulative "
-                 "mileage. Same inversion as `missed_injury` below.")
+                 "mileage. Same inversion as `missed_injury` below.\n\n"
+                 "This block was adopted on the **test** split and re-decided on "
+                 "validation on 2026-08-08. It survives unchanged — same sign, same "
+                 "ordering of all four variants — unlike the model ladder above it.")
             table_view(abl.round(4), "Workload ablation — table view")
 
     with right:
@@ -422,18 +480,22 @@ def _ablations(ctx: Ctx) -> None:
                        target="make availability-model")
         if non is not None:
             st.plotly_chart(
-                fig_bars(non, "variant", ["val_crps_games", "test_crps_games"],
-                         ctx.th, "CRPS by split — validation selects, test confirms",
-                         axis_title="CRPS (games)", height=280),
+                fig_bars(non, "variant",
+                         [c for c in ("val_crps_games", "test_crps_games")
+                          if c in non.columns],
+                         ctx.th, "Validation CRPS — no curved variant beats linear",
+                         axis_title="CRPS (games)", height=280,
+                         emphasis="linear"),
                 width="stretch")
             st.warning(
-                "**The test split prefers every curved variant and none of them "
-                "replicate.** A *paired* bootstrap on the 911 test rows put the "
+                "**The retired test column preferred every curved variant and none of "
+                "them replicated.** A *paired* bootstrap on those 911 rows put the "
                 "quadratic gain at −0.047, 95% CI [−0.079, −0.015], P(Δ<0) = 99.7% — "
                 "and it was still a false positive, because a paired interval says a "
                 "difference is consistent *within one sample*, not that the sample "
-                "was representative. **Select on validation; quote test for "
-                "confirmation only.**")
+                "was representative. Since 2026-08-08 the column is gone rather than "
+                "printed beside the one that decides; every validation figure "
+                "reproduced to five decimals on the move.")
             table_view(non.round(4), "Nonlinearity ablation — table view")
 
     provenance("`make availability-model` → "

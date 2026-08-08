@@ -8,8 +8,16 @@ exist when forecasting S.** So the question is not "absorb season or not" but wh
 *usable* forms each head needs, and this module measures it.
 
 `make season-effects` already measured the league series. This does not re-derive it; it
-takes those findings as the hypothesis and tests them where it counts — on held-out CRPS,
-calibration, and season-total dk_pts.
+takes those findings as the hypothesis and tests them where it counts — on validation
+CRPS, calibration, and season-total dk_pts.
+
+**Everything here runs on validation, and since 2026-08-05 that is enforced rather than
+intended.** This is an ablation: four arms per head, ranked. It used to fit every arm twice
+and report a test column beside the validation one, which is the shape that produced this
+project's recorded false positives — and the `season_total_arms` / `roster_spread` /
+`bonus_calibration` compositions downstream all ran on the held-out frame, so the
+*decisive* table was a test evaluation too. `src/models/held_out.py` now raises on that
+frame; the end-of-project reading is `src/final_evaluation.py`'s, taken once.
 
 ## The two forms, and why they are complementary rather than alternatives
 
@@ -32,7 +40,7 @@ absorbs season, so `beta` is estimated **within** season, which is the repo's ow
 rule ("ALWAYS absorb season when regressing on 30 pooled seasons"). A small R^2 move is
 therefore expected and good; a large one means the term is soaking up something that is
 not league movement. A trend that improves *everything* is the opposite failure: with two
-held-out seasons, a trend fitted on 28 and extrapolated 1-2 forward can fit the last two
+validation seasons, a trend fitted on 26 and extrapolated 1-2 forward can fit the last two
 by accident.
 
 ## What is fitted
@@ -90,10 +98,10 @@ from src.eda.season_effects import ROLE_EDGES, ROLE_LABELS
 from src.features.targets import (BONUS_CATEGORIES, BONUS_GAME_OVERDISPERSION,
                                   expected_bonus)
 from src.models.availability import (FEATURE_COLS, LeagueAgeBaseline, crps as gp_crps,
-                                     pit_values, split_seasons as split_availability)
+                                     pit_values)
 from src.models.component_rates import (CONVERSION_HEADS, COUNT_HEADS, DERIVED_COUNTS,
-                                        build_design as build_component_design,
-                                        split_seasons)
+                                        build_design as build_component_design)
+from src.models.held_out import selection_split
 from src.models.stan_availability import StanAvailability, availability_design
 from src.models.stan_components import (StanConversion, StanCount, conversion_floor,
                                         conversion_variants, count_floor,
@@ -122,7 +130,7 @@ DEFAULT_MINUTES_SPEC = "logit_own_spline"
 
 # Posterior draws pushed through the season-total composition. Eleven heads x draws x rows
 # of predictive samples, so this is a memory knob; 400 puts Monte Carlo error on a coverage
-# rate well inside a point of the sampling error on 791 test rows.
+# rate well inside a point of the sampling error on the ~800 validation rows.
 COMPOSITION_DRAWS = 400
 BONUS_SAMPLES = 128
 
@@ -273,7 +281,7 @@ def _bias(pred: np.ndarray, y: np.ndarray) -> dict:
 def oracle_override(pred: np.ndarray, y: np.ndarray, seasons: np.ndarray) -> np.ndarray:
     """The CEILING on any league-level correction: rescale each season to its own truth.
 
-    One multiplier per held-out season, `sum(y) / sum(pred)`, applied to every player in
+    One multiplier per scored season, `sum(y) / sum(pred)`, applied to every player in
     that season. It uses the realized season, so it is an oracle and can never be a model —
     that is the point. It bounds what a manual preseason override, a fitted trend, or any
     other league-level term could possibly buy, because a *single* league-wide scalar per
@@ -346,23 +354,34 @@ def selected_specs(predictions_dir: Path) -> tuple[dict[str, str], str]:
 # ── Sweeps ────────────────────────────────────────────────────────────────────
 
 def _iters(cfg_stan: dict) -> dict:
-    """One sampler budget for every arm on both splits.
+    """One sampler budget for every arm.
 
-    The component sweep uses shorter chains for selection and longer ones for the test
-    column; here both splits get the same budget, because the comparison being made is
-    between ARMS and a budget that differs by split would put a second difference inside it.
+    Every arm shares it, because the comparison being made is between ARMS and a budget
+    that differed by arm would put a second difference inside it.
 
-    **Consequence worth stating rather than discovering later: the `base` arm's test column
-    is NOT directly comparable to `stan_component_metrics.csv`.** That artifact's test
-    fits run at 1000/1000 and these run at the selection budget, so small differences
-    between the two tables are sampler noise, not a changed model. Within this table every
-    arm shares the budget, which is what the ablation needs.
+    **Consequence worth stating rather than discovering later: the `base` arm is NOT
+    directly comparable to `stan_component_metrics.csv`.** That artifact runs at 1000/1000
+    and these run at the selection budget, so small differences between the two tables are
+    sampler noise, not a changed model. That gap widened when the component sweep went to
+    full-length chains everywhere; it is still the same kind of gap.
     """
     return {"warmup": int(cfg_stan.get("select_warmup", 500)),
             "samples": int(cfg_stan.get("select_samples", 500))}
 
 
-def sweep_counts(train, val, test, full_train, specs, cfg_stan, n_knots
+def _val(scored: dict) -> dict:
+    """Prefix a scored dict with `val_`.
+
+    Every metric in this artifact carries the prefix, including `bias` and the coverage
+    columns, which used to be written bare. Bare was survivable while there was exactly
+    one other prefix to contrast against; with the test column gone, a bare `bias` would
+    read as split-agnostic when it is emphatically not. `crps_minutes` and friends keep
+    their own suffixes where the scorer supplies them and are renamed at the call site.
+    """
+    return {f"val_{k}": v for k, v in scored.items()}
+
+
+def sweep_counts(train, val, specs, cfg_stan, n_knots
                  ) -> tuple[pd.DataFrame, list[dict], dict]:
     seed = int(cfg_stan.get("seed", 42))
     chains = int(cfg_stan.get("chains", 4))
@@ -370,54 +389,39 @@ def sweep_counts(train, val, test, full_train, specs, cfg_stan, n_knots
 
     for component in COUNT_HEADS:
         spec = specs.get(component, DEFAULT_COUNT_SPEC)
-        floor_val = count_floor(train, val, component, seed)
-        floor_test = count_floor(full_train, test, component, seed)
-        floor_samples = _count_floor_samples(full_train, test, component, seed)
-        y_test = test[component].to_numpy(float)
+        floor = count_floor(train, val, component, seed)
+        floor_samples = _count_floor_samples(train, val, component, seed)
+        y = val[component].to_numpy(float)
         rows.append({"head": component, "kind": "count", "arm": "carry_forward",
                      "spec": "none", "n_features": 0,
-                     "val_r2": floor_val["r2"], "val_crps": floor_val["crps"],
-                     **{f"test_{k}": v for k, v in floor_test.items()},
-                     **_bias(np.clip(_carry(test, component), 0, None), y_test),
-                     **coverage_from_samples(floor_samples, y_test)})
+                     **_val(floor),
+                     **_val(_bias(np.clip(_carry(val, component), 0, None), y)),
+                     **_val(coverage_from_samples(floor_samples, y))})
 
-        val_specs = count_variants(train, val, component, n_knots)[spec]
-        test_specs = count_variants(full_train, test, component, n_knots)[spec]
+        base_specs = count_variants(train, val, component, n_knots)[spec]
         for arm, (v_tr, v_te, v_features, year) in season_arms(
-                val_specs[0], val_specs[1], val_specs[2]).items():
-            v_model = StanCount(v_features, component, name=f"{component}/{arm}/val",
-                                chains=chains, seed=seed, year_column=year, metric=METRIC,
-                                **_iters(cfg_stan)).fit(v_tr)
-            diagnostics.append(v_model.diagnostics)
-            v_y = v_te[component].to_numpy(float)
-            v = score_count(v_y, v_model.predict_mean(v_te),
-                            v_model.predict_samples(v_te, seed), v_model.phi, seed)
-
-            t_tr, t_te, t_features, _ = season_arms(
-                test_specs[0], test_specs[1], test_specs[2])[arm]
-            t_model = StanCount(t_features, component, name=f"{component}/{arm}/test",
-                                chains=chains, seed=seed, year_column=year, metric=METRIC,
-                                **_iters(cfg_stan)).fit(t_tr)
-            diagnostics.append(t_model.diagnostics)
-            t_pred = t_model.predict_mean(t_te)
-            t_samples = t_model.predict_samples(t_te, seed)
-            t = score_count(y_test, t_pred, t_samples, t_model.phi, seed)
-            keep[(component, arm)] = (t_model, t_te)
+                base_specs[0], base_specs[1], base_specs[2]).items():
+            model = StanCount(v_features, component, name=f"{component}/{arm}/val",
+                              chains=chains, seed=seed, year_column=year, metric=METRIC,
+                              **_iters(cfg_stan)).fit(v_tr)
+            diagnostics.append(model.diagnostics)
+            pred = model.predict_mean(v_te)
+            samples = model.predict_samples(v_te, seed)
+            scored = score_count(y, pred, samples, model.phi, seed)
+            keep[(component, arm)] = (model, v_te)
 
             rows.append({"head": component, "kind": "count", "arm": arm, "spec": spec,
-                         "n_features": len(t_features), "val_r2": v["r2"],
-                         "val_crps": v["crps"],
-                         **{f"test_{k}": val for k, val in t.items()},
-                         **_bias(t_pred, y_test),
-                         **coverage_from_samples(t_samples, y_test),
-                         **{f"year_{k}": v2 for k, v2 in t_model.year.summary().items()}})
+                         "n_features": len(v_features),
+                         **_val(scored), **_val(_bias(pred, y)),
+                         **_val(coverage_from_samples(samples, y)),
+                         **{f"year_{k}": v2 for k, v2 in model.year.summary().items()}})
 
         # The oracle ceiling, on the base arm's own predictions.
         base_model, base_te = keep[(component, "base")]
         base_pred = base_model.predict_mean(base_te)
-        seasons = test["season"].to_numpy()
+        seasons = val["season"].to_numpy()
         for label, pred in (
-                ("oracle_league", oracle_override(base_pred, y_test, seasons)),
+                ("oracle_league", oracle_override(base_pred, y, seasons)),
                 # The hand-set path, live rather than commented out. With `LEAGUE_OVERRIDE`
                 # empty this row is `base` exactly, which is the point: the row exists so
                 # that filling in an announced rule change is a config edit and a re-run
@@ -425,11 +429,11 @@ def sweep_counts(train, val, test, full_train, specs, cfg_stan, n_knots
                 ("manual_override", apply_override(base_pred, component, seasons))):
             rows.append({"head": component, "kind": "count", "arm": label, "spec": spec,
                          "n_features": len(base_model.features),
-                         "test_r2": float(1 - ((y_test - pred) ** 2).sum()
-                                          / ((y_test - y_test.mean()) ** 2).sum()),
-                         "test_mae": float(np.abs(y_test - pred).mean()),
-                         **_bias(pred, y_test)})
-    return _finalize(pd.DataFrame(rows), "val_crps", "test_crps",
+                         "val_r2": float(1 - ((y - pred) ** 2).sum()
+                                         / ((y - y.mean()) ** 2).sum()),
+                         "val_mae": float(np.abs(y - pred).mean()),
+                         **_val(_bias(pred, y))})
+    return _finalize(pd.DataFrame(rows), "val_crps",
                      higher_is_better=False), diagnostics, keep
 
 
@@ -449,7 +453,7 @@ def _count_floor_samples(train, test, component, seed) -> np.ndarray:
                                  np.repeat(p[None, :], 400, axis=0)).astype(float)
 
 
-def sweep_conversions(train, val, test, full_train, specs, cfg_stan, n_knots
+def sweep_conversions(train, val, specs, cfg_stan, n_knots
                       ) -> tuple[pd.DataFrame, list[dict], dict]:
     seed = int(cfg_stan.get("seed", 42))
     chains = int(cfg_stan.get("chains", 4))
@@ -458,40 +462,25 @@ def sweep_conversions(train, val, test, full_train, specs, cfg_stan, n_knots
     for made, attempted in CONVERSION_HEADS:
         head = f"{made}|{attempted}"
         spec = specs.get(head, DEFAULT_CONVERSION_SPEC)
-        floor_val = conversion_floor(train, val, made, attempted, seed)
-        floor_test = conversion_floor(full_train, test, made, attempted, seed)
+        floor = conversion_floor(train, val, made, attempted, seed)
         rows.append({"head": head, "kind": "conversion", "arm": "carry_forward",
-                     "spec": "none", "n_features": 0, "val_nll": floor_val["nll"],
-                     "val_crps": floor_val["crps"],
-                     **{f"test_{k}": v for k, v in floor_test.items()}})
+                     "spec": "none", "n_features": 0, **_val(floor)})
 
-        val_specs = conversion_variants(train, val, made, attempted, n_knots)[spec]
-        test_specs = conversion_variants(full_train, test, made, attempted, n_knots)[spec]
+        base_specs = conversion_variants(train, val, made, attempted, n_knots)[spec]
         for arm, (v_tr, v_te, v_features, year) in season_arms(
-                val_specs[0], val_specs[1], val_specs[2]).items():
-            v_model = StanConversion(v_features, made, attempted,
-                                     name=f"{head}/{arm}/val", chains=chains, seed=seed,
-                                     year_column=year, metric=METRIC,
-                                     **_iters(cfg_stan)).fit(v_tr)
-            diagnostics.append(v_model.diagnostics)
-            v = _score_conv(v_model, v_te, made, attempted, seed)
-
-            t_tr, t_te, t_features, _ = season_arms(
-                test_specs[0], test_specs[1], test_specs[2])[arm]
-            t_model = StanConversion(t_features, made, attempted,
-                                     name=f"{head}/{arm}/test", chains=chains, seed=seed,
-                                     year_column=year, metric=METRIC,
-                                     **_iters(cfg_stan)).fit(t_tr)
-            diagnostics.append(t_model.diagnostics)
-            t = _score_conv(t_model, t_te, made, attempted, seed)
-            keep[(head, arm)] = (t_model, t_te)
+                base_specs[0], base_specs[1], base_specs[2]).items():
+            model = StanConversion(v_features, made, attempted,
+                                   name=f"{head}/{arm}/val", chains=chains, seed=seed,
+                                   year_column=year, metric=METRIC,
+                                   **_iters(cfg_stan)).fit(v_tr)
+            diagnostics.append(model.diagnostics)
+            scored = _score_conv(model, v_te, made, attempted, seed)
+            keep[(head, arm)] = (model, v_te)
 
             rows.append({"head": head, "kind": "conversion", "arm": arm, "spec": spec,
-                         "n_features": len(t_features), "val_nll": v["nll"],
-                         "val_crps": v["crps"],
-                         **{f"test_{k}": val for k, val in t.items()},
-                         **{f"year_{k}": v2 for k, v2 in t_model.year.summary().items()}})
-    return _finalize(pd.DataFrame(rows), "val_nll", "test_nll",
+                         "n_features": len(v_features), **_val(scored),
+                         **{f"year_{k}": v2 for k, v2 in model.year.summary().items()}})
+    return _finalize(pd.DataFrame(rows), "val_nll",
                      higher_is_better=False), diagnostics, keep
 
 
@@ -509,117 +498,91 @@ def _score_conv(model: StanConversion, frame: pd.DataFrame, made: str, attempted
     return out
 
 
-def sweep_minutes(train, val, test, full_train, spec, cfg_stan, n_knots
+def sweep_minutes(train, val, spec, cfg_stan, n_knots
                   ) -> tuple[pd.DataFrame, list[dict]]:
     seed = int(cfg_stan.get("seed", 42))
     chains = int(cfg_stan.get("chains", 4))
     rows, diagnostics = [], []
 
-    floor_val = score_minutes(FloorMinutes().fit(train), val, "carry_forward", seed)
-    floor_test = score_minutes(FloorMinutes().fit(full_train), test, "carry_forward", seed)
-    floor_samples = FloorMinutes().fit(full_train).predict_samples(test, seed)
-    y_test = test["successes"].to_numpy(float)
+    floor_model = FloorMinutes().fit(train)
+    floor = score_minutes(floor_model, val, "carry_forward", seed)
+    floor_samples = floor_model.predict_samples(val, seed)
+    y = val["successes"].to_numpy(float)
     rows.append({"head": "min", "kind": "minutes", "arm": "carry_forward", "spec": "none",
-                 "n_features": 0, "val_crps": floor_val["crps_minutes"],
-                 "test_crps": floor_test["crps_minutes"],
-                 "val_r2": floor_val["r2_minutes"], "test_r2": floor_test["r2_minutes"],
-                 "test_mae": floor_test["mae_minutes"],
-                 "test_pit_ks": floor_test["pit_ks"], "bias": floor_test["bias_minutes"],
-                 **coverage_from_samples(floor_samples, y_test)})
+                 "n_features": 0, "val_crps": floor["crps_minutes"],
+                 "val_r2": floor["r2_minutes"], "val_mae": floor["mae_minutes"],
+                 "val_pit_ks": floor["pit_ks"], "val_bias": floor["bias_minutes"],
+                 **_val(coverage_from_samples(floor_samples, y))})
 
-    val_specs = minutes_variants(train, val, n_knots)[spec]
-    test_specs = minutes_variants(full_train, test, n_knots)[spec]
+    base_specs = minutes_variants(train, val, n_knots)[spec]
     for arm, (v_tr, v_te, v_features, year) in season_arms(
-            val_specs[0], val_specs[1], val_specs[2]).items():
-        v_model = StanMinutes(v_features, name=f"min/{arm}/val", chains=chains, seed=seed,
-                              year_column=year, metric=METRIC,
-                              **_iters(cfg_stan)).fit(v_tr)
-        diagnostics.append(v_model.diagnostics)
-        v = score_minutes(v_model, v_te, arm, seed)
-
-        t_tr, t_te, t_features, _ = season_arms(
-            test_specs[0], test_specs[1], test_specs[2])[arm]
-        t_model = StanMinutes(t_features, name=f"min/{arm}/test", chains=chains, seed=seed,
-                              year_column=year, metric=METRIC,
-                              **_iters(cfg_stan)).fit(t_tr)
-        diagnostics.append(t_model.diagnostics)
-        t = score_minutes(t_model, t_te, arm, seed)
-        samples = t_model.predict_samples(t_te, seed)
+            base_specs[0], base_specs[1], base_specs[2]).items():
+        model = StanMinutes(v_features, name=f"min/{arm}/val", chains=chains, seed=seed,
+                            year_column=year, metric=METRIC,
+                            **_iters(cfg_stan)).fit(v_tr)
+        diagnostics.append(model.diagnostics)
+        scored = score_minutes(model, v_te, arm, seed)
+        samples = model.predict_samples(v_te, seed)
         rows.append({"head": "min", "kind": "minutes", "arm": arm, "spec": spec,
-                     "n_features": len(t_features), "val_crps": v["crps_minutes"],
-                     "test_crps": t["crps_minutes"], "val_r2": v["r2_minutes"],
-                     "test_r2": t["r2_minutes"], "test_mae": t["mae_minutes"],
-                     "test_pit_ks": t["pit_ks"], "bias": t["bias_minutes"],
-                     **coverage_from_samples(samples, y_test),
-                     **{f"year_{k}": v2 for k, v2 in t_model.year.summary().items()}})
-    return _finalize(pd.DataFrame(rows), "val_crps", "test_crps",
+                     "n_features": len(v_features), "val_crps": scored["crps_minutes"],
+                     "val_r2": scored["r2_minutes"], "val_mae": scored["mae_minutes"],
+                     "val_pit_ks": scored["pit_ks"], "val_bias": scored["bias_minutes"],
+                     **_val(coverage_from_samples(samples, y)),
+                     **{f"year_{k}": v2 for k, v2 in model.year.summary().items()}})
+    return _finalize(pd.DataFrame(rows), "val_crps",
                      higher_is_better=False), diagnostics
 
 
-def sweep_availability(train, val, test, full_train, cfg_stan, l2
-                       ) -> tuple[pd.DataFrame, list[dict]]:
+def sweep_availability(train, val, cfg_stan, l2) -> tuple[pd.DataFrame, list[dict]]:
     """The 2x2 plus the role interaction — the arm this head's own measurement calls for."""
     seed = int(cfg_stan.get("seed", 42))
     chains = int(cfg_stan.get("chains", 4))
     rows, diagnostics = [], []
-    max_games = int(pd.concat([full_train, test])["team_games"].max())
+    max_games = int(pd.concat([train, val])["team_games"].max())
 
-    val_arms = availability_arms(train, val)
-    test_arms = availability_arms(full_train, test)
-    y_test = test["gp"].to_numpy(int)
-    n_test = test["team_games"].to_numpy(float)
+    arms = availability_arms(train, val)
+    y = val["gp"].to_numpy(int)
+    n = val["team_games"].to_numpy(float)
 
     # The mandatory floor. For games played it is the league/age baseline rather than a
     # carry-forward: prior GP is the least persistent quantity in the project (r = 0.317),
     # which is exactly why `docs/availability-plan.md` shrinks toward a league/age curve
     # instead of toward the player's own prior. Its recorded CRPS is 13.614 games.
-    floor_val = LeagueAgeBaseline().fit(train)
-    floor_test = LeagueAgeBaseline().fit(full_train)
-    floor_pmf = floor_test.predict_pmf(test, max_games)
-    floor_pred = floor_test.predict_mean(test) * n_test
+    floor = LeagueAgeBaseline().fit(train)
+    floor_pmf = floor.predict_pmf(val, max_games)
+    floor_pred = floor.predict_mean(val) * n
     rows.append({
         "head": "gp", "kind": "availability", "arm": "carry_forward",
         "spec": "league_age", "n_features": 0,
-        "val_crps": float(gp_crps(floor_val.predict_pmf(val, max_games),
-                                  val["gp"].to_numpy(int)).mean()),
-        "test_crps": float(gp_crps(floor_pmf, y_test).mean()),
-        "val_r2": _share_r2(val, floor_val), "test_r2": _share_r2(test, floor_test),
-        "test_mae": float(np.abs(floor_pred - y_test).mean()),
-        "test_pit_ks": ks_uniform(pit_values(floor_pmf, y_test, seed)),
-        "test_dispersion": float(getattr(floor_test, "rho", np.nan)),
-        **_bias(floor_pred, y_test.astype(float)),
-        **coverage_from_pmf(floor_pmf, y_test)})
+        "val_crps": float(gp_crps(floor_pmf, y).mean()),
+        "val_r2": _share_r2(val, floor),
+        "val_mae": float(np.abs(floor_pred - y).mean()),
+        "val_pit_ks": ks_uniform(pit_values(floor_pmf, y, seed)),
+        "val_dispersion": float(getattr(floor, "rho", np.nan)),
+        **_val(_bias(floor_pred, y.astype(float))),
+        **_val(coverage_from_pmf(floor_pmf, y))})
 
-    for arm in val_arms:
-        v_tr, v_te, v_features, year = val_arms[arm]
-        v_model = StanAvailability(l2=l2, features=v_features, name=f"gp/{arm}/val",
-                                   chains=chains, seed=seed, year_column=year,
-                                   metric=METRIC, **_iters(cfg_stan)).fit(v_tr)
-        diagnostics.append(v_model.diagnostics)
-        v_pmf = v_model.predict_pmf(v_te, max_games)
-        v_y = v_te["gp"].to_numpy(int)
-
-        t_tr, t_te, t_features, _ = test_arms[arm]
-        t_model = StanAvailability(l2=l2, features=t_features, name=f"gp/{arm}/test",
-                                   chains=chains, seed=seed, year_column=year,
-                                   metric=METRIC, **_iters(cfg_stan)).fit(t_tr)
-        diagnostics.append(t_model.diagnostics)
-        t_pmf = t_model.predict_pmf(t_te, max_games)
-        pred = t_model.predict_mean(t_te) * n_test
+    for arm in arms:
+        v_tr, v_te, v_features, year = arms[arm]
+        model = StanAvailability(l2=l2, features=v_features, name=f"gp/{arm}/val",
+                                 chains=chains, seed=seed, year_column=year,
+                                 metric=METRIC, **_iters(cfg_stan)).fit(v_tr)
+        diagnostics.append(model.diagnostics)
+        pmf = model.predict_pmf(v_te, max_games)
+        pred = model.predict_mean(v_te) * n
 
         rows.append({
             "head": "gp", "kind": "availability", "arm": arm, "spec": "glm",
-            "n_features": len(t_features),
-            "val_crps": float(gp_crps(v_pmf, v_y).mean()),
-            "test_crps": float(gp_crps(t_pmf, y_test).mean()),
-            "val_r2": _share_r2(v_te, v_model), "test_r2": _share_r2(t_te, t_model),
-            "test_mae": float(np.abs(pred - y_test).mean()),
-            "test_pit_ks": ks_uniform(pit_values(t_pmf, y_test, seed)),
-            "test_dispersion": float(t_model.rho),
-            **_bias(pred, y_test.astype(float)),
-            **coverage_from_pmf(t_pmf, y_test),
-            **{f"year_{k}": v2 for k, v2 in t_model.year.summary().items()}})
-    return _finalize(pd.DataFrame(rows), "val_crps", "test_crps",
+            "n_features": len(v_features),
+            "val_crps": float(gp_crps(pmf, y).mean()),
+            "val_r2": _share_r2(v_te, model),
+            "val_mae": float(np.abs(pred - y).mean()),
+            "val_pit_ks": ks_uniform(pit_values(pmf, y, seed)),
+            "val_dispersion": float(model.rho),
+            **_val(_bias(pred, y.astype(float))),
+            **_val(coverage_from_pmf(pmf, y)),
+            **{f"year_{k}": v2 for k, v2 in model.year.summary().items()}})
+    return _finalize(pd.DataFrame(rows), "val_crps",
                      higher_is_better=False), diagnostics
 
 
@@ -629,15 +592,15 @@ def _share_r2(frame: pd.DataFrame, model) -> float:
     return float(1 - ((y - p) ** 2).sum() / ((y - y.mean()) ** 2).sum())
 
 
-def _finalize(table: pd.DataFrame, val_col: str, test_col: str,
+def _finalize(table: pd.DataFrame, val_col: str,
               higher_is_better: bool) -> pd.DataFrame:
     """Mark the validation-selected arm per head, and whether it clears the no-fit floor.
 
     Two flags, kept apart for the reason `stan_components._finalize` keeps them apart:
-    `selected` is a **validation** fact answering "which arm would I ship", `beats_floor`
-    is a **test** fact answering "is this a model at all". This repo has already shipped
-    one false positive whose paired bootstrap on test read [-0.079, -0.015] with
-    P(delta<0) = 99.7% and did not replicate, so selection never reads a test column.
+    `selected` answers "which arm would I ship", `beats_floor` answers "is this a model at
+    all". Since 2026-08-05 both read the same validation column, because the test seasons
+    are no longer scored here at all — `src/models/held_out.py` raises on them and
+    `src/final_evaluation.py` reads them once.
 
     **Selection is on CRPS here, not R^2, and that choice is forced by the question.** The
     component sweep selects count heads on R^2, which is right when the arms differ in
@@ -662,11 +625,11 @@ def _finalize(table: pd.DataFrame, val_col: str, test_col: str,
         best = (fitted[val_col].idxmax() if higher_is_better else fitted[val_col].idxmin())
         out.loc[best, "selected"] = True
         floor_rows = block[block["arm"] == "carry_forward"]
-        if floor_rows.empty or test_col not in block:
+        if floor_rows.empty or val_col not in block:
             continue
-        floor = floor_rows[test_col].iloc[0]
-        better = (block[test_col] > floor) if higher_is_better else (block[test_col] < floor)
-        scored = block[test_col].notna().to_numpy()
+        floor = floor_rows[val_col].iloc[0]
+        better = (block[val_col] > floor) if higher_is_better else (block[val_col] < floor)
+        scored = block[val_col].notna().to_numpy()
         out.loc[block.index[scored], "beats_floor"] = better.to_numpy()[scored]
         out.loc[floor_rows.index, "beats_floor"] = True
     return out
@@ -794,7 +757,7 @@ def _draw_components(models: dict, frame: pd.DataFrame, arm: str, draws: int,
     return counts, made
 
 
-PORTFOLIO_SIZES = (12, 15, 30, 150, None)      # None = the whole held-out board
+PORTFOLIO_SIZES = (12, 15, 30, 150, None)      # None = the whole validation board
 
 
 def roster_spread(models: dict, frame: pd.DataFrame, arms: tuple[str, ...],
@@ -959,16 +922,15 @@ def run(cfg: dict) -> dict[str, Path]:
 
     targets = pd.read_parquet(features_dir / "component_targets.parquet")
     design = build_component_design(targets, cfg["data"]["seasons"], cfg["data"]["raw_dir"])
-    full_train, test = split_seasons(design, test_seasons)
-    train, val = split_seasons(full_train, test_seasons)
+    train, val = selection_split(design, test_seasons)
 
     specs, minutes_spec = selected_specs(out_dir)
     print(f"Season-term ablation: {len(design):,} player-seasons, "
           f"{design['season'].nunique()} target seasons")
-    print(f"  {len(full_train):,} train / {len(test):,} test "
-          f"({', '.join(sorted(test['season'].unique()))} held out)")
-    print(f"  validation split: {len(train):,} fit / {len(val):,} select "
-          f"({', '.join(sorted(val['season'].unique()))})")
+    print(f"  The test split is LOCKED — this is an ABLATION, so every arm and every\n"
+          f"  downstream composition runs on VALIDATION (src/models/held_out.py).")
+    print(f"  {len(train):,} fit / {len(val):,} select "
+          f"({', '.join(sorted(val['season'].unique()))} as validation)")
     if specs:
         print(f"  base spec per head, read from stan_component_metrics.csv: "
               f"{', '.join(f'{h}={s}' for h, s in sorted(specs.items()))}")
@@ -992,44 +954,40 @@ def run(cfg: dict) -> dict[str, Path]:
     print()
 
     counts, diag_counts, count_models = sweep_counts(
-        train, val, test, full_train, specs, cfg_stan, n_knots)
-    print("Count heads — held-out CRPS on the season total (lower is better):")
-    print(counts.pivot_table(index="head", columns="arm", values="test_crps")
+        train, val, specs, cfg_stan, n_knots)
+    print("Count heads — validation CRPS on the season total (lower is better):")
+    print(counts.pivot_table(index="head", columns="arm", values="val_crps")
           .reindex(columns=["carry_forward", "base", "trend", "year", "trend_year"])
           .round(3).to_string())
 
     conversions, diag_conv, conv_models = sweep_conversions(
-        train, val, test, full_train, specs, cfg_stan, n_knots)
-    print("\nConversion heads — held-out beta-binomial NLL per row (lower is better):")
-    print(conversions.pivot_table(index="head", columns="arm", values="test_nll")
+        train, val, specs, cfg_stan, n_knots)
+    print("\nConversion heads — validation beta-binomial NLL per row (lower is better):")
+    print(conversions.pivot_table(index="head", columns="arm", values="val_nll")
           .reindex(columns=["carry_forward", "base", "trend", "year", "trend_year"])
           .round(4).to_string())
 
     minutes_design = build_minutes_design(cfg)
-    m_full_train, m_test = split_availability(minutes_design, test_seasons)
-    m_train, m_val = split_availability(m_full_train, test_seasons)
-    minutes, diag_min = sweep_minutes(m_train, m_val, m_test, m_full_train,
-                                      minutes_spec, cfg_stan, n_knots)
+    m_train, m_val = selection_split(minutes_design, test_seasons)
+    minutes, diag_min = sweep_minutes(m_train, m_val, minutes_spec, cfg_stan, n_knots)
     print(f"\nMinutes head (spec {minutes_spec}) — CRPS in minutes:")
-    print(minutes[["arm", "val_crps", "test_crps", "test_r2", "bias",
-                   "coverage_80", "selected"]].round(3).to_string(index=False))
+    print(minutes[["arm", "val_crps", "val_r2", "val_bias",
+                   "val_coverage_80", "selected"]].round(3).to_string(index=False))
 
     av_design = availability_design(cfg)
-    a_full_train, a_test = split_availability(av_design, test_seasons)
-    a_train, a_val = split_availability(a_full_train, test_seasons)
+    a_train, a_val = selection_split(av_design, test_seasons)
     l2 = float(cfg.get("features", {}).get("availability", {}).get("glm_l2", 1.0))
-    availability, diag_av = sweep_availability(a_train, a_val, a_test, a_full_train,
-                                               cfg_stan, l2)
+    availability, diag_av = sweep_availability(a_train, a_val, cfg_stan, l2)
     print("\nAvailability head — CRPS in games, plus the role-interaction arms:")
-    print(availability[["arm", "n_features", "val_crps", "test_crps", "test_r2", "bias",
-                        "coverage_80", "selected"]].round(3).to_string(index=False))
+    print(availability[["arm", "n_features", "val_crps", "val_r2", "val_bias",
+                        "val_coverage_80", "selected"]].round(3).to_string(index=False))
 
     table = pd.concat([counts, conversions, minutes, availability], ignore_index=True)
 
     # ── the decisive downstream metric ────────────────────────────────────────
     models = {**count_models, **conv_models}
     arms = ("base", "trend", "year", "trend_year")
-    totals = season_total_arms(models, test, arms, draws, seed)
+    totals = season_total_arms(models, val, arms, draws, seed)
     print("\n" + "=" * 78)
     print("SEASON-TOTAL dk_pts (bonus excluded, exact and linear in the eight "
           "scoring components)")
@@ -1040,7 +998,7 @@ def run(cfg: dict) -> dict[str, Path]:
           "has to pay:\n  it cannot move MAE or R2 by construction, so if it does nothing "
           "here it does nothing.")
 
-    spread = roster_spread(models, test, arms, draws=draws, seed=seed)
+    spread = roster_spread(models, val, arms, draws=draws, seed=seed)
     if not spread.empty:
         print("\nRoster season-total SPREAD by portfolio size — the reason season effects "
               "matter at all:")
@@ -1056,8 +1014,8 @@ def run(cfg: dict) -> dict[str, Path]:
               "outrank\n  it by an order of magnitude; this table is that claim as a "
               "measurement.")
 
-    bonus_actual = realized_bonus(targets, test)
-    bonus = bonus_calibration(models, test, bonus_actual, arms, seed=seed)
+    bonus_actual = realized_bonus(targets, val)
+    bonus = bonus_calibration(models, val, bonus_actual, arms, seed=seed)
     print("\nBonus-threshold calibration (per game, dk_pts):")
     print(bonus.round(4).to_string(index=False))
     print("  The bonus is a simultaneous threshold on five counts, so it is convex in the "
@@ -1170,9 +1128,9 @@ def _verdicts(table: pd.DataFrame, totals: pd.DataFrame) -> None:
     year_rows = table[table["arm"] == "year"].set_index("head")
     base_rows = table[table["arm"] == "base"].set_index("head")
     common = year_rows.index.intersection(base_rows.index)
-    if len(common) and "test_r2" in table:
-        dr2 = (year_rows.loc[common, "test_r2"] - base_rows.loc[common, "test_r2"]).dropna()
-        print(f"\n1. Year effect vs base, held-out R2: median {dr2.median():+.5f}, "
+    if len(common) and "val_r2" in table:
+        dr2 = (year_rows.loc[common, "val_r2"] - base_rows.loc[common, "val_r2"]).dropna()
+        print(f"\n1. Year effect vs base, validation R2: median {dr2.median():+.5f}, "
               f"max |delta| {dr2.abs().max():.5f} ({dr2.abs().idxmax()})")
         print("   A year effect does TWO things and only one of them can move this "
               "number.\n"
@@ -1187,10 +1145,10 @@ def _verdicts(table: pd.DataFrame, totals: pd.DataFrame) -> None:
     # 2. A trend must help on `fg3a` and essentially nowhere else.
     trend_rows = table[table["arm"] == "trend"].set_index("head")
     common = trend_rows.index.intersection(base_rows.index)
-    if len(common) and "test_crps" in table:
-        d = (base_rows.loc[common, "test_crps"]
-             - trend_rows.loc[common, "test_crps"]).dropna().sort_values(ascending=False)
-        print(f"\n2. Trend vs base, held-out CRPS improvement (positive = trend helps):")
+    if len(common) and "val_crps" in table:
+        d = (base_rows.loc[common, "val_crps"]
+             - trend_rows.loc[common, "val_crps"]).dropna().sort_values(ascending=False)
+        print(f"\n2. Trend vs base, validation CRPS improvement (positive = trend helps):")
         print("   " + ", ".join(f"{h} {v:+.3f}" for h, v in d.items()))
         helped = [h for h, v in d.items() if v > 0]
         print(f"   helps {len(helped)} of {len(d)} heads. The league measurement says "
@@ -1200,9 +1158,9 @@ def _verdicts(table: pd.DataFrame, totals: pd.DataFrame) -> None:
     # 3. The oracle ceiling.
     oracle = table[table["arm"] == "oracle_league"].set_index("head")
     common = oracle.index.intersection(base_rows.index)
-    if len(common) and "test_mae" in table:
-        gain = ((base_rows.loc[common, "test_mae"] - oracle.loc[common, "test_mae"])
-                / base_rows.loc[common, "test_mae"] * 100).dropna().sort_values(ascending=False)
+    if len(common) and "val_mae" in table:
+        gain = ((base_rows.loc[common, "val_mae"] - oracle.loc[common, "val_mae"])
+                / base_rows.loc[common, "val_mae"] * 100).dropna().sort_values(ascending=False)
         print(f"\n3. Oracle league override — the CEILING on any league-level term, "
               f"as % of MAE:")
         print("   " + ", ".join(f"{h} {v:.1f}%" for h, v in gain.items()))

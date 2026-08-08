@@ -79,7 +79,7 @@ a different reason, and the two should be satisfied by one mechanism.
 
 - dk_pts decomposed into shot classes and counting components (`CLAUDE.md`, `make target-profile`).
 - Availability is a beta-binomial GLM head; it beats ridge/GBM/league-age baseline on CRPS and
-  is worth **211.1** dk_pts of season-total MAE (`src/models/availability.py`, `docs/availability-plan.md`).
+  is worth **210.3** dk_pts of season-total MAE (`src/models/availability.py`, `docs/availability-plan.md`).
 - `season_total = gp × rate` composition (`src/models/season_total.py`).
 - **The LSTM/Transformer trunk is deprioritized — decision, not just a finding.** See
   `CLAUDE.md`: prior-game-order features add ~+0.6pp R² over four season aggregates, which the
@@ -326,10 +326,10 @@ So the honest framing: **per-game buys calibration of the season-total distribut
 accuracy of its mean.** For a threshold-and-order-statistic product that is the thing that
 pays — the double-double bonus is a per-game threshold and minutes drive it — but the case
 must be made on those terms, not as "a better minutes model". The season head already scores
-R² 0.8572 against a no-fit floor of 0.8166, so the headroom being competed for is small.
+R² 0.8835 against a no-fit floor of 0.8536, so the headroom being competed for is small.
 
 **Costs, with real numbers.** 731,863 played regular-season player-games against the season
-head's 9,048 rows — **81× the data**. The season spline fit took 899 s (linear: 189 s), so a
+head's 8,306 rows — **88× the data**. The season spline fit took 721 s (linear: 171 s), so a
 plain per-game beta-binomial GLM with no latent state is order **6–16 h**: tolerable, and it
 delivers per-game covariates and heterogeneous dispersion. Adding a **latent AR state per
 player-season** introduces ~500,000 latent variables, which HMC handles badly without
@@ -358,27 +358,28 @@ explicit lagged-observation term, **not** a free latent per game.
 > binomial trials** with the per-player cap carried in the **trials** (`m_k = min(U, R_k)`,
 > the remaining capacity) rather than as a truncation. That gets **both** constraints:
 > the individual cap by construction, the team total by the deterministic last step.
-> Fitted on all 30 seasons and held out on 2024-25/2025-26, the selected variant scores
-> **4.5592** minutes of CRPS against the no-fit floor's 4.8576 and the independent
-> per-player draw's **4.9140** —
+> Fitted on all 30 seasons and scored on validation (2022-23/2023-24), the selected variant
+> scores **4.4945** minutes of CRPS against the no-fit floor's 4.6776 and the independent
+> per-player draw's **4.7842** —
 > so it beats the incumbent on the incumbent's own marginal metric, which this plan
-> expected to be a wash, *and* the independent draw's mean team-sum error is **36.87**
+> expected to be a wash, *and* the independent draw's mean team-sum error is **33.89**
 > minutes per team-game against the composition's exact zero.
 >
 > Two results worth carrying back here. **The pure decomposition fails**: the plain
-> binomial arm scores 4.9732 with PIT KS 0.1948, below the floor — the measured 4.65×
+> binomial arm scores 4.9388 with PIT KS 0.1919, below the floor — the measured 4.65×
 > game-level dispersion is not optional, exactly as the NB-vs-Poisson result on the count
 > heads. And **the offset is the floor**, so proportional redistribution comes for free
 > and `β` fits deviations from it — which makes "who absorbs the minutes when a starter
 > sits" a fitted quantity, the thing the redistribution section below wants.
 >
-> The dispersion is now **graded by prior-share quartile** (fitted 0.1480 fringe to
-> 0.0613 star, a 2.41× spread against one shared 0.0970), which cuts mean |variance
-> ratio − 1| by 59% and lands the star tier at 0.99. Still open: the fringe tier
-> remains **1.21** and q2 is now 0.84 — grading a *step* dispersion does not map
-> one-to-one onto *marginal* variance, because a low-share player breaks his stick
-> last and inherits the remainder variation ahead of him. The full-window fit
-> (~10–12 h) has not been run. This is
+> The dispersion is **graded by prior-share quartile** (fitted 0.1768 fringe to 0.0855
+> star, a 2.07× spread against one shared 0.1211), which cuts mean |variance ratio − 1|
+> by 35% and lands the star tier at **0.81**. Still open: the fringe tier reads **1.05**
+> and q2 0.81 — grading a *step* dispersion does not map one-to-one onto *marginal*
+> variance, because a low-share player breaks his stick last and inherits the remainder
+> variation ahead of him. **Gate E was taken at the full window on 2026-08-04 and the head
+> ships in `make stan`**; the figures here are from the 2026-08-08 validation refit, and
+> the retired test column is preserved in `docs/minutes-composition-plan.md`. This is
 > **iid across games** and therefore does *not* address the 2.43× block inflation — the
 > residual serial process below is unaffected by it.
 
@@ -555,22 +556,54 @@ predict — a 1.21× band with 4.4% yoy sd and swings past ±5% in 9 of 29 trans
 **+7.6% in 2004-05** (hand-checking crackdown), −7.8% 2011-12, −6.0% 2017-18, +7.3%
 2022-23, −7.5% 2023-24, **+8.6% in 2025-26**. There is no trend to extrapolate.
 
-**What ignoring it costs — the no-fit floor's bias on the held-out seasons.** Carry-forward
-lags any league move by exactly one season, so its bias *is* the season effect measured on
-the scale the heads are scored on. No fitted head corrects it, because none has a season
-term:
+**What ignoring it costs — the no-fit floor's bias on the validation seasons.**
+Carry-forward lags any league move by exactly one season, so its bias *is* the season effect
+measured on the scale the heads are scored on. No fitted head corrects it, because none has
+a season term. Each cell is shown beside that season's own league move, because the lag
+predicts they should carry **opposite** signs:
 
-| component | 2024-25 | 2025-26 | both |
-|---|---|---|---|
-| **`fta`** | −3.1% | **−10.7%** | **−7.0%** |
-| `stl` | −10.0% | +0.7% | −4.6% |
-| `fg3a` | −7.0% | −1.3% | −4.2% |
-| `tov` | −4.6% | −1.8% | −3.2% |
-| `ast` | −1.1% | −4.8% | −2.9% |
-| `blk` | +6.5% | +6.0% | **+6.2%** |
+| component | league move 2022-23 | bias 2022-23 | league move 2023-24 | bias 2023-24 | both |
+|---|---|---|---|---|---|
+| **`fta`** | +7.3% | **−4.4%** | −7.5% | **+10.7%** | +2.9% |
+| `ast` | +2.5% | −2.2% | +5.6% | **−6.2%** | **−4.2%** |
+| `blk` | −1.5% | +4.3% | **+10.6%** | **−5.4%** | −0.8% |
+| `stl` | −4.6% | +5.1% | +2.7% | −3.5% | +0.8% |
+| `tov` | +2.7% | −0.6% | −3.8% | +5.6% | +2.5% |
+| `reb` | −2.5% | +3.8% | +0.4% | −0.0% | +1.9% |
+| `fga` | −0.0% | +1.4% | +0.9% | +0.9% | +1.1% |
 
-`fta`'s −10.7% in 2025-26 is the +8.6% league jump arriving one year late. `blk` is biased
-+6% in *both* seasons, which is drift, not noise.
+**The lag is a measured relationship, not an assertion about two components.** The bias
+opposes its season's league move in **13 of 14** cells and the two correlate at **−0.944**
+(`opposes_league_move` / `league_yoy_pct` in the artifact; `fga` 2023-24 is the single
+exception, on a league move of under 1%). `fta` is the clearest case in both directions:
+**−4.4%** against the league's +7.3% rise into 2022-23, then **+10.7%** against its −7.5%
+fall into 2023-24.
+
+**Read a per-season cell, never the `both` column alone.** Averaging two seasons whose
+league moves point in opposite directions reports a *lag* as a *level* — `fta` pools to a
+mild +2.9% and `blk` to −0.8%, both hiding swings of 15 points. The `both` column is
+retained because a head that carries no season term inherits whatever the pooled bias
+happens to be, but it describes the seasons scored, not the component.
+
+> ⚠️ **This table was a TEST evaluation until 2026-08-08** and read, on 2024-25/2025-26
+> over 791 rows: **`fta`** −3.1% / **−10.7%** / **−7.0%**, `stl` −10.0% / +0.7% / −4.6%,
+> `fg3a` −7.0% / −1.3% / −4.2%, `tov` −4.6% / −1.8% / −3.2%, `ast` −1.1% / −4.8% / −2.9%,
+> `blk` +6.5% / +6.0% / **+6.2%**. The prose read: "`fta`'s −10.7% in 2025-26 is the +8.6%
+> league jump arriving one year late. `blk` is biased +6% in *both* seasons, which is drift,
+> not noise."
+>
+> **The mechanism survives and both headline readings do not.** `fta` is not carrying a
+> −7.0% systematic bias — that was one season's −10.7% averaged with a −3.1%, and on
+> validation the same component reads +2.9%. And **`blk` reverses sign**: +4.3% then −5.4%,
+> against "+6% in both". The "drift, not noise" reading was the weaker claim all along, and
+> the artifact said so — `blk`'s trend R² is **0.118** on a −0.14%/season slope, which is
+> the profile of a component with no drift to speak of. Two adjacent seasons moving the same
+> way is what noise looks like half the time.
+>
+> **What the move bought is the check that replaces them.** The retired table's cells oppose
+> their league move in only **10 of 14** (r = −0.865) against validation's 13 of 14, so the
+> lag is *cleaner* on the split that is allowed to decide. A component-level headline was
+> never the finding; the relationship is.
 
 > **Why this outranks the shared-β correlation the Stan work was built for.** A league shift
 > is **perfectly correlated across every player**, so it does not diversify away: a −7% error
@@ -581,10 +614,16 @@ term:
 >
 > ✅ **Now measured, and the "order of magnitude" was an under-statement by a further
 > order** — `make season-terms` (`season_term_roster_spread.csv`): a year effect widens a
-> 15-man roster's season-total dk_pts spread by **+11.6%** against shared-β's **+0.2%**,
-> i.e. ~**95×**, and by **+278%** across the whole 791-player board against **+6.4%**. See
-> the verdict below, which also finds this is the *only* thing a season term is worth: on
-> point accuracy the ceiling is ~3% of MAE.
+> 15-man roster's season-total dk_pts spread by **+10.4%** against shared-β's **+0.2%**,
+> i.e. ~**50×**, and by **+254%** across the whole 773-player validation board against
+> **+6.4%**. See the verdict below, which also finds this is the *only* thing a season term
+> is worth: on point accuracy the ceiling is **≤5% of MAE**.
+>
+> ⚠️ **Superseded 2026-08-07**: the recorded **+11.6%** / **+278%** and the ~**95×** ratio
+> were measured on the 791-player *test* board. The comparison is unchanged in kind — a
+> league shift still does not diversify and shared-β still does — but quote the validation
+> figures, and note the shared-β side (+0.2% / +6.4%) is itself measured on a different
+> board again, so the ratio is indicative rather than exact.
 
 **One piece is genuinely knowable at prediction time and should not be lumped in with the
 rest.** Rule changes and points of emphasis are announced in the summer, before opening
@@ -596,26 +635,77 @@ anything drawn from within the season.
 
 **Reproduce with `make season-terms`** (`src/models/season_terms.py`) →
 `outputs/predictions/season_term_{metrics,season_total,roster_spread,bonus,sigma_vs_league,diagnostics}.csv`.
-108 fits, **0 divergences**, **0 treedepth-saturated draws**, max R̂ 1.0142, 155.9 min. Five
-fits sit marginally over the 1.01 R̂ bar — worst 1.0142, all with ESS ≥ 371 and no
-divergences — and **four of the five are `base` arms**, so the season terms are not what
-strains the sampler. Four arms per head — `base`,
-`trend`, `year`, `trend_year` — on top of each head's already-selected specification, plus
-`trend_x_role` and `trend_x_role_year` for availability. Selected on the validation split
-(2022-23/2023-24), confirmed on test (2024-25/2025-26), every arm quoted against its no-fit
-floor. Every fit uses `metric="dense_e"`: on the `blk` spline base that is **13.4 s against
-236.6 s** with treedepth saturation **0 against 35**, which is what made 108 full Bayesian
-fits affordable at all.
+**54 fits, 0 divergences, max R̂ 1.0105, 79.3 min** (2026-08-07, validation only). Two fits
+sit marginally over the 1.01 R̂ bar — `tov/base` at 1.0103 and `min/base` at 1.0105 — and
+**both are `base` arms**, so the season terms are not what strains the sampler. Four arms
+per head — `base`, `trend`, `year`, `trend_year` — on top of each head's already-selected
+specification, plus `trend_x_role` and `trend_x_role_year` for availability. Selected on the
+validation split (2022-23/2023-24), every arm quoted against its no-fit floor. Every fit uses
+`metric="dense_e"`: on the `blk` spline base that is **13.4 s against 236.6 s** with
+treedepth saturation **0 against 35**, which is what made a full Bayesian ablation
+affordable at all.
 
-> ⚠️ The ablation runs at the **selection** sampler budget (500/500) on *both* splits, so
-> the `base` arm's test column is not directly comparable to `stan_component_metrics.csv`,
-> whose test fits run at 1000/1000. Differences between the two tables are sampler noise.
-> Within this table every arm shares one budget, which is what the contrast needs.
+> ⚠️ **This was a 108-fit, both-splits run until 2026-08-07** (max R̂ 1.0142, 155.9 min, five
+> fits over the R̂ bar, four of them `base` arms). `src/models/held_out.py` now raises on the
+> test seasons, so the test side is not fitted at all — which is where **half the sampler
+> time** went. The end-of-project reading is `src/final_evaluation.py`'s, taken once.
+>
+> ⭐ **Every per-head validation number reproduced to five decimal places**, and all 13
+> selected arms are unchanged. That is a **determinism check, not a replication**: the
+> validation fits were always validation fits, at the same seed and the same 500/500 budget,
+> so removing the test fits could not have moved them and it did not. It confirms the
+> conversion changed nothing it should not have. The *replication* evidence for this
+> ablation is still the July-versus-August comparison below, where the arms did shuffle.
+
+> ⚠️ The ablation runs at the **selection** sampler budget (500/500), so the `base` arm is
+> not directly comparable to `stan_component_metrics.csv`, which now runs full-length chains
+> everywhere. Differences between the two tables are sampler noise. Within this table every
+> arm shares one budget, which is what the contrast needs.
+
+#### 0. Read this before quoting the selected arms
+
+**11 of 13 heads select a season term** — `trend` ×5, `year` ×3, `trend_year` ×3, `base`
+only for `reb` and `stl`. On the July head list almost every head selected `base`. That
+looks like a reversal and is not, because **10 of the 13 margins are under 1% of the
+selection metric**:
+
+| head | selected | margin over `base` | | head | selected | margin over `base` |
+|---|---|---|---|---|---|---|
+| `reb` | `base` | 0.0000% | | `min` | `year` | 0.198% |
+| `stl` | `base` | 0.0000% | | `fga` | `year` | 0.264% |
+| `fg3m\|fg3a` | `trend_year` | 0.008% | | `blk` | `trend` | 0.352% |
+| `fg3a\|fga` | `year` | 0.046% | | `fta` | `trend` | 0.785% |
+| `ftm\|fta` | `trend_year` | 0.087% | | `tov` | `trend` | 1.302% |
+| `gp` | `trend` | 0.107% | | `fg2m\|fg2a` | `trend` | 1.883% |
+| | | | | `ast` | `trend_year` | 2.209% |
+
+An ablation whose winner flips across a head-list change that does not touch most of its
+heads is **measuring noise**, and that is a stronger statement of "the terms are worth
+nothing" than the original run could make — it now has a replication test behind it, and it
+failed. Only `ast` (2.21%) and `fg2m|fg2a` (1.88%) move on a margin worth a second look, and
+neither is a shot-attempt head, so neither is explained by the basis change.
+
+**The margin is read on each head's own selection metric** — `val_nll` for the conversion
+heads, `val_crps` for everything else — because that is what `_finalize` selects on. Worth
+stating because `src/docs_audit.py` got it wrong once: it inferred the metric from whether
+`val_nll` was populated, and the 2026-08-07 re-run began writing `val_nll` for the count
+heads, which silently switched them onto a column they are not selected on. The symptom was
+`stl` reporting a 0.008% margin while its selected arm was `base` — an arm that is the
+minimum by construction can only have a margin of zero.
 
 #### 1. The trend is refuted, and most sharply on the one quantity that predicted it
 
+> ⚠️ **This whole section describes the RETIRED `fg3a` count head and is preserved as the
+> record of that basis.** The shot-attempt basis replaced it with `fga` × `fg3a | fga` on
+> 2026-08-03, so `fg3a` is no longer fitted and none of the figures below have a row in the
+> current artifact — they are presence-checked, not value-checked. The section stays because
+> **this is the sharpest evidence against a trend the project ever produced**, and its
+> successor cannot restate it: `fg3a | fga` selects `year` on a **0.046%** margin, which is
+> noise. The general claim it supports — a trend adds a second correction on top of a
+> carry-forward that already moved — is basis-independent and still stands.
+
 `fg3a` is the only quantity `make season-effects` marks **"trend + year effect"** — trend R²
-0.93 at +4.07%/season. On the head it is the **worst** case for a trend:
+0.93 at +4.07%/season. On the head it was the **worst** case for a trend:
 
 | `fg3a` arm | val CRPS | test CRPS | held-out bias |
 |---|---|---|---|
@@ -640,122 +730,215 @@ measured:**
   that has already moved. That is why the correction over-shoots rather than merely being
   mis-sized.
 
-**Across the eight count heads the trend makes held-out bias worse on six of eight**
+**Across the eight count heads the trend made held-out bias worse on six of eight**
 (`fg3a` −3.74→+8.44, `fta` −7.40→−9.35, `blk` +4.75→+7.18, `fg2a` −0.27→−3.07,
-`stl` −6.68→−5.98 and `tov` −3.36→−4.82; only `stl` and `reb` are unharmed). And where the
-trend *does* win on test it wins on heads with no era story at all — `stl`, whose trend R²
-is **0.03**. That is the overfitting signature, not a finding.
+`stl` −6.68→−5.98 and `tov` −3.36→−4.82). And where the trend *did* win on test it won on
+heads with no era story at all — `stl`, whose trend R² is **0.03**. That is the overfitting
+signature, not a finding.
+
+⚠️ **On validation the same count is 3 of 7, and the heads are different ones.** Trend
+against base, `val_bias_pct`: `fga` −0.06→**+1.25**, `reb` +2.07→**+2.79**, `stl`
++0.41→**+1.17** get worse; `fta` +1.55→+0.23, `ast` −3.73→−0.27, `blk` −1.79→−0.42 and `tov`
++2.39→+1.19 get better. **Do not read this as the trend being rehabilitated.** Two things
+changed at once — the retired basis and the split — and the direction of a sub-1% bias
+move on a head whose whole season-term margin is under 1% is exactly the quantity this
+ablation has shown to be noise-dominated. What survives is that the trend moves bias in
+**both directions across heads**, which is the premise §2 rests on, and that is unchanged.
 
 #### 2. The trend's win on season-total dk_pts is cross-component cancellation
 
-Composed through the chain over the eight scoring components, held out on 791 player-seasons
-(bonus excluded, so this is exact and linear in the components):
+Composed through the chain over the eight scoring components, on the **773 validation**
+player-seasons (bonus excluded, so this is exact and linear in the components):
 
 | arm | MAE | bias | CRPS | coverage 50 / 80 / 95 |
 |---|---|---|---|---|
-| `base` | 108.56 | −36.89 | 78.27 | 0.612 / 0.858 / 0.980 |
-| **`trend`** | **106.06** | **−13.57** | **75.91** | 0.623 / 0.885 / 0.984 |
-| `year` | 110.56 | −45.87 | 79.92 | **0.584 / 0.847 / 0.979** |
-| `trend_year` | 105.92 | −12.89 | 76.06 | 0.618 / 0.885 / 0.984 |
+| `base` | **105.71** | **−16.44** | 76.05 | 0.454 / 0.765 / 0.908 |
+| `trend` | 105.76 | **+10.21** | **75.67** | 0.459 / 0.762 / 0.903 |
+| `year` | 106.52 | −23.40 | 76.68 | 0.462 / 0.768 / 0.909 |
+| `trend_year` | **105.00** | **+9.22** | **75.46** | 0.463 / 0.766 / 0.915 |
 
-Read alone, the `trend` row says ship a trend everywhere. It should not be read alone. The
-component biases behind it move in **both directions** — `fg3a` +8.44%, `blk` +7.18% against
-`fta` −9.35%, `fg2a` −3.07% — so the aggregate improvement is those errors **cancelling in
-the DK sum**, which is the same cross-component cancellation this repo already documents at
-8.30× on `teammate_assist_supply`, now appearing as a false positive for a season term. A
-model that is wrong in both directions and right on average is not a model of the league.
+**The trend does not win MAE at all here — it is 0.05 dk_pts *worse* than base — and it
+flips the bias from −16.44 to +10.21.** The component biases behind it move in **both
+directions** (§1), so what the aggregate does is those errors **cancelling in the DK sum**:
+the same cross-component cancellation this repo documents at 8.30× on
+`teammate_assist_supply`, appearing as a false positive for a season term. A model that is
+wrong in both directions and right on average is not a model of the league.
 
-⚠️ **This table is uniform-arm and test-only, so it is confirmation and not selection.** The
-per-head validation table above is what selects.
+> ⭐ **This resolves the one open question the verdict carried, and it resolves it back to
+> the original answer.** The table was **test-only until 2026-08-07** and read `base`
+> 108.56 / −36.89 / 78.27, `trend` **106.06** / **−13.57** / 75.91, `year` 110.56 / −45.87 /
+> 79.92, `trend_year` 105.92 / −12.89 / 76.06 — on which `trend` improved **both** MAE and
+> bias, so the cancellation story no longer explained the aggregate win and `CLAUDE.md`
+> flagged it as needing a human decision rather than a doc edit. On the split that is
+> allowed to decide, the anomaly is gone: `trend` improves neither MAE nor bias, and the
+> July reading (a trend winning MAE while flipping bias to +7.60) is what the validation
+> frame reproduces in shape. **No decision is owed — the mechanism was never in doubt, only
+> the arithmetic on one held-out frame.**
+
+⚠️ **This table is uniform-arm, so it is confirmation and not selection.** The per-head table
+above is what selects, and both now read the same split.
+
+⚠️ **Coverage is well below nominal on every arm** (0.45 / 0.76 / 0.91 against 0.50 / 0.80 /
+0.95) and no season term fixes it. That is the independent-draw composition missing the
+residual copula, the same defect §8 attributes the bonus shortfall to — not an argument
+about season terms in either direction.
 
 #### 3. The oracle bounds the entire question at ~3% of MAE
 
-`oracle_league` rescales each held-out season by its own realized total — a perfect
-per-season league multiplier, applied to every player. It is the most general form *any*
-league-level term can take, so it is the ceiling on a fitted trend, a year effect and a
-manual override alike, and it cannot be a model because it reads the season it forecasts.
+`oracle_league` rescales each scored season by its own realized total — a perfect per-season
+league multiplier, applied to every player. It is the most general form *any* league-level
+term can take, so it is the ceiling on a fitted trend, a year effect and a manual override
+alike, and it cannot be a model because it reads the season it forecasts.
 
-As a share of the base arm's MAE it is worth: `stl` **3.11%**, `blk` 2.32%, `fta` **2.16%**,
-`reb` 1.71%, `fga` **0.81%**, `ast` 0.58%, `tov` 0.01% — **median 1.71%,
-maximum 3.11%.** So even oracular knowledge of the league shift buys almost nothing at the
-player level, because player-level error dominates it. `fta` carries a **−7.0%** systematic
-bias and removing it entirely recovers **2.2%** of MAE. **That is the single most important
-number here**: it bounds every form of season term, and it is small.
+As a share of the base arm's MAE it is worth: `fta` **4.97%**, `reb` 2.58%, `tov` **2.36%**,
+`ast` 1.29%, `blk` **1.17%**, `stl` 0.36%, `fga` **−0.00%** — **median 1.29%, maximum
+4.97%.** So even oracular knowledge of the league shift buys almost nothing at the player
+level, because player-level error dominates it. **That is the single most important number
+here**: it bounds every form of season term, and it is small.
+
+`fga` is negative, which is not a defect: a perfect per-season rescale can make MAE
+fractionally worse on a head whose league level barely moves, because it shifts every
+player to correct an aggregate that was already right. It is the cleanest possible statement
+that there is nothing there to win.
+
+> ⚠️ **Superseded 2026-08-07 — measured on `test_mae` until then**, where it read `stl`
+> **3.11%**, `blk` 2.32%, `fta` **2.16%**, `reb` 1.71%, `fga` **0.81%**, `ast` 0.58%, `tov`
+> **0.01%**, median **1.71%**, max 3.11%. **The ordering reshuffled almost completely** —
+> `stl` fell from first (3.11%) to sixth (0.36%) and `fta` rose from third to first — while
+> the *size* barely moved: median 1.71% → 1.29%, max 3.11% → 4.97%. A ranking that
+> reorders itself across a change of two scored seasons is measuring season-specific
+> accident, not a stable property of the heads, which is the same conclusion §0 reaches
+> from the selection margins. **Quote the magnitude, never the order.**
+>
+> The one substantive change is the ceiling's height: it is now **~5% of MAE** on the worst
+> head rather than ~3%, so "the oracle bounds this at ~3%" should be quoted as **≤5%**. The
+> conclusion is unaffected — a perfect league oracle is still worth a twentieth of the error
+> at best, and no fitted form reaches an oracle.
 
 #### 4. The year effect does exactly what it should, and recovers the league independently
 
-Median held-out ΔR² against `base` is **+0.00004** across the thirteen heads, which is the
-mean-zero property surviving contact with the data. The largest is `fg3a` at **0.017**, the
-head where it absorbs drift rather than shock.
+Median validation ΔR² against `base` is **−0.00027** across the thirteen heads, which is the
+mean-zero property surviving contact with the data. The largest is `fg2m|fg2a` at **0.022**,
+and every other head is inside ±0.001.
 
 It is also a **defined check rather than a hopeful comparison**: `sigma_year` is fitted by
 NUTS on player-season rows and knows nothing about `make season-effects`, which measures the
 league rate directly as totals over totals. On a log link the two are the same number in the
-same units, and **5 of the 8 count heads land within 20%** —
+same units, and **3 of the 7 count heads land within 20%** —
 
 | head | fitted `sigma_year` | measured league yoy sd | ratio |
 |---|---|---|---|
-| `blk` | 3.66% | 3.70% | **0.99** |
-| `tov` | 2.71% | 2.89% | 0.94 |
-| `fta` | 3.78% | 4.36% | 0.87 |
-| `stl` | 2.49% | 3.03% | 0.82 |
-| `reb` | 1.75% | 1.48% | 1.18 |
-| `fg2a` | 3.03% | 2.42% | 1.25 |
-| `ast` | 4.46% | 3.08% | 1.45 |
-| **`fg3a`** | **15.43%** | 6.53% | **2.36** |
+| `reb` | 1.58% | 1.48% | **1.07** |
+| `tov` | 2.56% | 2.89% | 0.89 |
+| `blk` | 3.15% | 3.70% | **0.85** |
+| `stl` | 2.30% | 3.03% | 0.76 |
+| `fta` | 3.23% | 4.36% | 0.74 |
+| `fga` | 2.10% | 1.52% | 1.38 |
+| `ast` | 4.32% | 3.08% | 1.40 |
+| **`fg3a\|fga`** (logit) | **11.42%** | 6.19% | **1.84** |
 
-`fg3a` at 2.36× is the tell: with no trend term to carry the secular climb, the year effect
-absorbs **drift as a sequence of shocks** and then zeroes it at prediction time — which is
-why its bias goes to −9.01%. The logit-link rows (`gp` 4.47×, the conversions ~3.6×) differ
-by a 1/(1−p) factor and are a sanity check only.
+> ⚠️ **Every σ in this table moved on 2026-08-07, and NOT because the sampler is noisy.**
+> The old `year_*` columns were written from the **test arm's** fit — trained on 27 seasons,
+> train plus validation — into a row whose CRPS came from the **validation** arm, trained on
+> 25. One row, two different models' numbers, and `year_n_train_seasons` (27 → 25) is the
+> column that shows it. Nothing was leaking, but the σ being compared against the league
+> series was never the σ of the model the rest of the row describes. Both now come from the
+> validation fit.
+>
+> The recorded table read, as `sigma_year` / league yoy sd / ratio: `blk` 3.66% / 3.70% /
+> 0.99, `tov` 2.71% / 2.89% / 0.94, `fta` 3.78% / 4.36% / **0.87**, `stl` 2.49% / 3.03% /
+> **0.82**, `reb` 1.75% / 1.48% / 1.18, `fg2a` 3.03% / **2.42%** / 1.25, `ast` 4.46% /
+> 3.08% / 1.45 and `fg3a` **15.43%** / **6.53%** / **2.36** — i.e. **5 of 8 within 20%**,
+> on a head list that still carried `fg2a` and `fg3a`. Fitting on two fewer seasons
+> shrinks σ on six of seven heads, which pushes `fta` (0.87 → 0.74) and `stl` (0.82 → 0.76)
+> out of the 20% band. **The check still passes in substance** — a quantity fitted by NUTS
+> on player-season rows lands within a factor of ~1.4 of a league aggregate it has no
+> knowledge of, on every count head — but "5 of 8 within 20%" is now **3 of 7**, and the
+> band was always an arbitrary cut through a continuum.
+
+The retired `fg3a` at 2.36× was the tell: with no trend term to carry the secular climb, the
+year effect absorbs **drift as a sequence of shocks** and then zeroes it at prediction time —
+which is why its bias went to −9.01%. Its successor `fg3a | fga` shows the same signature
+in the same place, at **1.84×** the league movement of the three-point *mix* — the highest
+ratio of any head, and the mix is exactly the quantity with the strong secular trend. The
+logit-link rows (`gp` 4.20×, `ftm|fta` 3.72×, `fg2m|fg2a` 3.16×, `min` 2.52×) differ by a
+1/(1−p) factor and are a sanity check only.
 
 **The Jensen inflation is real and negligible**: mean-zero on the linear predictor is *not*
 mean-zero on the response, since `E[exp(σz)] = exp(σ²/2)`, and the measured multiplier runs
-**1.000 to 1.012** across the heads. Worth reporting rather than assuming away; not worth
-correcting.
+**1.000 to 1.008** across the heads (1.000 to 1.012 on the retired test-arm fits). Worth
+reporting rather than assuming away; not worth correcting.
 
 #### 5. What the year effect IS worth — and the plan understated it by another order of magnitude
 
 Roster season-total dk_pts spread, sd of the summed total across posterior draws, averaged
 over 200 random rosters:
 
-| roster | `base` sd | `year` sd | inflation | shared-β, same board |
+| roster | `base` sd | `year` sd | inflation | shared-β, comparable board |
 |---|---|---|---|---|
-| 12 | 753 | 866 | **+8.9%** | +0.2% |
-| **15** | **557** | **621** | **+11.6%** | **+0.2%** |
-| 30 | 1,213 | 1,671 | +22.1% | +0.3% |
-| 150 | 2,796 | 6,652 | +91.1% | +1.1% |
-| 791 (whole board) | 7,098 | 32,967 | **+278%** | +6.4% |
+| 12 | 537 | 579 | **+7.95%** | +0.2% |
+| **15** | **594** | **655** | **+10.4%** | **+0.2%** |
+| 30 | 847 | 1,025 | +21.0% | +0.3% |
+| 150 | 1,894 | 3,475 | +83.5% | +1.1% |
+| 773 (whole validation board) | 4,465 | 15,812 | **+254%** | +6.4% |
 
-**On a 15-man roster the year effect is worth ~95× the shared-β term** the Stan work was
-built for. The plan's "larger by an order of magnitude" is understated by a further order.
-The mechanism is the one the plan named: a league shift is perfectly correlated across
+**On a 15-man roster the year effect is worth ~50× the shared-β term** the Stan work was
+built for. The plan's "larger by an order of magnitude" is still understated by a further
+order. The mechanism is the one the plan named: a league shift is perfectly correlated across
 players, so it grows as **N** while independent error grows as **sqrt(N)** — and unlike
 shared-β, which is negligible on one roster and only matters board-wide, this one is already
-+15% at twelve players.
++8% at twelve players.
+
+⚠️ **The shared-β column is a different board and a different head.** It comes from
+`stan_availability.board_correlation`, which measures the availability head alone on its own
+validation board; this column composes eleven heads on 773 component-design rows. The
+comparison is the right one in kind — non-diversifiable against diversifiable — but the
+ratio is indicative, not a like-for-like division.
 
 ⚠️ **Treat these as an upper bound.** The fitted `sigma_year` exceeds the independently
-measured league movement on `fg3a`, `ast` and `fg2a`, so part of this spread is player-level
-heterogeneity the year effect has absorbed rather than league movement.
+measured league movement on `fga`, `ast` and `fg3a|fga`, so part of this spread is
+player-level heterogeneity the year effect has absorbed rather than league movement.
+
+> ⚠️ **Superseded 2026-08-07 — measured on the 791-player TEST board until then**, where it
+> read 753 / 866 (**+8.9%**) at 12, **557** / **621** (**+11.6%**) at 15, 1,213 / 1,671
+> (+22.1%) at 30, 2,796 / 6,652 (+91.1%) at 150 and 7,098 / 32,967 (**+278%**) across all
+> **791**. The whole-board row is keyed on board size, so it is a different row rather than
+> a moved value. Every inflation figure came down slightly and the shape — near-flat to 30
+> players, then growing hard — is unchanged, which is the part the argument uses.
 
 #### 6. Minutes is the one head that adopts a season term — and it falsifies a recorded hypothesis
 
-| `min` arm | val CRPS | test CRPS | bias (minutes) |
+| `min` arm | val CRPS | val R² | val bias (minutes) |
 |---|---|---|---|
-| `carry_forward` | 161.45 | 168.24 | −5.69 |
-| `base` | 144.09 | 147.02 | −41.05 |
-| `trend` | 144.44 | 148.78 | **−56.59** |
-| **`year`** (selected) | **143.81** | **146.54** | **−38.19** |
-| `trend_year` | 144.28 | 148.85 | −56.63 |
+| `carry_forward` | 161.45 | 0.854 | **+23.9** |
+| `base` | 144.09 | 0.883 | −14.2 |
+| `trend` | 144.44 | 0.882 | **−25.0** |
+| **`year`** (selected) | **143.81** | **0.884** | **−13.0** |
+| `trend_year` | 144.28 | 0.882 | −26.9 |
 
-The year effect wins on **both** splits — the replication bar this repo insists on — and
-nudges the standing −33 to −41 minute bias to −38.2.
+The year effect wins, and it is the one selection in this ablation with a margin that has
+survived a change that should not touch it: `logit_own_spline` + `year` reproduced across
+the shot-attempt basis change **and** across the split conversion, to four decimal places
+both times. Contrast §0, where the arms shuffle on sub-1% margins.
 
 **And the trend settles an open question in `docs/availability-plan.md`.** That doc proposed
-the minutes head's held-out bias as "the signature an era effect would leave". Adding a trend
-makes the bias **worse by 15.5 minutes** (−41.0 → −56.6) on both arms that carry one. So the
-minutes bias is **shrinkage toward a 30-season mean, not an era effect** — the hypothesis is
-falsified rather than left open.
+the minutes head's bias as "the signature an era effect would leave". Adding a trend makes
+the bias **worse by 10.8 minutes** (−14.2 → −25.0), and by 12.7 on `trend_year`. An era
+effect the head was failing to track would have been *corrected* by a trend, not amplified
+by it. So the minutes bias is **shrinkage toward a 30-season mean, not an era effect** — the
+hypothesis is falsified rather than left open, and the falsification is what survives here
+even though the bias level itself did not.
+
+> ⚠️ **The bias column changed meaning on 2026-08-07 and the sign structure changed with
+> it.** The old bare `bias` column was the **held-out** one, reading `carry_forward`
+> **−5.69**, `base` **−41.05**, `trend` **−56.59**, `year` **−38.19**, `trend_year` −56.63,
+> beside test CRPS of 168.24 / 147.02 / 148.78 / **146.54** / 148.85. On validation the
+> **floor over-predicts by +23.9 minutes** where it under-predicted by −5.7 on test, and the
+> fitted arms sit −13 to −27 rather than −38 to −57. This matches `stan_minutes` exactly,
+> whose own validation floor bias is +23.91, and it is why `CLAUDE.md` withdrew "the fitted
+> heads carry a −33 to −41 minute bias against the floor's −5.7". **What reproduces is the
+> GAP, not the level**: the fitted arms sit 27–51 minutes below the floor on both splits.
+> Do not quote a signed bias level for this head; quote its distance from the carry-forward.
 
 #### 7. Availability: the season × role interaction is a validation null
 
@@ -766,36 +949,52 @@ Participation Policy is a **−4.63%** level break on `gp_share [30+ mpg]` at **
 while the fringe bucket is +5.37% and not significant. So the era effect is real. It does not
 transfer:
 
-| arm | features | **val CRPS** | test CRPS | bias |
+| arm | features | **val CRPS** | val R² | val bias |
 |---|---|---|---|---|
-| `carry_forward` (league/age) | 0 | 13.387 | 13.614 | +6.80 |
-| `base` | 19 | 10.007 | 10.797 | +1.68 |
-| **`trend`** (selected) | 20 | **9.997** | 10.765 | −1.29 |
-| `year` | 19 | 10.015 | 10.813 | +2.20 |
-| `trend_year` | 20 | 10.005 | 10.757 | −1.24 |
-| `trend_x_role` | 26 | **10.078** | **10.742** | −1.23 |
-| `trend_x_role_year` | 26 | **10.087** | **10.736** | −1.27 |
+| `carry_forward` (league/age) | 0 | 13.387 | −0.057 | +5.52 |
+| `base` | 19 | 10.007 | 0.374 | +0.98 |
+| **`trend`** (selected) | 20 | **9.997** | **0.375** | −1.87 |
+| `year` | 19 | 10.015 | 0.373 | +1.39 |
+| `trend_year` | 20 | 10.005 | 0.374 | −1.82 |
+| `trend_x_role` | 26 | **10.078** | 0.366 | −1.87 |
+| `trend_x_role_year` | 26 | **10.087** | 0.364 | −1.79 |
 
-**The two role arms are the best two on test and the worst two on validation.** That is the
-exact false-positive shape this repo has already shipped once — the nonlinearity arm whose
-paired bootstrap on test read [−0.079, −0.015] with P(Δ<0) = 99.7% and did not replicate. It
-is caught here because selection never reads the test column. And the arm that *is* selected,
-`trend`, is worth **0.010 games of CRPS** on validation, which is nothing.
+**The two role arms are the worst two of the seven on validation** — the most expensive arms
+in the ablation, at 26 features, buying a *loss* of 0.08 games against `base`. And the arm
+that *is* selected, `trend`, is worth **0.010 games of CRPS**, which is nothing.
+
+> ⭐ **The finding here WAS the val/test disagreement, so it is worth stating plainly that
+> the test half is now retired.** Those same two role arms were the **best two on test**
+> (**10.742** and **10.736** against `base` **10.797**, with `carry_forward` 13.614,
+> `trend` 10.765, `year` 10.813 and `trend_year` 10.757) while being the worst two on
+> validation. That is the exact false-positive shape this repo has already shipped once —
+> the nonlinearity arm whose paired bootstrap on test read [−0.079, −0.015] with
+> P(Δ<0) = 99.7% and did not replicate — and it was caught only because selection never read
+> the test column. `src/models/held_out.py` now stops the test column from being computed at
+> all, so **this particular contrast cannot be re-run**; it is preserved here as the record
+> of why the lock exists. The verdict does not depend on it: the role arms lose on
+> validation, which is the only split that decides.
 
 #### 8. Bonus-threshold calibration
 
 | arm | predicted / game | realized / game | bias |
 |---|---|---|---|
-| `base` | 0.1154 | 0.1391 | **−14.8%** |
-| `trend` | 0.1216 | 0.1391 | −10.2% |
-| `year` | 0.1127 | 0.1391 | −16.5% |
-| `trend_year` | 0.1222 | 0.1391 | −9.9% |
+| `base` | 0.1207 | 0.1370 | **−11.7%** |
+| `trend` | 0.1264 | 0.1370 | −7.6% |
+| `year` | 0.1189 | 0.1370 | −12.8% |
+| `trend_year` | 0.1272 | 0.1370 | **−6.9%** |
 
-Every arm under-predicts the bonus by 12–19%, and **that level is mostly not the season
+Every arm under-predicts the bonus by 7–13%, and **that level is mostly not the season
 term** — this composition draws the eleven heads independently given realized minutes, so it
 omits the positive cross-component dependence the bonus threshold needs (measured
 off-diagonals average +0.0225 across the seven counts). It is a standing argument for the
-residual copula, not against a season term. The *ordering* tracks the bias story exactly.
+residual copula, not against a season term. The *ordering* tracks the bias story exactly:
+the two trend-carrying arms over-predict the components least and so under-predict the bonus
+least, which is the same cancellation §2 describes arriving at a convex functional.
+
+⚠️ **Superseded 2026-08-07** — on the 791-player test board the same table read **−14.8%**,
+**−10.2%**, **−16.5%** and **−9.9%** against a realized 0.1391/game, i.e. a 12–19% shortfall.
+The gap narrowed by about three points on validation and the ordering is identical.
 
 ### What to do, and what not to
 
@@ -827,17 +1026,18 @@ residual copula, not against a season term. The *ordering* tracks the bias story
 ### The rate side is nearly saturated — measured, with a mandatory floor
 
 `make component-rates` (`src/models/component_rates.py`), season-collapsed heads on 10,194
-player-seasons, held out on 2024-25/2025-26. Three results bind on everything below:
+player-seasons, scored on validation (2022-23/23-24). Three results bind on everything below:
 
 - **`carry_forward` — prior per-36 rate x actual minutes / 36, no fitting at all — scores
-  held-out R² 0.82–0.94**, and the best of seven fitted variants beats it by only **+0.0019 to
-  +0.0203**. Every component head must be quoted against it; `beats_floor` is on every output
-  row. Combined with `oracle_gp` 221.3 vs `oracle_rate` 302.7 on the season total, this says
+  validation R² 0.81–0.95**, and the best of seven fitted variants beats it by only **+0.0013 to
+  +0.0334**. Every component head must be quoted against it; `beats_floor` is on every output
+  row. Combined with `oracle_gp` 214.4 vs `oracle_rate` 261.9 on the season total, this says
   remaining value is in **availability and the joint structure**, not in richer rate features.
 - **The specification is scale, not curvature**: `log E[rate] = β·log(prior rate)`. Linear-in-
-  raw-rate inside `exp()` is misspecified, catastrophically for the zero-heavy heads (`fg3a`
-  0.520, `blk` 0.637 against 0.879 / 0.820 on the log scale). Splines add +0.030 (`fg3a`) and
-  +0.040 (`blk`) and ≤ +0.003 elsewhere; `age × own` and `mpg × own` interactions are a null.
+  raw-rate inside `exp()` is misspecified, catastrophically for the zero-heavy heads (`blk`
+  **0.651** against **0.775** on the log scale, and the retired `fg3a` 0.520 against 0.879).
+  Splines add **+0.054** (`blk`) and ≤ +0.005 elsewhere; `age × own` and `mpg × own`
+  interactions are a null. (Held-out, before 2026-08-05: `blk` 0.637 / 0.820, spline +0.040.)
 - **Walk-forward PCA of the 156-column season matrix is a null.** Refitted per target season on
   S-1 and earlier only (a pooled basis leaks the future invisibly), 10 components replacing the
   raw context columns: within ±0.003 of the raw spec on every head. The style and tracking
@@ -845,7 +1045,11 @@ player-seasons, held out on 2024-25/2025-26. Three results bind on everything be
   raw spec.
 - **`ftm|fta` is the one head nothing beats** — free-throw percentage is pure player skill, so
   an empirical-Bayes shrink of the prior is already optimal. The conversion side is worth
-  ~1–2% of its NLL at most (`fg2m|fg2a` +0.072, `fg3m|fg3a` +0.032).
+  ~1–2% of its NLL at most (`fg2m|fg2a` **+0.079**, `fg3m|fg3a` **+0.028**; held-out +0.072
+  and +0.032). ⚠️ On validation the shot-mix head `fg3a|fga` joins it in failing under
+  sklearn — 4.6317 against a floor of 4.6191, where on test it cleared. The Stan run splines
+  on `logit(own)` rather than raw `own` and clears comfortably, so read this as the sklearn
+  probe being the coarser instrument.
 
 > ⚠️ **The first version of this measurement was an artifact**, and the failure mode is worth
 > carrying: `sklearn`'s `PoissonRegressor` averages the deviance by the weight sum, so with
@@ -865,50 +1069,76 @@ player-seasons, held out on 2024-25/2025-26. Three results bind on everything be
 > `.gitignore` already covers, so no binary is committed and no generated `.hpp` lands in
 > the source tree.
 >
-> **Availability** ports the validated point MLE and reproduces it: held-out CRPS 10.7947
-> against 10.7952, ρ 0.2759 against 0.2757, and the MLE inside the 95% credible interval for
+> **Availability** ports the validated point MLE and reproduces it: validation CRPS 10.0063
+> against 10.0057, ρ 0.2808 against 0.2806, and the MLE inside the 95% credible interval for
 > **21/21** coefficients. The prior is set to `normal(0, 1/sqrt(2·l2))` precisely so the
-> posterior *mode* is the penalized MLE, making that a defined check. R̂ 1.0025, 0
-> divergences, 254 s. What the posterior adds is `Var_θ(Σ_i E[Y_i|θ])` — exactly 0 for any
+> posterior *mode* is the penalized MLE, making that a defined check. R̂ 1.0019, 0
+> divergences, 195 s. What the posterior adds is `Var_θ(Σ_i E[Y_i|θ])` — exactly 0 for any
 > point estimate — but **its size depends on the portfolio**, and this plan's framing
 > oversold it. The independent term grows as sqrt(N) and the shared-β term as N, so measured
-> on the held-out board the spread inflation is **+0.2% on a 15-player roster** and **+6.4%
-> across all 911**. Real for board-wide exposure across many lineups; near-irrelevant for one
+> on the validation board the spread inflation is **+0.2% on a 15-player roster** and **+6.7%
+> across all 883**. Real for board-wide exposure across many lineups; near-irrelevant for one
 > drafted team. This matters for the "joint / correlation modeling across teammates" section
 > below: shared *parameter* uncertainty is not the correlation source a single roster needs —
 > shared **team state** and the shared `min` draw still are.
 >
+> ⚠️ **The port check and the board table were held-out measurements until 2026-08-05**,
+> reading CRPS 10.7947 against 10.7952, ρ 0.2759 against 0.2757, R̂ 1.0025, 254 s, and +0.2%
+> / **+6.4%** across a **911**-player board. Both moved to validation with every other head;
+> the board additionally *belongs* there, being a simulator input.
+>
 > **Minutes** is new and is the first head to use the real trials denominator — successes
 > out of actual game length, never 48. See `docs/availability-plan.md` for the sweep; it
-> clears its no-fit floor by +0.041 R² and −21.4 minutes of CRPS, and it reports the
+> clears its no-fit floor by +0.030 R² and −17.5 minutes of CRPS, and it reports the
 > **game-level** dispersion (4.65× binomial) separately from the season-level ρ the collapse
 > estimates, because the simulator needs the former and the fit only sees the latter.
 >
-> **The eleven component heads** are built too — 74 fits, **0 divergences**, max R̂ 1.0118,
-> 305.0 min of compute. 10,194 player-seasons, 9,403 train / 791 test, validation on 2022-23
-> and 2023-24. Three findings, two of which **overturn what the sklearn run above measured**:
+> ⚠️ **The minutes sweep was a held-out measurement until 2026-08-06** and read a gain of
+> **+0.041** R² and **−21.4** minutes over the floor, on a test R² of **0.8572** against the
+> floor's **0.8166**, with the spline arm costing **899** s against the linear arm's
+> **189** s. Those figures are the retired test refits at double the iterations; the
+> per-game costing above is scaled from the validation fits the artifact now holds.
+>
+> **The eleven component heads** are built too — 37 fits, **0 divergences**, max R̂ 1.0076,
+> 137.4 min of compute. 10,194 player-seasons, 8,630 fit / 773 validation on 2022-23 and
+> 2023-24. Three findings, two of which **overturn what the sklearn run above measured**:
 >
 > - **`log(own)` alone is not sufficient under a negative binomial.** The Poisson fit has
->   `log_own` at 0.8204 (`blk`) and 0.8791 (`fg3a`); under NB the identical spec collapses to
->   **0.6794** and **0.3719**, both far below their floors, and only a spline recovers them
->   (0.8579, 0.9046). NB2's `var = μ + μ²/φ` down-weights large counts, so the fit is driven
+>   `log_own` at 0.7748 (`blk`; 0.8204 before the split moved) and, on the retired basis,
+>   0.8791 (`fg3a`); under NB the identical spec collapses to
+>   **0.6730** and **0.3719**, both far below their floors, and only a spline recovers them
+>   (0.8309, 0.9046). NB2's `var = μ + μ²/φ` down-weights large counts, so the fit is driven
 >   by the low-count mass — exactly where the log-scale relation is most curved. **The
 >   "splines are worth ≤ +0.003 outside `fg3a`/`blk`" guidance above is Poisson-specific**;
->   under NB the validation split picks a spline for **four** heads (`fg3a`, `blk`, `ast`,
->   `stl`), and on two of them it is the difference between a model and a failure.
-> - **`linear` is worse than the sklearn run suggested** — held-out R² **−19.00** on `fg3a`
->   and **−1.393** on `blk`, against 0.520/0.638. Linear-in-raw-rate inside `exp()` is not
->   merely misspecified, it is unusable.
+>   under NB the validation split picks a spline for **four** heads (`fga`, `ast`, `blk`,
+>   `stl`), and on `blk` it is the difference between a model and a failure.
+> - **`linear` is worse than the sklearn run suggested** — validation R² **−0.2744** on `blk`
+>   against 0.638 under sklearn, and **−19.00** on the retired `fg3a`. Linear-in-raw-rate
+>   inside `exp()` is not merely misspecified, it is unusable, and it fails the no-fit floor
+>   on five of the seven count heads.
 > - **⭐ Adopting the shot-attempt basis (2026-08-04) retired the −19.00 case entirely.**
 >   `fg3a` is no longer a count head; `fga` replaces it and is the best-behaved count in the
->   project — floor **0.9464**, the highest of the seven, selected at **0.9505**, and
->   `log_own` already at **0.9501**. Where the wrong scale cost `fg3a` a catastrophic
->   −19.00, it costs `fga` **0.9396**, i.e. 0.0068 R². A total is far less skewed than its
->   three-point part. `blk` at −1.393 is now the only spectacular linear failure left, and
+>   project — floor **0.9514**, the highest of the seven, selected at **0.9584**, and
+>   `log_own` already at **0.9581**. Where the wrong scale cost `fg3a` a catastrophic
+>   −19.00, it costs `fga` **0.9489**, i.e. 0.0025 R². A total is far less skewed than its
+>   three-point part. `blk` at −0.2744 is now the only negative linear arm left, and
 >   the `fg3a` figures above are retained as the record of the basis that was retired.
-> - **`fta` now joins `ftm|fta` below its floor** (best fitted 0.8649 against 0.8673), so the
->   whole free-throw family fails. Unlike `ftm|fta` there is no "pure player skill" argument
->   for trips to the line, so this deserves a second look rather than acceptance.
+> - **⚠️ `fta` cleared its floor when the sweep moved to validation, and "the whole
+>   free-throw family fails" is withdrawn.** It reads **0.8909** against a floor of
+>   **0.8765** at its selected `log_own`, where the test column had it at 0.8649 against
+>   0.8673 — a failure by 0.0024, which was never a margin worth a finding. **`ftm|fta`
+>   still fails at every variant and is now the only head in the project that does.** That
+>   was always the better-founded half: free-throw *percentage* has a pure-player-skill
+>   argument that trips to the line never had.
+>
+> ⚠️ **Every figure in this block was a TEST measurement until 2026-08-06.** The superseded
+> readings, kept because the `fta` reversal is only legible beside them: `blk` `log_own`
+> **0.6794** and spline **0.8579**; `blk` linear **−1.393**; `fga` floor **0.9464**, linear
+> **0.9396**, `log_own` **0.9501**, spline **0.9505**; and the sampler at **74** fits,
+> **305.0** min, max R̂ **1.0118**. The sweep ran 9,403 train / **791** test. Nothing here
+> reversed except free throws, and the two arms that look most changed — `blk` linear from
+> −1.393 to −0.2744, `fga` linear from 0.0068 below its floor to 0.0025 — tell the same
+> story at a different magnitude.
 >
 > **✅ The 3PA/2PA reparameterization is settled, and it wins decisively.** `fga` as a count ×
 > `fg3a | fga` as a binomial share beats two independent count heads by **−0.771 nats on
@@ -918,8 +1148,18 @@ player-seasons, held out on 2024-25/2025-26. Three results bind on everything be
 > so the two joint log-densities are directly comparable. The recommendation below is now a
 > measurement.
 >
-> Every head is quoted against `carry_forward`, and every variant is selected on a
-> validation split with the test column reported for confirmation only.
+> ⚠️ **Both artifacts went validation-only on 2026-08-06, so the test half of that pair
+> (10.784 → 9.991, −0.793) is now a record rather than a measurement.** It had survived the
+> conversion of `stan_component_substitution.csv` by being read out of
+> `stan_component_substitution_sweep.csv` instead, but `make stan-substitution` was
+> re-run validation-only the same day and that copy is gone too. Those three figures are
+> presence-checked in `src/docs_audit.py` and value-checked nowhere. **The validation half
+> reproduced unchanged at full-length chains** and is still audited: 10.797 → 10.026 at
+> −0.771.
+>
+> Every head is quoted against `carry_forward`, and every variant is selected on the
+> validation split. **There is no longer a test column to report** — the held-out reading is
+> taken once, by `make final-evaluation`.
 
 **Fit the heads separately.** The chain of conditionals factorizes the joint posterior exactly
 when parameter blocks are distinct, so separate fits are not an approximation — they recover the
@@ -930,7 +1170,7 @@ copula if needed — measured off-diagonals average **+0.0225** across the seven
 correlated multivariate player effect, and only after measuring it is worth it (the player random
 effect on rates was largely in-sample leakage). Reparameterize the 3PA/2PA substitution as
 `fga` count × `fg3a | fga` share rather than coupling two Poissons — ✅ **measured 2026-07-30
-and worth −0.79 nats per player-season**, see the built-block above.
+and worth −0.771 nats per player-season on validation**, see the built-block above.
 
 ## New model surface area
 
@@ -1036,11 +1276,11 @@ before shipping; given this repo's record on ceilings, a settled null is the lik
   small-scale timing check~~ — ✅ **answered by building it.** Season-collapsed, the whole
   surface is cheap: the availability head is 254 s and the eight count heads are ~1–3 min each
   on 4 chains. The cost wall is **not** the hierarchy, it is abandoning the collapse — see the
-  per-game minutes subsection, where the same head goes from 9,048 rows to 731,863.
+  per-game minutes subsection, where the same head goes from 8,306 rows to 731,863.
 - ~~**Whether minutes should be fitted per-game at all is open and deliberately deferred**~~
   — **partly answered 2026-07-31.** Of the three options costed under "Fitting strategy",
   the **team-game composition model is built and wins** (`make stan-composition`,
-  `docs/minutes-composition-plan.md`): −0.3548 minutes of held-out CRPS against the
+  `docs/minutes-composition-plan.md`): **−0.2898** minutes of validation CRPS against the
   independent per-player draw, and both the individual cap and the team total exact by
   construction. It was an afternoon rather than days, because the season collapse was never
   what made it expensive — the numerics were.

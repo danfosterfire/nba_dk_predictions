@@ -40,6 +40,21 @@ games that stage E reported.
 > comparison, which is all that is required for the availability contrast to be clean.
 > `E[GP x rate] = E[GP] x E[rate]` also assumes the two are conditionally independent given
 > the features; they are not exactly, so `oracle_rate` carries the residual.
+
+## Which rows the table is scored on
+
+**Validation**, since 2026-08-05. This module is where a games-played treatment is *chosen*
+— the whole design is a ladder of six of them scored against each other, and Gate E of
+`docs/games-played-plan.md` asks it to arbitrate between the incumbent beta-binomial and
+the spell process. A comparison that decides something has to be run on the split that is
+allowed to decide, and until this change it was not: the entire headline table was a test
+evaluation, quoted in four documents as the project's deliverable-level result.
+
+`compare` is the whole measurement and takes whichever pair of frames it is handed.
+`src/final_evaluation.py` calls it on `(train + validation, test)` once, at the end. The
+`oracle_gp` / `oracle_rate` bound and the naive/prior-GP ladder are unaffected in kind by
+the move — they are arithmetic on whichever rows they are given — but every number moves,
+because the rows and the training frame both change.
 """
 
 from pathlib import Path
@@ -58,8 +73,8 @@ from src.models.availability import (
     LeagueAgeBaseline,
     build_design,
     season_start_dates,
-    split_seasons,
 )
+from src.models.held_out import selection_split
 
 # Prior-season inputs to the fixed rate model. Rate persists at 0.869 per CLAUDE.md, so
 # this is the easy half; minutes and availability are here because rotation status moves
@@ -172,29 +187,85 @@ def crps_from_atoms(atoms: np.ndarray, weights: np.ndarray, y: np.ndarray) -> np
 
 # ── Treatments ────────────────────────────────────────────────────────────────
 
-def gp_treatments(train: pd.DataFrame, test: pd.DataFrame,
-                  max_games: int) -> dict[str, dict]:
+SPELL_PMF_FILE = "stan_games_played_gp_pmf.csv"
+# The test-side twin, written by `src/final_evaluation.py::_games_played` and by nothing
+# else. Two filenames rather than one, because a single path would let a validation-side
+# pmf silently answer a held-out question the moment the row keys happened to overlap.
+FINAL_SPELL_PMF_FILE = "final_evaluation_gp_pmf.csv"
+
+
+def spell_process_pmf(out_dir: Path, frame: pd.DataFrame, max_games: int,
+                      pmf_file: str = SPELL_PMF_FILE) -> np.ndarray | None:
+    """The spell process's games-played pmf, if `make stan-games-played` has run.
+
+    Read from an artifact rather than imported, because `src/models/stan_games_played.py`
+    needs a CmdStan toolchain and this module does not — the same separation
+    `games_played.py` keeps from its own Stan half. Returns `None` when the artifact is
+    absent, so a fresh checkout scores the original five treatments and says so.
+
+    **Partial coverage is refused rather than filled.** This frame is an inner join of the
+    availability design with the rate frame, so it is a near-subset of the head's own
+    rows; a row the head did not predict would otherwise get a silent zero pmf, which is
+    an infinitely confident forecast of zero games rather than a missing one. That refusal
+    is also what keeps the two pmf files from crossing splits: handed a validation pmf and
+    a test frame, the key join covers nothing and the treatment is skipped loudly.
+    """
+    path = Path(out_dir) / pmf_file
+    if not path.exists():
+        return None
+    long = pd.read_csv(path)
+    keys = frame[["season", "player_id"]].copy()
+    keys["_row"] = np.arange(len(frame))
+    joined = long.merge(keys, on=["season", "player_id"], how="inner")
+
+    covered = joined["_row"].nunique()
+    if covered < len(frame):
+        print(f"  /!\\  {pmf_file} covers {covered:,} of {len(frame):,} "
+              f"season-total rows; skipping the spell-process treatment rather than "
+              f"zero-filling {len(frame) - covered:,} of them")
+        return None
+
+    pmf = np.zeros((len(frame), max_games + 1))
+    keep = joined["gp"] <= max_games
+    pmf[joined.loc[keep, "_row"].to_numpy(int),
+        joined.loc[keep, "gp"].to_numpy(int)] = joined.loc[keep, "p"].to_numpy(float)
+    return pmf / np.clip(pmf.sum(axis=1, keepdims=True), 1e-12, None)
+
+
+def gp_treatments(train: pd.DataFrame, frame: pd.DataFrame, max_games: int,
+                  out_dir: Path | None = None,
+                  pmf_file: str = SPELL_PMF_FILE) -> dict[str, dict]:
     """Predicted games played under each treatment, with a pmf where one exists.
 
     Returns `{name: {"gp": array, "pmf": array | None}}`. The oracles carry the realized
     value and no distribution — they are bounds, not forecasts.
     """
     out: dict[str, dict] = {}
-    n = test["team_games"].to_numpy(dtype=float)
+    n = frame["team_games"].to_numpy(dtype=float)
 
     out["full_season"] = {"gp": n.copy(), "pmf": None}
-    out["prior_gp"] = {"gp": np.clip(test["gp_share_lag1"].to_numpy(dtype=float), 0, 1) * n,
+    out["prior_gp"] = {"gp": np.clip(frame["gp_share_lag1"].to_numpy(dtype=float), 0, 1) * n,
                        "pmf": None}
 
     for model in (LeagueAgeBaseline(), BetaBinomialGLM()):
         model.fit(train)
-        pmf = model.predict_pmf(test, max_games)
-        out[model.name] = {"gp": model.predict_mean(test) * n, "pmf": pmf}
+        pmf = model.predict_pmf(frame, max_games)
+        out[model.name] = {"gp": model.predict_mean(frame) * n, "pmf": pmf}
+
+    # Gate E: the same composition, with games played coming from the spell process
+    # instead of the season-level beta-binomial. Everything else — the rate model, the
+    # rows, the scoring — is held identical, so the contrast is the games-played
+    # treatment and nothing else, exactly as it is for the four rows above.
+    if out_dir is not None:
+        spell = spell_process_pmf(out_dir, frame, max_games, pmf_file)
+        if spell is not None:
+            k = np.arange(max_games + 1)[None, :]
+            out["spell_process"] = {"gp": (spell * k).sum(axis=1), "pmf": spell}
 
     # `gp_played`, not the design's `gp`: the realized rate is `dk_total / gp_played`, so
     # this pairing is the one that reproduces `dk_total` exactly when both halves are
     # oracles. Using the other column would leave a residual in a row labelled "perfect".
-    out["oracle_gp"] = {"gp": test["gp_played"].to_numpy(dtype=float), "pmf": None}
+    out["oracle_gp"] = {"gp": frame["gp_played"].to_numpy(dtype=float), "pmf": None}
     return out
 
 
@@ -203,9 +274,10 @@ def _row(treatment: str, group: str, metric: str, value: float, n: int) -> dict:
             "n": n, "value": value}
 
 
-def evaluate(test: pd.DataFrame, rate: np.ndarray, treatments: dict[str, dict],
+def evaluate(frame: pd.DataFrame, rate: np.ndarray, treatments: dict[str, dict],
              max_games: int) -> tuple[list[dict], pd.DataFrame]:
     """Season-total metrics per treatment, plus a tidy prediction frame."""
+    test = frame
     y = test["dk_total"].to_numpy(dtype=float)
     rotation = ((test["minutes_per_game_lag1"] >= ROTATION_MIN_MPG)
                 & (test["gp_share_lag1"] >= ROTATION_MIN_GP_SHARE)).to_numpy()
@@ -247,6 +319,66 @@ def evaluate(test: pd.DataFrame, rate: np.ndarray, treatments: dict[str, dict],
     return rows, pd.concat(frames, ignore_index=True)
 
 
+# ── The comparison, on whichever pair of frames it is handed ──────────────────
+
+ORDER = ["full_season", "prior_gp", "league_age", "beta_binomial", "spell_process",
+         "oracle_rate", "oracle_gp"]
+
+
+def gate_e(table: pd.DataFrame) -> dict:
+    """Gate E of `docs/games-played-plan.md`: is the spell process worth it downstream?
+
+    The games-played arms are compared on CRPS in *games*, which is a marginal metric and
+    which the plan's own Gate D showed cannot see the thing the spell process exists to
+    fix — how absences are *shaped* into runs. Gate E asks the question one level down,
+    where the answer is worth money: does swapping the games-played treatment improve the
+    season DK total, holding the rate model and the rows identical?
+
+    **The bars are the incumbent's own row on whichever split this is scored on**, read out
+    of the table rather than written down. A gate with hard-coded thresholds is a test-set
+    number in disguise — `stan_games_played._gate_d` had exactly that shape and it is how
+    the games-played decision came to be settled on test.
+
+    Returns `{"ran": False}` when `make stan-games-played` has not written a pmf, so a
+    fresh checkout reports "not run" instead of a silent pass.
+    """
+    if "spell_process" not in set(table.index):
+        return {"ran": False}
+    spell, incumbent = table.loc["spell_process"], table.loc["beta_binomial"]
+    out = {"ran": True,
+           "mae": float(spell["mae_dk_total"]),
+           "incumbent_mae": float(incumbent["mae_dk_total"]),
+           "crps": float(spell.get("crps_dk_total", np.nan)),
+           "incumbent_crps": float(incumbent.get("crps_dk_total", np.nan)),
+           "bias": float(spell["bias_dk_total"]),
+           "incumbent_bias": float(incumbent["bias_dk_total"])}
+    out["mae_improves"] = bool(out["mae"] < out["incumbent_mae"])
+    out["crps_improves"] = bool(out["crps"] < out["incumbent_crps"])
+    out["passes"] = bool(out["mae_improves"] and out["crps_improves"])
+    return out
+
+
+def compare(train: pd.DataFrame, frame: pd.DataFrame, max_games: int,
+            out_dir: Path | None = None, pmf_file: str = SPELL_PMF_FILE
+            ) -> tuple[pd.DataFrame, pd.DataFrame, float]:
+    """Fit the rate model and every GP treatment on `train`, score them on `frame`.
+
+    Split-agnostic, so the validation ladder and the one end-of-project reading are the
+    same code rather than two copies of it. `run` passes `(train, validation)`;
+    `src/final_evaluation.py` passes `(train + validation, test)` and the test-side pmf.
+    """
+    rate_model = RateModel().fit(train)
+    rate = rate_model.predict(frame)
+    rate_r2 = float(1 - (np.sum((rate - frame["dk_per_game"]) ** 2)
+                         / np.sum((frame["dk_per_game"]
+                                   - frame["dk_per_game"].mean()) ** 2)))
+
+    treatments = gp_treatments(train, frame, max_games, out_dir, pmf_file)
+    treatments["oracle_rate"] = {"gp": treatments["beta_binomial"]["gp"], "pmf": None}
+    rows, predictions = evaluate(frame, rate, treatments, max_games)
+    return pd.DataFrame(rows), predictions, rate_r2
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def run(cfg: dict) -> dict[str, Path]:
@@ -256,35 +388,28 @@ def run(cfg: dict) -> dict[str, Path]:
     test_seasons = int(cfg_av.get("test_seasons", TEST_SEASONS))
 
     frame = build_frame(cfg)
-    train, test = split_seasons(frame, test_seasons)
+    train, val = selection_split(frame, test_seasons)
     max_games = int(frame["team_games"].max())
 
-    print(f"Season-total design: {len(frame):,} player-seasons, "
-          f"{len(train):,} train / {len(test):,} test "
-          f"({', '.join(sorted(test['season'].unique()))} held out)")
+    print(f"Season-total design: {len(frame):,} player-seasons. The test split is "
+          f"LOCKED — this\n  ladder CHOOSES a games-played treatment (Gate E of "
+          f"docs/games-played-plan.md), so it\n  runs on VALIDATION; the deliverable-level "
+          f"held-out number is taken once, by\n  `make final-evaluation`.")
+    print(f"  {len(train):,} fit / {len(val):,} score "
+          f"({', '.join(sorted(val['season'].unique()))} as validation)")
 
-    rate_model = RateModel().fit(train)
-    rate = rate_model.predict(test)
-    rate_r2 = 1 - (np.sum((rate - test["dk_per_game"]) ** 2)
-                   / np.sum((test["dk_per_game"] - test["dk_per_game"].mean()) ** 2))
-    print(f"  Fixed rate model: held-out R² {rate_r2:.4f} on dk_pts per game played. "
+    metrics, predictions, rate_r2 = compare(train, val, max_games, out_dir)
+    print(f"  Fixed rate model: validation R² {rate_r2:.4f} on dk_pts per game played. "
           f"Identical across\n  every treatment below, so the contrast is the games-played "
           f"model and nothing else.")
 
-    treatments = gp_treatments(train, test, max_games)
-    treatments["oracle_rate"] = {"gp": treatments["beta_binomial"]["gp"], "pmf": None}
-
-    rows, predictions = evaluate(test, rate, treatments, max_games)
-    metrics = pd.DataFrame(rows)
-
-    order = ["full_season", "prior_gp", "league_age", "beta_binomial",
-             "oracle_rate", "oracle_gp"]
+    order = ORDER
     table = (metrics[metrics.group == "all"]
              .pivot_table(index="treatment", columns="metric", values="value")
              .reindex([t for t in order if t in set(metrics.treatment)]))
     cols = [c for c in ["mae_dk_total", "rmse_dk_total", "r2_dk_total",
                         "bias_dk_total", "crps_dk_total"] if c in table.columns]
-    print("\nSeason DK total, held out (MAE in dk_pts, lower is better):")
+    print("\nSeason DK total on VALIDATION (MAE in dk_pts, lower is better):")
     print(table[cols].round(1).to_string())
 
     naive = float(table.loc["full_season", "mae_dk_total"])
@@ -308,10 +433,27 @@ def run(cfg: dict) -> dict[str, Path]:
     print("\nEstablished rotation players only — where a season total is worth the most:")
     print(rot[[c for c in cols if c in rot.columns]].round(1).to_string())
 
+    gate = gate_e(table)
+    print("\nGate E — the spell process on the deliverable, against the incumbent "
+          "beta-binomial:")
+    if not gate["ran"]:
+        print("  NOT RUN: no spell-process pmf on disk. Run `make stan-games-played` "
+              "first; its\n  validation-side pmf is what this treatment reads.")
+    else:
+        print(f"  MAE  {gate['mae']:.1f} against {gate['incumbent_mae']:.1f} "
+              f"({gate['mae'] - gate['incumbent_mae']:+.1f})")
+        print(f"  CRPS {gate['crps']:.1f} against {gate['incumbent_crps']:.1f} "
+              f"({gate['crps'] - gate['incumbent_crps']:+.1f})")
+        print(f"  bias {gate['bias']:+.1f} against {gate['incumbent_bias']:+.1f}")
+        print(f"  => {'PASSES' if gate['passes'] else 'FAILS'}. Both bars are the "
+              f"incumbent's own row on these\n     rows, so the gate cannot be passed by "
+              f"changing what it is compared against.")
+
     paths = {}
     for name, (data, dest) in {
             "metrics": (metrics, out_dir / "season_total_metrics.csv"),
             "predictions": (predictions, out_dir / "season_total_predictions.csv"),
+            "gate_e": (pd.DataFrame([gate]), out_dir / "season_total_gate_e.csv"),
     }.items():
         data.to_csv(dest, index=False)
         paths[name] = dest

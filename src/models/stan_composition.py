@@ -34,6 +34,41 @@ redistribution.
   expanding-window draft-bucket share prior instead of the `>= 200 prior minutes`
   filter every other head uses. That is the structural difference from `stan_minutes`.
 
+## VALIDATION-ONLY — code and artifact, since 2026-08-08
+
+Converted 2026-08-05 with every other head: the test seasons are not fitted or scored here,
+`sweep` emits `val_*` columns only, and `src/models/held_out.py` raises on anything that
+reaches past validation. The artifact was regenerated on 2026-08-08, closing a three-day
+window in which the code was converted and `outputs/predictions/stan_composition_*.csv`
+still carried `test_*` columns. **Nothing about the head's verdict reversed** — same
+selected arm, same ordering of all six rows, same gate outcomes. The retired test column is
+preserved in `docs/minutes-composition-plan.md` under `Claim(historical=True)`.
+
+**The re-run was deferred twice and then taken, and the deferral argument was wrong in a way
+worth recording.** It rested on "the run buys no decision, and it costs 12–15 h". The first
+half was true and beside the point: leaving held-out figures in an artifact leaves them in
+the docs and on the dashboard, where they get quoted as the head's performance and become
+the bar a successor arm is measured against — which is exactly how the games-played Gate D
+acquired test-set bars. A stale artifact is not inert. **The second half was simply
+wrong**, see below.
+
+**Doubling chain length cost 33%, not 100%, and that is why the original "halves it" was
+right.** The 2026-08-06 deferral corrected "the conversion roughly halves the cost" to
+"saves ~40%, 12.6–14.7 h", by assuming the surviving validation fits would take twice as
+long once selection moved from `select_warmup`/`select_samples` to full length. They did
+not. Measured per fit: the four val fits went **7.35 h → 9.78 h**, a **1.33×** rise for a
+2× iteration increase, and `betabinom/val` actually ran *faster* at double the iterations
+(9,358 s against 9,615 s). Longer warmup buys a better-adapted step size, which buys fewer
+leapfrog steps per iteration, which partly pays for the extra iterations. Total run
+**9.92 h** against the 21.13 h two-pass run — a **53%** saving. The lesson is the one this
+head keeps teaching: **sampler cost is not linear in the knob you are turning**, and an
+estimate derived from an untested proportionality is worth less than the run it replaces.
+
+**This head has no registered final evaluation.** `src/final_evaluation.py` registers
+`availability`, `games_played` and `season_total` and not this one, so nothing currently
+takes composition's held-out reading. Registering it is a full-window refit on
+train+validation plus one scoring pass, which is a decision for whoever needs that number.
+
 Usage:
     python -m src.models.stan_composition
 """
@@ -49,12 +84,13 @@ from scipy.stats import betabinom
 from src.eda.availability import with_lags
 from src.features.team_context import DRAFT_BUCKETS, UNDRAFTED_BUCKET
 from src.models.availability import (EPS, FEATURE_COLS, RHO_MIN,
-                                     fit_dispersion, split_seasons)
+                                     fit_dispersion)
+from src.models.held_out import selection_split
 from src.models.component_rates import impute
 from src.models.stan_availability import availability_design
 from src.models.stan_minutes import (SPLINE_KNOTS, StanMinutes, beta_shapes,
                                      build_design as minutes_build_design,
-                                     game_level_dispersion, inner_split)
+                                     game_level_dispersion)
 from src.models.stan_minutes import variants as minutes_variants
 from src.models.stan_utils import (compile_model, crps_from_samples,
                                    diagnostics_frame, ks_uniform,
@@ -728,8 +764,8 @@ def mark_selection(table: pd.DataFrame) -> pd.DataFrame:
     out["selected"] = False
     out.loc[fitted["val_crps"].idxmin(), "selected"] = True
     floor = out[out["variant"] == "carry_forward"].iloc[0]
-    out["beats_floor"] = ((out["test_crps"] < floor["test_crps"])
-                          & (out["test_r2"] > floor["test_r2"]))
+    out["beats_floor"] = ((out["val_crps"] < floor["val_crps"])
+                          & (out["val_r2"] > floor["val_r2"]))
     out.loc[out["variant"] == "carry_forward", "beats_floor"] = True
     return out
 
@@ -737,8 +773,7 @@ def mark_selection(table: pd.DataFrame) -> pd.DataFrame:
 # ── The independent comparator (the incumbent) ────────────────────────────────
 
 def independent_comparator(cfg: dict, pilot: pd.DataFrame, val: pd.DataFrame,
-                           test: pd.DataFrame, cfg_stan: dict, seed: int
-                           ) -> dict:
+                           cfg_stan: dict, seed: int) -> dict:
     """The season head + rho_game, drawn independently per player-game.
 
     This is the plan of record being compared against: `stan_minutes`'s selected
@@ -753,7 +788,7 @@ def independent_comparator(cfg: dict, pilot: pd.DataFrame, val: pd.DataFrame,
     lengths = pd.read_parquet(features_dir / "game_length.parquet")
 
     out = {"samples": {}, "mu": {}}
-    for split, frame in (("val", val), ("test", test)):
+    for split, frame in (("val", val),):
         eval_seasons = set(frame["season"].unique())
         later = {s for s in design["season"].unique()
                  if s >= min(eval_seasons)}
@@ -794,7 +829,13 @@ def independent_comparator(cfg: dict, pilot: pd.DataFrame, val: pd.DataFrame,
 
 # ── Sweep ─────────────────────────────────────────────────────────────────────
 
-def _iters(cfg_stan: dict, fast: bool) -> dict:
+def _iters(cfg_stan: dict, fast: bool = False) -> dict:
+    """`fast` survives for the Gate A probe alone.
+
+    The sweep used to run its validation side short and its test side long; with the test
+    side gone every sweep fit runs at full length, so `fast` is no longer a split budget —
+    it is the probe's own knob, and `probe_timing` scales its extrapolation by the ratio.
+    """
     if fast:
         return {"warmup": int(cfg_stan.get("select_warmup", 500)),
                 "samples": int(cfg_stan.get("select_samples", 500))}
@@ -827,7 +868,7 @@ def _checkpoint(ckpt_dir: Path | None, label: str, row: dict,
                    for attr in ("alpha_draws", "beta_draws", "rho_draws",
                                 "rho_by_bin", "rho", "scaler", "features",
                                 "dispersed", "n_rho", "predictive_samples")}
-            for side in ("val", "test")}
+            for side in ("val",)}
         with open(ckpt_dir / f"stan_composition_{label}.pkl", "wb") as fh:
             pickle.dump(state, fh)
         print(f"    checkpointed {label} → {ckpt_dir}")
@@ -835,11 +876,22 @@ def _checkpoint(ckpt_dir: Path | None, label: str, row: dict,
         print(f"    /!\\  checkpoint for {label} failed ({exc}); the run continues")
 
 
-def sweep(train: pd.DataFrame, val: pd.DataFrame, test: pd.DataFrame,
-          full_train: pd.DataFrame, cfg_stan: dict, comparator: dict,
+def sweep(train: pd.DataFrame, val: pd.DataFrame, cfg_stan: dict, comparator: dict,
           ckpt_dir: Path | None = None
           ) -> tuple[pd.DataFrame, list[dict], dict]:
-    """Floor, ladder, incumbent. **Selection reads the validation column only.**"""
+    """Floor, ladder, incumbent — on the VALIDATION split only.
+
+    **Halves the sampler cost — 21.13 h measured two-pass against 9.92 h measured one-pass,
+    a 53% saving.** The test side was the expensive half twice over: it refit on
+    train + validation (631k rows against ~590k) *and* ran at double the iterations, on a
+    head whose per-row cost is superlinear in rows. Raising selection to full length spends
+    only part of that back — the four val fits went 7.35 h → 9.78 h, a 1.33× rise for a 2×
+    iteration increase, because longer warmup adapts a better step size and buys fewer
+    leapfrog steps per iteration.
+
+    Nothing it decided is lost. `betabinom_ot_graded` was already selected on `val_crps`,
+    and the test column was labelled confirmation-only in the doc that took Gate E.
+    """
     seed = int(cfg_stan.get("seed", 42))
     chains = int(cfg_stan.get("chains", 4))
     keep = int(cfg_stan.get("composition", {})
@@ -849,61 +901,48 @@ def sweep(train: pd.DataFrame, val: pd.DataFrame, test: pd.DataFrame,
     floor_val = score_samples(
         FloorComposition(keep).fit(train).predict_samples(val, seed),
         val, "carry_forward", seed)
-    floor_test = score_samples(
-        FloorComposition(keep).fit(full_train).predict_samples(test, seed),
-        test, "carry_forward", seed)
-    rows.append(_row("carry_forward", 0, floor_val, floor_test))
+    rows.append(_row("carry_forward", 0, floor_val))
 
-    val_variants = variants(train, val)
-    test_variants = variants(full_train, test)
-    for label in val_variants:
-        v_tr, v_te, v_feats, dispersed, n_rho = val_variants[label]
-        v_model = StanComposition(v_feats, dispersed, n_rho, name=f"{label}/val",
-                                  chains=chains, seed=seed, predictive_samples=keep,
-                                  **_iters(cfg_stan, True)).fit(v_tr)
-        diagnostics.append(v_model.diagnostics)
-        v = score_samples(v_model.predict_samples(v_te, seed), v_te, label, seed)
+    for label, (v_tr, v_te, v_feats, dispersed, n_rho) in variants(train, val).items():
+        model = StanComposition(v_feats, dispersed, n_rho, name=f"{label}/val",
+                                chains=chains, seed=seed, predictive_samples=keep,
+                                **_iters(cfg_stan)).fit(v_tr)
+        diagnostics.append(model.diagnostics)
+        v = score_samples(model.predict_samples(v_te, seed), v_te, label, seed)
 
-        t_tr, t_te, t_feats, dispersed, n_rho = test_variants[label]
-        t_model = StanComposition(t_feats, dispersed, n_rho, name=f"{label}/test",
-                                  chains=chains, seed=seed, predictive_samples=keep,
-                                  **_iters(cfg_stan, False)).fit(t_tr)
-        diagnostics.append(t_model.diagnostics)
-        t = score_samples(t_model.predict_samples(t_te, seed), t_te, label, seed)
+        models[label] = {"val": model, "val_frame": v_te}
+        rows.append(_row(label, len(v_feats), v))
+        _checkpoint(ckpt_dir, label, rows[-1], diagnostics[-1:], models)
 
-        models[label] = {"val": v_model, "test": t_model,
-                         "val_frame": v_te, "test_frame": t_te}
-        rows.append(_row(label, len(t_feats), v, t))
-        _checkpoint(ckpt_dir, label, rows[-1], diagnostics[-2:], models)
-
-    comp_val = score_samples(comparator["samples"]["val"], val,
-                             "independent_comparator", seed)
-    comp_test = score_samples(comparator["samples"]["test"], test,
-                              "independent_comparator", seed)
-    rows.append(_row("independent_comparator", -1, comp_val, comp_test))
+    rows.append(_row("independent_comparator", -1,
+                     score_samples(comparator["samples"]["val"], val,
+                                   "independent_comparator", seed)))
 
     return mark_selection(pd.DataFrame(rows)), diagnostics, models
 
 
-def _row(label: str, n_features: int, v: dict, t: dict) -> dict:
+def _row(label: str, n_features: int, v: dict) -> dict:
     return {"variant": label, "n_features": n_features,
-            "val_crps": v["crps_minutes"], "test_crps": t["crps_minutes"],
-            "val_r2": v["r2_minutes"], "test_r2": t["r2_minutes"],
-            "test_mae": t["mae_minutes"], "test_pit_ks": t["pit_ks"],
-            "test_bias": t["bias_minutes"],
-            "val_team_sum_abs": v["team_sum_abs_error"],
-            "test_team_sum_abs": t["team_sum_abs_error"]}
+            "val_crps": v["crps_minutes"], "val_r2": v["r2_minutes"],
+            "val_mae": v["mae_minutes"], "val_pit_ks": v["pit_ks"],
+            "val_bias": v["bias_minutes"],
+            "val_team_sum_abs": v["team_sum_abs_error"]}
 
 
 # ── Gate A: the timing probe ──────────────────────────────────────────────────
 
-def probe_timing(train: pd.DataFrame, full_train: pd.DataFrame, cfg_stan: dict,
-                 max_hours: float) -> dict:
-    """One-season `betabinom` fit at select iters, extrapolated linearly to the sweep.
+def probe_timing(train: pd.DataFrame, cfg_stan: dict, max_hours: float) -> dict:
+    """One-season `betabinom` fit at probe iters, extrapolated linearly to the sweep.
 
     Aborts loudly past the budget rather than discovering it six hours in. Fallbacks,
     in order (docs/minutes-composition-plan.md): cut `binomial` from the ladder,
-    shorten the select chains, subsample **train** team-games — never val or test.
+    shorten the chains, subsample **train** team-games — never val or test.
+
+    The extrapolation now covers one pass, not two: since the sweep dropped its test side
+    it fits each variant once, on `train`, at full length. **Gate A still under-predicts** —
+    it read 12.8 h against an actual 20.9 h at the full window, a 1.63x miss, because
+    per-row cost is superlinear in rows (more data sharpens the posterior, shrinks the step
+    size and buys more leapfrog steps). Treat the number as a lower bound.
     """
     last = sorted(train["season"].unique())[-1]
     probe_frame = train[train["season"] == last]
@@ -920,8 +959,7 @@ def probe_timing(train: pd.DataFrame, full_train: pd.DataFrame, cfg_stan: dict,
     full = _iters(cfg_stan, False)
     iter_scale = (full["warmup"] + full["samples"]) / (fast["warmup"] + fast["samples"])
     n_variants = len(FITTED_VARIANTS)
-    est = (n_variants * len(train) * per_row
-           + n_variants * len(full_train) * per_row * iter_scale)
+    est = n_variants * len(train) * per_row * iter_scale
     hours = est / 3600
     print(f"  Gate A: probe fit {len(probe_frame):,} rows ({last}) in {seconds:.0f}s "
           f"-> sweep extrapolates to {hours:.1f}h "
@@ -992,7 +1030,7 @@ def joint_nll_table(models: dict, selected: str, comparator: dict,
     contrast; the decision metrics are CRPS, the team-sum error and the PPCs.
     """
     rows = []
-    for split in ("val", "test"):
+    for split in ("val",):
         frame = frames[split]
         model = models[selected][split]
         alpha, beta, _ = model.plug_in()
@@ -1101,46 +1139,46 @@ def run(cfg: dict) -> dict[str, Path]:
     frame = composition_frame(cfg)
     pilot = frame[frame["season"] >= first_season].reset_index(drop=True)
 
-    full_train, test = split_seasons(pilot, TEST_SEASONS)
-    train, val = inner_split(full_train, TEST_SEASONS)
-    for name, part in (("train", train), ("val", val), ("test", test)):
+    train, val = selection_split(pilot, TEST_SEASONS)
+    print("  The test split is LOCKED — this sweep fits and scores VALIDATION only\n"
+          "  (src/models/held_out.py). The head's arm was already selected on "
+          "`val_crps`.\n  NOTE: this head is not a registered `make final-evaluation` "
+          "head, so nothing\n  currently takes its held-out reading — see the module "
+          "docstring.")
+    for name, part in (("train", train), ("val", val)):
         n_teams = part.groupby(GROUP_KEYS, sort=False).ngroups
         print(f"  {name}: {len(part):,} rows / {n_teams:,} team-games "
               f"({', '.join(sorted(part['season'].unique()))})")
 
-    probe = probe_timing(train, full_train, cfg_stan, max_hours)
+    probe = probe_timing(train, cfg_stan, max_hours)
 
     print("\n  fitting the incumbent comparator (season head + rho_game, "
           "independent draws)...")
-    comparator = independent_comparator(cfg, pilot, val, test, cfg_stan, seed)
-    print(f"  comparator coverage: val {comparator['coverage_val']:.1%} / "
-          f"test {comparator['coverage_test']:.1%} of rows from the season head "
-          f"(the rest fall back to the carry-forward share)")
+    comparator = independent_comparator(cfg, pilot, val, cfg_stan, seed)
+    print(f"  comparator coverage: val {comparator['coverage_val']:.1%} of rows from "
+          f"the season head\n  (the rest fall back to the carry-forward share)")
 
     ckpt_dir = Path(cfg["training"]["checkpoint_dir"]) / "stan_composition"
-    table, diagnostics, models = sweep(train, val, test, full_train, cfg_stan,
-                                       comparator, ckpt_dir)
+    table, diagnostics, models = sweep(train, val, cfg_stan, comparator, ckpt_dir)
     diagnostics.append(probe["diagnostics"])
     diagnostics.append(comparator["diagnostics_val"])
-    diagnostics.append(comparator["diagnostics_test"])
 
     print("\nVariant sweep (CRPS in minutes per player-game, lower is better):")
-    print(table[["variant", "n_features", "val_crps", "test_crps", "val_r2",
-                 "test_r2", "test_pit_ks", "test_bias", "test_team_sum_abs",
+    print(table[["variant", "n_features", "val_crps", "val_r2", "val_pit_ks",
+                 "val_bias", "val_team_sum_abs",
                  "selected", "beats_floor"]].round(4).to_string(index=False))
     selected = table.loc[table["selected"], "variant"].iloc[0]
     floor = table[table["variant"] == "carry_forward"].iloc[0]
     incumbent = table[table["variant"] == "independent_comparator"].iloc[0]
     chosen = table[table["variant"] == selected].iloc[0]
-    print(f"\n  Selected on VALIDATION: {selected}. The test column is confirmation "
-          f"only.")
-    print(f"  vs the floor:     CRPS {chosen['test_crps']:.4f} against "
-          f"{floor['test_crps']:.4f} ({chosen['test_crps'] - floor['test_crps']:+.4f})")
-    print(f"  vs the incumbent: CRPS {chosen['test_crps']:.4f} against "
-          f"{incumbent['test_crps']:.4f} "
-          f"({chosen['test_crps'] - incumbent['test_crps']:+.4f}); team-sum error "
-          f"{chosen['test_team_sum_abs']:.2f} against "
-          f"{incumbent['test_team_sum_abs']:.2f} minutes per team-game")
+    print(f"\n  Selected on VALIDATION: {selected}. There is no test column.")
+    print(f"  vs the floor:     CRPS {chosen['val_crps']:.4f} against "
+          f"{floor['val_crps']:.4f} ({chosen['val_crps'] - floor['val_crps']:+.4f})")
+    print(f"  vs the incumbent: CRPS {chosen['val_crps']:.4f} against "
+          f"{incumbent['val_crps']:.4f} "
+          f"({chosen['val_crps'] - incumbent['val_crps']:+.4f}); team-sum error "
+          f"{chosen['val_team_sum_abs']:.2f} against "
+          f"{incumbent['val_team_sum_abs']:.2f} minutes per team-game")
     if not bool(chosen["beats_floor"]):
         print("  /!\\  The selected variant does NOT clear the no-fit floor. Per "
               "CLAUDE.md that is not a model.")
@@ -1151,9 +1189,9 @@ def run(cfg: dict) -> dict[str, Path]:
     # features, same mean function), so it must never be cut from the ladder — but a
     # bare KeyError here would fire after the whole sweep and before any CSV is
     # written, which at full window is ~14 h of compute lost to a lookup.
-    if graded is not None and graded["test"].rho_by_bin is not None and twin is not None:
-        shared = twin["test"].rho
-        bins = graded["test"].rho_by_bin
+    if graded is not None and graded["val"].rho_by_bin is not None and twin is not None:
+        shared = twin["val"].rho
+        bins = graded["val"].rho_by_bin
         print(f"\nFitted dispersion by prior-share bin (fringe -> star): "
               f"{', '.join(f'{r:.4f}' for r in bins)}")
         print(f"  against a single shared rho of {shared:.4f} — the graded arm differs "
@@ -1167,17 +1205,15 @@ def run(cfg: dict) -> dict[str, Path]:
     ppc_arms = [selected] + [a for a in ("betabinom_ot", "betabinom_ot_graded")
                              if a in models and a != selected]
     checks = pd.concat(
-        [ppc(models[a]["test_frame"],
-             models[a]["test"].predict_samples(models[a]["test_frame"], seed),
-             comparator["samples"]["test"], a) for a in ppc_arms],
+        [ppc(models[a]["val_frame"],
+             models[a]["val"].predict_samples(models[a]["val_frame"], seed),
+             comparator["samples"]["val"], a) for a in ppc_arms],
         ignore_index=True)
-    print("\nPosterior predictive checks (test split):")
+    print("\nPosterior predictive checks (validation split):")
     print(checks.round(4).to_string(index=False))
 
-    joint = joint_nll_table(models, selected,
-                            comparator,
-                            {"val": models[selected]["val_frame"],
-                             "test": models[selected]["test_frame"]})
+    joint = joint_nll_table(models, selected, comparator,
+                            {"val": models[selected]["val_frame"]})
     print("\nJoint per-team-game NLL (plug-in) — composition vs independent:")
     print(joint.round(3).to_string(index=False))
     print("  /!\\  NOT a unit-Jacobian bijection (unlike the 3PA/2PA case): the\n"
@@ -1186,10 +1222,10 @@ def run(cfg: dict) -> dict[str, Path]:
 
     lengths = pd.read_parquet(Path(cfg["data"]["features_dir"])
                               / "game_length.parquet")
-    train_seasons = set(full_train["season"].unique()) \
+    train_seasons = set(train["season"].unique()) \
         | {s for s in frame["season"].unique()
-           if s < min(full_train["season"].unique())}
-    held_seasons = set(val["season"].unique()) | set(test["season"].unique())
+           if s < min(train["season"].unique())}
+    held_seasons = set(val["season"].unique())
     tail = fit_ot_tail(lengths, train_seasons - held_seasons)
     tail_check = ot_tail_check(lengths, held_seasons, tail)
     print(f"\nOT tail (train seasons): p_any = {tail['p_any_ot']:.4f}, "
@@ -1202,7 +1238,7 @@ def run(cfg: dict) -> dict[str, Path]:
                           tail_check], ignore_index=True)
     rho_rows = []
     for label, holder in models.items():
-        model = holder["test"]
+        model = holder["val"]
         if model.rho_by_bin is None:
             continue
         for b, value in enumerate(model.rho_by_bin, start=1):

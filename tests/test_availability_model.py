@@ -17,11 +17,13 @@ from src.models.availability import (
     pit_values,
     predictive_pmf,
     expand_basis,
+    ladder_comparison,
     minutes_nonlinearity_probe,
     nonlinearity_ablation,
     split_seasons,
     workload_ablation,
 )
+from src.models.held_out import selection_split
 
 SEASONS = ["2019-20", "2020-21", "2021-22", "2022-23"]
 
@@ -222,10 +224,64 @@ def test_total_minutes_incl_playoffs_is_deliberately_not_a_feature():
     assert "total_minutes_lag1" in FEATURE_COLS
 
 
+# ── The paired ladder comparison ──────────────────────────────────────────────
+
+def _predictions(seed: int = 0) -> pd.DataFrame:
+    """Two models scored on the same 200 rows, one strictly worse everywhere."""
+    rng = np.random.default_rng(seed)
+    base = rng.gamma(2.0, 5.0, size=200)
+    rows = []
+    for model, offset in [("beta_binomial", 0.0), ("gbm", 0.5)]:
+        rows.append(pd.DataFrame({
+            "season": "2023-24", "player_id": np.arange(200), "model": model,
+            "gp": np.arange(200) % 83, "crps_games": base + offset}))
+    return pd.concat(rows, ignore_index=True)
+
+
+def test_ladder_pairs_on_the_same_rows():
+    """The reference's own delta is exactly zero, which is only true if the two models are
+    differenced row by row rather than compared as two means."""
+    out = ladder_comparison(_predictions(), draws=200, seed=0)
+    overall = out[out["group"] == "all"].set_index("model")
+    assert overall.loc["beta_binomial", "delta_vs_reference"] == 0.0
+    assert overall.loc["gbm", "delta_vs_reference"] == pytest.approx(0.5)
+    # A constant offset is noiseless under a paired bootstrap, so it is distinguishable
+    # however small it is — which is the property the interval exists to express.
+    assert bool(overall.loc["gbm", "distinguishable"])
+    assert overall.loc["gbm", "share_rows_better"] == 0.0
+
+
+def test_ladder_reports_a_straddling_interval_as_indistinguishable():
+    """A mean difference with enough spread around it must not read as a verdict — the
+    reason the availability ladder's reversal did not move the head."""
+    rng = np.random.default_rng(1)
+    preds = _predictions()
+    noisy = preds["model"] == "gbm"
+    preds.loc[noisy, "crps_games"] = (preds.loc[~noisy, "crps_games"].to_numpy()
+                                      - 0.05 + rng.normal(0, 8.0, size=int(noisy.sum())))
+    out = ladder_comparison(preds, draws=400, seed=0).set_index(["model", "group"])
+    assert not bool(out.loc[("gbm", "all"), "distinguishable"])
+    assert out.loc[("gbm", "all"), "ci_lo"] < 0 < out.loc[("gbm", "all"), "ci_hi"]
+
+
+def test_ladder_quartiles_partition_the_frame():
+    out = ladder_comparison(_predictions(), draws=100, seed=0)
+    gbm = out[out["model"] == "gbm"]
+    assert set(gbm["group"]) == {"all", "gp_q1", "gp_q2", "gp_q3", "gp_q4"}
+    quartiles = gbm[gbm["group"] != "all"]
+    assert int(quartiles["n"].sum()) == int(gbm.loc[gbm["group"] == "all", "n"].iloc[0])
+
+
+def test_ladder_refuses_a_reference_that_is_not_in_the_frame():
+    """Silently comparing against nothing would emit a table of zeros that reads as a tie."""
+    with pytest.raises(ValueError, match="ridge"):
+        ladder_comparison(_predictions(), reference="ridge", draws=10)
+
+
 def test_workload_ablation_contrasts_only_the_feature_list():
     design = _design(300)
-    train, test = split_seasons(design, test_seasons=2)
-    out = workload_ablation(train, test, max_games=82, seed=0)
+    train, val = selection_split(design, test_seasons=2)
+    out = workload_ablation(train, val, max_games=82, seed=0)
 
     assert set(out["variant"]) == {"baseline", "plus_playoff_workload",
                                    "plus_playoff_only", "plus_career_minutes_only"}
@@ -241,8 +297,8 @@ def test_workload_ablation_shows_no_gain_when_the_block_is_noise():
     """The fixture's workload columns are independent of the target, so a real ablation
     must not credit them with a material improvement."""
     design = _design(300)
-    train, test = split_seasons(design, test_seasons=2)
-    out = workload_ablation(train, test, max_games=82, seed=0).set_index("variant")
+    train, val = selection_split(design, test_seasons=2)
+    out = workload_ablation(train, val, max_games=82, seed=0).set_index("variant")
     assert out.loc["plus_playoff_workload", "crps_vs_baseline"] < 0.25
 
 
@@ -275,20 +331,23 @@ def test_expand_basis_rejects_an_unknown_kind():
         expand_basis(df, df, ["x"], kind="cubic")
 
 
-def test_nonlinearity_ablation_selects_on_validation_not_test():
-    """The protocol is the point: `selected` must key off the validation column, so a
-    variant that only wins on test is not chosen."""
+def test_nonlinearity_ablation_reports_validation_only():
+    """The protocol is the point, and since 2026-08-07 it is enforced rather than obeyed.
+
+    `selected` keys off the only column there is, because there is no test column left to
+    be tempted by: a curved variant that would have won on the held-out rows — which every
+    one of them did — cannot be seen from here.
+    """
     design = _design(400)
-    train, test = split_seasons(design, test_seasons=2)
-    out = nonlinearity_ablation(train, test, max_games=82, seed=0,
+    train, val = selection_split(design, test_seasons=2)
+    out = nonlinearity_ablation(train, val, max_games=82, seed=0,
                                 cols=["age", "minutes_per_game_lag1"])
     assert {"linear", "quadratic", "spline_k4", "spline_k5"} == set(out["variant"])
+    assert not [c for c in out.columns if c.startswith("test")]
     assert out["selected"].sum() == 1
     best_val = out.loc[out["val_crps_games"].idxmin(), "variant"]
     assert out.loc[out["selected"], "variant"].iloc[0] == best_val
-    # The linear row is the reference on both columns.
-    lin = out.set_index("variant").loc["linear"]
-    assert lin["val_vs_linear"] == 0.0 and lin["test_vs_linear"] == 0.0
+    assert out.set_index("variant").loc["linear", "val_vs_linear"] == 0.0
 
 
 def test_nonlinearity_ablation_finds_no_material_gain_on_a_linear_generator():
@@ -299,9 +358,9 @@ def test_nonlinearity_ablation_finds_no_material_gain_on_a_linear_generator():
     phenomenon this function exists to surface, so asserting "linear is always selected"
     would be asserting that selection is noiseless.
     """
-    train, test = split_seasons(_design(400), test_seasons=2)
-    out = nonlinearity_ablation(train, test, max_games=82, seed=0,
-                               cols=["age", "minutes_per_game_lag1", "gp_share_lag1"])
+    train, val = selection_split(_design(400), test_seasons=2)
+    out = nonlinearity_ablation(train, val, max_games=82, seed=0,
+                                cols=["age", "minutes_per_game_lag1", "gp_share_lag1"])
     # No curved variant may show a large validation improvement over linear.
     curved = out[out["variant"] != "linear"]
     assert curved["val_vs_linear"].min() > -0.25
@@ -311,9 +370,9 @@ def test_minutes_probe_reports_variants_and_per_column_attribution():
     design = _design(400)
     design["minutes_per_game"] = (0.8 * design["minutes_per_game_lag1"]
                                   + np.random.default_rng(0).normal(0, 2, len(design)))
-    train, test = split_seasons(design, test_seasons=2)
+    train, val = selection_split(design, test_seasons=2)
     cols = ["age", "minutes_per_game_lag1"]
-    out = minutes_nonlinearity_probe(train, test, cols=cols)
+    out = minutes_nonlinearity_probe(train, val, cols=cols)
 
     assert set(out.loc[out["scope"] == "variant", "name"]) == {
         "linear", "quadratic", "spline_k4", "spline_k5"}
@@ -321,7 +380,15 @@ def test_minutes_probe_reports_variants_and_per_column_attribution():
     # Deltas are only defined for the per-column rows.
     assert out.loc[out["scope"] == "variant", "val_vs_linear"].isna().all()
     assert out.loc[out["scope"] == "column", "val_vs_linear"].notna().all()
-    # `replicates` requires both splits to agree in sign.
-    col = out[out["scope"] == "column"]
-    for _, r in col.iterrows():
-        assert bool(r["replicates"]) == (r["val_vs_linear"] > 0 and r["test_vs_linear"] > 0)
+
+
+def test_minutes_probe_no_longer_claims_a_replication_it_cannot_make():
+    """`replicates` compared a validation column with a test column produced by a
+    *different* fit on *different* rows. That is not a replication, and calling it one is
+    the reading `src/models/held_out.py` exists to stop."""
+    design = _design(200)
+    design["minutes_per_game"] = design["minutes_per_game_lag1"]
+    train, val = selection_split(design, test_seasons=2)
+    out = minutes_nonlinearity_probe(train, val, cols=["age"])
+    assert "replicates" not in out.columns
+    assert not [c for c in out.columns if c.startswith("test")]

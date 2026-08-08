@@ -28,8 +28,8 @@ CHAIN = [
      "negative binomial", "min", "outputs/predictions/stan_component_metrics.csv"),
     ("conversions", "fg2m | fg2a · fg3m | fg3a · ftm | fta", "beta-binomial",
      "attempts", "outputs/predictions/stan_component_metrics.csv"),
-    ("spell process", "which games he misses", "2-component or semi-Markov",
-     "—", "outputs/predictions/spell_process.csv"),
+    ("spell process", "which games he misses", "entry x exit x beta-geometric spells",
+     "team games", "outputs/predictions/stan_games_played_metrics.csv"),
     ("residual copula", "cross-component dependence", "Gaussian copula",
      "—", "outputs/predictions/simulator_draws.parquet"),
 ]
@@ -42,9 +42,11 @@ def render(ctx: Ctx) -> None:
         "16-man roster, then over a four-round knockout.")
 
     st.warning(
-        ":material/construction: **The simulator is not built.** This tab is the "
-        "specification — and the point worth making is that the specification is "
-        "already **pinned by measurements** rather than by preference. Every number "
+        ":material/construction: **Half the simulator is built.** The spell process — "
+        "which games a player misses — shipped on 2026-08-05 (`make stan-games-played`); "
+        "the residual copula that composes eleven marginal posteriors into one correlated "
+        "season has not. The point worth making about the rest is that its specification "
+        "is already **pinned by measurements** rather than by preference: every number "
         "below is an input the simulator has to honour, measured before it exists.")
 
     _chain(ctx)
@@ -52,6 +54,7 @@ def render(ctx: Ctx) -> None:
     _block_inflation(ctx)
     _bonus(ctx)
     _spells(ctx)
+    _spell_process(ctx)
     _contest(ctx)
 
     st.markdown("---")
@@ -318,12 +321,20 @@ def _spells(ctx: Ctx) -> None:
     st.error(
         "**A constant hazard implies geometric spells, which matches the mean and "
         "misses both tails.** Far more one-game absences and far more long ones than "
-        "the model allows — so absences are a **mixture**, and the process should be "
-        "2-component or semi-Markov. Separately, clustering is only about a sixth of "
-        "the ~20× overdispersion measured on games played; the rest is "
-        "**between-player heterogeneity**, which no AR process can generate. An "
-        "autoregressive binomial therefore *complements* the beta-binomial head "
-        "rather than replacing it.")
+        "the model allows — so absences are a **mixture**. The shipped duration head is "
+        "a **beta-geometric**: a geometric hazard with a Beta frailty integrated out, "
+        "which beats the geometric by 11,278 log-likelihood points at one extra "
+        "parameter.")
+    st.info(
+        "**⚠️ 'Clustering is only about a sixth of the overdispersion' was withdrawn on "
+        "2026-08-05.** Two errors compounded: the composition is **additive**, "
+        "`inflation = C + ρ(n − C)`, so dividing 22.7 by 3.96 decomposes nothing; and the "
+        "two figures were measured on different windows *and* different populations. "
+        "Matched — full window, established rotation players — the same population reads "
+        "`P(play|played) = 0.9443` and `P(play|missed) = 0.1333`, giving **C = 9.58**. "
+        "Clustering supplies **42%** of the budget, not 17%, and the practical consequence "
+        "is the opposite of what the old reading implied: there is **no dispersion hole to "
+        "fill, there is a surplus to avoid**.")
     note("Build it for the season-total joint distribution and the preseason initial "
          "state — not for games-played CRPS, which the beta-binomial head already "
          "handles.")
@@ -342,6 +353,110 @@ def _spells(ctx: Ctx) -> None:
                "Spell structure — table view")
     provenance("`make availability-profile` → `outputs/eda/availability_profile.csv` "
                "(`serial_structure`, `spell_distribution`)")
+
+
+# ── The fitted spell process ──────────────────────────────────────────────────
+
+def _spell_process(ctx: Ctx) -> None:
+    st.markdown("---")
+    st.markdown("### The spell process, fitted — entry × exit × a within-tenure chain")
+
+    gate = optional(ctx.predictions("stan_games_played_gate.csv"),
+                    target="make games-played")
+    if gate is None:
+        return
+
+    tail = gate[gate["metric"] == "p_below_41"].set_index("arm")
+    plain = tail.loc["full_window_chain"] if "full_window_chain" in tail.index else None
+    tenure = (tail.loc["tenure_decomposition"]
+              if "tenure_decomposition" in tail.index else None)
+    if plain is not None and tenure is not None:
+        stat_tiles([
+            ("Observed P(GP < 41)", f"{plain['observed']:.3f}",
+             "Established rotation players, single-team seasons."),
+            ("Plain full-window chain", f"{plain['simulated']:.3f}",
+             f"{plain['simulated'] / plain['observed'] - 1:+.1%} — the left tail, "
+             f"over-predicted. This arm is REJECTED."),
+            ("Tenure decomposition", f"{tenure['simulated']:.3f}",
+             f"{tenure['simulated'] / tenure['observed'] - 1:+.1%} — the shipped "
+             f"process class."),
+        ])
+
+    st.error(
+        "**A departure is an absorbing hitting time, not a low recovery rate.** A waived "
+        "player's cell has a recovery hazard of about zero, so a recurrent two-state "
+        "chain makes him absorbing from his *first* absence rather than from the game he "
+        "was actually cut — relocating the departure earlier in the season and dragging "
+        "the left tail out with it. Gate 0 measures that at its most generous possible "
+        "parameterization, each cell running at its own observed hazards, so the failure "
+        "is a property of the **process class** and no feature block can rescue it.")
+    st.info(
+        "**The fix keeps all 30 seasons.** `team_games = pre-tenure + tenure + "
+        "post-tenure` and `gp` = games played inside the tenure, an identity that "
+        "reconstructs full-window `gp_share` with no residual. Each factor answers a "
+        "separate question — when he joined, when he stopped, how often he missed while "
+        "there — and it is identifiable structurally from `in_appearance_window`, which "
+        "exists on every season. Two things fall out free: within a tenure every absence "
+        "spell is **interior**, so the duration head needs no censoring branch; and the "
+        "initial state is **known**, which is the one thing the collapse to sufficient "
+        "statistics cannot tell you.")
+
+    table_view(gate.round(4), "Gate 0 — simulated against observed, per arm")
+    provenance("`make games-played` → `outputs/predictions/stan_games_played_gate.csv`")
+
+    spells = optional(ctx.predictions("stan_games_played_spells.csv"),
+                      target="make games-played")
+    if spells is not None:
+        bias = spells[spells["analysis"] == "censoring_bias"]
+        if not bias.empty:
+            st.markdown("#### Censoring is 8.8% of spells and 28.6% of the missed games")
+            st.plotly_chart(
+                fig_bars(bias, "treatment", ["p_ge_26"], ctx.th,
+                         "P(spell ≥ 26 games) under three treatments of censoring",
+                         axis_title="probability", height=300),
+                width="stretch")
+            note("**Both wrong answers fail silently.** Dropping censored spells "
+                 "understates the extreme tail by ~2×; treating them as complete still "
+                 "understates it. Neither raises, neither looks wrong, and both change "
+                 "exactly the tail the head exists to get right. With proper censoring "
+                 "the fitted `a` falls below 1, so the beta-geometric has **no finite "
+                 "mean** — the simulator does not care, because a spell is truncated by "
+                 "the remaining schedule anyway, but `E[T]` must never be quoted from "
+                 "that fit.")
+        classes = spells[spells["analysis"] == "spell_class"]
+        if not classes.empty:
+            table_view(classes.round(4), "Spell classes — table view")
+        provenance("`make games-played` → "
+                   "`outputs/predictions/stan_games_played_spells.csv`")
+
+    metrics = optional(ctx.predictions("stan_games_played_metrics.csv"),
+                       target="make stan-games-played")
+    if metrics is None:
+        return
+    st.markdown("#### The arm ladder")
+    st.dataframe(metrics.round(4), width="stretch", hide_index=True)
+    note("**Selection reads the validation column only.** This head has already produced "
+         "one test-selected false positive and caught a second, so the test column "
+         "confirms and never decides. `floor` is the incumbent season-level "
+         "beta-binomial and stays permanently as the bar; `within_tenure` holds the "
+         "tenure at its observed value, so it is an oracle and cannot ship however well "
+         "it scores.")
+
+    gates = optional(ctx.predictions("stan_games_played_gates.csv"),
+                     target="make stan-games-played")
+    if gates is not None:
+        table_view(gates.round(4), "Gates A–D — table view")
+    process = optional(ctx.predictions("spell_process.csv"),
+                       target="make stan-games-played")
+    if process is not None:
+        table_view(process.round(4),
+                   "What the simulator is GIVEN — spell_process.csv")
+        provenance("`make stan-games-played` → `outputs/predictions/spell_process.csv`, "
+                   "`stan_games_played_metrics.csv`, `stan_games_played_gates.csv`, "
+                   "`stan_games_played_coefficients.csv`, "
+                   "`stan_games_played_diagnostics.csv`, `stan_games_played_pit.csv`, "
+                   "`stan_games_played_predictions.csv`, `stan_games_played_gp_pmf.csv`, "
+                   "`stan_games_played_collapse.csv`")
 
 
 # ── What the contest requires ─────────────────────────────────────────────────

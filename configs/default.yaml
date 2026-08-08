@@ -222,6 +222,38 @@ stan:
     # this in could ever be worth, so a real entry can be judged against a known bound.
     league_override: {}
 
+  # The games-played spell process — docs/games-played-plan.md.
+  games_played:
+    # Single-team player-seasons only. 12.2% of player-seasons are multi-team but carry
+    # 36.7% of full-window missed games, because a traded player is "rostered all year"
+    # for BOTH teams — simulating per cell and summing double-counts his absences.
+    # Prediction is unaffected: every covariate is player-season level, so the excluded
+    # rows are still scored and CRPS stays comparable to the incumbent's 10.795.
+    single_team_only: true
+    # Ignoring censoring understates P(T >= 26) by 2.16x and treating censored spells as
+    # complete still understates it by 1.44x. Both fail silently. Within the tenure every
+    # spell is interior, so this only bites on the full-window spell-class artifact.
+    handle_censoring: true
+    # Half-normal scale on the beta-geometric concentration a + b. The closed-form fit on
+    # interior spells lands at 3.69, so this is weakly informative by ~an order of
+    # magnitude and the data decides.
+    kappa_scale: 25.0
+    # Posterior draws x simulated seasons per draw pushed through the predictive. There is
+    # no closed form for the games-played marginal of a tenure-truncated chain with two
+    # frailties, so the pmf is Monte Carlo; 200 x 50 puts its error at ~0.003 on any
+    # single cell and far less on CRPS, which integrates over the whole distribution.
+    predictive_draws: 200
+    sim_seasons: 50
+    # Gate 0's Monte Carlo, which is numpy only and runs without a CmdStan toolchain.
+    gate0_sims: 200
+    # Gate A: abort before the ladder if the timing probe extrapolates past this. The
+    # estimate is multiplied by the 1.63x under-prediction `stan-composition` measured on
+    # its two-pass sweep, so this is compared against a corrected figure rather than a
+    # linear one. That head's one-pass re-run re-measured the miss at 1.17x; 1.63 is kept
+    # deliberately, as a conservative factor rather than a current estimate — see
+    # `stan_games_played.probe_timing`.
+    max_extrapolated_hours: 6.0
+
   # The team-game minutes composition head — docs/minutes-composition-plan.md.
   composition:
     # The frame is built over every season (lags and the expanding rookie prior need

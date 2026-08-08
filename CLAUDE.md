@@ -42,16 +42,20 @@ src/eda/       season_matrix, pca, archetypes, context_value, persistence, aging
                serial_correlation, variance_budget, residual_correlation
                (season-level analysis pipeline)
 src/models/    lstm, transformer, multihead, xgboost baseline, availability,
-               season_total, component_rates,
+               season_total, component_rates, games_played,
                stan_utils, stan_availability, stan_minutes, stan_components,
-               stan_composition, season_terms
-src/stan/      betabinomial_glm.stan, negbinomial_glm.stan — TWO files for eleven-plus
-               heads, because availability / minutes / conversions are the same
-               likelihood with different data, and the counts are the other one.
-               Both carry an OPTIONAL year random effect that `S = 0` disables
-               EXACTLY — zero-length parameter vectors, identical posterior.
+               stan_composition, stan_games_played, season_terms
+src/stan/      betabinomial_glm.stan, negbinomial_glm.stan — TWO files for fourteen-plus
+               heads, because availability / minutes / conversions / onset / entry /
+               exit are the same likelihood with different data, and the counts are the
+               other one. Both carry an OPTIONAL year random effect that `S = 0`
+               disables EXACTLY — zero-length parameter vectors, identical posterior.
                composition_glm.stan is the third and stands apart: the team-game
-               minutes allocation, a multinomial decomposed into binomial trials
+               minutes allocation, a multinomial decomposed into binomial trials.
+               betageometric_duration.stan is the fourth: absence-spell length, a
+               geometric hazard with a Beta frailty integrated out — the same device
+               one level down. `H_open = 0` disables its in-progress offset exactly,
+               the same way `S = 0` disables the year effect
 src/train.py   training loop
 src/evaluate.py test-split metrics
 src/predict.py  inference entry point
@@ -65,7 +69,9 @@ dashboard/     nine-tab project walkthrough over the precomputed artifacts.
                tabs/ (one render(ctx) each). decisions/economics/audit import no
                streamlit; nothing in the package imports src/ — see dashboard/README.md
 docs/          eda-plan (season-level EDA spec), availability-plan (games played /
-               minutes), adp-plan (market proxy, sourcing + where ADP belongs),
+               minutes), games-played-plan (the spell process: entry x exit x a
+               within-tenure chain, and why a plain full-window chain fails),
+               adp-plan (market proxy, sourcing + where ADP belongs),
                predictions-plan, minutes-composition-plan, simulations-plan,
                shot-attempt-basis-plan (Gate 0 of the fga x fg3a|fga
                reparameterization — measured, adoption specified, NOT taken),
@@ -137,13 +143,21 @@ test. Missing artifacts are *skipped*, so a fresh checkout without `make eda` is
 It guards the artifact→prose direction tightly and the prose→artifact direction loosely;
 see the module docstring for exactly what it cannot catch.
 
-**It covers six docs — `README.md`, `availability-plan`, `minutes-composition-plan`,
-`predictions-plan`, `adp-plan` and `CLAUDE.md` — with 1,347 claims and one builder per doc.**
-Coverage of measured figures: 89% (README), 65% (predictions), 62% (adp), 59% (CLAUDE.md),
-53% (availability), 44% (composition) — `make docs-audit` prints them live, so treat the
+**It covers eight docs — `README.md`, `availability-plan`, `minutes-composition-plan`,
+`predictions-plan`, `games-played-plan`, `shot-attempt-basis-plan`, `adp-plan` and
+`CLAUDE.md` — with 2,230 claims and one builder per doc.**
+Coverage of measured figures: 80% (README), 79% (shot-attempt basis), 64% (composition),
+63% (predictions), 62% (adp), 60% (CLAUDE.md), 55% (availability), 46% (games played) —
+`make docs-audit` prints them live, so treat the
 printout rather than this line as current. The uncovered remainder is prose-only figures
 (`docs/provenance-plan.md` lists all fourteen), costing estimates, and counts of things
 rather than measurements.
+**583 of the claims are superseded values held for the record**, which is the number that
+grows fastest as heads move off the test split: each conversion retires a measurement
+without deleting it. The season-term conversion alone added **161** — the largest single
+jump so far, because that ablation quotes four arms across thirteen heads and five
+downstream tables, so a change of split retires figures by the table rather than by the
+line.
 
 **`README.md` was added last and is the doc the guard fits best**, which is why its coverage
 is the highest: it holds no measurements of its own, only a selection of headlines copied
@@ -235,6 +249,13 @@ make stan-composition  # the team-game minutes COMPOSITION — the per-game allo
                        #   (zero-sum + the cap); see docs/minutes-composition-plan.md
 make stan              # all four, in chain order — composition AFTER stan-minutes,
                        #   which it imports from and measures itself against
+make games-played      # the games-played spell process, numpy only — the collapse, the
+                       #   spell classes, the closed-form beta-geometric fits and Gate 0's
+                       #   empirical-hazard Monte Carlo. NO Stan, so a process class can
+                       #   be rejected in seconds rather than in NUTS hours.
+make stan-games-played # the fitted arms. Imports stan_availability's head as its
+                       #   permanent floor, so that target runs first. Held OUT of the
+                       #   `stan` aggregate until Gate D passes.
 make stan-substitution # Gate 0 of docs/shot-attempt-basis-plan.md — the `fga` count x
                        #   `fg3a | fga` share against the two independent attempt
                        #   counts, both arms un-handicapped. 16 fits and its OWN
@@ -334,6 +355,125 @@ Temporal walk-forward by season. With seasons [S1, S2, S3, S4]:
 - Test:   predict S4 games using S3 stats (last pair)
 
 The scaler is fit only on the prior-season games that feed into training, preventing leakage.
+
+**Do not use the test data at any point during data preparation, evaluating 
+modeling decisions/alternatives, model fitting, or evaluating simulated draft 
+strategies on backtested seasons. Only use the validation data for these purposes. 
+The test data should only be used for a final end-of-project step testing the 
+error rate of the entire workflow.** (Note: This constraint was less rigorously 
+imposed earlier in the project, and several existing findings relate to the 
+test data, though with likely-minimal leakage impacts. This constraint is 
+intended to avoid further leakage as the project develops.)
+
+### ✅ The rule is now a capability, not a convention — `src/models/held_out.py`
+
+**A rule that lives only in prose gets followed until it is inconvenient, and this one
+already failed.** The games-played head's Gate D was *specified* with the incumbent's test
+figures as its bars, run on the test split, and settled which model ships — on a 0.0013
+CRPS margin a paired bootstrap could not distinguish from zero, which **reversed** when
+re-decided on validation. Nothing in the code objected, because nothing in the code knew.
+
+So reaching the test split now **raises** unless something has explicitly unlocked it:
+
+- **`availability.split_seasons` is the choke point** every head goes through, and the guard
+  lives *there* rather than at each call site — so a new head cannot forget to add a guard it
+  never had to add. It returns `(kept, _HeldOut(held))`, and `_HeldOut` raises on
+  `__getitem__` / `to_numpy` / `merge` but not on `len()` or `.columns`. The guard is on
+  **use**, not on carving: `train, _ = split_seasons(...)` and `len(test)` stay legal because
+  a module has to be able to separate the rows to know what to exclude.
+- **`held_out.selection_split(design)` → `(train, validation)`** is what a sweep calls. The
+  test seasons are never materialized, so there is nothing to read by accident.
+- **`held_out.final_split(design)` → `(full_train, test)`** is guarded, and
+  `src/final_evaluation.py` (`make final-evaluation`) is the only thing that unlocks it.
+  It reads which arm shipped **from the artifact** rather than re-deciding, refits on train
+  **plus** validation, and scores test once. Registered heads: `availability`,
+  `games_played`, `season_total`.
+- `tests/conftest.py` unlocks for the suite (unit tests exercise the split machinery on
+  synthetic four-season frames); `tests/test_held_out.py` re-locks and tests the lock, and
+  **AST-walks every converted module** to assert it names `selection_split` and never
+  `split_seasons`.
+
+**Why the final evaluation refits rather than predicting test from the training fit.** A test
+figure should describe the model that would actually deploy, which has seen train *and*
+validation. Predicting test from a train-only fit is a *lower bound* on deployed performance,
+not an estimate of it. The cost is that a val-versus-test comparison is confounded — different
+rows, different training data — which is exactly why the sweeps no longer emit a test column
+at all. **A val/test gap was never a replication check here**, and the project stopped
+pretending it was on 2026-08-05.
+
+**Converted heads, and what it cost.** `stan_availability`, `stan_minutes`,
+`stan_components`, `stan_composition`, `stan_games_played`, `season_terms`, `season_total`,
+`component_rates`, and `eda.season_effects`'s `carry_forward_bias`. Roughly **half the
+sampler time** across the Stan heads, since the test side was the majority of the fits at
+double the iterations — and selection was raised to full-length chains everywhere, because
+the short/long split was a second confound sitting inside a comparison being read as a
+replication.
+
+- **`component_rates` was the one head with no guard at all**, because it defined its own
+  `split_seasons` rather than importing the shared one. Six identical lines routing around
+  the lock. A test now pins that it cannot come back.
+- **Five findings reversed on the move, and all five had passed on test.** Gate E of the
+  games-played plan (✅ by 0.03 dk_pts on test → ❌ by 6.34 on validation); `fg3a|fga` under
+  sklearn (clears its floor on test, fails on validation); the games-played Gate D that
+  started this; **`fta`**, added 2026-08-06 when `stan_components` was re-run, which
+  failed its no-fit floor by 0.0024 on test and clears it by 0.0144 on validation,
+  retiring "the whole free-throw family fails"; and **the availability model ladder**,
+  added 2026-08-08, where the GBM went from third to first. **Three survived unchanged**,
+  which is the useful contrast: the availability
+  Stan port still reproduces the MLE on 21/21 coefficients, the `reb` alpha-trap pair
+  reproduces 0.928 / 0.662 to a thousandth across the split change, and the substitution
+  arm's validation margin reproduces at −0.771 across a half-length-to-full-length change
+  in every one of its fits.
+  - **Every one of the five reversals was a sub-1.5% margin on test that a paired bootstrap
+    could not have called.** That is the pattern the conversion established and then
+    confirmed on its last head: the split move does not overturn findings with real margins,
+    it overturns the ones that were never distinguishable from zero and were being reported
+    as verdicts. The availability ladder is the case where the interval was actually
+    computed rather than inferred after the fact — GBM-minus-GLM at −0.1297 with a 95% CI of
+    [−0.3154, +0.0672].
+- **✅ `stan_composition` is converted AND its artifact regenerated (2026-08-08)** — the
+  last code/artifact disagreement in the repo is closed, and **nothing reversed**: same
+  selected arm, same ordering, same gate outcomes, with no arm moving more than 0.0019 CRPS
+  across a doubling of chain length.
+  - **The deferral argument was wrong, and the way it was wrong is the lesson.** It rested
+    on "the run buys no decision" — true, and beside the point. Held-out figures sitting in
+    an artifact are quoted from the docs and rendered on the dashboard as the head's
+    performance, and they become the bar a successor arm is measured against. That is
+    precisely how the games-played Gate D acquired test-set bars. **A stale artifact is not
+    inert.**
+  - **⚠️ It also rested on a cost estimate that was itself a `CLAUDE.md`-style false
+    correction.** On 2026-08-06 the module's "the conversion roughly halves it" was
+    "corrected" to "saves ~40%, 12.6–14.7 h", by assuming the validation fits would take 2×
+    as long once selection moved to full-length chains. Measured: they took **1.33×**
+    (7.35 h → 9.78 h), and `betabinom/val` ran *faster* at double the iterations (9,358 s
+    against 9,615 s), because longer warmup adapts a better step size and buys fewer
+    leapfrog steps. Total **9.92 h** against 21.13 h — a **53%** saving, so the original
+    "halves it" was right and the correction was the error. **Sampler cost is not linear in
+    the knob you are turning**, and an estimate from an untested proportionality is worth
+    less than the run it replaces.
+- **✅ `make availability-model` is converted and re-run (2026-08-08) — the last head, and
+  the one where it mattered most. The CONVERSION IS COMPLETE; nothing in `src/` scores the
+  held-out split outside `src/final_evaluation.py`.** This module does not merely report on
+  the test seasons, it *decides* on them: the four-way ladder picks a mean function,
+  `workload_ablation` picks a feature block, `nonlinearity_ablation` picks a basis.
+  - **One of the three decisions had its ordering reverse and none of the three changed.**
+    The head-vs-GBM-vs-ridge CRPS ladder went from **10.795 / 10.888 / 10.896 / 13.614** on
+    test to **9.876 (GBM) / 10.004 (ridge) / 10.006 (GLM) / 13.387** on validation — the GLM
+    from first to third. It still ships, because a paired bootstrap over the 883 rows puts
+    the GBM's margin at −0.1297 with a 95% CI of **[−0.3154, +0.0672]**, and because both
+    challengers are *worse* than the GLM on the lowest realized-games quartile, which is the
+    population the head exists for. See the ladder bullet under "Established facts".
+  - **The playoff-workload block and the nonlinearity null both survive untouched** — same
+    signs, same orderings, and every nonlinearity figure reproduced to five decimals because
+    that ablation was already selecting on the frames `selection_split` returns.
+  - **This makes it five reversals, and the pattern holds for all five**: every one was a
+    margin a paired interval could not distinguish from zero, being reported as a verdict.
+    The availability ladder is the cleanest instance, because this time the interval was
+    *computed* rather than reconstructed afterwards — `availability.ladder_comparison` ships
+    it as an artifact.
+  - **`availability.split_seasons` still exists and is still where the guard lives**, so
+    `tests/test_held_out.py` checks this module per *function* rather than module-wide: `run`
+    must name `selection_split`, and no sweep may name `split_seasons`.
 
 ---
 
@@ -637,9 +777,26 @@ effort accordingly, and do not expect team composition to carry the model.
     past ±5% in 9 of 29 transitions — **+7.6% in 2004-05** (hand-checking crackdown) and
     **+8.6% in 2025-26**. The three-point mix's worst year is **−24.7%**, the 1997-98
     three-point line moving back.
-  - **The cost is measured on the no-fit floor**, which lags any league move by exactly one
-    season: **`fta` −7.0%** across the held-out seasons (**−10.7%** in 2025-26), `blk`
-    **+6.2%** in *both*. No fitted head corrects it.
+  - **The cost is measured on the no-fit floor, and the lag is CHECKABLE rather than
+    asserted.** The floor carries prior per-36 forward, so it lags any league move by exactly
+    one season — which predicts that a season's bias carries the **opposite** sign to that
+    season's league move. On validation it does, in **13 of 14** cells, correlating at
+    **−0.944**. `fta` is the case in both directions: **−4.4%** against the league's +7.3%
+    rise into 2022-23, then **+10.7%** against its −7.5% fall into 2023-24. No fitted head
+    corrects it. ✅ `make season-effects` (`league_yoy_pct` / `opposes_league_move` in
+    `season_effects_carry_forward_bias.csv`).
+    - **⚠️ Never quote the pooled `all` column on its own — it reports a lag as a level, and
+      that is how the retired reading went wrong.** On the held-out seasons this bullet said
+      **`fta` −7.0%** (**−10.7%** in 2025-26), `blk` **+6.2%** in *both*. On validation `fta`
+      pools to **+2.9%** while swinging −4.4% → +10.7%, and **`blk` reverses sign** (+4.3% →
+      −5.4%, pooling to −0.8%) against a claim that it was "drift, not noise". The reversal
+      is the lag working correctly, not a defect: `blk`'s league rate moved **−1.5%** into
+      2022-23 and **+10.6%** into 2023-24, so the floor was owed opposite-signed errors.
+      `blk`'s trend R² is **0.118** on a **−0.14%**/season slope, so there was never drift
+      to see, and two adjacent seasons moving the same way is what noise looks like half
+      the time. The
+      *relationship* is the finding and it is sharper on the deciding split: the retired
+      cells oppose their league move in only **10 of 14** (r = **−0.865**).
   - **This outranks the shared-β correlation the Stan work was built for.** A league shift is
     perfectly correlated across every player, so it does not diversify: −7% on free throws is
     −7% on a whole roster's free-throw points, against **+0.2%** for shared-β on a 15-man
@@ -685,102 +842,152 @@ effort accordingly, and do not expect team composition to carry the model.
       reminder that a mean over 136 pairs is not a robust summary. The conclusion is
       unchanged — no common factor, structure in specific pairs — and the largest surviving
       pair is a plain positive one between two volume series.
-- **✅ THE ABLATION RAN — `make season-terms`. No head ships a season term, and the
-  2026-08-04 rerun on the shot-attempt basis STRENGTHENS that rather than overturning it.**
-  108 fits, **0 divergences**, max R̂ 1.0142, 128.8 min.
+- **✅ THE ABLATION RAN — `make season-terms`. No head ships a season term, and neither the
+  2026-08-04 shot-attempt rerun nor the 2026-08-07 move to validation-only overturns that.**
+  **54 fits, 0 divergences, max R̂ 1.0105, 79.3 min** — half the fits and 40% of the compute
+  of the 108-fit both-splits run, because the test side is no longer fitted at all.
   - **⚠️ READ THIS BEFORE QUOTING THE SELECTED ARMS.** On the July head list almost every
-    head selected `base`. On the new one **11 of 13 select a season term** — `trend` ×5,
-    `year` ×3, `trend_year` ×3, `base` only for `reb` and `stl`. That looks like a reversal
-    and is not: **9 heads flipped their selected arm on margins under 1% of the selection
-    metric** (`fg3a|fga` 0.05%, `fg3m|fg3a` 0.01%, `ftm|fta` 0.09%, `gp` 0.11%, `min` 0.20%,
-    `fga` 0.26%, `blk` 0.35%, `fta` 0.79%). An ablation whose winner flips across a change
-    that does not touch most of its heads is **measuring noise**, and that is a stronger
-    statement of "the terms are worth nothing" than the original run could make — it now has
-    a replication test behind it, and it failed.
+    head selected `base`. Since the shot-attempt basis **11 of 13 select a season term** —
+    `trend` ×5, `year` ×3, `trend_year` ×3, `base` only for `reb` and `stl`. That looks like
+    a reversal and is not: **10 of the 13 margins are under 1% of the selection metric**
+    (`fg3m|fg3a` 0.01%, `fg3a|fga` 0.05%, `ftm|fta` 0.09%, `gp` 0.11%, `min` 0.20%,
+    `fga` 0.26%, `blk` 0.35%, `fta` 0.79%, plus the two `base` heads at exactly 0). An
+    ablation whose winner flips across a change that does not touch most of its heads is
+    **measuring noise**, and that is a stronger statement of "the terms are worth nothing"
+    than the original run could make — it now has a replication test behind it, and it
+    failed.
     - Only two heads move on a margin worth a second look: **`ast` at 2.21%** (`trend_year`)
       and **`fg2m|fg2a` at 1.88%** (`trend`). Neither is a shot-attempt head, so neither is
       explained by the basis change.
-    - **The oracle ceiling is unchanged in kind**, which is the reason none of this is worth
-      adopting: median **1.71%** of MAE across the seven count heads, max `stl` 3.11%.
-    - `trend` still **worsens held-out bias on 4 of 7 count heads** (`blk` 4.75→7.18,
-      `fta` −7.40→−9.35, `tov` −3.36→−4.82, `reb` 0.60→0.76).
-    - **⚠️ One recorded argument DID weaken and must not be quoted as it stands.** The
-      season-total table used to show `trend` winning MAE while flipping bias to **+7.60**,
-      which was read as cross-component cancellation producing a false positive. It now
-      reads MAE **106.06** and bias **−13.57** against base's **108.56 / −36.89** — `trend`
-      improves *both*, so the cancellation story no longer explains the aggregate win. The
-      component biases still move in both directions, so the mechanism is still present; it
-      is no longer sufficient on its own. **This is the one part of the season-term verdict
-      that needs a human decision rather than a doc edit.**
+    - **The margin is read on each head's OWN selection metric** — `val_nll` for conversions,
+      `val_crps` for everything else. `src/docs_audit.py` inferred it from whether `val_nll`
+      was populated, and the 2026-08-07 run started writing `val_nll` for the count heads,
+      silently switching them onto a column they are not selected on. The tell was `stl`
+      reporting a 0.008% margin while selecting `base` — an arm that is the minimum by
+      construction can only have margin zero. Key on `kind`, never on which columns happen
+      to be filled.
+    - **⭐ The 2026-08-07 run reproduced every per-head validation figure to five decimals
+      and all 13 selected arms — and that is a DETERMINISM check, not a replication.** The
+      validation fits were always validation fits at the same seed and the same 500/500
+      budget, so dropping the test side could not move them. It proves the conversion
+      changed nothing it should not have; it is *not* independent evidence for the verdict.
   Four arms per head (`base`, `trend`,
   `year`, `trend_year`) on each head's already-selected spec, plus `trend_x_role` and
-  `trend_x_role_year` for availability; selected on validation (2022-23/23-24), confirmed on
-  test (2024-25/25-26), every arm quoted against its no-fit floor. Full verdict in
-  `docs/predictions-plan.md`.
+  `trend_x_role_year` for availability; selected on validation (2022-23/23-24), every arm
+  quoted against its no-fit floor. Full verdict in `docs/predictions-plan.md`.
   - **The trend is refuted most sharply on the one quantity that predicted it.** ⚠️ This
     bullet describes the RETIRED `fg3a` count head and its figures are preserved as the
     record of that basis — `fg3a` is no longer fitted, and its successor `fg3a|fga` selects
     `year` on a 0.05% margin. `fg3a`
-    selected **`base`** (val CRPS **33.247** against trend 35.443 and year 34.309), and a
-    trend flipped its held-out bias from **−3.74% to +8.44%**. Two measured mechanisms: the
-    three-point climb **decelerated** — +3.58%/season over 30 seasons but **+1.61%/season
+    selected **`base`** (val CRPS **33.247** against trend 35.443 and year 34.309), a
+    trend flipped its held-out bias from **−3.74% to +8.44%**, and a year effect drove it to
+    **−9.01%** by absorbing drift as shocks and then zeroing them. Two measured mechanisms:
+    the three-point climb **decelerated** — +3.58%/season over 30 seasons but **+1.61%/season
     over the last six** — and the head's dominant feature `log(fg3a_p36_lag1)` already
     carries the league level, so a trend adds a second correction on top of one already
-    there. **The trend worsens held-out bias on 6 of 8 count heads**, and where it wins on
-    test it wins on heads with no era story (`stl`, trend R² 0.03). That is overfitting.
-  - **A trend's apparent win on season-total dk_pts is cross-component cancellation.** All-
-    trend scores MAE **106.06** and bias **−13.57** against base's 108.56 / **−36.89** — but
-    the component biases behind it move in *both* directions (`fg3a` +8.44%, `blk` +7.18%
-    against `fta` −9.35%, `fg2a` −3.07%), so the aggregate gain is those errors cancelling in
-    the DK sum. Same mechanism as the 8.30× cancellation on `teammate_assist_supply`, now
-    producing a false positive for a season term. The season-total table is **uniform-arm and
-    test-only** — confirmation, never selection.
-  - **⭐ The oracle bounds the whole question at ~3% of MAE, and this is the number to
-    remember.** `oracle_league` rescales each held-out season by its own realized total — a
+    there. **The trend worsened held-out bias on 6 of 8 count heads**, and where it won on
+    test it won on heads with no era story (`stl`, trend R² 0.03). That is overfitting.
+    - ⚠️ **On validation the count is 3 of 7 and the heads are different ones** (`fga`, `reb`
+      and `stl` worsen; `fta`, `ast`, `blk` and `tov` improve). Do not read that as the trend
+      being rehabilitated — the basis and the split both changed, and these are sub-1% bias
+      moves on heads whose whole season-term margin is under 1%. What survives is that the
+      trend moves bias in **both directions across heads**, which is what the cancellation
+      argument below rests on.
+  - **⭐ A trend's apparent win on season-total dk_pts is cross-component cancellation, and
+    the 2026-08-07 validation run RESTORES that reading after the test column had briefly
+    undermined it.** On the 773-row validation frame all-trend scores MAE **105.76** against
+    base's **105.71** — it does not win at all, it is 0.05 dk_pts *worse* — while flipping
+    bias from **−16.44** to **+10.21**. The component biases behind it move in *both*
+    directions, so what the aggregate does is those errors cancelling in the DK sum: same
+    mechanism as the 8.30× cancellation on `teammate_assist_supply`, producing a false
+    positive for a season term.
+    - **⚠️ This closes the item that was flagged here as needing a human decision.** The
+      test-only table read `trend` **106.06** / **−13.57** against base **108.56** /
+      **−36.89**, i.e. `trend` improving *both* MAE and bias, which the cancellation story
+      could not explain. On the split that is allowed to decide, the anomaly is gone and the
+      original July shape is back. **No decision is owed** — the mechanism was never in
+      doubt, only the arithmetic on one held-out frame.
+    - Coverage is **0.45 / 0.76 / 0.91** against a nominal 0.50 / 0.80 / 0.95 on every arm,
+      and no season term fixes it. That is the independent-draw composition missing the
+      residual copula, not an argument about season terms either way.
+    The season-total table is **uniform-arm** — confirmation, never selection — and since
+    2026-08-07 it and the per-head table read the same split.
+  - **⭐ The oracle bounds the whole question at ≤5% of MAE, and this is the number to
+    remember.** `oracle_league` rescales each scored season by its own realized total — a
     perfect per-season league multiplier, and therefore the ceiling on a trend, a year effect
-    and a manual override alike. As a share of base MAE: `stl` **3.11%**, `blk` 2.32%, `fta`
-    **2.16%**, `reb` 1.71%, `fga` **0.81%**, `ast` 0.58%, `tov` 0.01% —
-    **median 1.71%**. `fta` carries a −7.0% systematic bias and removing it *entirely*
-    recovers 2.2% of MAE, because player-level error dominates.
+    and a manual override alike. As a share of base MAE: `fta` **4.97%**, `reb` 2.58%, `tov`
+    **2.36%**, `ast` 1.29%, `blk` **1.17%**, `stl` 0.36%, `fga` −0.00% — **median 1.29%**.
+    `fga` is negative because a perfect rescale can cost a fraction on a head whose league
+    level barely moves, which is the cleanest statement that there is nothing there to win.
+    - **⚠️ Quote the magnitude, never the ORDER.** On `test_mae` this read `stl` **3.11%**,
+      `blk` 2.32%, `fta` **2.16%**, `reb` 1.71%, `fga` **0.81%**, `ast` 0.58%, `tov`
+      **0.01%**, median **1.71%** — `stl` fell from first to sixth and `fta` rose from third
+      to first across two scored seasons, while the median moved 1.71% → 1.29%. A ranking
+      that reorders itself like that is season-specific accident. The one substantive change
+      is the ceiling's height: quote **≤5%**, not ~3%.
   - **The year effect behaves exactly as designed, and recovers the league independently.**
-    Median held-out ΔR² vs base is **+0.00004** across thirteen heads — the mean-zero
+    Median validation ΔR² vs base is **−0.00027** across thirteen heads — the mean-zero
     property surviving contact with data. And `sigma_year`, fitted by NUTS on player-season
-    rows, lands within 20% of the *directly measured* league yoy sd on **5 of 8** count
-    heads (`blk` 0.99×, `tov` 0.94×, `fta` 0.87×, `stl` 0.82×, `reb` 1.18×). **`fg3a` at
-    2.36× is the tell**: with no trend term it absorbs *drift* as a sequence of shocks and
-    then zeroes it at prediction time, which is why its bias goes to −9.01%.
+    rows, lands within 20% of the *directly measured* league yoy sd on **3 of 7** count
+    heads (`blk` 0.85×, `tov` 0.89×, `reb` 1.07×), and within a factor of 1.4 on all seven.
+    **The shot-mix head is the tell**, at **1.84×** on the one quantity with a real secular
+    trend: with no trend term the year effect absorbs *drift* as a sequence of shocks and
+    then zeroes it at prediction time.
+    - **⚠️ Every σ moved on 2026-08-07 and it was a latent DEFECT, not sampler noise.** The
+      old `year_*` columns were written from the **test arm's** fit (trained on 27 seasons)
+      into a row whose CRPS came from the **validation** arm (25) — one row, two models,
+      visible in `year_n_train_seasons`. Nothing leaked; the σ compared against the league
+      series simply was not the σ of the model the rest of the row described. The recorded
+      **5 of 8 within 20%** (`blk` 0.99×, `tov` 0.94×, `fta` 0.87×, `stl` 0.82×, `reb`
+      1.18×, `fg3a` 2.36×) is that contaminated column. Fitting on two fewer seasons shrinks
+      σ on six of seven heads, pushing `fta` and `stl` out of the band.
   - **Mean-zero on the linear predictor is NOT mean-zero on the response.** Under a log link
     `E[exp(σz)] = exp(σ²/2)`, so integrating the year effect *raises* every predicted count.
-    Measured at **1.000–1.012** across the heads — real, negligible, and reported rather than
+    Measured at **1.000–1.008** across the heads — real, negligible, and reported rather than
     assumed (`YearTerm.response_multiplier`).
   - **What the year effect IS worth is joint spread, and only that.** Roster season-total
-    dk_pts sd: **+8.9%** at 12 players, **+11.6% at 15**, +22.1% at 30, +91.1% at 150 and
-    **+278%** across all 791 — against shared-β's +0.2% / +0.2% / +0.3% / +1.1% / +6.4% on
-    the same board. Treat as an **upper bound**: `fg3a`, `ast` and `fg2a` have a fitted σ
-    above their measured league movement, so some of it is player heterogeneity. Give the
-    simulator σ from `season_effects_summary.csv` (`yoy_sd_pct`), not the fitted value.
+    dk_pts sd: **+7.95%** at 12 players, **+10.4% at 15**, +21.0% at 30, +83.5% at 150 and
+    **+254%** across all 773 — against shared-β's +0.2% / +0.2% / +0.3% / +1.1% / +6.4%.
+    Treat as an **upper bound**: `fga`, `ast` and `fg3a|fga` have a fitted σ above their
+    measured league movement, so some of it is player heterogeneity. Give the simulator σ
+    from `season_effects_summary.csv` (`yoy_sd_pct`), not the fitted value. **⚠️ Supersedes
+    +8.9% / +11.6% / +22.1% / +91.1% / +278% on the 791-player test board** — the whole-board
+    row is keyed on board size, so it is a different row rather than a moved value, and the
+    shared-β column is a different board and a different head, so ~50× is indicative rather
+    than a like-for-like division.
   - **The minutes head adopts a season term, and it is the one selection that reproduced
-    exactly across the basis change** — val 143.81 / test 146.54 to four decimal places,
-    against 9 heads that flipped. That invariance is what distinguishes a real selection
-    from the noise-dominated ones above. It also falsifies a recorded hypothesis. `year`
-    wins on **both** splits (val **143.81**, test **146.54**
-    against base 144.09 / 147.02) and nudges the standing bias to **−38.2** from −41.0.
-    `docs/availability-plan.md` proposed that bias as "the signature an era effect would
-    leave"; a trend makes it **worse by 15.5 minutes** (−41.0 → **−56.6**), so it is
-    shrinkage toward a 30-season mean, **not** an era effect.
-  - **The availability season × role interaction is a validation NULL, and the exact
-    false-positive shape this repo has shipped before.** `trend_x_role` and
-    `trend_x_role_year` are the **best two arms on test** (10.742, 10.736 against base
-    10.797) and the **worst two on validation** (10.078, 10.087 against 10.007). Caught only
-    because selection never reads test. The selected arm, `trend`, is worth **0.010 games**
-    of validation CRPS — nothing. The era effect is real in the league series and does not
-    transfer into a better availability forecast.
-  - **Every arm under-predicts the bonus by 12–19%** (`base` −14.8%, `trend` −10.2%, `year`
-    −16.5%) and **that level is mostly not the season term**: this composition draws the
-    eleven heads independently given realized minutes, omitting the positive cross-component
-    dependence a simultaneous threshold needs. It argues for the residual copula, not against
-    a season term.
-  - **`metric="dense_e"` is what made 108 Bayesian fits affordable.** On the `blk` spline
+    across a change that should not touch it** — `logit_own_spline` + `year` survived both
+    the shot-attempt basis change and the split conversion to four decimals, against 9 heads
+    that flipped on the first. That invariance is what distinguishes a real selection from
+    the noise-dominated ones above. `year` wins at val **143.81** against base 144.09.
+    (Retired held-out column: **146.54** against **147.02**.)
+    - **It also falsifies a recorded hypothesis.** `docs/availability-plan.md` proposed the
+      head's bias as "the signature an era effect would leave"; a trend makes it **worse by
+      10.8 minutes** (**−13.0** on `year` and −14.2 on `base` against **−25.0** on `trend`),
+      so it is shrinkage toward a 30-season mean, **not** an era effect. ⚠️ The recorded
+      **−38.2 / −56.6 / −41.0** are the held-out column and the *level* is withdrawn — on
+      validation the FLOOR is the biased one at **+23.9** while the fitted arms run −13 to
+      −27. What reproduces is the **gap** (fitted arms sit 27–51 minutes below the
+      carry-forward on both splits), and the falsification survives because "a trend makes
+      it worse" is a statement about the trend, not about which seasons it was measured on.
+  - **The availability season × role interaction is a validation NULL.** `trend_x_role` and
+    `trend_x_role_year` are the **worst two arms of seven on validation** (10.078, 10.087
+    against base 10.007) — the most expensive arms at 26 features, buying a loss. The
+    selected arm, `trend`, is worth **0.010 games** of validation CRPS — nothing. The era
+    effect is real in the league series and does not transfer into a better forecast.
+    - **⚠️ Its finding WAS a val/test disagreement and that half is now unreproducible.**
+      Those same two arms were the **best two on test** (10.742, 10.736 against base
+      10.797), the exact false-positive shape this repo has shipped before, caught only
+      because selection never read test. `src/models/held_out.py` now stops the test column
+      being computed at all, so the contrast is preserved as the record of why the lock
+      exists rather than as a re-runnable measurement. The verdict does not depend on it.
+  - **Every arm under-predicts the bonus by 7–13%** (`base` **−11.7%**, `trend` **−7.6%**,
+    `year` **−12.8%**) and **that level is mostly not the season term**: this composition
+    draws the eleven heads independently given realized minutes, omitting the positive
+    cross-component dependence a simultaneous threshold needs. It argues for the residual
+    copula, not against a season term. ⚠️ Supersedes −14.8% / −10.2% / −16.5% (a 12–19%
+    shortfall) on the test board; the ordering is identical and the gap narrowed ~3 points.
+  - **`metric="dense_e"` is what made this Bayesian ablation affordable.** On the `blk` spline
     base: **13.4 s against 236.6 s**, treedepth saturation **0 against 35**, same posterior.
     This is the cheaper form of the QR-whitened basis this file already recommends for
     spline variants, and the ablation applies it to *every* arm so the metric cannot confound
@@ -915,60 +1122,96 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
   the injured seasons the head exists to predict. It halves the ceiling (R² 0.236 → 0.116)
   and flips the MPG-vs-GP ordering. `availability_profile.csv` reports both columns; use the
   unweighted one for availability and the weighted one for rates.
-- **The availability head is a beta-binomial GLM, and the simulator is not built.** Held out
-  on 2024-25/2025-26 (10,361 train / 911 test), CRPS in games: **GLM 10.795**, GBM 10.888,
-  ridge 10.896, league/age baseline 13.614. (Before the playoff-workload block: 10.914 /
-  11.04 / 10.98 / 13.614.) Gradient boosting does not beat a 19-feature GLM, so
-  the plan's own decision rule says stop. `src/models/availability.py`, `make
-  availability-model`. Two things confirm the distribution is the working part: the fitted
-  dispersion lands at **20–30× implied overdispersion**, independently recovering the ~20×
-  in `availability_profile.csv`, and PIT is near-uniform (KS 0.08–0.11 against the
-  baseline's 0.17). Held-out R² 0.268 is **not** comparable to the 0.236 ceiling — that one
-  is in-sample and season-absorbed.
-- **The availability head is worth ~211 dk_pts of season-total MAE, and availability is
+- **⭐ The availability head is a beta-binomial GLM and the simulator is not built — but on
+  validation the GBM leads the ladder, and it is the ORDERING that reversed, not the
+  decision.** Scored on 2022-23/2023-24 (9,478 train / 883 validation), CRPS in games:
+  **GBM 9.876**, ridge 10.004, **GLM 10.006**, league/age 13.387. `src/models/availability.py`,
+  `make availability-model`.
+  - **⚠️ This was the last held-out measurement in the project and it read GLM 10.795 / GBM
+    10.888 / ridge 10.896 / league-age 13.614 on 10,361 train / 911 test until 2026-08-08.**
+    (Pre-workload-block: 10.914 / 11.04 / 10.98 / 13.614.) The recorded conclusion —
+    "gradient boosting does not beat a 19-feature GLM, so the plan's own decision rule says
+    stop" — is **false as stated** on the split that decides.
+  - **The decision stands because the reversal is not distinguishable from zero.** ✅
+    `make availability-model` (`availability.ladder_comparison` →
+    `availability_ladder_comparison.csv`), a paired bootstrap over the same 883 rows against
+    the shipped head: GBM **−0.1297** CRPS, 95% CI **[−0.3154, +0.0672]**, P(better) 0.906;
+    ridge **−0.0014**, CI [−0.0546, +0.0516]. Only the league/age baseline separates
+    (+3.3811, CI [+2.8567, +3.9299]). The ridge's 0.0014 is the same order as the
+    **0.0013**-CRPS margin that decided the games-played Gate D, reversed, and wrote
+    `src/models/held_out.py`. Treating this one as a verdict would be that mistake with the
+    sign flipped.
+  - **⭐ Where the GBM wins is the argument against it.** By *realized* games-played
+    quartile, the GBM is **+0.333** CRPS worse than the GLM in q1 and −0.063 / −0.452 /
+    −0.366 better in q2/q3/q4; the ridge runs **+0.251** / +0.109 / −0.008 / −0.393. Both
+    challengers beat the GLM on seasons that went normally and lose on the seasons that fell
+    apart — the population the head exists for. Quote the quartile row before the mean.
+  - Two things confirm the distribution is the working part: the fitted
+    dispersion lands at **20–30× implied overdispersion**, independently recovering the ~20×
+    in `availability_profile.csv`, and PIT is near-uniform (KS 0.07–0.11 against the
+    baseline's 0.15). Validation R² 0.374 is **not** comparable to the 0.236 ceiling — that
+    one is in-sample and season-absorbed. (Retired held-out reading: KS 0.08–0.11 against
+    0.17, R² 0.268.)
+- **The availability head is worth ~210 dk_pts of season-total MAE, and availability is
   measurably the larger half of the error.** `make season-total`,
   `src/models/season_total.py` — composes `season_total = gp × dk_per_game_played` holding
-  a **fixed** rate model (ridge, held-out R² 0.770 on the rate) and varying only the
-  games-played treatment, so the contrast is the head and nothing else. Held out on
-  2024-25/2025-26, 10,294 train / 896 test:
+  a **fixed** rate model (ridge, validation R² 0.783 on the rate) and varying only the
+  games-played treatment, so the contrast is the head and nothing else. Selected on
+  **validation** (2022-23/23-24), 9,421 train / 873 rows:
 
   | GP treatment | MAE | RMSE | R² | bias | CRPS |
   |---|---|---|---|---|---|
-  | full season (naive) | 646.3 | 831.2 | 0.141 | **+541.9** | — |
-  | prior GP carried forward | 475.0 | 638.5 | 0.493 | +41.9 | — |
-  | league/age baseline | 476.0 | 595.8 | 0.559 | +23.2 | 340.8 |
-  | **beta-binomial head** | **435.1** | **570.8** | **0.595** | **+6.1** | **316.9** |
-  | *oracle rate* | *302.7* | *427.7* | *0.773* | *+5.3* | — |
-  | *oracle GP* | *221.3* | *304.2* | *0.885* | *−33.2* | — |
+  | full season (naive) | 610.8 | 751.8 | 0.374 | **+523.3** | — |
+  | prior GP carried forward | 417.9 | 560.5 | 0.652 | +19.4 | — |
+  | league/age baseline | 461.6 | 565.9 | 0.645 | +12.9 | 329.1 |
+  | **beta-binomial head** | **400.5** | **514.0** | **0.707** | **−3.1** | **287.3** |
+  | *spell process* (Gate E) | *406.8* | *520.3* | *0.700* | *−16.6* | *291.8* |
+  | *oracle rate* | *261.9* | *367.0* | *0.851* | *−41.3* | — |
+  | *oracle GP* | *214.4* | *287.5* | *0.908* | *+2.0* | — |
 
-  ⚠️ **The R² column was corrected 2026-07-30** — it read 0.10 / 0.47 / 0.55 / 0.59 / 0.78 /
-  0.88 and no single construction reproduces that set. **It is not a pre-playoff-workload
-  leftover**, which was the obvious hypothesis and is falsified: `full_season`, `prior_gp` and
-  `oracle_gp` never touch the availability head (they are the schedule length, prior
-  `gp_share` × schedule, and realized `gp_played`), so no change to that head can move their
-  R² — yet `full_season` was the most wrong, by 0.041. Every other figure in this block is
-  exact, including MAE, RMSE, bias and CRPS on all six rows, so the *predictions* behind the
-  old table were these predictions. Since `r2 = 1 − SSE/ss_tot` and equal RMSE pins SSE, only
-  `ss_tot` could differ — and solving per row gives six mutually inconsistent denominators
-  (0.954× to 1.033× the actual). So the column was hand-typed and never refreshed when the
-  rest of the table was, rather than being a coherent earlier measurement. Reproduced by
-  recomputing R² straight from `season_total_predictions.csv`, which matches
-  `season_total_metrics.csv` exactly on all six rows.
+  ⚠️ **This whole table was a TEST evaluation until 2026-08-05** and read 646.3 / 475.0 /
+  476.0 / **435.1** / 302.7 / 221.3 MAE on 10,294 train / 896 test. It is the module where a
+  games-played treatment is *chosen* — six of them are scored against each other and Gate E
+  asks it to arbitrate — so it had to move to the split that is allowed to decide. Nothing
+  about the finding reverses: the head still beats every non-oracle treatment, and
+  `oracle_gp` still beats `oracle_rate`. **One ordering does flip**: `league_age` (461.6) is
+  now clearly worse than `prior_gp` (417.9), where on test they were a tie (476.0 vs 475.0).
+  - ⚠️ **The R² column was separately corrected 2026-07-30**, when it read 0.10 / 0.47 /
+    0.55 / 0.59 / 0.78 / 0.88 against the test table above and no single construction
+    reproduced that set. The diagnosis is worth keeping because the failure mode is generic:
+    `full_season`, `prior_gp` and `oracle_gp` never touch the availability head, so no change
+    to that head can move their R² — yet `full_season` was the most wrong, by 0.041. Since
+    `r2 = 1 − SSE/ss_tot` and equal RMSE pins SSE, only `ss_tot` could differ, and solving per
+    row gave six mutually inconsistent denominators (0.954× to 1.033×). The column had been
+    hand-typed and never refreshed when the rest of the table was.
 
-  −211.1 MAE (−32.7%) against assuming a full season and −39.9 against carrying prior GP
-  forward. **The oracles settle which half dominates**: perfect games played gives 221.3
-  against perfect rate's 302.7, so availability carries 213.8 dk_pts of the remaining error
-  and the rate 132.5 — the plan's thesis, now a measurement rather than an assertion.
+  −210.3 MAE (−34.4%) against assuming a full season and −17.4 against carrying prior GP
+  forward. **The oracles settle which half dominates**: perfect games played gives 214.4
+  against perfect rate's 261.9, so availability carries 186.1 dk_pts of the remaining error
+  and the rate 138.5 — the plan's thesis, now a measurement rather than an assertion. (The
+  test table put the same gap at 213.8 against 132.5; the *ordering* is what the thesis
+  rests on and it survives the move, with a narrower margin.)
   `oracle_gp` is invariant to the head by construction, which makes it the check that a
   change to the GP treatment moved only what it should.
-  Two calibration notes: the naive treatment's **+541.9 bias** is most of its error (it
-  assumes 82 games for everyone), and the head's **+6.1** is near zero, which is the
+  Two calibration notes: the naive treatment's **+523.3 bias** is most of its error (it
+  assumes 82 games for everyone), and the head's **−3.1** is near zero, which is the
   distribution doing its job. CRPS is on the pushforward of the GP pmf through `k → k·rate`
   — `crps_from_atoms`, the O(K) kernel reduction, pinned against the literal double sum in
   `tests/test_season_total.py`.
-- **Gains shrink on established rotation players, but the ordering holds** — 651.3 naive →
-  499.4 head (−23.3%), against −32.7% overall, because regulars miss less time. Do not
+- **⭐ Gate E of the games-played plan RAN here on 2026-08-05 and the spell process FAILS
+  it** — 406.8 MAE and 291.8 CRPS against the incumbent's 400.5 / 287.3. **It had been
+  recorded as a ✅ on test with a margin of 0.03 dk_pts** (435.1053 against a 435.1352 bar),
+  which is seven parts in a hundred thousand and was never evidence of anything. That is the
+  third gate in that head to reverse on moving off the test split.
+  `season_total.gate_e` now reads its bars out of the incumbent's own row on whichever table
+  it is scoring, so a hard-coded threshold cannot smuggle a test-set number back in.
+  **It does not speak to the `hybrid` arm**, whose games-played pmf is the incumbent's by
+  construction and which would therefore tie Gate E exactly — the same marginal-gate
+  category error as Gate D, one level down.
+- **Gains shrink on established rotation players, but the ordering holds** — 582.9 naive →
+  451.3 head (−22.6%), against −34.4% overall, because regulars miss less time. Do not
   quote the aggregate figure as if it applied to the players a DFS user cares about most.
+  (Superseded test figures: 651.3 → 499.4, −23.3%.)
 - **Fit the beta-binomial with an analytic gradient, and check the denominator first.**
   Two failures here were silent, not loud. (1) 13 player-seasons (0.12%) have
   `gp > team_games` — traded players whose two teams' schedules overlap — and since the
@@ -1000,21 +1243,31 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
   is the one evidence-backed feature change outstanding on the head.
 - **Playoff workload earns its place on the head, but by *selection*, not fatigue — every
   sign is the opposite of the mechanism it was built for.** `make availability-model`
-  (`workload_ablation` → `outputs/predictions/availability_workload_ablation.csv`), held
-  out on 2024-25/2025-26, everything fixed but the feature list:
+  (`workload_ablation` → `outputs/predictions/availability_workload_ablation.csv`), on
+  **validation** (2022-23/2023-24), everything fixed but the feature list:
 
-  | variant | features | CRPS | vs baseline | held-out R² |
+  | variant | features | CRPS | vs baseline | val R² |
   |---|---|---|---|---|
-  | baseline | 15 | 10.914 | — | 0.268 |
-  | **+ playoff workload** | **19** | **10.795** | **−0.119** | **0.283** |
-  | + playoff only | 18 | 10.817 | −0.097 | 0.281 |
-  | + `career_minutes` only | 16 | 10.883 | −0.031 | 0.271 |
+  | baseline | 15 | 10.104 | — | 0.363 |
+  | **+ playoff workload** | **19** | **10.006** | **−0.098** | **0.374** |
+  | + playoff only | 18 | 10.015 | −0.089 | 0.373 |
+  | + `career_minutes` only | 16 | 10.085 | −0.018 | 0.365 |
 
-  Worth **+6.2 dk_pts of season-total MAE** (441.3 → 435.1; the head is now −211.1 against
-  a full season, and −9.5 more on established rotation players: 508.9 → 499.4). `oracle_gp`
-  is unchanged at 221.3, which is the internal check that only the GP treatment moved.
-  In-sample the block is **+0.0178 above its own shuffled null** (0.2998 vs 0.2820, sd
-  0.0002).
+  ⚠️ **This decided a feature block on the held-out split until 2026-08-08**, where it read
+  10.914 / **10.795** / 10.817 / 10.883 CRPS and 0.268 / **0.283** / 0.281 / 0.271 R² at a
+  gain of **−0.119**. **It survives the re-decision unchanged** — same sign, same ordering
+  of all four variants, same order of magnitude — which is the contrast worth drawing with
+  the model ladder above it: a block worth a tenth of a game does not care which split
+  measured it, and a 0.13-game gap between two models does.
+
+  ⚠️ Worth **+6.2 dk_pts of season-total MAE** (441.3 → 435.1; −9.5 more on established
+  rotation players, 508.9 → 499.4), with `oracle_gp` unchanged at 221.3 — the internal check
+  that only the GP treatment moved. **That trio is measured against the superseded TEST
+  season-total table** and is kept because it is the only record of the pre-workload run.
+  It has no validation twin and will not get one from the current code: `season_total.py`
+  holds the availability head fixed at the shipped feature list, so nothing composes a
+  baseline-feature variant through it. In-sample the block is **+0.0178 above its own
+  shuffled null** (0.2998 vs 0.2820, sd 0.0002) — in-sample, so untouched by the split.
 
   **The direction is the finding.** Every single-season playoff column predicts *better*
   next-season availability — `playoff_mpg` r = +0.282 raw, +0.055 controlling for
@@ -1029,9 +1282,11 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     minutes into the total mixes team quality into a clean regular-season workload measure.
     Keep the two effects in separate columns. Pinned by a test so it does not get "fixed"
     back in.
-  - The GBM's margin narrowed but the ordering held — GLM 10.795 vs GBM 10.888, against
-    10.914/11.04 before, so the block helped the GBM slightly more (−0.152 vs −0.119). The
-    plan's stopping rule still says stop.
+  - ⚠️ **The recorded "the GBM's margin narrowed but the ordering held" is withdrawn.** On
+    test the block helped the GBM slightly more than the GLM (−0.152 vs −0.119), leaving
+    GLM 10.795 against GBM 10.888 from 10.914/11.04 before. On validation the margin it was
+    tracking has crossed zero — see the ladder bullet above. The stopping rule still says
+    stop, but for a different reason: nothing beats the GLM *distinguishably*.
 - **Nonlinear terms are a null for games played and NOT a null for minutes — and the split
   between those two is the useful part.** `make availability-model`
   (`nonlinearity_ablation` + `minutes_nonlinearity_probe` →
@@ -1039,32 +1294,48 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
   B-splines with linear extrapolation (knots from **training** quantiles only) or
   quadratics, over the nine continuous columns; `age_sq` is already in the linear baseline.
 
-  | variant | p | val CRPS | test CRPS | selected |
+  | variant | p | val CRPS | val R² | selected |
   |---|---|---|---|---|
-  | **linear** | 19 | **10.006** | 10.795 | **✓** |
-  | quadratic | 27 | 10.037 | *10.749* | |
-  | spline k=4 | 54 | 10.041 | *10.761* | |
-  | spline k=5 | 63 | 10.054 | *10.751* | |
+  | **linear** | 19 | **10.006** | **0.374** | **✓** |
+  | quadratic | 27 | 10.037 | 0.370 | |
+  | spline k=4 | 54 | 10.041 | 0.367 | |
+  | spline k=5 | 63 | 10.054 | 0.366 | |
 
-  **The test column prefers every curved variant and none of them replicate.** This is the
-  methodological trap worth remembering: a *paired* bootstrap on the 911 test rows puts the
-  quadratic gain at **−0.047, 95% CI [−0.079, −0.015], P(Δ<0) = 99.7%** — and it is still a
-  false positive, because a paired interval says a difference is consistent *within one
-  sample*, not that the sample was representative. Select on a validation split; quote test
-  for confirmation only. The GBM arm corroborates from a different direction: a fully
-  nonparametric learner on the same features still loses to the linear GLM.
-- **For minutes per game the same test replicates, and it is *not* the age arc.** Ridge
-  probe (the minutes head is not built), predicting next-season MPG: linear R² val 0.6768 /
-  test 0.6670, quadratic **0.6914 / 0.6746**, spline k=4 0.6930 / 0.6736 — both splits move
-  the same way. Splining one column at a time attributes it:
+  - **⭐ Every validation figure here reproduced to five decimals across the 2026-08-08
+    conversion, and that is a DETERMINISM check.** `held_out.selection_split` hands back
+    exactly the frames this ablation's own private inner split used to carve, so dropping
+    the test side could not move them — it proves the conversion changed nothing it should
+    not have, and is not independent evidence for the verdict.
+  - **⚠️ The retired test column preferred every curved variant** — 10.795 (linear) against
+    **10.749** / **10.761** / **10.751** — and this is the methodological trap worth
+    remembering: a *paired* bootstrap on the 911 test rows put the quadratic gain at
+    **−0.047, 95% CI [−0.079, −0.015], P(Δ<0) = 99.7%**, and it was still a false positive,
+    because a paired interval says a difference is consistent *within one sample*, not that
+    the sample was representative. The GBM arm corroborates the null from a different
+    direction: a fully nonparametric learner on the same features does not beat the linear
+    GLM by a distinguishable margin either.
+- **For minutes per game curvature is real, and it is *not* the age arc.** Ridge
+  probe (the minutes head is not built), predicting next-season MPG on validation: linear
+  R² **0.6768**, quadratic **0.6914**, spline k=4 **0.6930**. Splining one column at a time
+  attributes it:
 
-  | column splined | Δ val R² | Δ test R² | replicates |
-  |---|---|---|---|
-  | **`minutes_per_game_lag1`** | **+0.0124** | **+0.0077** | **yes** |
-  | `total_minutes_lag1` | +0.0008 | +0.0011 | yes |
-  | `age` | −0.0008 | −0.0007 | no |
-  | `career_minutes_lag1` | +0.0005 | −0.0006 | no |
-  | everything else | ≤ +0.0007 | ≤ 0 | no |
+  | column splined | Δ val R² |
+  |---|---|
+  | **`minutes_per_game_lag1`** | **+0.0124** |
+  | `total_minutes_lag1` | +0.0008 |
+  | `career_year` | +0.0007 |
+  | `age` | **−0.0008** |
+  | `playoff_minutes_share_lag1` | −0.0016 |
+
+  - **⚠️ "The same test replicates" is WITHDRAWN — the test column is gone and it was never
+    a replication.** It read 0.6670 / **0.6746** / 0.6736 by variant and +0.0077 /
+    +0.0011 / −0.0006 / −0.0007 by column, with a `replicates` flag requiring both columns
+    to move the same way. Those two columns differed in *training data* as well as in scored
+    rows — the confound `src/models/held_out.py` exists to stop being read as agreement — so
+    the flag was asserting something it could not see. The validation column is unchanged to
+    four decimals. **What actually carries the finding is the contrast between the two
+    TARGETS on one frame**: the identical experiment, same rows, same code, is a null for
+    games played and is not for minutes per game.
 
   So the intuitive story — young players ramp up, prime players play heavy minutes, veterans
   get load-managed — is real (`make aging`: MPG peaks at 27 and falls to 0.515 by 37) but
@@ -1079,33 +1350,50 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
   proposed head must be quoted against it.** `make component-rates`
   (`src/models/component_rates.py` → `outputs/predictions/component_rate_metrics.csv`).
   **`carry_forward` = prior per-36 rate × actual minutes / 36, no fitting at all**, scores
-  held-out R² **0.82–0.94**, and the best of seven fitted variants beats it by only
-  **+0.0019 to +0.0203**. A component head that does not clear it is not a model. Every
+  validation R² **0.81–0.95**, and the best of seven fitted variants beats it by only
+  **+0.0013 to +0.0334**. A component head that does not clear it is not a model. Every
   output row carries `beats_floor` and `run` warns when no variant clears it for a head,
   because that is also the signature of the regularization trap below.
+  ⚠️ **Measured on the held-out seasons until 2026-08-05, where it read 0.82–0.94 and
+  +0.0019 to +0.0203.** This module was the only head in the project with **no guard at
+  all** — it defined its own `split_seasons` rather than importing the shared one, so
+  `src/models/held_out.py`'s lock, which lives inside `availability.split_seasons`, never
+  saw it. The copy was behaviourally identical; deleting it changed nothing but the guard.
+  The finding is unchanged and the floor is if anything harder to beat.
 - **For the component count heads the answer is *scale*, not curvature: put the own prior
   rate in on the log scale.** Season-collapsed Poisson/NB (`y_season ~ Poisson(M·e^{Xβ})`,
   M = season minutes), 10,194 player-seasons with a ≥200-minute prior season, 29 seasons,
-  held out on 2024-25/2025-26. Held-out R² on the season total:
+  scored on **validation** (2022-23/23-24), 8,630 fit / 773 rows. R² on the season total:
 
   | head | no-fit floor | linear | **log(own)** | spline(own) | + age×own |
   |---|---|---|---|---|---|
-  | `fga` | 0.9464 | 0.9455 | 0.9513 | 0.9517 | **0.9522** |
-  | `reb` | 0.9424 | 0.9278 | **0.9441** | 0.9436 | 0.9442 |
-  | `ast` | 0.9197 | 0.8601 | **0.9229** | 0.9262 | 0.9236 |
-  | `blk` | 0.8407 | 0.6375 | 0.8204 | **0.8605** | 0.8228 |
-  | `fta` | 0.8673 | 0.8449 | 0.8689 | 0.8692 | **0.8720** |
-  | `stl` | 0.8194 | 0.8170 | 0.8369 | **0.8397** | 0.8338 |
-  | `tov` | 0.8845 | 0.8828 | **0.8915** | 0.8913 | 0.8916 |
+  | `fga` | 0.9514 | 0.9544 | 0.9586 | 0.9589 | **0.9591** |
+  | `reb` | 0.9505 | 0.9181 | **0.9514** | 0.9497 | 0.9512 |
+  | `ast` | 0.9195 | 0.8569 | 0.9222 | **0.9255** | 0.9225 |
+  | `blk` | 0.8103 | 0.6510 | 0.7748 | **0.8291** | 0.7799 |
+  | `fta` | 0.8765 | 0.7993 | 0.8922 | 0.8817 | **0.8932** |
+  | `stl` | 0.8386 | 0.8556 | 0.8682 | 0.8693 | **0.8693** |
+  | `tov` | 0.8966 | 0.9091 | 0.9171 | 0.9162 | **0.9173** |
 
+  > ⚠️ **This table was a TEST evaluation until 2026-08-05** and read, in the same layout:
+  > `fga` 0.9464 / 0.9455 / 0.9513 / 0.9517 / 0.9522, `reb` 0.9424 / 0.9278 / 0.9441 /
+  > 0.9436 / 0.9442, `ast` 0.9197 / 0.8601 / 0.9229 / 0.9262 / 0.9236, `blk` 0.8407 /
+  > 0.6375 / 0.8204 / 0.8605 / 0.8228, `fta` 0.8673 / 0.8449 / 0.8689 / 0.8692 / 0.8720,
+  > `stl` 0.8194 / 0.8170 / 0.8369 / 0.8397 / 0.8338, `tov` 0.8845 / 0.8828 / 0.8915 /
+  > 0.8913 / 0.8916. **Every conclusion in this block survives** — `linear` is still
+  > catastrophic on `blk`, `log(own)` still recovers nearly all of it, splines still pay
+  > only where the prior is skewed. Two things sharpened: `blk`'s spline gain grows from
+  > +0.040 to **+0.054**, and `stl`'s from +0.003 to +0.001 while its *linear* arm now
+  > *beats* its floor.
+  >
   > ⚠️ **Refreshed 2026-08-03 for the shot-attempt basis.** The `fg2a` row
   > (0.9194 / 0.9089 / 0.9245 / 0.9248 / 0.9260) and the `fg3a` row
   > (0.9036 / 0.5197 / 0.8791 / 0.9088 / 0.8784) are retired with the two-count basis, and
-  > `fga` replaces both. **`fga` is the best-behaved count head in the project** — floor
-  > 0.9464, the highest of the seven, and it still clears it by +0.0058. It is also far less
-  > misspecification-prone than the heads it replaces: `linear` costs it only 0.0009 R²,
-  > against 0.5197 for `fg3a`, because a total is much less skewed than its three-point part.
-  > The other five rows are untouched, since nothing outside the shot family moved.
+  > `fga` replaces both — both sets of figures are the retired basis on the retired split.
+  > **`fga` is still the best-behaved count head in the project**: floor **0.9514**, the
+  > highest of the seven, and `linear` costs it nothing at all (it is +0.0030 *above* the
+  > floor) against 0.5197 for the `fg3a` it replaced, because a total is much less skewed
+  > than its three-point part.
   >
   > ⚠️ **The `+ age×own` column was corrected 2026-07-31, and the correction is a change of
   > *variant*, not of value.** It previously read 0.9437 / 0.9260 / 0.9249 / 0.9083 / 0.8558 /
@@ -1122,15 +1410,15 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
   `exp()` is badly misspecified, catastrophically so for the zero-heavy skewed heads
   (`fg3a` 0.520, `blk` 0.638). `log1p(own)` recovers nearly all of it in **one term**.
   - **Splines add a real but small further gain, concentrated where the prior is most
-    skewed** — `fg3a` +0.030 and `blk` +0.041 over `log(own)`, and ≤ +0.003 on the other
-    six. Spend flexibility on those two heads only.
+    skewed** — `blk` **+0.054** over `log(own)` (and the retired `fg3a` +0.030), against
+    ≤ +0.003 on five of the other six. Spend flexibility there only.
   - **The `age × own` and `mpg × own` interactions are a null once the scale is right** —
-    ≤ +0.003 over `log(own)`, and *negative* for `fg3a` and `stl`. Component-specific aging is real
+    ≤ +0.005 over `log(own)`, and *negative* for `reb` and `ast`. Component-specific aging is real
     (`make aging`) but does not survive as an interaction here.
   - The floor being this strong is the sharpest available statement of "attempts persist"
     (`fg3a` 0.908 in `persistence.csv`), and it means the rate side is close to saturated
-    from prior-season information alone — consistent with `oracle_gp` 221.3 beating
-    `oracle_rate` 302.7 on the season total.
+    from prior-season information alone — consistent with `oracle_gp` 214.4 beating
+    `oracle_rate` 261.9 on the season total.
   - **⚠️ These figures replaced an earlier set that was an artifact.** At `alpha=1.0` the
     linear baseline read R² 0.662 on `reb` and splines "improved" it by +0.15, with
     interactions worth −0.10 NLL. All of that was over-regularization (see the sklearn trap
@@ -1146,11 +1434,21 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     have the player's own prior rate and his minutes — the same "rate side is saturated"
     conclusion from a second direction. PCA interactions (`log(own) × pc1/pc2`) are also a
     null. Use the cheap raw spec.
-  - **`ftm|fta` is the one head where *nothing* beats the floor** — best fitted NLL 3.1021
-    against the floor's 3.0822. Free-throw percentage is pure player skill with no context
+  - **`ftm|fta` is a head where *nothing* beats the floor** — best fitted NLL 3.0569
+    against the floor's 3.0541. Free-throw percentage is pure player skill with no context
     to add, so an empirical-Bayes shrink of the prior is already optimal. `fg2m|fg2a` gains
-    +0.072 NLL and `fg3m|fg3a` +0.032 (both from the PCA/spline variants), so the
-    conversion side is worth ~1–2% of its NLL at most.
+    +0.079 NLL and `fg3m|fg3a` +0.028 (both from the PCA/spline variants), so the
+    conversion side is worth ~1–2% of its NLL at most. (Recorded on the held-out split:
+    3.1021 against 3.0822, +0.072 and +0.032.)
+    - **⚠️ On validation `fg3a|fga` joins it under sklearn, and the Stan head clears the same
+      floor by only +0.0034.** The shot-mix head's best Poisson/logistic variant reads 4.6317
+      against a floor of **4.6191** — it *fails* — while `stan_components` clears that
+      identical floor at **4.6157**. Both instruments now agree the head is *marginal*, where
+      the recorded reading had Stan clearing by +0.0391 on test and made the sklearn failure
+      look like an artifact of the coarser probe. The instrument difference is still real —
+      sklearn's `spline_own` basis is on raw `own` while `stan_components` splines on
+      `logit(own)`, which strictly nests the right scale — but it is worth 0.0160 NLL, not
+      the 0.04 the test column implied. **Do not quote this head as clearing comfortably.**
   - **The conversion floor has to be a *shrunk* carry-forward, and that is a fact about
     proportions.** A player who went 0-for-3 from three has a prior 3P% of exactly 0.000;
     carrying it onto 200 attempts gives a beta-binomial NLL of **1.3e9** and makes the
@@ -1226,31 +1524,47 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     hopeful comparison.** An L2 penalty of `l2` on standardized coefficients *is* a
     `normal(0, 1/sqrt(2·l2))` prior, so the posterior **mode** is exactly the penalized
     optimum `BetaBinomialGLM` finds — `stan_utils.prior_sd_for_l2` is that identity. Measured
-    on 10,361 train / 911 test: held-out CRPS **10.7947** (Stan plug-in) / **10.7953**
-    (posterior) against the MLE's **10.7952**, ρ **0.2759** vs **0.2757**, max coefficient gap
-    **0.0127**, largest gap **0.095 posterior sd**, and the MLE inside the 95% credible
-    interval for **21/21** terms. R̂ **1.0025**, min ESS 2,402, **0 divergences**, 254 s
+    on 9,478 train / 883 **validation**: CRPS **10.0063** (Stan plug-in) / **10.0071**
+    (posterior) against the MLE's **10.0057**, ρ **0.2808** vs **0.2806**, max coefficient gap
+    **0.00335**, largest gap **0.085 posterior sd**, and the MLE inside the 95% credible
+    interval for **21/21** terms. R̂ **1.0019**, min ESS 2,314, **0 divergences**, 195 s
     wall clock over 4 chains.
+    - **⚠️ This block was measured on the held-out seasons until 2026-08-05 and read
+      10.7947 / 10.7953 / 10.7952, ρ 0.2759 vs 0.2757, gap 0.0127 / 0.095 sd, R̂ 1.0025,
+      min ESS 2,402, 254 s.** The port check moved to validation with every other head
+      (`src/models/held_out.py`); the figures are not comparable, since both the fitting
+      frame and the scored rows changed. **What the check asserts is unchanged and slightly
+      sharper**: the coefficient gap fell 3.8× and the MLE is still inside the interval for
+      every term, which is the whole content of "this is a port". The held-out reading is
+      taken once, by `make final-evaluation`, through this module's own `fit_and_score`.
   - **Do not argue for the posterior on marginal CRPS — it is a wash by construction and the
     argument is the joint.** At ~10^4 rows against 20 parameters the posterior is sharp.
     What it buys is `Var_θ(Σ_i E[Y_i|θ])`: every player shares β, so one draw moves the whole
     board together, and that term is **exactly 0** under any point estimate.
   - **⚠️ But it is worth almost nothing on one roster, and the size of the portfolio is what
     decides.** The independent term grows as **sqrt(N)** and the shared-β term as **N**, so
-    their ratio scales as sqrt(N). Measured on the 911-player held-out board
+    their ratio scales as sqrt(N). Measured on the 883-player **validation** board
     (`stan_availability.board_correlation`, random subsets, not extrapolated):
 
     | players | independent sd | shared-β sd | inflation |
     |---|---|---|---|
-    | 12 | 69.4 | 4.0 | **+0.2%** |
-    | 15 | 77.6 | 4.8 | +0.2% |
-    | 30 | 109.5 | 8.4 | +0.3% |
-    | 150 | 245.0 | 37.2 | +1.1% |
-    | **911 (whole board)** | 604.0 | 219.1 | **+6.4%** |
+    | 12 | 69.9 | 4.2 | **+0.2%** |
+    | 15 | 78.0 | 5.0 | +0.2% |
+    | 30 | 110.3 | 8.8 | +0.3% |
+    | 150 | 246.4 | 39.1 | +1.2% |
+    | **883 (whole board)** | 597.8 | 222.8 | **+6.7%** |
 
     So it is real for **board-wide exposure across many lineups** and near-irrelevant for a
-    single 15-man team. Quoting the 219-game figure as if it applied to one roster is the
+    single 15-man team. Quoting the 223-game figure as if it applied to one roster is the
     over-claim to avoid — it was made and corrected in the session that built this.
+    - **The board is a SIMULATOR INPUT, so validation is where it belongs**, not merely
+      where the lock put it. "How much does my whole board move together" is a number the
+      simulator is *given*; calibrating it on the seasons the simulator is later backtested
+      against is the leakage the split cannot catch, exactly as for `game_level_dispersion`
+      and the residual copula. **⚠️ The recorded 911-player row (604.0 / 219.1 / +6.4%, and
+      69.4 / 4.0 at 12 players) was the held-out board** and is superseded rather than
+      wrong. The conclusion is untouched: a fraction of a percent on one roster, several
+      percent across the board, and the ratio still scaling as sqrt(N).
   - **⚠️ The integrated predictive is NOT necessarily wider per player, and expecting it to be
     is a trap this session fell into.** By the law of total variance the mixture adds
     `Var_θ(E[Y|θ])` but replaces `Var(Y|θ̄)` with `E_θ[Var(Y|θ)]`, and
@@ -1271,36 +1585,55 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     does not exist here, since Stan differentiates exactly.
   - **B-spline bases are badly conditioned for HMC.** The spline variants sample at treedepth
     8 (255 leapfrog steps per iteration) with a step size of 0.011, against treedepth 3–4 for
-    the linear ones — **899 s against 189 s** for the same data on the minutes head. Valid,
+    the linear ones — **721 s against 171 s** for the same data on the minutes head. Valid,
     just expensive; an orthogonalized (QR-whitened) basis is the fix if spline variants ever
-    become the shipped spec.
+    become the shipped spec. (The recorded **899** s / **189** s pair is the same contrast
+    on the retired test refits, which ran at double the iterations.)
 - **✅ The minutes head is built — `make stan-minutes`, and it is the FIRST head to use the
   real trials denominator.** `min` is successes out of **actual game length**, never 48:
   `data/features/game_length.parquet` supplies it, 5.93% of games go to overtime, and the
   prior attempt's `normal(μ,σ) T[0,48]` needed a `min == 48 → 47.9` fudge *and* discarded
-  every overtime game. Season-collapsed on 9,804 player-seasons (9,048 train / 756 test),
-  `y` = season minutes, `n` = summed game length **over the games he played** — so it is the
-  conditional `min | available` and composes with the availability head rather than
-  double-counting absences. **0 rows clamped by rounding**, realized share max 0.9096.
+  every overtime game. Season-collapsed on 9,804 player-seasons (8,306 fit / 742 validation
+  on 2022-23 and 2023-24), `y` = season minutes, `n` = summed game length **over the games he
+  played** — so it is the conditional `min | available` and composes with the availability
+  head rather than double-counting absences. **0 rows clamped by rounding**, realized share
+  max 0.9096.
 
-  | variant | val CRPS | test CRPS | test R² | selected |
-  |---|---|---|---|---|
-  | `carry_forward` (no-fit floor) | 161.45 | 168.24 | 0.8166 | |
-  | linear | 144.62 | 147.18 | 0.8565 | |
-  | `logit(own)` | 145.44 | 147.35 | 0.8565 | |
-  | `logit(own)` + quadratic | 144.83 | 147.21 | 0.8574 | |
-  | **`logit(own)` + spline** | **144.13** | **146.85** | 0.8572 | **✓** |
+  | variant | val CRPS | val R² | val MAE | val bias | selected |
+  |---|---|---|---|---|---|
+  | `carry_forward` (no-fit floor) | 161.45 | 0.8536 | 213.13 | **+23.91** | |
+  | linear | 144.71 | 0.8826 | 199.54 | −3.26 | |
+  | `logit(own)` | 145.45 | 0.8819 | 200.90 | −2.97 | |
+  | `logit(own)` + quadratic | 144.54 | 0.8827 | 200.84 | −13.82 | |
+  | **`logit(own)` + spline** | **143.93** | **0.8835** | 199.60 | −14.00 | **✓** |
 
-  Clears the floor by **+0.0407 R² and −21.4 minutes of CRPS**. R̂ ≤ 1.0093, **0 divergences**
-  over 8 fits, 2,183 s total.
+  Clears the floor by **+0.0299 R² and −17.5 minutes of CRPS**. Max R̂ **1.0054**,
+  **0 divergences** over 4 fits, 1,227 s total.
+  - ⚠️ **This table was a TEST evaluation until 2026-08-06** and read, as
+    `val CRPS / test CRPS / test R²`: floor 161.45 / **168.24** / **0.8166**, linear
+    **144.62** / **147.18** / **0.8565**, `logit(own)` **145.44** / **147.35** / 0.8565,
+    quadratic **144.83** / **147.21** / **0.8574**, spline **144.13** / **146.85** /
+    **0.8572** — clearing the floor by **+0.0407** R² and **−21.4** minutes over 8 fits, max
+    R̂ **1.0093**, **2,183** s, with held-out bias running from the floor's **−5.69** to
+    **−33.1** (linear) and **−40.9** (spline). **Two things retired at once and only one of
+    them is the split.** The `test_*` columns went because `sweep` no longer writes them;
+    the *old* `val_crps` values went because selection was raised from 500/500 to
+    full-length chains in the same change, so even the surviving column is a different
+    measurement. Only the floor's **161.45** is arithmetic all the way down and reproduces
+    to the digit.
+  - **The selected variant reproduced, which is what makes this head's selection readable
+    at all.** `logit_own_spline` is still chosen, and it now wins by 0.61 CRPS over the
+    quadratic against 0.69 before — a margin that survived both a change of scored rows and
+    a doubling of chain length. Contrast the season-term ablation, where **9 of 13 heads
+    flipped their selected arm** on margins under 1%: an ablation whose winner moves under a
+    change that should not touch it is measuring noise, and this one does not move.
   - **The specification answer is the OPPOSITE of the count heads', and that is the finding.**
     There, scale is everything and curvature is nearly nothing. Here the logit scale is a
-    **dead wash** (0.8565 against linear's 0.8565, and it is *worse* on validation CRPS),
-    while curvature is what pays. Both splits move the same way, so unlike the games-played
-    arm this replicates. Do not generalize "put it on the link's scale" from the counts to
-    the minutes head.
+    **dead wash** and slightly *worse* on both metrics (val R² 0.8819 against linear's
+    0.8826, val CRPS 145.45 against 144.71), while curvature is what pays. Do not generalize
+    "put it on the link's scale" from the counts to the minutes head.
   - **The season-level ρ is NOT the number the simulator needs, and they differ by more than
-    the fit does.** Fitted season-level ρ = **0.0495**; game-level ρ measured separately
+    the fit does.** Fitted season-level ρ = **0.05025**; game-level ρ measured separately
     against each player-season's own mean over 713,947 player-games = **0.0776**, i.e.
     **4.65× binomial** at a 48-minute game. A season total cannot separate a per-game random
     effect from a per-season one — iid game noise is diluted by ~1/G while a shared season
@@ -1313,130 +1646,225 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
       variance inflation** from `make serial-correlation` for the serial dependence *between*
       games. Using only (2) gives independent draws with the right marginal and too little
       variance in any aggregate; using only (3) gets the clustering right and each game wrong.
-  - **The fitted heads carry a −33 to −41 minute held-out bias against the floor's −5.7.**
-    About −2.7% on a ~1,500-minute mean, and it is the price of shrinkage on a held-out
-    season: the floor is unbiased because it does not shrink. It costs nothing on R², MAE or
-    CRPS here, but it is a real calibration defect and it would compound through the eleven
-    component heads, which take these minutes as exposure. Worth a bias correction before the
-    simulator consumes it — and a candidate cause is now on record, since
-    `docs/availability-plan.md` finds a large role-graded era trend that a flat 30-season
-    pool cannot represent.
-- **✅ The eleven component heads are built in Stan — `make stan-components`, 74 fits, 0
-  divergences, 305.0 min. Two results overturn what `make component-rates` measured with
-  sklearn, and one settles a standing recommendation.** 10,194 player-seasons, 9,403 train /
-  791 test, validation split 8,630 / 773 on 2022-23 and 2023-24. Held-out R² on the season
-  total:
+  - **⚠️ "The fitted heads carry a −33 to −41 minute bias against the floor's −5.7" is
+    WITHDRAWN — that was the held-out column, and on validation the FLOOR is the biased
+    one.** The floor over-predicts by **+23.91** minutes while the fitted arms run **−3.26**
+    (linear) to **−14.00** (spline). So the recorded explanation — "the floor is unbiased
+    because it does not shrink" — is false on the split that selects.
+    - **What reproduces is the GAP, not the level.** The fitted arms sit **−27.2** (linear)
+      to **−37.9** (spline) minutes *below* the floor on validation, against −27.1 to −35.3
+      on the retired held-out column. Shrinkage moves every arm roughly the same distance
+      down from the carry-forward; where that lands in absolute terms is a property of the
+      seasons being scored. So the calibration defect is **relative**, it still compounds
+      through the eleven component heads that take these minutes as exposure, and it is
+      still worth correcting before the simulator consumes it — but do not quote a signed
+      level for it, and do not read "the fitted heads under-predict minutes" as a standing
+      fact.
+    - The two columns are not a controlled contrast in any case: different scored rows,
+      different training data and different chain lengths, which is exactly the confound
+      `src/models/held_out.py` was written to stop being read as a replication.
+    - This also **removes the era-effect candidate** the bullet used to carry. A bias whose
+      sign flips between two adjacent season pairs is not the signature of a monotone
+      role-graded era trend; `make season-terms` had already falsified that from the other
+      direction, finding a trend makes the bias *worse* by 15.5 minutes.
+- **✅ The eleven component heads are built in Stan — `make stan-components`, 37 fits, 0
+  divergences, max R̂ 1.0076, 137.4 min. Two results overturn what `make component-rates`
+  measured with sklearn, one settles a standing recommendation, and one — the free-throw
+  family — REVERSED on the move to validation.** 10,194 player-seasons, 8,630 fit / 773
+  validation on 2022-23 and 2023-24. Validation R² on the season total:
 
   | head | no-fit floor | linear | `log(own)` | `log(own)` + spline | selected |
   |---|---|---|---|---|---|
-  | `fga` | 0.9464 | 0.9396 | 0.9501 | **0.9505** | spline |
-  | `reb` | 0.9424 | 0.9095 | **0.9439** | 0.9428 | `log_own` |
-  | `ast` | 0.9197 | 0.6615 | 0.9223 | **0.9240** | spline |
-  | `tov` | 0.8845 | 0.8823 | **0.8929** | 0.8926 | `log_own` |
-  | `blk` | 0.8407 | **−1.393** | **0.6794** | **0.8579** | spline |
-  | `fta` | **0.8673** | 0.8171 | 0.8649 | 0.8648 | *none clears* |
-  | `stl` | 0.8194 | 0.8113 | 0.8390 | **0.8413** | spline |
+  | `fga` | 0.9514 | 0.9489 | 0.9581 | **0.9584** | spline |
+  | `reb` | 0.9505 | 0.8889 | **0.9513** | 0.9511 | `log_own` |
+  | `ast` | 0.9195 | 0.6418 | 0.9198 | **0.9255** | spline |
+  | `tov` | 0.8966 | 0.9048 | **0.9170** | 0.9169 | `log_own` |
+  | `blk` | 0.8103 | **−0.2744** | **0.6730** | **0.8309** | spline |
+  | `fta` | 0.8765 | 0.5741 | **0.8909** | 0.8893 | `log_own` |
+  | `stl` | 0.8386 | 0.8492 | 0.8674 | **0.8695** | spline |
 
+  > ⚠️ **This table was a TEST evaluation until 2026-08-06** and read, in the same layout:
+  > `fga` 0.9464 / 0.9396 / 0.9501 / 0.9505, `reb` 0.9424 / 0.9095 / 0.9439 / 0.9428,
+  > `ast` 0.9197 / 0.6615 / 0.9223 / 0.9240, `tov` 0.8845 / 0.8823 / 0.8929 / 0.8926,
+  > `blk` 0.8407 / −1.393 / 0.6794 / 0.8579, `fta` 0.8673 / 0.8171 / 0.8649 / 0.8648,
+  > `stl` 0.8194 / 0.8113 / 0.8390 / 0.8413, on 9,403 train / 791 test. **Every conclusion
+  > survives except the free-throw one, which reverses** — see the `fta` bullet. The fit
+  > count halves from **74** because the test side is no longer fitted at all, and the cost
+  > falls from **305.0** min to 137.4 *despite* every fit now running full-length chains:
+  > the old test side was the majority of the compute at double the iterations.
+
+  - **⚠️ `selected` and `beats_floor` used to read DIFFERENT SPLITS. They no longer do, and
+    that is the semantic change to notice in the artifact.** The variant was chosen on
+    validation and then certified against its no-fit floor on *test*, so a head could be
+    selected on one split and marked a failure on another — which is exactly what happened
+    to `fta`. `_finalize` now computes both from `val_r2` / `val_nll`, making the floor
+    comparison the honest one: does the variant I would ship beat arithmetic on the rows I
+    chose it with? Certification against the held-out seasons is `src/final_evaluation.py`'s
+    job and nothing else's.
+  - **⭐ `fta` CLEARS its floor on validation, so "the whole free-throw family fails" is
+    WITHDRAWN.** `log_own` scores **0.8909** against a floor of **0.8765** — **+0.0144**,
+    and it is the selected variant — where on test it read 0.8649 against 0.8673 and failed
+    by **0.0024**. Two parts in a thousand was never evidence of anything, and it was being
+    read as a finding about free throws in general. **`ftm|fta` still fails, and is now the
+    only head in the project that fails its floor at every variant.** That was always the
+    better-founded half of the claim: free-throw *percentage* has a pure-player-skill
+    argument that trips to the line never had, which is precisely why `fta` joining it
+    deserved more suspicion than it got.
   - **⭐ The shot-attempt basis removed this project's worst misspecification case.** The
     retired `fg3a` row read floor 0.9036, **linear −19.00**, `log_own` **0.3719**, spline
     0.9046 — a head that *failed its floor at two of three variants*. `fga` replaces it and
-    is the best-behaved count head in the project: floor **0.9464** (the highest), selected
-    **0.9505**, and **linear costs it only 0.0068 R²** (0.9396) against `fg3a`'s −19.00. A
+    is the best-behaved count head in the project: floor **0.9514** (the highest), selected
+    **0.9584**, and **linear costs it only 0.0025 R²** (0.9489) against `fg3a`'s −19.00. A
     total is far less skewed than its three-point part, so the scale barely matters. `blk`
-    at **−1.393** is now the worst linear case, and it is the only one left that is
-    spectacular. The retired `fg2a` row (0.9194 / 0.9018 / 0.9241 / 0.9241) is unremarkable
+    at **−0.2744** is now the worst linear case, and the only one left that is negative at
+    all. The retired `fg2a` row (0.9194 / 0.9018 / 0.9241 / 0.9241) is unremarkable
     either way.
   - **⚠️ `log(own)` alone is NOT sufficient under a negative binomial, and that contradicts
-    the Poisson result.** `make component-rates` has `log_own` at 0.8204 (`blk`) and 0.8791
-    (`fg3a`); under NB the same spec collapses to **0.6794** and **0.3719**, both far below
-    their floors, and only the spline recovers them. The mechanism is the likelihood, not the
+    the Poisson result.** `make component-rates` has `log_own` at 0.7748 (`blk`) — both
+    figures now on validation, so they are directly comparable — and under NB the same spec
+    collapses to **0.6730**, far below the 0.8103 floor, with only the spline recovering it
+    (**0.8309**). The mechanism is the likelihood, not the
     data: NB2's `var = μ + μ²/φ` down-weights large counts relative to Poisson, so the fit is
     driven by the low-count mass — exactly where the log-scale relation is most curved. **The
     "splines are worth ≤ +0.003 outside `fg3a`/`blk`" guidance is Poisson-specific.** Under NB
-    the validation split picks the spline for **four** heads (`fg3a`, `blk`, `ast`, `stl`),
-    and for `fg3a`/`blk` it is not a refinement but the difference between a model and a
-    failure.
-  - **`linear` is catastrophic, far beyond what the Poisson fit showed** — `fg3a` **−19.00**
-    and `blk` **−1.393** held-out R², against 0.520/0.638 under sklearn. Linear-in-raw-rate
+    the validation split picks the spline for **four** heads (`fga`, `ast`, `blk`, `stl`),
+    and for `blk` it is not a refinement but the difference between a model and a
+    failure. (The retired `fg3a` made the same point harder still, at 0.8791 under Poisson
+    against **0.3719** under NB.)
+  - **`linear` is catastrophic, far beyond what the Poisson fit showed** — `blk` **−0.2744**
+    validation R² against 0.638 under sklearn, and the retired `fg3a` read **−19.00**.
+    Linear-in-raw-rate
     inside `exp()` is not merely misspecified, it is unusable. The strongest available
-    statement of "the specification is scale, not curvature."
-  - **`fta` now joins `ftm|fta` below the floor, so the whole free-throw family fails.** Best
-    fitted 0.8649 against a floor of 0.8673; `make component-rates` had it barely clearing at
-    0.8708. Free-throw *volume* looks as resistant to context as free-throw *percentage* —
-    worth a second look rather than acceptance, since unlike `ftm|fta` there is no
-    "pure player skill" argument for trips to the line.
-  - Conversion heads, held-out beta-binomial NLL per row (lower better), all **four**
-    selecting `logit(own)` + spline: the new shot-mix head `fg3a|fga` **4.6137** vs floor
-    **4.6528** (**+0.0391**), `fg2m|fg2a` **3.7249** vs floor 3.7770 (**+0.0521**),
-    `fg3m|fg3a` **3.2407** vs 3.2614 (+0.0208), `ftm|fta` 3.1313 vs **3.0822** (−0.0491,
-    fails as predicted). Same ordering as the sklearn run, slightly smaller gains.
-    **The shot-mix head clears its floor comfortably**, which is the head-level confirmation
-    of Gate 0 — and note `logit_own` alone does *not* clear it on validation, so the spline
-    is load-bearing there exactly as it is for `blk`.
+    statement of "the specification is scale, not curvature." **It fails the no-fit floor on
+    5 of the 7 count heads** — every one but `stl` and `tov` — and `fta` is the second-worst
+    at **0.5741**, a head where every other variant is fine.
+  - Conversion heads, validation beta-binomial NLL per row (lower better), all **four**
+    selecting `logit(own)` + spline: the new shot-mix head `fg3a|fga` **4.6157** vs floor
+    **4.6191** (**+0.0034**), `fg2m|fg2a` **3.8046** vs floor 3.8442 (**+0.0396**),
+    `fg3m|fg3a` **3.1677** vs 3.1851 (+0.0173), `ftm|fta` 3.0804 vs **3.0541** (−0.0263,
+    fails as predicted). Same ordering as the sklearn run and as the retired test reading
+    (4.6137 / 4.6528, 3.7249 / 3.7770, 3.2407 / 3.2614, 3.1313 / 3.0822 — gains of +0.0391,
+    +0.0521, +0.0208 and −0.0491).
+    **The shot-mix head still clears its floor, but by +0.0034 rather than the +0.0391 the
+    test column showed** — an order of magnitude narrower, and the one place where reading
+    the old column overstated a head-level result. It is still the head-level confirmation
+    of Gate 0, and `logit_own` alone still does *not* clear the floor, so the spline is
+    load-bearing there exactly as it is for `blk`.
 - **✅ The 3PA/2PA reparameterization survives an un-handicapped re-measurement — Gate 0,
   `make stan-substitution`, 2026-08-03. Full design and adoption spec:
   `docs/shot-attempt-basis-plan.md`.** Modelling `fga` as the count and `fg3a | fga` as a
-  binomial *share* beats two independent count heads by **−0.500782 nats** on validation and
-  **−0.493549** on test, per player-season, on the joint density of `(fg2a, fg3a)`:
-  10.504935 → 10.004153 and 10.478052 → 9.984503. It replicates on both splits and wins by
-  **−0.491910** even against arm A's *best-of-16* configuration (10.476413), so the result
-  does not depend on which variant the canonical basis is granted. 16 fits, max R̂ **1.0087**,
-  **0** divergences, 46.5 min. The comparison is legitimate because
-  `(fg2a, fg3a) ↔ (fga, fg3a)` is a **bijection with unit Jacobian on the integers** — the
-  same point in different coordinates — so the two joint log-densities are directly
-  comparable.
-  - **⚠️ The recorded −0.771 / −0.793 was measured against a straw man**, and 0.305646 of the
-    0.792657-nat test margin was the handicap alone. `substitution_arm` fits *every* head at
-    `log_own`, but `fg3a` selects `log_own_spline`, and at `log_own` it reads test R² 0.3719
-    with `beats_floor = False` against 0.9046 for the spline it ships. Arm B was also pinned
-    at one variant rather than swept. Un-handicapping arm A leaves **−0.487010**; sweeping arm
-    B adds a further −0.006539. Both recorded figures remain true of
-    `stan_component_substitution.csv`, which is not rebuilt — they are a different, weaker
+  binomial *share* beats two independent count heads by **−0.501041 nats** on validation,
+  per player-season, on the joint density of `(fg2a, fg3a)`: 10.505159 → 10.004118. Arm A is
+  fitted at each head's own selected variant and arm B is swept, so neither side is
+  handicapped. 8 fits, max R̂ **1.0047**, **0** divergences, 26.8 min. The comparison is
+  legitimate because `(fg2a, fg3a) ↔ (fga, fg3a)` is a **bijection with unit Jacobian on the
+  integers** — the same point in different coordinates — so the two joint log-densities are
+  directly comparable.
+  - **⚠️ Validation-only since the 2026-08-06 re-run, and two things retired with the test
+    column.** Adoption was decided on a test margin of **−0.493549**, checked against arm A's
+    *best-of-16* configuration (**10.476413**) which arm B beat by −0.491910. Neither can be
+    recomputed: `_arm_a_grid` reads the grid out of `stan_component_metrics.csv`'s `test_nll`,
+    and adoption removed `fg2a`/`fg3a` from that file while the split move removed the
+    column. **The loss costs the argument 0.001640 nats** — that is the entire distance
+    between the grid minimum and arm A's *own selected* pair, which the gate still fits, so
+    "wins against arm A's best-of-16" and "wins against arm A as it would be fitted" were
+    never different claims here. Full retired block in `docs/shot-attempt-basis-plan.md`.
+  - **⚠️ The recorded −0.771 / −0.793 was measured against a straw man.** `substitution_arm`
+    fits *every* head at `log_own`, but `fg3a` selects `log_own_spline`, and at `log_own` it
+    reads R² 0.3719 with `beats_floor = False` against 0.9046 for the spline it ships. Arm B
+    was also pinned at one variant rather than swept. They are a different, weaker
     experiment, not a stale value.
-  - **⭐ The sharpest result is that the coordinate change beats the fitting.** At their
-    **no-fit floors** — prior per-36 rate × minutes for the count, shrunk carry-forward for
-    the share, no features anywhere — the two bases score **11.024027** against
-    **10.085599**, a **−0.938427** gap. So arm B's floor beats arm A's *best fitted*
-    configuration by **−0.390814**, which is ~79% of the total margin, and arm B's own fitted
-    heads add only **−0.101096** on top of their floor. This is not a better model of shot
-    attempts; it is the same information in coordinates where the dependence is structural
-    instead of residual. Same shape as "the rate side is nearly saturated by a
-    carry-forward": when the floor is that strong, the **parameterization** is where the
-    leverage is.
-  - **The share head needs its spline to clear its floor.** `logit_own` reads 4.636033 on
-    validation against a floor of 4.619109 — *below* it — while `logit_own_spline` clears at
-    4.615620. On test `logit_own` does clear, so **a test-only reading would have shipped a
-    variant that fails its floor on the split that selects.** `linear` fails on both. For
-    `fga` the spline is near-irrelevant by contrast (5.388533 vs 5.390057 on validation).
-  - **⚠️ STILL an ablation, not the shipped spec — `component_rates.COUNT_HEADS` still fits
-    `fg2a` and `fg3a` as two independent NB counts**, and `sweep_counts` iterates that list.
-    Read the head list, not this bullet, when asking what is fitted today. Adoption is
-    specified but deliberately not taken: the head count stays **11** (`fg2a` becomes
-    *derived*, like `pts`), `season_totals`' `agg` must add `fg2a` explicitly since it is
-    still the trials for `fg2m|fg2a`, three sites degrade *silently* on an unknown head
-    (`season_terms.py:822-823`, `selected_specs`'s fallback to `log_own` — which is the very
-    failure above — and `residual_correlation.to_matrix`), and
-    `season_terms._draw_components` needs a draw ordering it cannot currently express:
-    `fga → fg3a|fga → fg2a = fga − fg3a → makes`.
-  - **`conversion_variants` now takes `own=` explicitly, and that fix had to land first.**
-    The `{made}_pct_lag1` convention resolves to `fg3a_pct_lag1` — three-point *shooting*
-    percentage, not the attempt-*mix* share. It does not exist today so the call raises; but
-    adoption **creates** it, at which point the head would silently fit on shooting accuracy
-    and lose its whole rationale (shares persist at 0.886, conversion percentages at 0.500).
-    The refactored arm reproduces the recorded **9.991042** to nine decimals, which is how we
+    - **⭐ The decomposition is now entirely on validation, where it used to need the test
+      column.** Handicapped arm A scores **10.797078**; fitting `fg3a` at the spline it
+      selects brings it to **10.505159**, so **the handicap is 0.291919 nats**, and sweeping
+      arm B is worth a further **−0.021832**. So −0.771128 → **−0.501041** exactly, and
+      **65%** of the recorded margin survives its own correction. (The retired test reading
+      of the same three: 0.305646, −0.487010, −0.006539.)
+    - **The regression check is now floating-point identity rather than a comparison to a
+      recorded figure.** The gate's arm B pinned at `(log_own, logit_own)` and
+      `substitution_arm`'s arm B are the same quantity reached by different code in
+      different modules, and they agree at **10.025950** to **1.78e-15**. It replaces the
+      retired check against 9.991042, which compared this gate's *test* side to a July
+      number; both sides of the new one are current and on the same rows.
+    - **⚠️ `stan_component_substitution.csv` WAS rebuilt on 2026-08-06, validation only**, so
+      the sentence that stood here — that both recorded figures remain true of it, which was
+      not rebuilt — is now half retired. The **validation** margin reproduces: 10.797 →
+      10.026 at **−0.771**, unchanged to the precision quoted even though every fit went from
+      half-length to full-length chains. That is a free replication of the arm, and the
+      strongest reason to believe the half-iteration selection side was never the weak link.
+      The **test** row is gone with the split.
+      - **⚠️ And the last copy of the test figures went with the Gate 0 re-run on
+        2026-08-06.** They had survived inside `stan_component_substitution_sweep.csv` — arm
+        A's `log_own+log_own` grid cell at **10.783699** and arm B's `log_own` + `logit_own`
+        heads summing to **9.991042**, differing by the recorded −0.792657 — and
+        `docs_audit.subst_test` read them from there specifically so a superseded measurement
+        stayed *value-checked* rather than merely quoted. `make stan-substitution` is now
+        validation-only too, so that file no longer has a test half either. **−0.793 and
+        0.792657 are presence-checked records now**, and the distinction that paragraph drew
+        is worth keeping precisely because this is the case where it ran out: preserving a
+        figure in an artifact only works until the artifact is legitimately rebuilt, and then
+        the honest move is to demote the claim rather than freeze the run.
+  - **⭐ The sharpest result is that the coordinate change beats the fitting, and it is
+    SHARPER on validation than on the test column it replaces.** At their **no-fit floors** —
+    prior per-36 rate × minutes for the count, shrunk carry-forward for the share, no
+    features anywhere — the two bases score **11.174424** against **10.064318**, a
+    **−1.110105** gap. So arm B's floor beats arm A's *fitted* configuration by
+    **−0.440841** — 88% of the total margin — and arm B's own fitted heads add only
+    **−0.060200** on top of their floor. This is not a better model of shot attempts; it is
+    the same information in coordinates where the dependence is structural instead of
+    residual. Same shape as "the rate side is nearly saturated by a carry-forward": when the
+    floor is that strong, the **parameterization** is where the leverage is. (The retired
+    test reading was 11.024027 / 10.085599 / −0.938427, with −0.390814 against the
+    best-of-16 and −0.101096 of own fitting. **The floors themselves are arithmetic and
+    reproduce to the digit** — `stan_component_metrics.csv` independently agrees on both
+    arm-B rows — so the widening is the *fitted* side moving, not the benchmark.)
+  - **The share head needs its spline to clear its floor, and this is the head where reading
+    the test column would have shipped a failure.** `logit_own` reads 4.636018 on validation
+    against a floor of 4.619109 — *below* it — while `logit_own_spline` clears at 4.615622.
+    On test `logit_own` **did** clear (4.611402 against a 4.652797 floor), so a test-only
+    reading would have selected a variant that fails its floor on the split that selects.
+    `linear` fails on both. For `fga` the spline is near-irrelevant by contrast (5.388496 vs
+    5.389932 on validation). The result is independently reproduced by `make stan-components`,
+    whose own `fg3a|fga` rows are fitted through a different code path and land within 1e-4.
+  - **⚠️ ADOPTED 2026-08-03 — this bullet used to say "still an ablation, not the shipped
+    spec" and that has been false since the day it was written.** `component_rates.COUNT_HEADS`
+    is `fga, fta, reb, ast, stl, blk, tov` and `fg2a`/`fg3a` are no longer count heads; read
+    the head list rather than any prose. The head count stayed **11** (`fg2a` became
+    *derived*, like `pts`), and `selected_specs`'s fallback to `log_own` — the silent-degrade
+    site this bullet warned about — is now `stan_components.LEGACY_ARM_A_SPECS`, pinned
+    constants recording what the pre-adoption artifact selected, so Gate 0 stays re-runnable
+    instead of quietly re-acquiring the handicap it exists to remove. Verified 2026-08-06.
+  - **`conversion_variants` takes `own=` explicitly, and the hazard it was written against
+    turned out not to be real.** The worry was that the `{made}_pct_lag1` convention would
+    resolve to `fg3a_pct_lag1` and silently fit the head on three-point *shooting* accuracy
+    instead of the attempt *mix* (shares persist at 0.886, conversion percentages at 0.500).
+    Adoption falsified it: `season_totals` builds `fg3a_pct = fg3a / fga`, which **is** the
+    mix, while shooting percentage stays `fg3m_pct`. Keep `own=` for explicitness. The
+    refactored arm reproduced the recorded **9.991042** to nine decimals, which is how we
     know the fix changed nothing else.
-- **Sampler cost is concentrated entirely in the spline variants.** 16 of 74 fits saturated
-  treedepth, *all* of them spline arms; the slowest fit is 19.8 min (`fg2m|fg2a` spline)
-  against 1–3 min for a linear count head. 73/74 cleared every convergence bar; the one
-  exception (`fg2m|fg2a/logit_own_spline/val`, R̂ 1.0118 against a 1.01 bar, ESS 450, **0
-  divergences**) is a *selection* fit, and the variant it chose won by 0.017 NLL — far outside
-  the sampling noise — while its test-side twin converged cleanly at R̂ 1.0031.
+- **Sampler cost is concentrated entirely in the spline variants.** 6 of 37 fits saturated
+  treedepth, *all* of them spline arms; the slowest fit is 19.6 min (`fg3m|fg3a` spline)
+  against 1.0–2.2 min for a linear or `log_own` count head. **37/37 cleared every convergence
+  bar** — max R̂ **1.0076**, 0 divergences.
+  - **Raising the selection side to full-length chains removed the one fit that used to fail
+    a bar, and that is the clearest evidence the old short/long split cost something real.**
+    `fg2m|fg2a/logit_own_spline/val` read R̂ **1.0118** against a 1.01 bar with ESS 450; at
+    full length it reads R̂ 1.0040 with ESS 987. The recorded defence of it — that the
+    variant it chose won by 0.017 NLL, far outside the sampling noise — was the right call
+    on the evidence available, but it was an argument for *tolerating* a diagnostic failure
+    in a fit that decides something. There is now none to tolerate.
 - **`time.perf_counter()` does NOT advance while macOS is asleep, so the timings survive a
   suspended run.** Worth recording because the opposite was assumed during this build: the
   July components run spanned a ~7 h machine sleep (10 h 11 m elapsed) and reported 208.6 min
   of compute with a maximum single fit of 19.8 min — no inflated row anywhere.
   `stan_utils.diagnostics` needs no sleep-correction. (That 208.6 is a record of *that* run;
-  the shot-attempt refit's total is 305.0 min and is quoted where the current heads are.)
+  the shot-attempt refit totalled 305.0 min, and the current validation-only heads 137.4.)
+  - **It reproduced on the 2026-08-06 refit, and this time the arithmetic closes.** That run
+    was awake 07:06–08:40 and 16:48–17:12 with a **7.8 h** sleep in between: 606 min elapsed,
+    of which ~469 were asleep, leaving **136.9 min** of awake wall clock against **137.4 min**
+    of reported compute. The sleep is visible in the log as a 488.6-minute gap between two
+    fit starts, of which only 19.6 min is the fit — so *elapsed* time is the misleading
+    number and the artifact's is the true one, which is the whole point.
 - **✅ The team-game minutes COMPOSITION SHIPS — Gate E taken at the full window
   2026-08-04, and it is now part of `make stan`.** It beats the independent draw on the
   independent draw's own metric. `make stan-composition`,
@@ -1445,44 +1873,69 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
   **sequential binomial trials**, ordered by prior-season minutes share, with the
   per-player cap enforced through the **trials** (`m_k = min(U, R_k)` — remaining
   capacity) rather than checked afterwards. Fitted on all 30 seasons (train 631,158 rows /
-  61,252 team-games), held out on 2024-25/2025-26 (52,957 player-rows / 4,920 team-games):
+  61,252 team-games) and scored on **validation** (2022-23/23-24, 52,295 player-rows /
+  4,920 team-games) since the 2026-08-08 refit:
 
-  | variant | val CRPS | test CRPS | test PIT KS |
-  |---|---|---|---|
-  | `carry_forward` (floor) | 4.6776 | 4.8576 | 0.0354 |
-  | `binomial` | 4.9394 | **4.9732** — *fails the floor* | **0.1948** |
-  | `betabinom` | 4.5422 | 4.5893 | 0.0405 |
-  | `betabinom_ot` | 4.5430 | 4.5848 | 0.0414 |
-  | **`betabinom_ot_graded`** (selected) | **4.4926** | **4.5592** | 0.0393 |
-  | `independent_comparator` | 4.7842 | 4.9140 | 0.0769 |
+  | variant | val CRPS | val PIT KS |
+  |---|---|---|
+  | `carry_forward` (floor) | 4.6776 | 0.0496 |
+  | `binomial` | **4.9388** — *fails the floor* | **0.1919** |
+  | `betabinom` | 4.5417 | 0.0496 |
+  | `betabinom_ot` | 4.5431 | 0.0494 |
+  | **`betabinom_ot_graded`** (selected) | **4.4945** | 0.0428 |
+  | `independent_comparator` | 4.7842 | 0.0483 |
 
-  - **The `independent_comparator` row is the control and it reproduced exactly.** It never
-    trains on the composition window and scores identical rows, so it was predicted to be
-    invariant and came back at **4.7842 / 4.9140 / 0.0769**, along with 36.87, the two
-    *observed* starter shares and the whole OT-tail block. That is what makes everything
-    else readable as a window effect rather than a frame change.
-  - **⚠️ Gate A under-predicted the cost by 1.63× and that is a fact about the model, not
-    the machine.** The probe extrapolated **12.8 h**; the sweep took **20.9 h** of sampler
-    time. Per-row cost is **superlinear in rows** — 5.75 ms/row on the 26k-row probe against
-    **15.23 ms/row** on the 631k-row `betabinom` fit — because more data sharpens the
-    posterior, shrinks the step size and buys more leapfrog steps per iteration on top of an
-    already-linear per-gradient cost. The pilot's linear model was accurate to 1.2% over a
-    16× extrapolation and off by 63% over a 24× one. **Treat Gate A as a lower bound.**
+  ⚠️ **This table was a TEST evaluation until 2026-08-08**, when the artifact was
+  regenerated to match code that had been validation-only since 2026-08-05. It read, as
+  `val CRPS / test CRPS / test PIT KS`: floor 4.6776 / 4.8576 / 0.0354, `binomial` 4.9394 /
+  **4.9732** / **0.1948**, `betabinom` 4.5422 / 4.5893 / 0.0405, `betabinom_ot` 4.5430 /
+  4.5848 / 0.0414, selected **4.4926** / **4.5592** / 0.0393, comparator 4.7842 / **4.9140**
+  / 0.0769. **Nothing reversed** — same selected arm, same ordering, same gate outcomes.
+  Full retired block in `docs/minutes-composition-plan.md`.
+
+  - **⭐ The selection replicated across a doubling of chain length, and that is the reason
+    to believe it.** The validation side used to fit at `select_warmup`/`select_samples` and
+    now runs full-length, so every fitted row is a fresh measurement — and **no arm moved by
+    more than 0.0019 CRPS**. `carry_forward` and `independent_comparator` reproduced to six
+    decimals, the first because it is arithmetic and the second because it never trains on
+    the composition window. Contrast the season-term ablation, where 9 of 13 heads flipped
+    their selected arm under a change that should not have touched them.
+  - **`binomial`'s calibration failure now has a validation twin**, which it did not before:
+    the old schema wrote `test_pit_ks` and no `val_pit_ks`, so the sharpest statement of the
+    arm's failure was a held-out number. It reads **0.1919** on validation against the
+    floor's 0.0496, reproducing the retired 0.1948 almost exactly.
+  - **⚠️ Gate A under-predicts, but the multiplier is NOT a constant — do not treat 1.63× as
+    one.** The one-pass sweep extrapolated **8.3 h** and took **9.78 h**, a **1.17×** miss,
+    against the two-pass run's 12.8 h → **20.9 h** and **1.63×**. Per-row cost is
+    **superlinear in rows** — 5.95 ms/row on the 26k-row probe against **14.83 ms/row** on
+    the 631k-row `betabinom` fit — because more data sharpens the posterior, shrinks the
+    step size and buys more leapfrog steps per iteration on top of an already-linear
+    per-gradient cost. The miss shrank because the retired figure was inflated by a *second*
+    pass the extrapolation modelled badly, not because the sampler got more predictable.
+    **Treat Gate A as a lower bound**, and note that `stan_games_played.probe_timing`
+    hard-codes `raw_hours * 1.63` from the retired measurement — which is now conservative
+    rather than calibrated, and is deliberately left that way.
+  - **Raising selection to full-length chains removed this head's only diagnostic failure.**
+    Max R̂ is **1.00935** with **0** divergences over 6 fits and every fit converged. The
+    fit that failed the 1.01 bar in the two-pass run was `binomial/val` at R̂ 1.0113 with
+    ESS 421 — a *selection* fit running at half length; at full length it reads R̂ 1.00649
+    with ESS 917. Same pattern as `fg2m|fg2a` in `stan_components`.
 
   - **This resolves the fork `docs/predictions-plan.md` left open.** That doc's warning
     box said a Dirichlet-multinomial gets the team total exactly but cannot bound any
     individual at `game_length`, and "**neither form gets both**". The sequential
     decomposition **does**: trials-as-remaining-capacity gives the cap, the deterministic
     last step gives the total. Both are asserted on every simulated draw.
-  - **−0.3548 minutes of CRPS against the incumbent** (4.5592 vs 4.9140, **−7.2%**) — the
+  - **−0.2898 minutes of CRPS against the incumbent** (4.4945 vs 4.7842, **−6.06%**) — the
     plan predicted a wash and budgeted for arguing on capability instead. It won outright.
     And the capability gap is there too: the independent draw misses the team total by
-    **36.87 minutes per team-game** where the composition is exact, and carries a −1.2856
-    minute bias against the composition's exact zero. (The pilot read −0.406; the win
-    shrank by about a tenth at full window and is nowhere near a wash.)
+    **33.89 minutes per team-game** where the composition is exact, and carries a **−0.5521**
+    minute bias against the composition's exact zero. (The pilot read −0.406 and the retired
+    test column −0.3548, i.e. **−7.2%**, at 36.87 minutes and a −1.2856 bias; the win shrinks
+    as the frame changes and is nowhere near a wash on any of them.)
   - **The pure decomposition is worse than the no-fit floor**, and this is the sharpest
-    result: the `binomial` arm reads 4.9732 against 4.8576 with PIT KS 0.1948 against
-    0.0354 — far too tight, exactly as the measured game-level ρ (4.65× binomial)
+    result: the `binomial` arm reads 4.9388 against 4.6776 with PIT KS 0.1919 against
+    0.0496 — far too tight, exactly as the measured game-level ρ (4.65× binomial)
     predicted. The dispersion is not a refinement, it is the difference between a model
     and a failure. Same shape as the NB-vs-Poisson finding on the count heads.
   - **The offset IS the floor**, so both share one code path: `logit(w_k / Σ_{j≥k} w_j ×
@@ -1491,23 +1944,27 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     renormalizer and scales everyone else up — so `β` fits *deviations* from proportional
     redistribution, which is the "who absorbs the minutes" question as a fitted quantity.
   - **✅ ρ is graded by prior-share quartile, and role grading is real** — fitted
-    **0.1751 / 0.1285 / 0.1099 / 0.0839** from fringe to star, a **2.09×** spread against
-    a single shared **0.1195**. A 34-mpg starter's allocation step is genuinely steadier
+    **0.1768 / 0.1300 / 0.1115 / 0.0855** from fringe to star, a **2.07×** spread against
+    a single shared **0.1211**. A 34-mpg starter's allocation step is genuinely steadier
     than a reserve's. `betabinom_ot_graded` differs from its twin in the **dispersion
     alone** — same features, same mean function — so the contrast is clean.
     **⚠️ Every ρ is larger at full window and the spread is narrower** (the pilot read
     0.1480 / 0.1125 / 0.0874 / 0.0613 against a shared 0.0970, a 2.41× spread): 26 seasons
     of rotation practice raise the dispersion everywhere and compress the fringe-to-star
-    ratio. The grading is still real and still monotone; it is less extreme.
+    ratio. The grading is still real and still monotone; it is less extreme. (The two-pass
+    run read 0.1751 / 0.1285 / 0.1099 / 0.0839 against 0.1195 at 2.09× — every value rose by
+    ~0.0016 at full chain length and the ordering is untouched.)
     - **The calibration fix is the point, not the CRPS.** Realized/simulated variance
-      ratio by tier goes **1.3466 / 0.8089 / 0.7691 / 0.5973** shared →
-      **1.0845 / 0.7687 / 0.8217 / 0.7757** graded: mean |ratio − 1| falls **0.2928 →
-      0.1796**, a **39%** cut, with the two extremes improving most.
+      ratio by tier goes **1.2224 / 0.8430 / 0.6589 / 0.6285** shared →
+      **1.0465 / 0.8132 / 0.7071 / 0.8136** graded: mean |ratio − 1| falls **0.2730 →
+      0.1782**, a **35%** cut, with the extremes improving most.
       **⚠️ The pilot's 0.1055 and its near-exact 0.988 star tier oversold this** — at full
-      window the star tier lands at 0.776 and the cut is 39% rather than 59%. And **three of
-      four tiers now sit below 1**, so the head is mildly over-dispersed in aggregate, which
-      is a better-posed target than chasing q2.
-    - **⚠️ q2 still gets *worse* (0.809 → 0.769), and it is structural.** The fitted ρ is the
+      window the star tier lands at 0.814 and the cut is 35% rather than 59%. And **three of
+      four tiers sit below 1**, so the head is mildly over-dispersed in aggregate, which
+      is a better-posed target than chasing q2. (Retired test reading: 0.2928 → 0.1796, a
+      39% cut, with tiers 1.3466 / 0.8089 / 0.7691 / 0.5973 → 1.0845 / 0.7687 / 0.8217 /
+      0.7757.)
+    - **⚠️ q2 still gets *worse* (0.843 → 0.813), and it is structural.** The fitted ρ is the
       dispersion of a **sequential step**; the ratio is measured on a player's
       **marginal** minutes. Because the order is prior-share *descending*, a low-share
       player breaks his stick last and inherits the accumulated remainder variation from
@@ -1517,14 +1974,16 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
       graded arm strictly generalizes. A test pins the identity at the simulator level.
       **Bin edges come from train quantiles only** — leakage here would be especially
       quiet, since ρ never touches the mean.
-  - **The OT interaction is real but tiny, and at full window it LOSES validation** to
-    plain `betabinom` by 0.0008 CRPS while winning test by 0.0045. It survives only because
-    the graded arm is built on it. Starters take **0.5882** of team minutes in regulation
-    and **0.6314** in OT; the head simulates **0.5998** → **0.6464**, reproducing the
-    +4.3 pp shift as +4.7 pp with a +1.2 pp level overshoot.
+  - **The OT interaction is real but tiny, and it LOSES validation** to plain `betabinom`
+    by 0.0014 CRPS. It survives only because the graded arm is built on it. Starters take
+    **0.6013** of team minutes in regulation and **0.6423** in OT; the head simulates
+    **0.5912** → **0.6415**, reproducing the +4.1 pp shift as +5.0 pp with a −1.0 pp level
+    *undershoot*. (The retired test reading had the level going the other way — observed
+    0.5882 → 0.6314 against a simulated 0.5998 → 0.6464, a +1.2 pp overshoot — so the sign
+    of the level error is a property of the scored seasons, not a standing bias.)
   - **Game length itself is a two-parameter geometric tail**: p_any = 0.0608, p_more =
-    0.1408, which covers 3OT/4OT for free. Held out it predicts 256.9 single-OT games
-    against 222 observed — the form holds, but it overpredicts OT by ~16% on recent
+    0.1408, which covers 3OT/4OT for free. It predicts 128.4 single-OT games
+    against 120 observed — the form holds, but it overpredicts OT by ~7% on recent
     seasons, which belongs in the season-effects ledger.
   - **Rookies cannot be filtered here, unlike every other head** — the sum must be
     complete — so no-prior players (15.2% of rows, 12.3% of minutes) get an
@@ -1554,17 +2013,111 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     than the cap** (~1% of rows — a star whose played-set prior shares sum well below 5),
     so it saturates at 0.93 with an `offset_clipped` indicator rather than at `1 − 1e-3`,
     which asserted "47.95 of 48 minutes" with a near-zero beta shape parameter.
-- **Availability is strongly autocorrelated but that is NOT where the overdispersion comes
-  from.** `serial_structure` on 942,597 transitions (appearance window):
-  `P(play|played) = 0.905`, `P(play|missed) = 0.308`, so lag-1 ρ = **0.597** and a 2-state
-  Markov chain inflates variance `(1+ρ)/(1-ρ)` = **3.96×** — against the **22.7×** measured.
-  Clustering is ~a sixth of it; the rest is **between-player heterogeneity**, which no AR
-  process can generate. An autoregressive binomial therefore complements the beta-binomial
-  head rather than replacing it. And the simple chain is falsified specifically: a constant
-  hazard implies **geometric** spells, which matches the mean (3.25) and misses both tails —
-  observed 0.483 of spells are 1 game against 0.308 predicted, and 0.0635 are 10+ against
-  0.0365. Absences are a **mixture**; use a 2-component or semi-Markov process, and build it
-  for the season-total joint distribution and the preseason initial state, not for GP CRPS.
+- **Availability is strongly autocorrelated, and clustering is 42% of the overdispersion —
+  not the sixth this file recorded until 2026-08-05.** `serial_structure` on 942,597
+  transitions (appearance window): `P(play|played) = 0.905`, `P(play|missed) = 0.308`, so
+  lag-1 ρ = **0.597** and a 2-state Markov chain inflates variance `(1+ρ)/(1-ρ)` = **3.96×**
+  — against the **22.7×** measured. And the simple chain is falsified specifically: a
+  constant hazard implies **geometric** spells, which matches the mean (3.25) and misses both
+  tails — observed 0.483 of spells are 1 game against 0.308 predicted, and 0.0635 are 10+
+  against 0.0365. Absences are a **mixture**.
+  - **⚠️ "Clustering is ~a sixth of it" is withdrawn, and it was wrong twice over.** ✅
+    `make availability-profile` (`key == "transition_rotation"` / `"markov_rotation"`).
+    **(1) The composition is additive, not multiplicative**: with a player-season frailty on
+    the mean and Markov clustering within, `inflation = C + ρ·(n − C)`, returning
+    `1 + (n−1)ρ` at `C = 1` as it must — so dividing 22.7 by 3.96 is not a decomposition of
+    anything. **(2) The two figures are measured on different frames**: the 3.96× runs on the
+    appearance window over *all* players, the 22.7× on the full window over *established
+    rotation* players. Matched, the same population reads `P(play|played) = **0.9443**`,
+    `P(play|missed) = **0.1333**`, giving **C = 9.58**.
+  - **So there is no dispersion hole to fill; there is a surplus to avoid.** The residual
+    frailty a chain must not double-count is `(22.70 − 9.581)/(82 − 9.581) = **0.181**`
+    against the incumbent's fitted **0.2757**, and stacking that ρ on the measured clustering
+    predicts **29.55** against 22.70 — a **30.2%** overshoot. This is why the games-played
+    spell process was decided *in writing, before its sweep ran* to ship on tail calibration
+    with GP CRPS as a non-regression bar. The unsuffixed profile rows are untouched and still
+    correct measurements of what they measure; only the ratio taken between them was wrong.
+  - Build the process for the season-total joint distribution and the preseason initial
+    state, not for GP CRPS. **See `docs/games-played-plan.md` and the entry below.**
+- **✅ The games-played spell process is built — `make games-played` + `make
+  stan-games-played`, 2026-08-05. NO ARM SHIPS; the incumbent stands. But the reason Gate D
+  rejects the best arm is a defect in Gate D.** Full design and results:
+  **`docs/games-played-plan.md`**. Everything below is measured on **validation** — the
+  first pass decided Gate D on the test split, which reversed when re-decided correctly, and
+  `src/models/held_out.py` now makes that impossible rather than discouraged.
+  - **The frame is `entry index × exit index × a within-tenure two-state chain`, because a
+    plain full-window chain FAILS at its own ceiling.** *A departure is an absorbing hitting
+    time, not a low recovery rate* — a waived player's cell has `r̂ ≈ 0`, so a recurrent
+    chain makes him absorbing from his **first absence** rather than from the game he was
+    cut. Gate 0 measures it with per-cell empirical hazards, the most generous
+    parameterization available: the plain chain over-predicts `P(GP<41)` by **21.9%**,
+    **z = +5.29** against the sampling error of the observed proportion, where the tenure
+    decomposition misses by **3.8%** (**z = +0.93**).
+  - **⭐ The process class is right and the TENURE is the bottleneck.** The oracle-tenure arm
+    scores validation CRPS **7.2265** against its own floor's **10.0992** on the same rows
+    (the incumbent reads **10.0057** on the full validation frame) — 28% better on the
+    deciding split. Given the observed tenure the within-tenure chain is far better than the
+    season-level beta-binomial, and every bit of that is destroyed by having to predict entry
+    and exit from preseason covariates. **The bottleneck is knowing when a player joins and
+    leaves a roster**, which is mid-season churn and already out of scope. That also says
+    where *not* to spend: more flexibility on the absence process cannot recover what the
+    tenure factors lose.
+  - **⭐ Gate D is a MARGINAL gate and cannot pass a marginal-neutral arm.** The `hybrid` arm
+    draws its games-played count *from* the incumbent's pmf, so its marginal is identical
+    rather than approximate — CRPS 10.0057 against 10.0057, PIT 0.0939 against 0.0939, tail
+    0.0406 against 0.0406, to every decimal. All three of Gate D's criteria are marginal and
+    its tail test is a strict inequality, so the hybrid ties every bar and fails on the tie.
+    **That is a category error in the instrument, not a verdict on the arm** — and it is the
+    reason the head's decision is a judgement rather than a gate outcome.
+  - **The fitted arms lose on their merits**: `duration_covariates` scores **10.1625**
+    against the incumbent's 10.0057, a gap of **+0.1568** (paired bootstrap over 883 rows,
+    95% CI [+0.0737, +0.2393], P(better) = 0.1%), `full_window` +0.2647, `three_state`
+    +0.2983, `calibrated_fallback` +0.0149 and it also loses PIT. `three_state` posts the *best* tail of any arm (0.0041)
+    while being worst on CRPS — the tail alone is a noisy criterion on 359 rotation rows.
+  - **⭐ The spell SHAPE is where the arms differ, and no marginal metric can see it.** CRPS,
+    MAE and `P(GP<41)` are all functions of a pmf over a count: two models with identical
+    games-played distributions can scatter absences as coin flips or block them into a
+    fortnight and score the same. Simulated spell lengths against observed, mean absolute
+    relative error: **hybrid 0.5310**, `full_window` 1.7408, `duration_covariates` **1.8105**,
+    `calibrated_fallback` **5.0082**. The hybrid is within 2% on both P(T=1) and P(≥10 games)
+    — the statistic a Round 1 knockout turns on — and its weakness is the extreme tail
+    (+157% on month-long absences).
+  - **A constant recovery hazard is disqualifying for a best-ball simulator.** The
+    calibrated fallback's geometric spells have a mean length of **10.06 games against an
+    observed 3.09**, P(T=1) of 0.1171 against 0.4924, and it understates a season-ending
+    absence by 99% at the fitted interior rate. Use the beta-geometric.
+  - **The collapse is exact and it is what makes this affordable.** 1,297,766 transitions →
+    **32,944** binomial rows, a **39.4×** reduction with an *identical* posterior, so
+    `docs/availability-plan.md`'s premise that a game-level fit would be "a much larger fit"
+    is wrong — it is the same size. The matched-frame clustering the fallback inverts is
+    **9.5806**.
+  - **Gate B passes**: the onset head scores **−0.330658** per at-risk transition against a
+    shrunk carry-forward's **−0.350239** (**+0.019580**). **Gate C passes**: the simulated
+    hazard-by-streak curve keeps falling past a streak of 20, which is the check that the
+    frailty has not collapsed to a point mass — a failure invisible in the GP marginal.
+    **Gate E has not run**: `season_total.py` still evaluates on the held-out split.
+  - **The duration head is beta-geometric and fits INTERIOR spells only** —
+    `src/stan/betageometric_duration.stan`, the same Beta-frailty device
+    `betabinomial_glm.stan` uses one level down, beating the geometric by **11,278**
+    log-likelihood points at one extra parameter. Interior only because three independent
+    measurements say the edge spells are roster mechanics: `not_rostered` shares of 58.7% /
+    46.2% against 1.0% for interior spells; **82.7%** agreement between the structural proxy
+    and `not_rostered`; and the length-biased renewal identity failing in the same direction,
+    with in-progress spells **2.2×** longer than it allows. The cell the structural proxy
+    cannot see — missed outside the appearance window while still rostered — is **16.74%**
+    of missed games, and reaching it is what the three-state arm was for.
+  - **Ignoring censoring fails silently both available ways.** Dropping censored spells
+    understates `P(T ≥ 26)` by **2.16×**; treating them as complete still understates it.
+    With proper censoring the fitted `a` = **0.721** < 1, so the beta-geometric has **no
+    finite mean** and a polynomial tail — the simulator does not care, but `E[T]` must never
+    be quoted from that fit.
+  - **The onset hazard's 14.3× fall with played streak is SORTING, not state dependence.**
+    High-hazard players break their streaks early, so long streaks are populated by
+    low-hazard players — the frailty the beta-binomial marginalizes generates the whole curve
+    for free, which is what lets the collapse keep it.
+  - **⚠️ The tail target is itself an estimate.** 339 rotation rows on test and 359 on
+    validation put standard errors of ~0.02 on the observed tail probabilities — the same
+    order as the differences between arms. Do not read a tail comparison as sharper than that.
 - **The injury-report transfer function is measured, and the designation scale is NOT
   monotone.** 12,338 of 12,406 archive rows joined to a realized box-score outcome (99.5%,
   **0.0% unmatched names**), 142 game dates inside 2025-26, 532 players. `P(play)`:
@@ -1896,19 +2449,24 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
   interaction looks like it is buying real signal. `LogisticRegression` is the reverse: its
   objective is `Σ w·logloss + ‖coef‖²/(2C)`, **not** averaged, so with the same weights
   `C=1.0` is *weak*. **Always sanity-check a weighted GLM against a no-fit baseline** — for
-  the component heads, `prior rate × actual minutes`, which scores R² 0.82–0.94 and would
+  the component heads, `prior rate × actual minutes`, which scores R² 0.81–0.95 and would
   have exposed this immediately.
   - ✅ **The trap is now a curve and a permanent regression guard**: `make component-rates`
-    (`alpha_sensitivity`, `analysis == "alpha_sensitivity"` — 112 rows over 8 count heads × 2
+    (`alpha_sensitivity`, `analysis == "alpha_sensitivity"` — 98 rows over 7 count heads × 2
     variants × a 1e-8…10 grid, with `floor_r2` on every row). `reb` on the raw-rate spec reads
-    **0.9278 at alpha=1e-8**, **0.9322 at 0.01** and **0.6620 at alpha=1.0**, reproducing the
-    recorded pair; at alpha=10, **16 of 16 fits fall below the no-fit floor**, which is the
-    visual statement of why the floor is mandatory.
+    **0.9181 at alpha=1e-8**, **0.9267 at 0.01** and **0.6619 at alpha=1.0** — and the middle
+    pair reproduces the recorded 0.928 / 0.662 to a thousandth **across the move from the
+    held-out split to validation**, which is the strongest available statement that this is a
+    property of the penalty and not of any particular rows. At alpha=10, **14 of 14 fits fall
+    below the no-fit floor**, the visual statement of why the floor is mandatory. (Recorded
+    held-out: 0.9278 / **0.9322** / **0.6620**, and 16 of 16 — the 16 dating from the retired
+    eight-head basis.)
   - **It hurts the shipped spec too, not just the misspecified one.** Median R² loss from
-    `POISSON_ALPHA` to alpha=1.0 is **0.228** on `linear` and **0.289** on `log_own`, worst
-    `fg3a` at 0.595. Every head's best alpha on the grid is ≤ 0.1.
-  - **The guard compares each head against its own optimum, not against the floor.** `blk` and
-    `fg3a` lose to the floor at *every* alpha under `log_own` because they need splines — a
+    `POISSON_ALPHA` to alpha=1.0 is **0.200** on `linear` and **0.305** on `log_own`, worst
+    `blk` at **0.497**. Every head's best alpha on the grid is ≤ 0.01. (Recorded: 0.228 /
+    0.289, worst `fg3a` at 0.595 — a retired head.)
+  - **The guard compares each head against its own optimum, not against the floor.** `blk`
+    loses to the floor at *every* alpha under `log_own` because it needs a spline — a
     documented modelling finding, not the penalty misbehaving — so a floor crossing alone
     cannot be the trigger.
 - **The season matrix serves the PCA, not roster aggregation.** Its `GP≥20 & MIN≥10` filter

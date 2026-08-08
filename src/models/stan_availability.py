@@ -57,6 +57,26 @@ and an alternating fit because L-BFGS-B on a ~1e5-magnitude objective stops on
 finite-difference noise. Stan differentiates the model exactly, so `beta` and `rho` are
 sampled jointly with no alternation.
 
+## Which rows the three numbers are measured on
+
+**Validation**, since 2026-08-05. Every figure printed here — the CRPS triple, the board
+correlation, the PIT deciles — describes the fit on `train` scored against the validation
+seasons, and `src/models/held_out.py` raises on anything that reaches past them.
+
+That is a demotion in what the numbers *are*, and worth stating plainly. A port check is
+not a selection, so scoring it on the held-out seasons was never the failure mode the lock
+was built for. But it is also not the end-of-project measurement, and a module that reads
+test "just to see" is exactly how the test column stops feeling special — which is how the
+games-played head came to settle a shipping decision on it. `board_correlation` is the
+sharper case: it is a **simulator input**, a statement about how much a whole draft board
+moves together, so calibrating it on the seasons the simulator is later backtested against
+is leakage the split cannot catch, in the same way `game_level_dispersion` and the residual
+copula already take `train_val`.
+
+`fit_and_score` is the whole measurement, and `src/final_evaluation.py` calls **the same
+function** on `(full_train, test)` when the workflow is finished. So the held-out reading is
+not a reimplementation of this one; it is this one, run once, on the other frame.
+
 Usage:
     python -m src.models.stan_availability
 """
@@ -72,8 +92,8 @@ from src.features.availability import build_panel, season_availability
 from src.models.availability import (EPS, FEATURE_COLS, RHO_MAX, RHO_MIN,
                                      AvailabilityModel, BetaBinomialGLM,
                                      _sigmoid, build_design, evaluate,
-                                     pit_table, season_start_dates,
-                                     split_seasons)
+                                     pit_table, season_start_dates)
+from src.models.held_out import selection_split
 from src.models.stan_utils import (YearTerm, compile_model, diagnostics_frame,
                                    posterior, prior_sd_for_l2, sample,
                                    standardized, thin, warn_if_unconverged)
@@ -311,7 +331,7 @@ def coefficient_comparison(mle: BetaBinomialGLM, stan: StanAvailability,
 PORTFOLIO_SIZES = (12, 15, 30, 150, None)      # None = the whole held-out board
 
 
-def board_correlation(stan: StanAvailability, test: pd.DataFrame,
+def board_correlation(stan: StanAvailability, frame: pd.DataFrame,
                       sizes: tuple = PORTFOLIO_SIZES, n_subsets: int = 200,
                       seed: int = 0) -> pd.DataFrame:
     r"""The thing the posterior buys that a point estimate cannot: whole-board covariance.
@@ -333,26 +353,33 @@ def board_correlation(stan: StanAvailability, test: pd.DataFrame,
 
     **So the size of the portfolio decides whether this matters at all, and it is reported
     across sizes rather than as one number.** The ratio of the two terms scales as sqrt(N):
-    measured here it is **+0.1% on a 15-player roster** and **+6.4% across the whole
-    911-player board**. Quoting only the board figure would badly oversell what the
+    measured here it is a fraction of a percent on a 15-player roster and several percent
+    across the whole board. Quoting only the board figure would badly oversell what the
     posterior does for a single draft roster; quoting only the roster figure would miss
     that it is the dominant term for board-wide exposure across many lineups.
 
     Subsets are drawn at random and averaged, so `inflation` is measured on real players
     rather than extrapolated from the full-board number under an equal-variance assumption.
+
+    **`frame` is the validation board, not the held-out one.** This is a simulator input —
+    "how much does my whole board move together" is a number the simulator is *given* — so
+    measuring it on the seasons the simulator is later backtested against would be leakage
+    of the kind the split cannot catch, exactly as for `stan_minutes.game_level_dispersion`
+    and the residual copula. The board size therefore tracks the validation seasons' player
+    count rather than the held-out one's.
     """
-    mus, rhos = stan.mu_draws(test)
-    n = test["team_games"].to_numpy(float)
+    mus, rhos = stan.mu_draws(frame)
+    n = frame["team_games"].to_numpy(float)
     conditional = n * mus * (1.0 - mus) * (1.0 + (n - 1.0) * rhos[:, None])
     means = n * mus                                     # E[Y_i | theta], per draw per player
 
     rng = np.random.default_rng(seed)
     rows = []
     for size in sizes:
-        if size is None or size >= len(test):
-            size, subsets = len(test), [np.arange(len(test))]
+        if size is None or size >= len(frame):
+            size, subsets = len(frame), [np.arange(len(frame))]
         else:
-            subsets = [rng.choice(len(test), size, replace=False)
+            subsets = [rng.choice(len(frame), size, replace=False)
                        for _ in range(n_subsets)]
         independent = np.array([np.sqrt(conditional[:, s].sum(axis=1).mean())
                                 for s in subsets])
@@ -371,30 +398,18 @@ def board_correlation(stan: StanAvailability, test: pd.DataFrame,
     return pd.DataFrame(rows)
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+# ── The measurement, on whichever pair of frames it is handed ─────────────────
 
-def run(cfg: dict) -> dict[str, Path]:
-    raw_dir = Path(cfg["data"]["raw_dir"])
-    out_dir = Path(cfg["evaluation"]["predictions_dir"])
-    out_dir.mkdir(parents=True, exist_ok=True)
-    seasons = cfg["data"]["seasons"]
-    cfg_av = cfg.get("features", {}).get("availability", {})
-    cfg_stan = cfg.get("stan", {})
-    test_seasons = int(cfg_av.get("test_seasons", 2))
-    seed = int(cfg_stan.get("seed", cfg_av.get("seed", 42)))
-    l2 = float(cfg_av.get("glm_l2", 1.0))
+def fit_and_score(train: pd.DataFrame, frame: pd.DataFrame, max_games: int,
+                  cfg_stan: dict, l2: float, seed: int) -> dict:
+    """Fit the MLE and the Stan head on `train`, score both plus the plug-in on `frame`.
 
-    design = availability_design(cfg)
-    train, test = split_seasons(design, test_seasons)
-    max_games = int(design["team_games"].max())
-
-    print(f"Stan availability: {len(design):,} player-seasons, {len(train):,} train / "
-          f"{len(test):,} test ({', '.join(sorted(test['season'].unique()))} held out)")
-    print(f"  {len(FEATURE_COLS)} features, n = max(team_games, gp) — the 13 traded "
-          f"player-seasons with gp > team_games would otherwise make the summed\n"
-          f"  log-likelihood non-finite at every rho, which under HMC poisons the "
-          f"trajectory rather than just stopping an optimizer.")
-
+    Split-agnostic on purpose. `run` hands it `(train, validation)`; when the workflow is
+    finished `src/final_evaluation.py` hands it `(train + validation, test)`. The held-out
+    number is therefore produced by *this* code rather than by a second implementation of
+    it that could drift — the same reason the port check imports `evaluate` and `crps` from
+    the MLE module instead of reimplementing them.
+    """
     print("\nFitting the point MLE (the reference this ports)...")
     mle = BetaBinomialGLM(l2).fit(train)
     print(f"  converged={mle.converged}, rho={mle.rho:.4f}")
@@ -405,9 +420,11 @@ def run(cfg: dict) -> dict[str, Path]:
         l2=l2, pmf_mode="posterior", chains=int(cfg_stan.get("chains", 4)),
         warmup=int(cfg_stan.get("warmup", 1000)),
         samples=int(cfg_stan.get("samples", 1000)), seed=seed,
-        predictive_draws=int(cfg_stan.get("predictive_draws", PREDICTIVE_DRAWS))).fit(train)
+        predictive_draws=int(cfg_stan.get("predictive_draws",
+                                          PREDICTIVE_DRAWS))).fit(train)
     d = stan.diagnostics
-    print(f"  max R-hat {d['max_rhat']:.4f}, min ESS {min(d['min_ess_bulk'], d['min_ess_tail']):.0f}, "
+    print(f"  max R-hat {d['max_rhat']:.4f}, min ESS "
+          f"{min(d['min_ess_bulk'], d['min_ess_tail']):.0f}, "
           f"{d['divergences']} divergences, {d['wall_clock_s']:.1f}s wall clock "
           f"({d['cmdstan']})")
     print(f"  posterior mean rho {stan.rho:.4f} against the MLE's {mle.rho:.4f}")
@@ -419,20 +436,60 @@ def run(cfg: dict) -> dict[str, Path]:
 
     rows, pit_frames, prediction_frames = [], [], []
     for model in (mle, plug_in, stan):
-        model_rows, predictions = evaluate(model, test, max_games, seed)
+        model_rows, predictions = evaluate(model, frame, max_games, seed)
         rows += model_rows
         prediction_frames.append(predictions)
         pit_frames.append(pit_table(predictions["pit"].to_numpy(), model.name))
 
-    metrics = pd.DataFrame(rows)
+    return {
+        "mle": mle, "stan": stan, "plug_in": plug_in,
+        "metrics": pd.DataFrame(rows),
+        "coefficients": coefficient_comparison(mle, stan, stan.features),
+        "board": board_correlation(stan, frame),
+        "pit": pd.concat(pit_frames, ignore_index=True),
+        "predictions": pd.concat(prediction_frames, ignore_index=True),
+        "diagnostics": diagnostics_frame([stan.diagnostics]),
+    }
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+
+def run(cfg: dict) -> dict[str, Path]:
+    out_dir = Path(cfg["evaluation"]["predictions_dir"])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cfg_av = cfg.get("features", {}).get("availability", {})
+    cfg_stan = cfg.get("stan", {})
+    test_seasons = int(cfg_av.get("test_seasons", 2))
+    seed = int(cfg_stan.get("seed", cfg_av.get("seed", 42)))
+    l2 = float(cfg_av.get("glm_l2", 1.0))
+
+    design = availability_design(cfg)
+    train, val = selection_split(design, test_seasons)
+    max_games = int(design["team_games"].max())
+
+    print(f"Stan availability: {len(design):,} player-seasons. The test split is LOCKED — "
+          f"this port\n  check fits and scores VALIDATION only "
+          f"(src/models/held_out.py); the held-out reading is\n  taken once, by "
+          f"`make final-evaluation`, through this module's own `fit_and_score`.")
+    print(f"  {len(train):,} fit / {len(val):,} score "
+          f"({', '.join(sorted(val['season'].unique()))} as validation)")
+    print(f"  {len(FEATURE_COLS)} features, n = max(team_games, gp) — the 13 traded "
+          f"player-seasons with gp > team_games would otherwise make the summed\n"
+          f"  log-likelihood non-finite at every rho, which under HMC poisons the "
+          f"trajectory rather than just stopping an optimizer.")
+
+    scored = fit_and_score(train, val, max_games, cfg_stan, l2, seed)
+    mle, stan, plug_in = scored["mle"], scored["stan"], scored["plug_in"]
+
+    metrics = scored["metrics"]
     table = (metrics[metrics.group == "all"]
              .pivot_table(index="model", columns="metric", values="value"))
     order = ["crps_games", "mae_games", "r2_gp_share", "pit_ks_distance",
              "dispersion_rho", "implied_overdispersion"]
-    print("\nHeld-out scores (CRPS in games, lower is better):")
+    print("\nValidation scores (CRPS in games, lower is better):")
     print(table[order].sort_values("crps_games").round(4).to_string())
 
-    coefs = coefficient_comparison(mle, stan, stan.features)
+    coefs = scored["coefficients"]
     worst = coefs.loc[coefs["z_from_mle"].abs().idxmax()]
     print(f"\nPort check — MLE optimum against the posterior ({len(coefs)} terms):")
     print(f"  max |posterior mean - MLE| = "
@@ -450,10 +507,10 @@ def run(cfg: dict) -> dict[str, Path]:
     print(f"\n  CRPS: MLE {crps_mle:.4f} | Stan plug-in {crps_plug:.4f} "
           f"({crps_plug - crps_mle:+.4f}) | Stan posterior {crps_post:.4f} "
           f"({crps_post - crps_mle:+.4f})")
-    print("  The marginal metric was never the argument — at ~10,300 rows against 20\n"
+    print("  The marginal metric was never the argument — at ~10,000 rows against 20\n"
           "  parameters the posterior is sharp, so this is expected to be a wash.")
 
-    board = board_correlation(stan, test)
+    board = scored["board"]
     print("\nWhat the posterior actually buys — shared-beta correlation, by portfolio size:")
     print(board.round(3).to_string(index=False))
     small = board.iloc[0]
@@ -472,18 +529,18 @@ def run(cfg: dict) -> dict[str, Path]:
           "  conditional variance pushes back against the parameter spread.")
 
     print("\nPIT calibration (share per decile; 0.100 is uniform):")
-    pit = pd.concat(pit_frames, ignore_index=True)
+    pit = scored["pit"]
     print(pit.pivot_table(index="model", columns="bin_low", values="share")
           .round(3).to_string())
 
-    diag = diagnostics_frame([stan.diagnostics])
     artifacts = {
         "metrics": (metrics, out_dir / "stan_availability_metrics.csv"),
         "coefficients": (coefs, out_dir / "stan_availability_coefficients.csv"),
-        "diagnostics": (diag, out_dir / "stan_availability_diagnostics.csv"),
+        "diagnostics": (scored["diagnostics"],
+                        out_dir / "stan_availability_diagnostics.csv"),
         "board": (board, out_dir / "stan_availability_board.csv"),
         "pit": (pit, out_dir / "stan_availability_pit.csv"),
-        "predictions": (pd.concat(prediction_frames, ignore_index=True),
+        "predictions": (scored["predictions"],
                         out_dir / "stan_availability_predictions.csv"),
     }
     paths = {}

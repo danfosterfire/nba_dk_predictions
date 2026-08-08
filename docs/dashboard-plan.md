@@ -391,11 +391,11 @@ answer is the **opposite** of the component heads'.
 | **The trials denominator is derivable exactly** — 37,986 games, **0** disagreements between two independent team-side estimates, worst residual 0.617 min against a 2.5 min boundary. The two teams agreeing *is* the validation. | `outputs/eda/game_length_coverage.csv` (live) |
 | OT rate by season — **5.93%** overall, so capping at 48 discards ~6% of games and censors the top of the distribution exactly where stars play most | `game_length_coverage.csv` (live) |
 | The feasibility check — 100% join coverage, zero rows with `min > game_length`, max ratio exactly 1.0000 | ⏳ `make game-length` (feasibility rows) |
-| Variant ladder against the no-fit floor — `carry_forward` 168.24 → `logit(own)` + spline **146.85**, +0.041 R², −21.4 min CRPS | `stan_minutes_metrics.csv` (live, with `selected` / `beats_floor`) |
-| **The specification finding**: the logit scale is a dead wash (0.8565 vs 0.8565) while curvature pays and replicates on both splits — the mirror image of the count heads, and the two answers must not be pooled into one rule | `stan_minutes_metrics.csv` + cross-link to tab 6 |
+| Variant ladder against the no-fit floor — `carry_forward` 161.45 → `logit(own)` + spline **143.93**, +0.030 R², −17.5 min CRPS, all on validation | `stan_minutes_metrics.csv` (live, with `selected` / `beats_floor`) |
+| **The specification finding**: the logit scale is a dead wash and slightly worse (0.8819 vs linear's 0.8826) while curvature pays and its selection survived both the move to validation and full-length chains — the mirror image of the count heads, and the two answers must not be pooled into one rule | `stan_minutes_metrics.csv` + cross-link to tab 6 |
 | Where the curvature is: a **floor at the bottom** of the prior-MPG range (4.3 → 10.5 mpg), not a ceiling at the top; `age` splines are actively worse | `availability_minutes_nonlinearity.csv` (live) |
-| **Two dispersions, and the simulator needs the one the fit does not estimate** — season-level ρ 0.0495 against game-level 0.0776 (**4.65×** binomial), plus 2.43× block inflation on top | `stan_minutes_dispersion.csv`, `serial_correlation.csv` (live) |
-| `open` defect: a −33 to −41 minute held-out bias against the floor's −5.7, which would compound through eleven heads that take these minutes as exposure | registry |
+| **Two dispersions, and the simulator needs the one the fit does not estimate** — season-level ρ 0.05025 against game-level 0.0776 (**4.65×** binomial), plus 2.43× block inflation on top | `stan_minutes_dispersion.csv`, `serial_correlation.csv` (live) |
+| `open` defect: every fitted arm sits 27–38 minutes *below* the no-fit floor — the **gap** reproduces across splits where the signed level does not — and it would compound through eleven heads that take these minutes as exposure | registry |
 
 ### 6 · The DK component-rate heads
 
