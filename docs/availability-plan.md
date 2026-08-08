@@ -591,17 +591,30 @@ Four findings, three of which change how the snapshot should be consumed:
 > `total_minutes` undercounts those players' mileage by **10.8%**.
 >
 > `models.availability.workload_ablation` measures it on the plan's own decision rule —
-> held-out CRPS, everything fixed but the feature list:
+> CRPS, everything fixed but the feature list, on **validation**:
 >
 > | variant | features | CRPS | vs baseline | R² |
 > |---|---|---|---|---|
-> | baseline | 15 | 10.914 | — | 0.268 |
-> | **+ playoff workload** | **19** | **10.795** | **−0.119** | **0.283** |
-> | + playoff only | 18 | 10.817 | −0.097 | 0.281 |
-> | + `career_minutes` only | 16 | 10.883 | −0.031 | 0.271 |
+> | baseline | 15 | 10.104 | — | 0.363 |
+> | **+ playoff workload** | **19** | **10.006** | **−0.098** | **0.374** |
+> | + playoff only | 18 | 10.015 | −0.089 | 0.373 |
+> | + `career_minutes` only | 16 | 10.085 | −0.018 | 0.365 |
 >
-> It clears the bar, and downstream it is worth **+6.2 dk_pts of season-total MAE**. In
-> sample the block is **+0.0178 above its own shuffled null** (0.2998 vs 0.2820, sd 0.0002).
+> ⚠️ **This ablation decided a feature block on the held-out split until 2026-08-08**, where
+> it read 10.914 / **10.795** / 10.817 / 10.883 CRPS and 0.268 / **0.283** / 0.281 / 0.271
+> R², a gain of **−0.119**. Re-deciding it on validation was the point of converting this
+> module, and **it survives unchanged**: same sign, same ordering of all four variants, and
+> the block is still worth roughly a tenth of a game of CRPS. Unlike the model ladder
+> directly above it, this decision does not depend on which split it was taken on.
+>
+> It clears the bar, and in sample the block is **+0.0178 above its own shuffled null**
+> (0.2998 vs 0.2820, sd 0.0002) — an in-sample figure, so untouched by the split move.
+>
+> ⚠️ The downstream **+6.2 dk_pts of season-total MAE** is still the *retired test* reading
+> (441.3 → 435.1) and has not been re-measured. `season_total.py` runs on validation now,
+> but it holds the availability head fixed at the shipped feature list — nothing composes a
+> baseline-feature variant through it, so there is no validation twin to quote. Treat the
+> +6.2 as indicative of magnitude, not as a current measurement.
 >
 > **But the sign is wrong for fatigue, and that is the finding.** Every single-season
 > playoff column predicts *better* next-season availability: `playoff_mpg` r = +0.282 raw
@@ -841,7 +854,7 @@ draw `(β, ρ)` from the posterior when simulating each player-game.
 
 Why this is worth discussing rather than assuming:
 
-- **The marginal metric will barely move.** At 10,361 training rows against ~15 features, the
+- **The marginal metric will barely move.** At 9,478 training rows against ~15 features, the
   posterior mean and the MLE will be close and GP-marginal CRPS should improve very little. If
   the case is argued on CRPS it will probably fail, and that is the wrong reason to do it.
 - **The real argument is the joint distribution**, which is what
@@ -924,18 +937,30 @@ season rehabbing — which is exactly the population the preseason snapshot iden
 >
 > `models.availability.minutes_nonlinearity_probe` (a ridge stand-in, so the R² is not a
 > claim about the eventual head — only about curved vs straight). Predicting next-season
-> MPG, selection on a validation split and test for confirmation:
+> MPG on **validation**:
 >
-> | variant | val R² | test R² |
-> |---|---|---|
-> | linear (incl. `age + age_sq`) | 0.6768 | 0.6670 |
-> | **+ quadratics** | **0.6914** | **0.6746** |
-> | splines k=4 | 0.6930 | 0.6736 |
+> | variant | val R² |
+> |---|---|
+> | linear (incl. `age + age_sq`) | 0.6768 |
+> | **+ quadratics** | **0.6914** |
+> | splines k=4 | 0.6930 |
 >
-> Both splits move together, unlike the games-played arm where the same test is a null.
-> Splining one column at a time says **`minutes_per_game_lag1` carries essentially all of
-> it** (Δ val +0.0124, Δ test +0.0077), `total_minutes_lag1` adds a whisper, and everything
-> else including `age` (−0.0008 / −0.0007) is noise or worse.
+> Curvature pays here, unlike the games-played arm where the identical experiment on the
+> identical rows is a null — **that contrast between the two targets is the finding**, and
+> both halves of it are now measured on one frame by one code path. Splining one column at
+> a time says **`minutes_per_game_lag1` carries essentially all of it** (Δ +0.0124),
+> `total_minutes_lag1` adds a whisper (+0.0008), and everything else including `age`
+> (**−0.0008**) is noise or worse.
+>
+> ⚠️ **The `test R²` column is gone, and with it the claim that "both splits move
+> together".** It read 0.6670 / **0.6746** / 0.6736 with a per-column Δ of +0.0077 on
+> `minutes_per_game_lag1` and −0.0007 on `age`. The validation column is **unchanged to
+> four decimals** across the conversion, because `held_out.selection_split` returns exactly
+> the frames the probe's private inner split used to carve — a clean determinism check on
+> the move. What is withdrawn is the *replication*: the two columns differed in training
+> data as well as in scored rows, so their agreeing was never evidence that the effect
+> generalizes, and the `replicates` flag that encoded it has been removed rather than
+> recomputed.
 >
 > **The load-management arc is real but already absorbed.** `make aging` has MPG peaking at
 > 27 and reaching 0.515 by 37, so the shape exists — but `age + age_sq` already fits it, and
@@ -1063,7 +1088,7 @@ not exist at prediction time — that is the whole prediction-time constraint. S
 are a smooth trend extrapolated one season forward, a recency weighting of training rows (the
 repo already has a staleness prior, `×0.96`/season, which `persistence.csv` shows is
 column-specific), or simply restricting the training window. All three are testable on
-held-out CRPS against the current flat-pooled fit, and that comparison is the actual
+validation CRPS against the current flat-pooled fit, and that comparison is the actual
 experiment.
 
 > ### ❌ The experiment ran, and the season × role interaction is a validation NULL
@@ -1350,33 +1375,83 @@ question above.
 
 ### What stage E answered
 
-**The baselines were not beaten by anything more sophisticated, so the spell simulator is
-not built.** Held out on 2024-25 and 2025-26 (10,361 train / 911 test), CRPS in games:
+**The baselines were not beaten by anything *distinguishable*, so the spell simulator is
+not built.** Scored on **validation** (2022-23 and 2023-24), 9,478 train / 883 rows, CRPS
+in games:
 
 | Model | CRPS | MAE | R² | PIT KS | implied overdispersion |
 |---|---|---|---|---|---|
-| **beta-binomial GLM** | **10.795** | 15.39 | 0.283 | 0.096 | 23.3× |
-| GBM | 10.888 | 15.41 | 0.262 | 0.079 | 19.9× |
-| ridge | 10.896 | 15.39 | 0.275 | 0.103 | 22.7× |
-| league/age baseline | 13.614 | 18.94 | −0.084 | 0.174 | 29.5× |
+| GBM | **9.876** | 14.20 | **0.381** | **0.070** | 20.1× |
+| ridge | 10.004 | 14.29 | 0.376 | 0.107 | 23.1× |
+| **beta-binomial GLM** (ships) | **10.006** | 14.46 | 0.374 | 0.094 | 23.7× |
+| league/age baseline | 13.387 | 18.74 | −0.057 | 0.151 | 29.7× |
 
-> Updated 2026-07-29 with the playoff/mileage workload block (19 features, was 15). The
-> pre-block figures were GLM 10.914 / ridge 10.98 / GBM 11.04. The GBM gained slightly more
-> than the GLM did (−0.152 against −0.119), narrowing the margin from 0.126 to 0.093 without
-> changing the ordering. See "Workload" below for the ablation.
+> ⚠️ **This table was a TEST evaluation until 2026-08-08, and the ordering REVERSED when it
+> moved.** It read GLM **10.795** / GBM **10.888** / ridge **10.896** / league-age
+> **13.614** on 10,361 train / 911 test, with MAE 15.39 / 15.41 / 15.39 / 18.94, R² 0.283 /
+> 0.262 / 0.275 / −0.084, PIT KS 0.096 / 0.079 / 0.103 / 0.174 and implied overdispersion
+> 23.3× / 19.9× / 22.7× / 29.5×. The GLM led on test and is third here. This module was the
+> last head in the project still scoring the held-out split, and it is the one where that
+> mattered most — it does not merely report, it *decides*: the ladder picks a mean function,
+> `workload_ablation` picks a feature block and `nonlinearity_ablation` picks a basis.
+>
+> An earlier note recorded that the workload block narrowed the GLM's margin over the GBM
+> "from 0.126 to 0.093 without changing the ordering", from pre-block test figures of GLM
+> 10.914 / ridge 10.98 / GBM 11.04. The margin it was tracking has since crossed zero.
 
-The GBM does not beat a 19-feature GLM, which is the plan's own stopping condition. Two
-independent checks say the *distribution* is the part doing the work, exactly as the
+**The ordering reversed and the decision does not, because the ordering was never
+distinguishable from zero.** ✅ `make availability-model`
+(`availability.ladder_comparison` → `outputs/predictions/availability_ladder_comparison.csv`),
+a paired bootstrap over the 883 validation rows against the shipped head:
+
+| Model | Δ CRPS vs GLM | 95% CI | P(better) | rows better | distinguishable |
+|---|---|---|---|---|---|
+| GBM | **−0.1297** | [−0.3154, +0.0672] | 0.906 | 62.4% | **no** |
+| ridge | −0.0014 | [−0.0546, +0.0516] | 0.515 | 60.2% | **no** |
+| league/age | +3.3811 | [+2.8567, +3.9299] | 0.000 | 28.5% | yes |
+
+Only the baseline separates from the head. The GBM's 0.13 games is 1.3% of CRPS on a
+paired interval that straddles zero, and the ridge's **0.0014** is the same order as the
+0.0013-CRPS margin on which the games-played Gate D was decided, reversed and rewritten
+into `src/models/held_out.py`. Reporting "the GBM now wins" would repeat that mistake with
+the sign flipped.
+
+**And where the GBM wins is the argument against it.** The same artifact splits the deltas
+by *realized* games-played quartile:
+
+| Model | q1 (fewest games) | q2 | q3 | q4 |
+|---|---|---|---|---|
+| GBM | **+0.333** | −0.063 | −0.452 | −0.366 |
+| ridge | **+0.251** | +0.109 | −0.008 | −0.393 |
+
+Both challengers beat the GLM on seasons that went normally and **lose to it on the seasons
+that fell apart**, which is the population this whole head exists for — the plan's own
+framing is that squared error "regresses everyone to ~65 games and never produces the tail".
+A candidate that is better on average by being better at ordinary seasons is not the one to
+ship. The GLM continues to ship: it is the likelihood that matches the target, it is what
+`stan_availability` ports, `season_total` composes and `stan_games_played` floors against,
+and nothing has beaten it by a margin that could support moving.
+
+⚠️ **The stopping condition has to be restated, because its old wording is now false.** It
+read "the GBM does not beat a 19-feature GLM" — on validation it does, on the mean. The
+rule that survives is the one the plan actually needs: *build the spell simulator only if a
+more sophisticated model beats the GLM by a margin a paired interval can distinguish.* None
+does.
+
+Two independent checks say the *distribution* is the part doing the work, exactly as the
 overdispersion finding predicted:
 
 - The dispersion fitted purely by maximum likelihood lands at **20–30× implied
   overdispersion**, recovering the ~20× measured separately in `availability_profile.csv`.
-- On the left tail, the GLM predicts **15.0% / 34.8%** of established rotation players below
-  41 / 60 games against **11.8% / 36.9%** observed. The league/age baseline reads 24.8% /
-  45.0% — it produces the tail by being vague about everyone.
+- On the left tail, the GLM predicts **15.5% / 35.2%** of established rotation players below
+  41 / 60 games against **10.0% / 32.6%** observed. The league/age baseline reads 24.1% /
+  43.9% — it produces the tail by being vague about everyone. (Test reading, retired:
+  15.0% / 34.8% predicted against 11.8% / 36.9% observed, baseline 24.8% / 45.0%. The
+  *shape* — the head slightly over-predicting the tail and the baseline grossly so —
+  reproduces; the levels are a property of which two seasons are scored.)
 
-Held-out R² of 0.268 is **not** the 0.236 ceiling beaten: that figure is in-sample and
-season-absorbed, a different quantity.
+R² of 0.374 is **not** the 0.236 ceiling beaten: that figure is in-sample and
+season-absorbed, a different quantity. (Retired held-out reading: 0.268.)
 
 Two traps cost real time and are recorded in `CLAUDE.md`: 13 traded players have
 `gp > team_games`, which makes the summed log-likelihood non-finite at *every* ρ; and a

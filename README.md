@@ -150,9 +150,14 @@ fitting half alone.
 Three honest caveats, kept here rather than in a footnote because they are the places the
 discipline is not clean:
 
-- **One comparison still has not gone through validation.**
-  [availability.py](src/models/availability.py) is not converted, so the playoff-workload
-  feature block and the choice of a GLM over a GBM and ridge remain test-set decisions.
+- ~~**One comparison still has not gone through validation.**~~ ✅ **Closed 2026-08-08.**
+  [availability.py](src/models/availability.py) was the last, and the caveat named the two
+  decisions it left on the test split: the playoff-workload feature block and the choice of
+  a GLM over a GBM and ridge. Both were re-decided on validation and **both stand — but the
+  ladder's ordering reversed**, with the GBM going from third to first on mean CRPS. It does
+  not take the head, because a paired bootstrap cannot distinguish its margin from zero and
+  because it is *worse* than the GLM on the lowest realized-games quartile. That the caveat
+  was pointing at a real reversal is the argument for having written it down.
   [stan_composition.py](src/models/stan_composition.py) was the other outstanding case —
   converted in code on 2026-08-05 with an artifact that still carried held-out columns — and
   that closed on **2026-08-08** when the head was re-run; nothing about its verdict reversed.
@@ -349,15 +354,18 @@ its artifact and **exits non-zero** on disagreement, so a headline copied here a
 refreshed fails the build rather than quietly misleading.
 
 **The availability head is the largest measured win.** `make availability-model` /
-`make season-total`. Scored by CRPS in games, the
-beta-binomial GLM reads **10.795** against a GBM's 10.888, ridge's 10.896 and a league/age
-baseline's 13.614 — gradient boosting does not beat a 19-feature GLM. On the actual
+`make season-total`. Scored by CRPS in games on validation, the beta-binomial GLM reads
+**10.006** against a GBM's **9.876**, ridge's 10.004 and a league/age baseline's 13.387. The
+GBM leads on the mean and the GLM ships anyway, for two measured reasons: a paired bootstrap
+over the 883 rows puts the gap at **−0.1297** with a 95% interval of **[−0.3154, +0.0672]**,
+and by realized-games quartile the GBM is **+0.333** CRPS *worse* on the seasons that fell
+apart — the population the head exists for. On the actual
 deliverable it is worth **−210 dk_pts of season-total MAE** against assuming a full season
 (610.8 → 400.5), with bias falling from +523.3 to −3.1. The oracles settle which half of the
 error dominates: perfect games played gives MAE 214.4 against perfect rate's 261.9.
-(The season-total ladder moved from the held-out seasons to validation on 2026-08-05, where
-it had read 646.3 → 435.1 and 221.3 against 302.7; the head-vs-baseline CRPS row is still a
-held-out measurement, because `make availability-model` has not moved yet.)
+(Both ladders were held-out measurements until they moved to validation — the season total
+on 2026-08-05, where it read 646.3 → 435.1 and 221.3 against 302.7, and the CRPS row on
+2026-08-08, where it read GLM **10.795** against GBM 10.888, ridge 10.896 and 13.614.)
 
 **The component rate side is nearly saturated from prior-season information alone.**
 `make component-rates` / `make stan-components`. A no-fit floor — prior per-36 rate × actual

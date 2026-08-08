@@ -3,8 +3,8 @@
 Small, self-contained, and the most instructive contrast in the project: its
 specification answer is the **opposite** of the component heads'. There, scale is
 everything and curvature is nearly nothing. Here the logit scale is a dead wash and
-curvature is what pays — and unlike the games-played arm, it replicates on both
-splits.
+curvature is what pays — where the games-played arm, asked the identical question on the
+identical rows, is a null.
 """
 
 import streamlit as st
@@ -253,13 +253,20 @@ def _where_the_curvature_is(ctx: Ctx) -> None:
     cols = probe[probe["scope"] == "column"].sort_values("val_vs_linear",
                                                          ascending=False)
     st.plotly_chart(
-        fig_bars(cols, "name", ["val_vs_linear", "test_vs_linear"], ctx.th,
-                 "Δ R² from splining one column at a time, next-season MPG",
-                 axis_title="Δ R² against the linear spec", height=420),
+        fig_bars(cols, "name",
+                 [c for c in ("val_vs_linear", "test_vs_linear") if c in cols.columns],
+                 ctx.th, "Δ R² from splining one column at a time, next-season MPG",
+                 axis_title="Δ R² against the linear spec", height=420,
+                 emphasis="minutes_per_game_lag1"),
         width="stretch")
     note("Splining one column at a time attributes the gain. Only "
-         "**`minutes_per_game_lag1`** moves both splits the same way, and "
-         "`total_minutes_lag1` marginally. A spline on **`age` is actively worse**.")
+         "**`minutes_per_game_lag1`** moves it materially, and `total_minutes_lag1` "
+         "marginally. A spline on **`age` is actively worse**.\n\n"
+         "The probe reported a test column and a `replicates` flag until 2026-08-08. "
+         "Both are gone: the two columns differed in training data as well as in scored "
+         "rows, so their agreeing was never evidence that the effect generalizes. What "
+         "carries the finding is the contrast between the two **targets** on one frame — "
+         "the identical experiment is a null for games played and is not for minutes.")
 
     st.info(
         "**So the intuitive story is real but already absorbed.** Young players ramp "

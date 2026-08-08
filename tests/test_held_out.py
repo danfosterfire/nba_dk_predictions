@@ -111,8 +111,9 @@ import ast
 from pathlib import Path
 
 # Every module that selects, ablates or gates. `availability` is absent because it DEFINES
-# `split_seasons` and is where the guard lives; `held_out` and `final_evaluation` are the
-# two that are allowed to reach the held-out frame.
+# `split_seasons` and is where the guard lives — it is converted too, and gets a
+# function-scoped check of its own below; `held_out` and `final_evaluation` are the two
+# that are allowed to reach the held-out frame.
 CONVERTED = [
     "src/models/stan_availability.py",
     "src/models/stan_minutes.py",
@@ -160,6 +161,53 @@ def test_no_converted_head_names_the_guarded_split():
         assert "split_seasons" not in _names(path), (
             f"{path} names split_seasons, which hands back the guarded held-out frame; "
             f"use held_out.selection_split")
+
+
+def _function_names(path: str, function: str) -> set[str]:
+    """Every name referenced inside one top-level function."""
+    tree = ast.parse(Path(path).read_text())
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                and node.name == function:
+            return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)} | {
+                n.attr for n in ast.walk(node) if isinstance(n, ast.Attribute)}
+    raise AssertionError(f"{path} defines no top-level {function}()")
+
+
+AVAILABILITY = "src/models/availability.py"
+
+# `run` selects the mean function, `workload_ablation` selects a feature block and
+# `nonlinearity_ablation` selects a basis. Three decisions, all of which were taken on the
+# held-out split until 2026-08-08.
+AVAILABILITY_SELECTORS = ["run", "workload_ablation", "nonlinearity_ablation",
+                          "minutes_nonlinearity_probe", "gbm_shuffled_null"]
+
+
+def test_availability_selects_through_selection_split():
+    """`availability` cannot be checked module-wide the way the list above is, because it
+    *defines* `split_seasons` — the guard lives there. So the same property is asserted per
+    function: the entry point goes through `selection_split`, and nothing that selects,
+    ablates or scores may name the guarded split directly.
+    """
+    assert "selection_split" in _function_names(AVAILABILITY, "run"), (
+        f"{AVAILABILITY}::run does not call held_out.selection_split")
+    for function in AVAILABILITY_SELECTORS:
+        assert "split_seasons" not in _function_names(AVAILABILITY, function), (
+            f"{AVAILABILITY}::{function} names split_seasons, which hands back the guarded "
+            f"held-out frame; the sweeps take the frames `run` gives them")
+
+
+def test_availability_no_longer_carves_a_private_validation_split():
+    """`_inner_split` existed because the outer split handed back *test*, so the two
+    nonlinearity sweeps had to carve their own selection frame to have anything admissible
+    to select on. `selection_split` returns exactly that frame, so a second private carve
+    is now a second definition of the same thing — the shape `component_rates` was in.
+    """
+    from src.models import availability
+
+    assert not hasattr(availability, "_inner_split"), (
+        "availability defines a private inner split again; held_out.selection_split "
+        "already returns the (train, validation) pair it used to carve")
 
 
 def test_component_rates_no_longer_defines_its_own_split():

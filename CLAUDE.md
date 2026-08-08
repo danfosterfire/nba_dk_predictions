@@ -412,21 +412,25 @@ replication.
 - **`component_rates` was the one head with no guard at all**, because it defined its own
   `split_seasons` rather than importing the shared one. Six identical lines routing around
   the lock. A test now pins that it cannot come back.
-- **Four findings reversed on the move, and all four had passed on test.** Gate E of the
+- **Five findings reversed on the move, and all five had passed on test.** Gate E of the
   games-played plan (✅ by 0.03 dk_pts on test → ❌ by 6.34 on validation); `fg3a|fga` under
   sklearn (clears its floor on test, fails on validation); the games-played Gate D that
-  started this; and — added 2026-08-06 when `stan_components` was re-run — **`fta`, which
-  failed its no-fit floor by 0.0024 on test and clears it by 0.0144 on validation**,
-  retiring "the whole free-throw family fails". **Three survived unchanged**, which is the
-  useful contrast: the availability
+  started this; **`fta`**, added 2026-08-06 when `stan_components` was re-run, which
+  failed its no-fit floor by 0.0024 on test and clears it by 0.0144 on validation,
+  retiring "the whole free-throw family fails"; and **the availability model ladder**,
+  added 2026-08-08, where the GBM went from third to first. **Three survived unchanged**,
+  which is the useful contrast: the availability
   Stan port still reproduces the MLE on 21/21 coefficients, the `reb` alpha-trap pair
   reproduces 0.928 / 0.662 to a thousandth across the split change, and the substitution
   arm's validation margin reproduces at −0.771 across a half-length-to-full-length change
   in every one of its fits.
-  - **Every one of the four reversals was a sub-1% margin on test that a paired bootstrap
-    could not have called.** That is the pattern worth carrying into the remaining
-    conversions: the split move does not overturn findings with real margins, it overturns
-    the ones that were never distinguishable from zero and were being reported as verdicts.
+  - **Every one of the five reversals was a sub-1.5% margin on test that a paired bootstrap
+    could not have called.** That is the pattern the conversion established and then
+    confirmed on its last head: the split move does not overturn findings with real margins,
+    it overturns the ones that were never distinguishable from zero and were being reported
+    as verdicts. The availability ladder is the case where the interval was actually
+    computed rather than inferred after the fact — GBM-minus-GLM at −0.1297 with a 95% CI of
+    [−0.3154, +0.0672].
 - **✅ `stan_composition` is converted AND its artifact regenerated (2026-08-08)** — the
   last code/artifact disagreement in the repo is closed, and **nothing reversed**: same
   selected arm, same ordering, same gate outcomes, with no arm moving more than 0.0019 CRPS
@@ -447,9 +451,29 @@ replication.
     "halves it" was right and the correction was the error. **Sampler cost is not linear in
     the knob you are turning**, and an estimate from an untested proportionality is worth
     less than the run it replaces.
-- **`make availability-model` has NOT been converted** and still scores the held-out split,
-  so the head-vs-GBM-vs-ridge CRPS ladder (10.795 / 10.888 / 10.896 / 13.614) and the
-  playoff-workload ablation remain held-out measurements. That is the one outstanding piece.
+- **✅ `make availability-model` is converted and re-run (2026-08-08) — the last head, and
+  the one where it mattered most. The CONVERSION IS COMPLETE; nothing in `src/` scores the
+  held-out split outside `src/final_evaluation.py`.** This module does not merely report on
+  the test seasons, it *decides* on them: the four-way ladder picks a mean function,
+  `workload_ablation` picks a feature block, `nonlinearity_ablation` picks a basis.
+  - **One of the three decisions had its ordering reverse and none of the three changed.**
+    The head-vs-GBM-vs-ridge CRPS ladder went from **10.795 / 10.888 / 10.896 / 13.614** on
+    test to **9.876 (GBM) / 10.004 (ridge) / 10.006 (GLM) / 13.387** on validation — the GLM
+    from first to third. It still ships, because a paired bootstrap over the 883 rows puts
+    the GBM's margin at −0.1297 with a 95% CI of **[−0.3154, +0.0672]**, and because both
+    challengers are *worse* than the GLM on the lowest realized-games quartile, which is the
+    population the head exists for. See the ladder bullet under "Established facts".
+  - **The playoff-workload block and the nonlinearity null both survive untouched** — same
+    signs, same orderings, and every nonlinearity figure reproduced to five decimals because
+    that ablation was already selecting on the frames `selection_split` returns.
+  - **This makes it five reversals, and the pattern holds for all five**: every one was a
+    margin a paired interval could not distinguish from zero, being reported as a verdict.
+    The availability ladder is the cleanest instance, because this time the interval was
+    *computed* rather than reconstructed afterwards — `availability.ladder_comparison` ships
+    it as an artifact.
+  - **`availability.split_seasons` still exists and is still where the guard lives**, so
+    `tests/test_held_out.py` checks this module per *function* rather than module-wide: `run`
+    must name `selection_split`, and no sweep may name `split_seasons`.
 
 ---
 
@@ -1098,16 +1122,36 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
   the injured seasons the head exists to predict. It halves the ceiling (R² 0.236 → 0.116)
   and flips the MPG-vs-GP ordering. `availability_profile.csv` reports both columns; use the
   unweighted one for availability and the weighted one for rates.
-- **The availability head is a beta-binomial GLM, and the simulator is not built.** Held out
-  on 2024-25/2025-26 (10,361 train / 911 test), CRPS in games: **GLM 10.795**, GBM 10.888,
-  ridge 10.896, league/age baseline 13.614. (Before the playoff-workload block: 10.914 /
-  11.04 / 10.98 / 13.614.) Gradient boosting does not beat a 19-feature GLM, so
-  the plan's own decision rule says stop. `src/models/availability.py`, `make
-  availability-model`. Two things confirm the distribution is the working part: the fitted
-  dispersion lands at **20–30× implied overdispersion**, independently recovering the ~20×
-  in `availability_profile.csv`, and PIT is near-uniform (KS 0.08–0.11 against the
-  baseline's 0.17). Held-out R² 0.268 is **not** comparable to the 0.236 ceiling — that one
-  is in-sample and season-absorbed.
+- **⭐ The availability head is a beta-binomial GLM and the simulator is not built — but on
+  validation the GBM leads the ladder, and it is the ORDERING that reversed, not the
+  decision.** Scored on 2022-23/2023-24 (9,478 train / 883 validation), CRPS in games:
+  **GBM 9.876**, ridge 10.004, **GLM 10.006**, league/age 13.387. `src/models/availability.py`,
+  `make availability-model`.
+  - **⚠️ This was the last held-out measurement in the project and it read GLM 10.795 / GBM
+    10.888 / ridge 10.896 / league-age 13.614 on 10,361 train / 911 test until 2026-08-08.**
+    (Pre-workload-block: 10.914 / 11.04 / 10.98 / 13.614.) The recorded conclusion —
+    "gradient boosting does not beat a 19-feature GLM, so the plan's own decision rule says
+    stop" — is **false as stated** on the split that decides.
+  - **The decision stands because the reversal is not distinguishable from zero.** ✅
+    `make availability-model` (`availability.ladder_comparison` →
+    `availability_ladder_comparison.csv`), a paired bootstrap over the same 883 rows against
+    the shipped head: GBM **−0.1297** CRPS, 95% CI **[−0.3154, +0.0672]**, P(better) 0.906;
+    ridge **−0.0014**, CI [−0.0546, +0.0516]. Only the league/age baseline separates
+    (+3.3811, CI [+2.8567, +3.9299]). The ridge's 0.0014 is the same order as the
+    **0.0013**-CRPS margin that decided the games-played Gate D, reversed, and wrote
+    `src/models/held_out.py`. Treating this one as a verdict would be that mistake with the
+    sign flipped.
+  - **⭐ Where the GBM wins is the argument against it.** By *realized* games-played
+    quartile, the GBM is **+0.333** CRPS worse than the GLM in q1 and −0.063 / −0.452 /
+    −0.366 better in q2/q3/q4; the ridge runs **+0.251** / +0.109 / −0.008 / −0.393. Both
+    challengers beat the GLM on seasons that went normally and lose on the seasons that fell
+    apart — the population the head exists for. Quote the quartile row before the mean.
+  - Two things confirm the distribution is the working part: the fitted
+    dispersion lands at **20–30× implied overdispersion**, independently recovering the ~20×
+    in `availability_profile.csv`, and PIT is near-uniform (KS 0.07–0.11 against the
+    baseline's 0.15). Validation R² 0.374 is **not** comparable to the 0.236 ceiling — that
+    one is in-sample and season-absorbed. (Retired held-out reading: KS 0.08–0.11 against
+    0.17, R² 0.268.)
 - **The availability head is worth ~210 dk_pts of season-total MAE, and availability is
   measurably the larger half of the error.** `make season-total`,
   `src/models/season_total.py` — composes `season_total = gp × dk_per_game_played` holding
@@ -1199,23 +1243,31 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
   is the one evidence-backed feature change outstanding on the head.
 - **Playoff workload earns its place on the head, but by *selection*, not fatigue — every
   sign is the opposite of the mechanism it was built for.** `make availability-model`
-  (`workload_ablation` → `outputs/predictions/availability_workload_ablation.csv`), held
-  out on 2024-25/2025-26, everything fixed but the feature list:
+  (`workload_ablation` → `outputs/predictions/availability_workload_ablation.csv`), on
+  **validation** (2022-23/2023-24), everything fixed but the feature list:
 
-  | variant | features | CRPS | vs baseline | held-out R² |
+  | variant | features | CRPS | vs baseline | val R² |
   |---|---|---|---|---|
-  | baseline | 15 | 10.914 | — | 0.268 |
-  | **+ playoff workload** | **19** | **10.795** | **−0.119** | **0.283** |
-  | + playoff only | 18 | 10.817 | −0.097 | 0.281 |
-  | + `career_minutes` only | 16 | 10.883 | −0.031 | 0.271 |
+  | baseline | 15 | 10.104 | — | 0.363 |
+  | **+ playoff workload** | **19** | **10.006** | **−0.098** | **0.374** |
+  | + playoff only | 18 | 10.015 | −0.089 | 0.373 |
+  | + `career_minutes` only | 16 | 10.085 | −0.018 | 0.365 |
 
-  Worth **+6.2 dk_pts of season-total MAE** (441.3 → 435.1; −9.5 more on established
+  ⚠️ **This decided a feature block on the held-out split until 2026-08-08**, where it read
+  10.914 / **10.795** / 10.817 / 10.883 CRPS and 0.268 / **0.283** / 0.281 / 0.271 R² at a
+  gain of **−0.119**. **It survives the re-decision unchanged** — same sign, same ordering
+  of all four variants, same order of magnitude — which is the contrast worth drawing with
+  the model ladder above it: a block worth a tenth of a game does not care which split
+  measured it, and a 0.13-game gap between two models does.
+
+  ⚠️ Worth **+6.2 dk_pts of season-total MAE** (441.3 → 435.1; −9.5 more on established
   rotation players, 508.9 → 499.4), with `oracle_gp` unchanged at 221.3 — the internal check
-  that only the GP treatment moved. ⚠️ **That trio is measured against the superseded TEST
-  season-total table** and is kept because it is the only record of the pre-workload run;
-  the ablation itself has not been re-measured on validation, since `make availability-model`
-  still scores the held-out split. In-sample the block is **+0.0178 above its own shuffled
-  null** (0.2998 vs 0.2820, sd 0.0002).
+  that only the GP treatment moved. **That trio is measured against the superseded TEST
+  season-total table** and is kept because it is the only record of the pre-workload run.
+  It has no validation twin and will not get one from the current code: `season_total.py`
+  holds the availability head fixed at the shipped feature list, so nothing composes a
+  baseline-feature variant through it. In-sample the block is **+0.0178 above its own
+  shuffled null** (0.2998 vs 0.2820, sd 0.0002) — in-sample, so untouched by the split.
 
   **The direction is the finding.** Every single-season playoff column predicts *better*
   next-season availability — `playoff_mpg` r = +0.282 raw, +0.055 controlling for
@@ -1230,9 +1282,11 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     minutes into the total mixes team quality into a clean regular-season workload measure.
     Keep the two effects in separate columns. Pinned by a test so it does not get "fixed"
     back in.
-  - The GBM's margin narrowed but the ordering held — GLM 10.795 vs GBM 10.888, against
-    10.914/11.04 before, so the block helped the GBM slightly more (−0.152 vs −0.119). The
-    plan's stopping rule still says stop.
+  - ⚠️ **The recorded "the GBM's margin narrowed but the ordering held" is withdrawn.** On
+    test the block helped the GBM slightly more than the GLM (−0.152 vs −0.119), leaving
+    GLM 10.795 against GBM 10.888 from 10.914/11.04 before. On validation the margin it was
+    tracking has crossed zero — see the ladder bullet above. The stopping rule still says
+    stop, but for a different reason: nothing beats the GLM *distinguishably*.
 - **Nonlinear terms are a null for games played and NOT a null for minutes — and the split
   between those two is the useful part.** `make availability-model`
   (`nonlinearity_ablation` + `minutes_nonlinearity_probe` →
@@ -1240,32 +1294,48 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
   B-splines with linear extrapolation (knots from **training** quantiles only) or
   quadratics, over the nine continuous columns; `age_sq` is already in the linear baseline.
 
-  | variant | p | val CRPS | test CRPS | selected |
+  | variant | p | val CRPS | val R² | selected |
   |---|---|---|---|---|
-  | **linear** | 19 | **10.006** | 10.795 | **✓** |
-  | quadratic | 27 | 10.037 | *10.749* | |
-  | spline k=4 | 54 | 10.041 | *10.761* | |
-  | spline k=5 | 63 | 10.054 | *10.751* | |
+  | **linear** | 19 | **10.006** | **0.374** | **✓** |
+  | quadratic | 27 | 10.037 | 0.370 | |
+  | spline k=4 | 54 | 10.041 | 0.367 | |
+  | spline k=5 | 63 | 10.054 | 0.366 | |
 
-  **The test column prefers every curved variant and none of them replicate.** This is the
-  methodological trap worth remembering: a *paired* bootstrap on the 911 test rows puts the
-  quadratic gain at **−0.047, 95% CI [−0.079, −0.015], P(Δ<0) = 99.7%** — and it is still a
-  false positive, because a paired interval says a difference is consistent *within one
-  sample*, not that the sample was representative. Select on a validation split; quote test
-  for confirmation only. The GBM arm corroborates from a different direction: a fully
-  nonparametric learner on the same features still loses to the linear GLM.
-- **For minutes per game the same test replicates, and it is *not* the age arc.** Ridge
-  probe (the minutes head is not built), predicting next-season MPG: linear R² val 0.6768 /
-  test 0.6670, quadratic **0.6914 / 0.6746**, spline k=4 0.6930 / 0.6736 — both splits move
-  the same way. Splining one column at a time attributes it:
+  - **⭐ Every validation figure here reproduced to five decimals across the 2026-08-08
+    conversion, and that is a DETERMINISM check.** `held_out.selection_split` hands back
+    exactly the frames this ablation's own private inner split used to carve, so dropping
+    the test side could not move them — it proves the conversion changed nothing it should
+    not have, and is not independent evidence for the verdict.
+  - **⚠️ The retired test column preferred every curved variant** — 10.795 (linear) against
+    **10.749** / **10.761** / **10.751** — and this is the methodological trap worth
+    remembering: a *paired* bootstrap on the 911 test rows put the quadratic gain at
+    **−0.047, 95% CI [−0.079, −0.015], P(Δ<0) = 99.7%**, and it was still a false positive,
+    because a paired interval says a difference is consistent *within one sample*, not that
+    the sample was representative. The GBM arm corroborates the null from a different
+    direction: a fully nonparametric learner on the same features does not beat the linear
+    GLM by a distinguishable margin either.
+- **For minutes per game curvature is real, and it is *not* the age arc.** Ridge
+  probe (the minutes head is not built), predicting next-season MPG on validation: linear
+  R² **0.6768**, quadratic **0.6914**, spline k=4 **0.6930**. Splining one column at a time
+  attributes it:
 
-  | column splined | Δ val R² | Δ test R² | replicates |
-  |---|---|---|---|
-  | **`minutes_per_game_lag1`** | **+0.0124** | **+0.0077** | **yes** |
-  | `total_minutes_lag1` | +0.0008 | +0.0011 | yes |
-  | `age` | −0.0008 | −0.0007 | no |
-  | `career_minutes_lag1` | +0.0005 | −0.0006 | no |
-  | everything else | ≤ +0.0007 | ≤ 0 | no |
+  | column splined | Δ val R² |
+  |---|---|
+  | **`minutes_per_game_lag1`** | **+0.0124** |
+  | `total_minutes_lag1` | +0.0008 |
+  | `career_year` | +0.0007 |
+  | `age` | **−0.0008** |
+  | `playoff_minutes_share_lag1` | −0.0016 |
+
+  - **⚠️ "The same test replicates" is WITHDRAWN — the test column is gone and it was never
+    a replication.** It read 0.6670 / **0.6746** / 0.6736 by variant and +0.0077 /
+    +0.0011 / −0.0006 / −0.0007 by column, with a `replicates` flag requiring both columns
+    to move the same way. Those two columns differed in *training data* as well as in scored
+    rows — the confound `src/models/held_out.py` exists to stop being read as agreement — so
+    the flag was asserting something it could not see. The validation column is unchanged to
+    four decimals. **What actually carries the finding is the contrast between the two
+    TARGETS on one frame**: the identical experiment, same rows, same code, is a null for
+    games played and is not for minutes per game.
 
   So the intuitive story — young players ramp up, prime players play heavy minutes, veterans
   get load-managed — is real (`make aging`: MPG peaks at 27 and falls to 0.515 by 37) but

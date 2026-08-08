@@ -1032,24 +1032,71 @@ REGISTRY: tuple[Decision, ...] = (
     Decision(
         id="availability-beta-binomial-glm",
         topic="availability",
-        claim="The availability head is a beta-binomial GLM, and gradient boosting "
-              "does not beat it.",
-        because="Held out on 2024-25/2025-26, CRPS in games: GLM **10.795**, GBM "
-                "10.888, ridge 10.896, league/age baseline 13.614. The plan's own "
-                "stopping rule says stop. Two things confirm the *distribution* is the "
-                "working part: the fitted dispersion lands at 20–30× implied "
-                "overdispersion, independently recovering the ~20× measured in "
-                "`availability_profile.csv`, and PIT is near-uniform (KS 0.08–0.11 "
-                "against the baseline's 0.17).",
+        claim="The availability head is a beta-binomial GLM, and nothing beats it by a "
+              "margin a paired interval can distinguish.",
+        because="On validation (2022-23/2023-24), CRPS in games: GBM **9.876**, ridge "
+                "10.004, GLM **10.006**, league/age 13.387. Two things confirm the "
+                "*distribution* is the working part: the fitted dispersion lands at "
+                "20–30× implied overdispersion, independently recovering the ~20× "
+                "measured in `availability_profile.csv`, and PIT is near-uniform "
+                "(KS 0.07–0.11 against the baseline's 0.15).",
         status="built",
         reproduce="make availability-model → "
                   "outputs/predictions/availability_metrics.csv, "
                   "outputs/predictions/availability_pit.csv, "
                   "outputs/predictions/availability_predictions.csv",
         source="docs/availability-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-08",
         date="2026-07-28",
         tags=("head",),
+    ),
+    Decision(
+        id="gbm-does-not-beat-the-glm",
+        topic="availability",
+        claim="**Gradient boosting does not beat a 19-feature GLM** — withdrawn as "
+              "stated. On validation the GBM leads on mean CRPS.",
+        because="The claim was measured on the held-out split, where the GLM read "
+                "10.795 against a GBM's 10.888. Converting this head on 2026-08-08 "
+                "reversed the ordering: **9.876 against 10.006**. What replaces it is "
+                "narrower and holds — nothing beats the GLM *distinguishably*.",
+        status="withdrawn",
+        replaced_by="**Nothing beats the GLM by a margin a paired interval can "
+                    "distinguish.** The GBM's lead is −0.1297 CRPS with a 95% interval "
+                    "of [−0.3154, +0.0672], and it is +0.333 *worse* on the "
+                    "fewest-games quartile — see `an-ordering-is-not-a-verdict`.",
+        caught_by="Converting `src/models/availability.py` to "
+                  "`held_out.selection_split` on 2026-08-08 — the last head in the "
+                  "project still scoring the test seasons, and the one that took three "
+                  "decisions on them.",
+        reproduce="make availability-model → "
+                  "outputs/predictions/availability_metrics.csv",
+        source="CLAUDE.md",
+        reviewed="2026-08-08",
+        date="2026-08-08",
+        tags=("head", "reversal", "held-out-split"),
+    ),
+    Decision(
+        id="an-ordering-is-not-a-verdict",
+        topic="availability",
+        claim="The GLM keeps the head even though the GBM leads, and the two reasons "
+              "are measured rather than argued.",
+        because="**One — the margin is not distinguishable from zero.** Paired over the "
+                "same 883 validation rows the GBM is **−0.1297** CRPS with a 95% "
+                "interval of **[−0.3154, +0.0672]**; the ridge's **−0.0014** is the "
+                "same order as the 0.0013-CRPS margin that decided the games-played "
+                "Gate D, reversed, and wrote `src/models/held_out.py`. Only the "
+                "league/age baseline separates. **Two — the challengers lose where the "
+                "head exists to work.** By realized games-played quartile the GBM is "
+                "**+0.333** CRPS *worse* on the fewest-games quartile (ridge +0.251) "
+                "while winning the other three. A model that is better on average by "
+                "being better at ordinary seasons is not the one to ship.",
+        status="settled",
+        reproduce="make availability-model → "
+                  "outputs/predictions/availability_ladder_comparison.csv",
+        source="docs/availability-plan.md",
+        reviewed="2026-08-08",
+        date="2026-08-08",
+        tags=("head", "method", "held-out-split"),
     ),
     Decision(
         id="do-not-minutes-weight-availability",
@@ -1215,20 +1262,23 @@ REGISTRY: tuple[Decision, ...] = (
         claim="Playoff workload earns its place on the head — but by **selection**, "
               "not fatigue. Every sign is the opposite of the mechanism it was built "
               "for.",
-        because="CRPS 10.914 → **10.795** for four features, worth +6.2 dk_pts of "
-                "season-total MAE. But every single-season playoff column predicts "
+        because="Validation CRPS 10.104 → **10.006** for four features. But every "
+                "single-season playoff column predicts "
                 "*better* next-season availability: `playoff_mpg` r = +0.282 raw, "
                 "+0.055 controlled. Playoff participation marks a good player on a "
                 "good team, and that selection effect beats fatigue outright. The only "
                 "column pointing the way fatigue would is **`career_minutes` at "
-                "−0.067** — cumulative mileage.",
+                "−0.067** — cumulative mileage. The block was adopted on the *test* "
+                "split (10.914 → 10.795) and re-decided on validation 2026-08-08: "
+                "same sign, same ordering of all four variants, decision unchanged — "
+                "the contrast with the model ladder, which reversed.",
         status="measured",
         reproduce="make availability-model → "
                   "outputs/predictions/availability_workload_ablation.csv",
         source="docs/availability-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-08",
         date="2026-07-29",
-        tags=("features",),
+        tags=("features", "held-out-split"),
     ),
     Decision(
         id="total-minutes-incl-playoffs-is-a-null",
@@ -1252,23 +1302,25 @@ REGISTRY: tuple[Decision, ...] = (
     Decision(
         id="select-on-validation-not-test",
         topic="availability",
-        claim="Select on a validation split; quote test for confirmation only. A "
+        claim="Select on validation, and do not print a test column beside it. A "
               "*paired* bootstrap does not rescue a test-set selection.",
         because="The test column preferred every curved variant over the linear one "
-                "and **none of them replicate**. A paired bootstrap on the 911 test "
+                "and **none of them replicated**. A paired bootstrap on those 911 "
                 "rows put the quadratic gain at −0.047, 95% CI [−0.079, −0.015], "
                 "P(Δ<0) = 99.7% — and it was still a false positive, because a paired "
                 "interval says a difference is consistent *within one sample*, not "
-                "that the sample was representative. The GBM arm corroborates from a "
-                "different direction: a fully nonparametric learner on the same "
-                "features still loses to the linear GLM.",
+                "that the sample was representative. This ablation always selected on "
+                "validation; since 2026-08-08 it no longer computes the test column at "
+                "all, and every validation figure reproduced to five decimals on the "
+                "move — a determinism check on the conversion, not evidence for the "
+                "verdict.",
         status="settled",
         reproduce="make availability-model → "
                   "outputs/predictions/availability_nonlinearity.csv",
         source="docs/availability-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-08",
         date="2026-07-29",
-        tags=("method", "reversal-adjacent"),
+        tags=("method", "reversal-adjacent", "held-out-split"),
     ),
     Decision(
         id="clustering-is-not-the-overdispersion",
@@ -1496,19 +1548,25 @@ REGISTRY: tuple[Decision, ...] = (
         claim="The nonlinearity that pays on minutes is a **floor at the bottom** of "
               "the prior-MPG range, not a ceiling at the top — and it is *not* the age "
               "arc.",
-        because="Splining one column at a time: only `minutes_per_game_lag1` moves both "
-                "splits (+0.0124 val / +0.0077 test), with `total_minutes_lag1` "
-                "marginal and everything else at or below zero. A spline on **`age` is "
-                "actively worse**, because `age + age_sq` already absorbs the arc. Mean "
+        because="Splining one column at a time: only `minutes_per_game_lag1` moves it "
+                "materially (**+0.0124** validation R²), with `total_minutes_lag1` "
+                "marginal at +0.0008 and everything else at or below zero. A spline on "
+                "**`age` is actively worse** (−0.0008), because `age + age_sq` already "
+                "absorbs the arc. Mean "
                 "next-season MPG runs 4.3 → 10.5 (+6.1) at the bottom against a roughly "
-                "parallel −2.0 decline from 26 mpg up. Part of that is survivorship.",
+                "parallel −2.0 decline from 26 mpg up. Part of that is survivorship. "
+                "The probe carried a test column and a `replicates` flag until "
+                "2026-08-08; both are withdrawn, because those two columns differed in "
+                "training data as well as scored rows and so could not certify a "
+                "replication. The contrast that carries the finding is between the two "
+                "**targets** on one frame — a null for games played, real for minutes.",
         status="measured",
         reproduce="make availability-model → "
                   "outputs/predictions/availability_minutes_nonlinearity.csv",
         source="docs/availability-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-08",
         date="2026-07-29",
-        tags=("features",),
+        tags=("features", "held-out-split"),
     ),
     Decision(
         id="three-minutes-numbers-compose",
@@ -1849,7 +1907,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make season-terms → outputs/predictions/season_term_metrics.csv, "
                   "outputs/predictions/season_term_season_total.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-08-07",
+        reviewed="2026-08-08",
         date="2026-07-31",
         tags=("era", "method"),
     ),
@@ -1879,7 +1937,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/season_term_diagnostics.csv, "
                   "outputs/predictions/season_term_bonus.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-08-07",
+        reviewed="2026-08-08",
         date="2026-07-31",
         tags=("era", "method"),
     ),
@@ -1918,7 +1976,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/season_term_roster_spread.csv, "
                   "outputs/predictions/season_term_sigma_vs_league.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-08-07",
+        reviewed="2026-08-08",
         date="2026-07-31",
         tags=("era", "correlation", "simulation"),
     ),
@@ -1948,7 +2006,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="null",
         reproduce="make season-terms → outputs/predictions/season_term_metrics.csv",
         source="docs/availability-plan.md",
-        reviewed="2026-08-07",
+        reviewed="2026-08-08",
         date="2026-07-31",
         tags=("era", "availability"),
     ),
@@ -1983,7 +2041,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "removing it",
         reproduce="make season-terms → outputs/predictions/season_term_metrics.csv",
         source="docs/availability-plan.md",
-        reviewed="2026-08-07",
+        reviewed="2026-08-08",
         date="2026-07-31",
         tags=("era", "minutes"),
     ),
@@ -2626,7 +2684,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make residual-correlation → outputs/eda/residual_correlation.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-07",
+        reviewed="2026-08-08",
         date="2026-07-29",
         tags=("simulator-input",),
     ),

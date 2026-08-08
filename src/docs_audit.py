@@ -100,6 +100,7 @@ GP_SHAPE = "outputs/predictions/stan_games_played_spell_shape.csv"
 PROFILE = "outputs/eda/availability_profile.csv"
 METRICS = "outputs/predictions/availability_metrics.csv"
 ABLATION = "outputs/predictions/availability_workload_ablation.csv"
+LADDER = "outputs/predictions/availability_ladder_comparison.csv"
 NONLIN = "outputs/predictions/availability_nonlinearity.csv"
 MIN_NONLIN = "outputs/predictions/availability_minutes_nonlinearity.csv"
 STAN_MIN_M = "outputs/predictions/stan_minutes_metrics.csv"
@@ -526,6 +527,16 @@ def persist(feature: str, column: str = "r_within_season",
     return _one(table(PERSIST), column, tier=tier, feature=feature)
 
 
+def ladder(model: str, column: str, group: str = "all") -> float:
+    """One cell of the availability ladder's paired comparison.
+
+    `group` is required to reach a quartile row rather than defaulting into it, because
+    "the GBM is 0.13 better" and "the GBM is 0.33 worse where it matters" are both true of
+    this artifact and the whole point is that they are different rows.
+    """
+    return _one(table(LADDER), column, model=model, group=group)
+
+
 def adp(section: str, metric: str) -> float:
     return _one(table(ADP_PROFILE), "value", section=section, metric=metric)
 
@@ -835,65 +846,65 @@ def _availability() -> list[Claim]:
                f"playoff appearance rate, {key}"))
 
     # ── stage E baselines ─────────────────────────────────────────────────────
-    baselines = [("beta_binomial", "10.795", "15.39", "0.283", "0.096", "23.3"),
-                 ("gbm", "10.888", "15.41", "0.262", "0.079", "19.9"),
-                 ("ridge", "10.896", "15.39", "0.275", "0.103", "22.7"),
-                 ("league_age", "13.614", "18.94", "−0.084", "0.174", "29.5")]
-    for model, crps, mae, r2, ks, od in baselines:
-        for quoted, name in [(crps, "crps_games"), (mae, "mae_games"),
-                             (r2, "r2_gp_share"), (ks, "pit_ks_distance"),
-                             (od, "implied_overdispersion")]:
-            add(_c(quoted, METRICS,
-                   lambda m=model, n=name: metric(METRICS, m, n),
-                   f"{model} {name}"))
-    add(_c("15.0%", METRICS,
+    # Validation-only since 2026-08-08, when the last held-out head was converted. The
+    # ORDERING reversed on the move — the GBM leads on mean CRPS and the GLM still ships —
+    # so the retired column is preserved below and the paired interval that settles it is
+    # claimed as its own block.
+    C += _availability_ladder_claims(AVAIL)
+    add(_c("15.5%", METRICS,
            lambda: metric(METRICS, "beta_binomial", "predicted_share_below_41",
                           "rotation"), "GLM predicted below 41"))
-    add(_c("34.8%", METRICS,
+    add(_c("35.2%", METRICS,
            lambda: metric(METRICS, "beta_binomial", "predicted_share_below_60",
                           "rotation"), "GLM predicted below 60"))
-    add(_c("11.8%", METRICS,
+    add(_c("10.0%", METRICS,
            lambda: metric(METRICS, "beta_binomial", "observed_share_below_41",
                           "rotation"), "observed below 41"))
-    add(_c("36.9%", METRICS,
+    add(_c("32.6%", METRICS,
            lambda: metric(METRICS, "beta_binomial", "observed_share_below_60",
                           "rotation"), "observed below 60"))
-    add(_c("24.8%", METRICS,
+    add(_c("24.1%", METRICS,
            lambda: metric(METRICS, "league_age", "predicted_share_below_41",
                           "rotation"), "baseline predicted below 41"))
-    add(_c("45.0%", METRICS,
+    add(_c("43.9%", METRICS,
            lambda: metric(METRICS, "league_age", "predicted_share_below_60",
                           "rotation"), "baseline predicted below 60"))
+    for quoted, label in [("15.0%", "GLM predicted below 41"),
+                          ("34.8%", "GLM predicted below 60"),
+                          ("11.8%", "observed below 41"),
+                          ("36.9%", "observed below 60"),
+                          ("24.8%", "baseline predicted below 41"),
+                          ("45.0%", "baseline predicted below 60"),
+                          ("0.268", "held-out R2")]:
+        add(_c(quoted, METRICS, lambda: float("nan"),
+               f"pre-lock held-out tail: {label}", historical=True))
 
     # ── workload ablation ─────────────────────────────────────────────────────
-    ablations = [("baseline", "10.914", "0.268"),
-                 ("plus_playoff_workload", "10.795", "0.283"),
-                 ("plus_playoff_only", "10.817", "0.281"),
-                 ("plus_career_minutes_only", "10.883", "0.271")]
-    for variant, crps, r2 in ablations:
-        add(_c(crps, ABLATION,
-               lambda v=variant: cell(ABLATION, "crps_games", variant=v),
-               f"ablation {variant} CRPS"))
-        add(_c(r2, ABLATION,
-               lambda v=variant: cell(ABLATION, "r2_gp_share", variant=v),
-               f"ablation {variant} R2"))
+    C += _workload_ablation_claims(AVAIL)
 
     # ── minutes nonlinearity probe ────────────────────────────────────────────
-    probes = [("linear", "0.6768", "0.6670"), ("quadratic", "0.6914", "0.6746"),
-              ("spline_k4", "0.6930", "0.6736")]
-    for name, val, test in probes:
+    # The `test_r2` / `test_vs_linear` columns went with the conversion, and with them the
+    # `replicates` flag. The val column reproduced to four decimals, which is a determinism
+    # check on the move rather than evidence for the finding.
+    probes = [("linear", "0.6768"), ("quadratic", "0.6914"), ("spline_k4", "0.6930")]
+    for name, val in probes:
         add(_c(val, MIN_NONLIN,
                lambda n=name: cell(MIN_NONLIN, "val_r2", scope="variant", name=n),
                f"MPG probe {name} val R2"))
-        add(_c(test, MIN_NONLIN,
-               lambda n=name: cell(MIN_NONLIN, "test_r2", scope="variant", name=n),
-               f"MPG probe {name} test R2"))
     add(_c("0.0124", MIN_NONLIN,
            lambda: cell(MIN_NONLIN, "val_vs_linear", scope="column",
                         name="minutes_per_game_lag1"), "prior-MPG spline, val"))
-    add(_c("0.0077", MIN_NONLIN,
-           lambda: cell(MIN_NONLIN, "test_vs_linear", scope="column",
-                        name="minutes_per_game_lag1"), "prior-MPG spline, test"))
+    add(_c("0.0008", MIN_NONLIN,
+           lambda: cell(MIN_NONLIN, "val_vs_linear", scope="column",
+                        name="total_minutes_lag1"), "total-minutes spline, val"))
+    add(_c("−0.0008", MIN_NONLIN,
+           lambda: cell(MIN_NONLIN, "val_vs_linear", scope="column", name="age"),
+           "age spline, val"))
+    for quoted, label in [("0.6670", "linear test R2"), ("0.6746", "quadratic test R2"),
+                          ("0.6736", "spline_k4 test R2"),
+                          ("0.0077", "prior-MPG spline, test")]:
+        add(_c(quoted, MIN_NONLIN, lambda: float("nan"),
+               f"pre-lock held-out MPG probe: {label}", historical=True))
 
     # ── the minutes head ──────────────────────────────────────────────────────
     # Validation-only since `make stan-minutes` was re-run under the held-out lock
@@ -1003,6 +1014,137 @@ SEASON_TOTAL_HISTORICAL = ["646.3", "831.2", "0.141", "541.9", "475.0", "638.5",
                            "0.773", "5.3", "221.3", "304.2", "0.885", "−33.2",
                            "651.3", "499.4", "213.8", "132.5", "−32.7%", "−39.9",
                            "−23.3%", "316.9", "340.8", "211.1"]
+
+
+# The four-way model ladder, on VALIDATION since 2026-08-08 — the last held-out head to be
+# converted. The ORDERING reversed: the GBM leads on mean CRPS where the GLM led on test.
+# The retired figures ride along as historical claims so a later editor cannot delete the
+# one reversal in this project whose paired interval was actually computed.
+LADDER_ROWS = [("gbm", "9.876", "14.20", "0.381", "0.070", "20.1"),
+               ("ridge", "10.004", "14.29", "0.376", "0.107", "23.1"),
+               ("beta_binomial", "10.006", "14.46", "0.374", "0.094", "23.7"),
+               ("league_age", "13.387", "18.74", "−0.057", "0.151", "29.7")]
+
+# The retired held-out ladder, listed per doc because each quotes a different slice of it:
+# the plan doc carries the whole table, `CLAUDE.md` the CRPS row plus the pre-block figures,
+# and `README.md` only the CRPS row. A union list would presence-check figures into docs
+# that never had them, which reports a stale claim where nothing is stale.
+LADDER_HISTORICAL = ("10.795", "10.888", "10.896", "13.614", "15.39", "15.41", "18.94",
+                     "0.283", "0.262", "0.275", "−0.084", "0.096", "0.079", "0.103",
+                     "0.174", "23.3", "19.9", "22.7", "29.5", "10.914", "10.98", "11.04",
+                     "0.126", "0.093", "10,361", "911")
+
+
+LADDER_SCOPES = ("table", "summary", "headline")
+
+
+def _availability_ladder_claims(doc: str, scope: str = "table",
+                                historical: tuple[str, ...] = LADDER_HISTORICAL
+                                ) -> list[Claim]:
+    """The availability model ladder and the paired interval that settles it.
+
+    Shared between `CLAUDE.md`, `README.md` and `docs/availability-plan.md` for the reason
+    `_season_total_claims` is: three docs quote one artifact, and a block going stale in one
+    while staying current in another is the failure this file has already caught twice.
+
+    The paired-bootstrap block is claimed at least as hard as the CRPS row, because the
+    ordering reversed on the split move and the *interval* is the entire reason the head did
+    not change with it. A doc that quoted the new ordering without the interval would be
+    reporting a reversal as a verdict — so `headline` still carries the GBM's interval even
+    though it carries nothing else.
+
+    `scope` names how much of the block a doc actually quotes: `table` is the full plan-doc
+    treatment, `summary` is the CRPS row with the intervals and quartiles, `headline` is the
+    CRPS row alone. Claiming more than a doc quotes reports a stale claim where nothing is
+    stale, which is noise in the one report that has to stay readable.
+    """
+    if scope not in LADDER_SCOPES:
+        raise ValueError(f"scope must be one of {LADDER_SCOPES}; got {scope!r}")
+    C: list[Claim] = []
+
+    def add(*a, **k):
+        C.append(_c(*a, **k, doc=doc))
+
+    for model, crps, mae, r2, ks, od in LADDER_ROWS:
+        add(crps, METRICS, lambda m=model: metric(METRICS, m, "crps_games"),
+            f"{model} CRPS")
+        if scope != "table":
+            continue
+        for quoted, name in [(mae, "mae_games"), (r2, "r2_gp_share"),
+                             (ks, "pit_ks_distance"), (od, "implied_overdispersion")]:
+            add(quoted, METRICS, lambda m=model, n=name: metric(METRICS, m, n),
+                f"{model} {name}")
+
+    if scope != "headline":
+        for model, delta, lo, hi, p, share in [
+                ("gbm", "−0.1297", "−0.3154", "+0.0672", "0.906", "62.4%"),
+                ("ridge", "−0.0014", "−0.0546", "+0.0516", "0.515", "60.2%"),
+                ("league_age", "+3.3811", "+2.8567", "+3.9299", "0.000", "28.5%")]:
+            add(delta, LADDER, lambda m=model: ladder(m, "delta_vs_reference"),
+                f"{model} vs the shipped head")
+            add(lo, LADDER, lambda m=model: ladder(m, "ci_lo"), f"{model} CI low")
+            add(hi, LADDER, lambda m=model: ladder(m, "ci_hi"), f"{model} CI high")
+            add(p, LADDER, lambda m=model: ladder(m, "p_better"), f"{model} P(better)")
+            if scope == "table":
+                add(share, LADDER, lambda m=model: ladder(m, "share_rows_better"),
+                    f"{model} share of rows better")
+
+        # The quartile rows are the substantive reason the GLM keeps the head, so they are
+        # claimed rather than left as prose beside a claimed mean.
+        for model, quartiles in [("gbm", ["+0.333", "−0.063", "−0.452", "−0.366"]),
+                                 ("ridge", ["+0.251", "+0.109", "−0.008", "−0.393"])]:
+            for i, quoted in enumerate(quartiles, start=1):
+                add(quoted, LADDER,
+                    lambda m=model, g=f"gp_q{i}": ladder(m, "delta_vs_reference", g),
+                    f"{model} delta in gp_q{i}")
+
+    for quoted in historical:
+        add(quoted, METRICS, lambda: float("nan"),
+            f"pre-lock held-out availability ladder: {quoted}", historical=True)
+    return C
+
+
+# `CLAUDE.md` quotes the CRPS row, the pre-block figures and the workload note; `README.md`
+# quotes only the CRPS row.
+LADDER_HISTORICAL_CLAUDE = ("10.795", "10.888", "10.896", "13.614", "10.914", "10.98",
+                            "11.04", "−0.152", "10,361", "911", "0.268")
+LADDER_HISTORICAL_README = ("10.795", "10.888", "10.896", "13.614")
+
+
+# The playoff/mileage block, on VALIDATION since 2026-08-08. Unlike the ladder beside it
+# this decision survived the move unchanged — same sign, same ordering of all four variants
+# — which is the contrast the docs draw between a block worth a tenth of a game and a
+# model gap of 0.13 that was never distinguishable from zero.
+ABLATION_ROWS = [("baseline", "10.104", "0.363"),
+                 ("plus_playoff_workload", "10.006", "0.374"),
+                 ("plus_playoff_only", "10.015", "0.373"),
+                 ("plus_career_minutes_only", "10.085", "0.365")]
+
+ABLATION_HISTORICAL = ["10.914", "10.795", "10.817", "10.883",
+                       "0.268", "0.283", "0.281", "0.271", "−0.119"]
+
+
+def _workload_ablation_claims(doc: str, gain: bool = True) -> list[Claim]:
+    """The playoff/mileage workload ablation, claimed from whichever doc quotes it."""
+    C: list[Claim] = []
+
+    def add(*a, **k):
+        C.append(_c(*a, **k, doc=doc))
+
+    for variant, crps, r2 in ABLATION_ROWS:
+        add(crps, ABLATION, lambda v=variant: cell(ABLATION, "crps_games", variant=v),
+            f"ablation {variant} CRPS")
+        add(r2, ABLATION, lambda v=variant: cell(ABLATION, "r2_gp_share", variant=v),
+            f"ablation {variant} R2")
+    if gain:
+        add("−0.098", ABLATION,
+            lambda: (cell(ABLATION, "crps_games", variant="plus_playoff_workload")
+                     - cell(ABLATION, "crps_games", variant="baseline")),
+            "playoff-workload CRPS gain")
+    for quoted in ABLATION_HISTORICAL:
+        add(quoted, ABLATION, lambda: float("nan"),
+            f"pre-lock held-out workload ablation: {quoted}", historical=True)
+    return C
 
 
 def _season_total_claims(doc: str, rotation: bool = True) -> list[Claim]:
@@ -2626,16 +2768,10 @@ def _claude() -> list[Claim]:
     add("0.159", PROFILE,
         lambda: prof("predictor_r2", "prior_mpg", "r2_in_sample_unweighted"),
         "prior MPG ceiling")
-    for model, quoted in [("beta_binomial", "10.795"), ("gbm", "10.888"),
-                          ("ridge", "10.896"), ("league_age", "13.614")]:
-        add(quoted, METRICS, lambda m=model: metric(METRICS, m, "crps_games"),
-            f"{model} CRPS")
-    add("0.268", ABLATION,
-        lambda: cell(ABLATION, "r2_gp_share", variant="baseline"),
-        "held-out R2 before playoff workload")
-    add("10.914", ABLATION,
-        lambda: cell(ABLATION, "crps_games", variant="baseline"),
-        "baseline CRPS")
+    C += _availability_ladder_claims(CLAUDE, scope="summary",
+                                     historical=LADDER_HISTORICAL_CLAUDE)
+    add("0.374", METRICS, lambda: metric(METRICS, "beta_binomial", "r2_gp_share"),
+        "validation R2 of the shipped head")
 
     # ── the season total ──────────────────────────────────────────────────────
     C += _season_total_claims(CLAUDE)
@@ -3369,50 +3505,46 @@ def _claude() -> list[Claim]:
         "stacking overshoot")
 
     # ── the nonlinearity ablations ────────────────────────────────────────────
-    for variant, val, test in [("linear", "10.006", None),
-                               ("quadratic", "10.037", "10.749"),
-                               ("spline_k4", "10.041", "10.761"),
-                               ("spline_k5", "10.054", "10.751")]:
+    # Validation-only since 2026-08-08. Every val figure reproduced to five decimals on the
+    # move, because `selection_split` returns exactly the frames this ablation's own inner
+    # split used to carve — a determinism check, not a replication.
+    for variant, val, r2 in [("linear", "10.006", "0.374"),
+                             ("quadratic", "10.037", "0.370"),
+                             ("spline_k4", "10.041", "0.367"),
+                             ("spline_k5", "10.054", "0.366")]:
         add(val, NONLIN,
             lambda v=variant: cell(NONLIN, "val_crps_games", variant=v),
             f"nonlinearity {variant} val CRPS")
-        if test:
-            add(test, NONLIN,
-                lambda v=variant: cell(NONLIN, "test_crps_games", variant=v),
-                f"nonlinearity {variant} test CRPS")
-    for name, val, test in [("linear", "0.6768", "0.6670"),
-                            ("quadratic", "0.6914", "0.6746"),
-                            ("spline_k4", "0.6930", "0.6736")]:
+        add(r2, NONLIN,
+            lambda v=variant: cell(NONLIN, "val_r2_gp_share", variant=v),
+            f"nonlinearity {variant} val R2")
+    for quoted in ("10.795", "10.749", "10.761", "10.751"):
+        add(quoted, NONLIN, lambda: float("nan"),
+            f"pre-lock held-out nonlinearity CRPS: {quoted}", historical=True)
+    for name, val in [("linear", "0.6768"), ("quadratic", "0.6914"),
+                      ("spline_k4", "0.6930")]:
         add(val, MIN_NONLIN,
             lambda n=name: cell(MIN_NONLIN, "val_r2", scope="variant", name=n),
             f"MPG probe {name} val R2")
-        add(test, MIN_NONLIN,
-            lambda n=name: cell(MIN_NONLIN, "test_r2", scope="variant", name=n),
-            f"MPG probe {name} test R2")
-    for column, quoted in [("minutes_per_game_lag1", ("0.0124", "0.0077")),
-                           ("total_minutes_lag1", ("0.0008", "0.0011")),
-                           ("age", ("−0.0008", "−0.0007")),
-                           ("career_minutes_lag1", ("0.0005", "−0.0006"))]:
-        add(quoted[0], MIN_NONLIN,
+    for column, quoted in [("minutes_per_game_lag1", "0.0124"),
+                           ("total_minutes_lag1", "0.0008"),
+                           ("career_year", "0.0007"),
+                           ("age", "−0.0008"),
+                           ("playoff_minutes_share_lag1", "−0.0016")]:
+        add(quoted, MIN_NONLIN,
             lambda c=column: cell(MIN_NONLIN, "val_vs_linear", scope="column",
                                   name=c), f"{column} spline, val")
-        add(quoted[1], MIN_NONLIN,
-            lambda c=column: cell(MIN_NONLIN, "test_vs_linear", scope="column",
-                                  name=c), f"{column} spline, test")
+    # `0.0005` is deliberately absent: it was `career_minutes_lag1`'s *validation* delta,
+    # which is still live in the artifact — the doc simply stopped quoting that row. A
+    # historical claim protects a superseded figure from deletion and would be the wrong
+    # instrument for a current one.
+    for quoted in ("0.6670", "0.6746", "0.6736", "0.0077", "0.0011", "−0.0007",
+                   "−0.0006"):
+        add(quoted, MIN_NONLIN, lambda: float("nan"),
+            f"pre-lock held-out MPG probe: {quoted}", historical=True)
 
     # ── the workload ablation ─────────────────────────────────────────────────
-    for variant, crps, r2 in [("baseline", "10.914", "0.268"),
-                              ("plus_playoff_workload", "10.795", "0.283"),
-                              ("plus_playoff_only", "10.817", "0.281"),
-                              ("plus_career_minutes_only", "10.883", "0.271")]:
-        add(crps, ABLATION, lambda v=variant: cell(ABLATION, "crps_games", variant=v),
-            f"ablation {variant} CRPS")
-        add(r2, ABLATION, lambda v=variant: cell(ABLATION, "r2_gp_share", variant=v),
-            f"ablation {variant} R2")
-    add("−0.119", ABLATION,
-        lambda: (cell(ABLATION, "crps_games", variant="plus_playoff_workload")
-                 - cell(ABLATION, "crps_games", variant="baseline")),
-        "playoff-workload CRPS gain")
+    C += _workload_ablation_claims(CLAUDE)
 
     # ── the season total, derived ─────────────────────────────────────────────
     add("287.3", SEASON_TOTAL, lambda: treatment("beta_binomial", "crps_dk_total"),
@@ -3724,10 +3856,17 @@ def _readme() -> list[Claim]:
         "sequence features above their shuffled null")
 
     # ── results: availability ─────────────────────────────────────────────────
-    for model, quoted in [("beta_binomial", "10.795"), ("gbm", "10.888"),
-                          ("ridge", "10.896"), ("league_age", "13.614")]:
-        add(quoted, METRICS, lambda m=model: metric(METRICS, m, "crps_games"),
-            f"{model} CRPS")
+    # The overview quotes the CRPS column and the paired interval, not the full ladder —
+    # `full=False` claims exactly that subset rather than forcing the README to carry every
+    # cell of a table it deliberately summarizes.
+    C += _availability_ladder_claims(README, scope="headline",
+                                     historical=LADDER_HISTORICAL_README)
+    add("−0.1297", LADDER, lambda: ladder("gbm", "delta_vs_reference"),
+        "GBM vs the shipped head")
+    add("−0.3154", LADDER, lambda: ladder("gbm", "ci_lo"), "GBM CI low")
+    add("+0.0672", LADDER, lambda: ladder("gbm", "ci_hi"), "GBM CI high")
+    add("+0.333", LADDER, lambda: ladder("gbm", "delta_vs_reference", "gp_q1"),
+        "GBM delta on the worst games quartile")
     for name, which, quoted in [("full_season", "mae_dk_total", "610.8"),
                                 ("beta_binomial", "mae_dk_total", "400.5"),
                                 ("full_season", "bias_dk_total", "523.3"),
