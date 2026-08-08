@@ -3052,6 +3052,119 @@ REGISTRY: tuple[Decision, ...] = (
         date="2026-07-29",
         tags=("next",),
     ),
+    Decision(
+        id="no-head-persists-its-posterior",
+        topic="simulations",
+        claim="**No Stan head writes its coefficient draws to disk**, so simulating from "
+              "the joint posterior currently means refitting. A posterior artifact is "
+              "step zero of the simulation layer.",
+        because="`make stan` writes metrics, diagnostics and per-row predictions and "
+                "throws the draws away. The one exception is `stan_composition`'s crash "
+                "checkpoint, which pickles alpha/beta/rho draws incidentally to survive a "
+                "9.9 h loop rather than as a consumable. Refitting costs ~137 min for the "
+                "component heads and ~9.9 h for the composition head — which a draft room "
+                "cannot do once and a strategy sweep cannot do a hundred times. The fix "
+                "is small and generalizes the checkpoint that already exists: thinned "
+                "draws plus the design recipe (features, scaler, spline knots, imputation "
+                "means, selected variant) and provenance, one file per head. It also "
+                "makes a walk-forward backtest affordable later without re-deciding "
+                "anything.",
+        status="open",
+        unblocks="make posteriors writes data/features/posteriors/<head>.pkl",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-08",
+        date="2026-08-08",
+        tags=("next", "architecture"),
+    ),
+    Decision(
+        id="sim-tensor-is-player-by-period",
+        topic="simulations",
+        claim="The simulator's contract to everything downstream is a "
+              "`player x scoring_period x sim` tensor of dk_pts — **never a player-game "
+              "array**.",
+        because="Best ball scores by scoring period, and there are only 20 of them (Round "
+                "1's 17 weeks plus three double weeks). At ~550 players and 2,000 sims "
+                "that is ~88 MB in float32 — small enough to hold for a whole strategy "
+                "sweep and to load into a draft room in under a second. Per-game draws "
+                "still happen inside the simulator, because the double-double bonus is a "
+                "per-game threshold on five components and E[bonus] != bonus(E[x]), but "
+                "they are summed into periods immediately. Fixing this contract is the "
+                "difference between a draft sweep that runs in minutes and one that runs "
+                "in hours, and it is what makes the sub-second in-draft recompute "
+                "achievable.",
+        status="settled",
+        reproduce="make component-targets → outputs/eda/bonus_calibration.csv",
+        unblocks="src/sim/season.py writes data/features/sim_tensor_<season>.npz",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-08",
+        date="2026-08-08",
+        tags=("architecture",),
+    ),
+    Decision(
+        id="simulated-truth-needs-error-injection",
+        topic="simulations",
+        claim="Strategy tuning runs on **simulated truth with the model's measured "
+              "out-of-sample error injected**. An uninjected simulated backtest cannot "
+              "price ADP, exposure caps, or any other hedge against model error.",
+        because="A season drawn from the model's own posterior is a world where the model "
+                "is perfectly calibrated by construction, so ADP can only add noise and "
+                "the sweep drives alpha to zero for reasons that have nothing to do with "
+                "whether the market knows something. The same failure hits every "
+                "error-hedging strategy. So the truth draw is perturbed to reproduce the "
+                "measured miss — availability CRPS 10.006 games, component R2 0.81-0.95 "
+                "against the no-fit floors, season-total MAE 400.5 dk_pts — before "
+                "anything is scored against it. An uninjected sweep is not a conservative "
+                "version of this; it answers a different question and its alpha is not "
+                "transportable. Realized 2022-23 / 2023-24 remains the honest readout, at "
+                "N = 2 seasons.",
+        status="settled",
+        reproduce="make stan-components → outputs/predictions/stan_component_metrics.csv",
+        unblocks="Gate C in docs/simulations-plan.md",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-08",
+        date="2026-08-08",
+        tags=("methodology",),
+    ),
+    Decision(
+        id="scoring-periods-are-nba-weeks",
+        topic="simulations",
+        claim="DK's scoring periods are **NBA week ranges** — derive them from "
+              "`ScheduleLeagueV2`'s `weekNumber`, do not re-derive weeks from raw dates.",
+        because="Checked on 2025-26: the NBA's own week numbering runs Monday-Sunday, "
+                "partitions game dates with zero dates in more than one week, and Week 17 "
+                "closes 2026-02-12 against DK's stated Round-1 close of 2/14. The "
+                "bucketing module still has to own three edge cases once rather than "
+                "per-use: a postponed game scores in the period it is played, the NBA Cup "
+                "final (12/11/2026) scores nowhere, and the all-star gap breaks week "
+                "adjacency. Recorded as open rather than measured because the probe was "
+                "a live call to `ScheduleLeagueV2` and nothing is on disk until "
+                "`make scoring-periods` writes it.",
+        status="open",
+        unblocks="make scoring-periods writes data/features/scoring_periods.parquet",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-08",
+        date="2026-08-08",
+        tags=("rules",),
+    ),
+    Decision(
+        id="production-schedule-not-published",
+        topic="simulations",
+        claim="The **2026-27 regular-season schedule is not published**, which gates the "
+              "production run only. Rosters are already live.",
+        because="`ScheduleLeagueV2` returns 20 rows for 2026-27 — 19 preseason games plus "
+                "the 12/11/2026 NBA Cup final that does not score — against 1,400 rows "
+                "for 2025-26. `commonteamroster` already returns 2026-27 rosters, with "
+                "POSITION null for unsigned and two-way players, which the DK board "
+                "covers. Because the backtest seasons all have realized schedules, every "
+                "backtest piece can be built now and only the production season waits. "
+                "The schedule is normally released in mid-August.",
+        status="blocked",
+        unblocks="the NBA publishes the 2026-27 schedule; poll ScheduleLeagueV2",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-08",
+        date="2026-08-08",
+        tags=("capture", "production"),
+    ),
 
     # ══ Drafting strategy ════════════════════════════════════════════════════
     Decision(
@@ -3062,11 +3175,19 @@ REGISTRY: tuple[Decision, ...] = (
         because="Top 2 of 12 advance and ranks 3–12 receive $0. That changes the "
                 "objective function outright — variance is worth paying for near the "
                 "cut line — and it is why the cascading tie-break mechanics stop being "
-                "a footnote.",
+                "a footnote. **Sharpened 2026-08-08: Round 1 is the *only* "
+                "zero-consolation round**, and that reframes the objective rather than "
+                "overturning it. Surviving it guarantees a cash in both target "
+                "tournaments — `600k_shootaround` pays 11 of 12 Round-2 entries at $30 "
+                "minimum on a $20 entry, and `20k_spin_move` pays or advances all 6 at "
+                "$80 minimum on a $52 entry. So P(any return) = P(top 2 of 12) exactly, "
+                "and everything past Round 1 sets the size of the return rather than its "
+                "sign. 'Convex, therefore chase the tail' holds only for "
+                "`600k_shootaround`, and only above that Round-2 floor.",
         status="measured",
         reproduce="make adp-profile → outputs/eda/adp_profile.csv",
         source="docs/dk_best_ball_rules.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-08",
         date="2026-07-28",
         tags=("economics",),
     ),
@@ -3196,5 +3317,131 @@ REGISTRY: tuple[Decision, ...] = (
         reviewed="2026-07-30",
         date="2026-07-28",
         tags=("capture",),
+    ),
+    Decision(
+        id="two-strategies-two-tiers",
+        topic="drafting",
+        claim="**Two strategies ship this year**: 10 entries at $20 "
+              "(`600k_shootaround`) and 4 entries at $52 (`20k_spin_move`).",
+        because="Near-equal stake — $200 against $208 — across two structures whose "
+                "objectives differ in shape rather than scale, so comparing them is "
+                "itself a result. `20k_spin_move`'s path is three successive shallow cuts "
+                "(2/12 → 2/6 → 2/6) into a nearly flat final table where all 8 finalists "
+                "clear $750 on a $52 entry, so it rewards survival and durability; "
+                "P(reach round 4) at random is 1.85%. `600k_shootaround` narrows "
+                "brutally after round 1 (2/12 → 1/12 → 1/10) into a $200,000 top prize at "
+                "10,000x entry, so above its round-2 floor it rewards correlated upside "
+                "and differentiation from the field; P(reach round 4) at random is "
+                "0.139%. Its rake hurdle is also 43% higher (+17.60% against +12.32%). "
+                "Confirming the sweep actually selects different rosters for the two is "
+                "Gate D.",
+        status="settled",
+        reproduce="make dashboard → dashboard/economics.py, "
+                  "data/raw/dk_best_ball_tournament_metadata.csv, "
+                  "data/raw/dk_best_ball_tournament_prize_structure.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-08",
+        date="2026-08-08",
+        tags=("economics", "strategy"),
+    ),
+    Decision(
+        id="test-split-is-a-pure-readout",
+        topic="drafting",
+        claim="The test seasons get **one** strategy backtest before going live, and it "
+              "changes **nothing** — not the strategy, not the stake, not the entry "
+              "decision.",
+        because="The strategy is frozen on validation and written to an artifact; the "
+                "test runner reads which strategy shipped rather than re-deciding, "
+                "exactly as `src/final_evaluation.py` does, and emits a risk report — ROI "
+                "distribution, P(advance), P(cash), worst-case drawdown across the 10 + 4 "
+                "entries — with no ranking and no recommendation. It runs inside "
+                "`held_out.unlocked()` so the unlock is visible in the log, and the sweep "
+                "itself goes through `selection_split` and never materializes the test "
+                "rows. Prose already failed once here: the games-played head's Gate D was "
+                "specified with test figures as its bars and settled which model ships, "
+                "on a margin a paired bootstrap could not distinguish from zero.",
+        status="settled",
+        reproduce="make final-evaluation → src/models/held_out.py, "
+                  "src/final_evaluation.py",
+        unblocks="src/sim/strategy.py and its final-evaluation counterpart",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-08",
+        date="2026-08-08",
+        tags=("methodology", "split"),
+    ),
+    Decision(
+        id="reactive-draft-is-primary",
+        topic="drafting",
+        claim="**Reactive live-pick is the primary draft mode**, driven by a local "
+              "draft-room UI with one click per pick. Ranking-submission is the fallback.",
+        because="This resolves a contradiction the plan carried in two places — its "
+                "mechanics section concluded ranking-submission should lead and its "
+                "build-list said the opposite. Fewer, higher-conviction entries drafted "
+                "manually is the year's plan, which makes a real-time recommender the "
+                "deliverable. A local Streamlit page over the precomputed board needs no "
+                "external access and works at a 30-second clock; reading the DK page via "
+                "the browser extension is worth exploring for 8-hour slow drafts but is "
+                "explicitly not on the critical path. Ranking-submission still gets built, "
+                "because a fast clock can outrun a human and because the opponent model "
+                "needs DK's documented autodraft logic (queue → ranking → 8G/8F/3C caps) "
+                "regardless.",
+        status="settled",
+        reproduce="make adp-draftkings → "
+                  "data/raw/dk_draft_rankings/DkPreDraftRankings_July28_2026.csv, "
+                  "data/features/adp_draftkings.parquet",
+        unblocks="dashboard/draft_room.py and src/sim/draft.py",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-08",
+        date="2026-08-08",
+        tags=("strategy", "product"),
+    ),
+    Decision(
+        id="select-on-p-advance-report-roi",
+        topic="drafting",
+        claim="The in-draft objective is **payout-weighted EV over the full bracket**, "
+              "but the sweep **selects on lift in P(top 2 of 12)** and reports ROI "
+              "alongside it.",
+        because="The two statistics are not equally measurable on the same simulation "
+                "budget. ROI is dominated by rare deep runs — `600k_shootaround` reaches "
+                "round 4 on 0.139% of entries — so its Monte Carlo error is enormous. "
+                "P(top 2 of 12) is a 16.67% event and resolves orders of magnitude "
+                "faster, and since surviving round 1 is exactly the condition for any "
+                "return at all, its lift over an ADP-drafted entry is a defensible "
+                "headline rather than a proxy. ROI is still reported, against the "
+                "break-even hurdle and with its interval. Simulating the whole bracket "
+                "also prices something scoring rounds independently cannot: the round-2 "
+                "to round-4 field is not an ADP field, it is the population that already "
+                "cleared a 2-of-12 cut, so an independent-field model would systematically "
+                "overstate continuation value.",
+        status="settled",
+        reproduce="make dashboard → dashboard/economics.py, "
+                  "data/raw/dk_best_ball_tournament_prize_structure.csv",
+        unblocks="src/sim/bracket.py and src/sim/strategy.py",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-08",
+        date="2026-08-08",
+        tags=("methodology", "strategy"),
+    ),
+    Decision(
+        id="dk-position-eligibility-from-rosters",
+        topic="drafting",
+        claim="DK position eligibility comes from `data/raw/team_rosters_*.csv`, whose "
+              "`POSITION` column carries DK-shaped dual eligibility for all 30 seasons "
+              "with **zero** nulls.",
+        because="Without it no lineup can be filled at all — the weekly slate is 2 G / 2 F "
+                "/ 1 C / 2 UTIL and a player's eligibility decides which of them he can "
+                "occupy. The column already encodes duals the way DK does (`G-F`, `F-C`, "
+                "`C-F`, `F-G`), and the two `data/raw/dk_draft_rankings/*.csv` boards "
+                "carry DK's *own* positions for 698 and 942 players, which is what the "
+                "NBA.com → DK mapping gets validated against rather than assumed. The "
+                "2026-27 rosters do carry nulls, for unsigned and two-way players, and "
+                "the DK board covers exactly those.",
+        status="measured",
+        reproduce="make fetch → data/raw/team_rosters_2023_24.csv, "
+                  "data/features/adp_dk_id_map.parquet",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-08",
+        date="2026-08-08",
+        tags=("joins", "rules"),
     ),
 )
