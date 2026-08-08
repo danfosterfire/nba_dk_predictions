@@ -79,8 +79,12 @@ to the relevant docs for the task at hand. The docs are:
 - Tests use plain `assert` with synthetic builders, no fixtures or classes (mirroring
   `tests/test_preprocess.py`).
 - **When a load-bearing decision is taken, reversed, or measured, add or update its entry in
-  `dashboard/decisions.py`** alongside the `CLAUDE.md` / plan-doc edit. The registry is what
+  `dashboard/decisions.py`** alongside a plan-doc edit (create a new document 
+  in /docs for new workflows). The registry is what
   the dashboard's decision log renders, and it carries `source` and `reviewed` so
   `make dashboard-audit` can flag entries whose source doc has moved since. Statuses come
   from a closed vocabulary — a reversal becomes `withdrawn` and keeps its entry rather than
   being deleted, because the reversals are the most useful thing on that page.
+- Do not update @CLAUDE.md or @README.md with detailed findings. Instead, update 
+  the relevant detailed plan doc in /docs, and include that document in the 
+  list of docs above.
