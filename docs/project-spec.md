@@ -112,9 +112,8 @@ docs/          eda-plan (season-level EDA spec), availability-plan (games played
                within-tenure chain, and why a plain full-window chain fails),
                adp-plan (market proxy, sourcing + where ADP belongs),
                predictions-plan, minutes-composition-plan, simulations-plan,
-               shot-attempt-basis-plan (Gate 0 of the fga x fg3a|fga
-               reparameterization — measured, adoption specified, NOT taken),
-               dk_best_ball_rules,
+               shot-attempt-basis-plan (the fga x fg3a|fga reparameterization —
+               measured, adopted 2026-08-03, shipped), dk_best_ball_rules,
                provenance-plan (every figure gets a make target — and the six
                corrections that fell out of building them), dashboard-plan
 ```
@@ -146,28 +145,39 @@ All `python`, `pip`, and `pytest` commands must be prefixed with the venv activa
 
 ## Train / validate / test split
 
-There are 30 seasons of data available for this project: From the 1996-1997 season 
-through the 2025-2026 season. The project objective is to develop a drafting 
-strategy before the beginning of the 2026-2027 season. Adopt a 
-train/validate/test split across these seasons:
+There are 30 seasons of data available for this project: from the 1996-97 season through
+the 2025-26 season. The project objective is to develop a drafting strategy before the
+beginning of the 2026-27 season.
 
-- Train: 1996 through 2022 seasons. Use for exploratory analysis, model selection, 
-and model fitting.
-- Validate: 2023 and 2024 seasons. Use to evaluate fitted models and compare 
-the efficacy of hyperparameters and model selection decisions. Train models on 
-the training dataset, and then make predictions based on the validation dataset,
-comparing the predictions against the observed values. Use the the actual 
-data from these seasons for backtesting drafting strategies, and use predictions 
-for these seasons to develop the drafting strategies.
-- Test: 2025 season. **Do not use at any point during data preparation, 
-evaluating modeling decisions/alternatives, model fitting, or evaluating
-simulated draft strategies. The test data should only be used for a final 
-end-of-project step testing the error rate of the entire workflow.**
-- Production: Once a pipeline is settled and all modeling decisions are complete, 
-use the entire 1996-2025 dataset to train production models, predict 2026 
-performance, and apply drafting rules for 2026-2027 contests.
+**The split is a temporal walk-forward by target season.** Every row is a season predicted
+from the season before it, so 30 data seasons give **29 target seasons**, and the split is
+a suffix of them:
 
-Detailed notes on the current status of this split are in 
+- **Train — target seasons 1997-98 → 2021-22.** Exploratory analysis, model selection, and
+  model fitting.
+- **Validate — 2022-23 and 2023-24.** The only split model selection may read. Fit on
+  train, predict validate, compare predictions against observed values, and settle
+  hyperparameter and specification choices here. Also the window for developing and
+  backtesting drafting strategies.
+- **Test — 2024-25 and 2025-26. Do not use at any point during data preparation,
+  evaluating modeling decisions/alternatives, model fitting, or evaluating simulated draft
+  strategies. Reserved for a final end-of-project measurement of the whole workflow.**
+- **Production.** Once the pipeline is settled and all modeling decisions are complete,
+  refit on all 30 seasons, predict 2026-27 performance, and apply the drafting rules to
+  2026-27 contests.
+
+`test_seasons: 2` in `configs/default.yaml` is the knob. The seasons themselves are derived
+by sorting the labels present and taking the last two — never hard-coded.
+
+**The split is enforced by the code, not by discipline.** `src/models/held_out.py` makes the
+test split a capability. `selection_split(design) -> (train, validation)` is what every
+sweep calls, and it never materializes the test rows at all. `final_split` is guarded and
+raises when read; `src/final_evaluation.py` (`make final-evaluation`) is the only thing that
+unlocks it, and it refits on train **plus** validation before scoring test once. Anything
+fitted from data — spline knots, imputation means, shrinkage constants, dispersion bin edges
+— is estimated on the fitting half alone.
+
+Detailed notes on the current status of this split are in
 ./docs/train-validate-test-split.md.
 
 ## The component targets — the model's output contract
@@ -182,15 +192,15 @@ enter only as **exposure** and **trials** — they contribute nothing to DK scor
 | `fga` | count — negative binomial | `min` |
 | `fg3a` \| `fga` | successes / trials — the three-point **share of attempts** | `fga` |
 | *`fg2a`* | **derived**, `fga − fg3a` — not a head | — |
-| `fta` | count, but **arrives in pairs** — model *trips* and double | `min` |
+| `fta` | count — negative binomial | `min` |
 | `fg2m` | successes / trials | `fg2a` |
 | `fg3m` | successes / trials | `fg3a` |
 | `ftm` | successes / trials | `fta` |
-| `reb` | count | `min` |
-| `ast` | count | `min` |
-| `stl` | count | `min` |
-| `blk` | count | `min` |
-| `tov` | count | `min` |
+| `reb` | count — negative binomial | `min` |
+| `ast` | count — negative binomial | `min` |
+| `stl` | count — negative binomial | `min` |
+| `blk` | count — negative binomial | `min` |
+| `tov` | count — negative binomial | `min` |
 
 **The shot-attempt basis is `fga` × `fg3a | fga`, adopted 2026-08-03 — seven counts and
 four conversions, still eleven heads.** A three-point attempt *substitutes* for a two, so

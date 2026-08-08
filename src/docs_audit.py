@@ -83,10 +83,20 @@ AVAIL = "docs/availability-plan.md"
 COMP = "docs/minutes-composition-plan.md"
 PRED = "docs/predictions-plan.md"
 ADP = "docs/adp-plan.md"
-CLAUDE = "CLAUDE.md"
 SHOT = "docs/shot-attempt-basis-plan.md"
 README = "README.md"
 GAMES = "docs/games-played-plan.md"
+
+# `CLAUDE.md` held the established-facts section until 2026-08-08, when it was split
+# across the five docs below and reduced to a router. Nothing claims `CLAUDE.md` now:
+# it carries no measurements, so there is nothing to drift. The figures did not move
+# as one block — the split was by subject — which is why `_established_facts` names a
+# destination per section rather than taking one doc for the whole builder.
+FACTS = "docs/facts-archive.md"            # measured facts, not to be re-derived
+NOTES = "docs/model-development-notes.md"  # findings from model selection and fitting
+QUIRKS = "docs/data-quirks.md"             # raw-data and library behaviour
+SPEC = "docs/project-spec.md"              # the spec every workflow reads
+SPLIT = "docs/train-validate-test-split.md"
 
 GP_GATE = "outputs/predictions/stan_games_played_gate.csv"
 GP_COLLAPSE = "outputs/predictions/stan_games_played_collapse.csv"
@@ -342,7 +352,7 @@ def serial(component: str, column: str, fit_window: str = "full") -> float:
     simulator on the seasons it is scored against. **The window has to be named here.**
     Without it `_one` takes `.iloc[0]`, i.e. whichever row sorts first, which is the same
     silent-ambiguity failure the composition PPC lookups were fixed for. The prose in
-    `CLAUDE.md` and `docs/` quotes the full-window figures, so that is the default; the
+    `docs/` quotes the full-window figures, so that is the default; the
     two windows differ by up to 0.002 on `lag1_excess`, which is inside most quoted
     precisions and therefore exactly the kind of wrong-row read that would not announce
     itself.
@@ -356,7 +366,7 @@ def resid(column: str, kind: str | None = None,
 
     Both ordered pairs are in the artifact, so a mean over off-diagonals is already
     symmetric-weighted. `kind` restricts to the seven counts, which is the population the
-    prose quotes — `CLAUDE.md` reports the all-eleven mean beside it and the two differ by
+    prose quotes — the notes report the all-eleven mean beside it and the two differ by
     nearly 2×, so the restriction is load-bearing rather than cosmetic.
     """
     frame = table(RESID)
@@ -1026,8 +1036,9 @@ LADDER_ROWS = [("gbm", "9.876", "14.20", "0.381", "0.070", "20.1"),
                ("league_age", "13.387", "18.74", "−0.057", "0.151", "29.7")]
 
 # The retired held-out ladder, listed per doc because each quotes a different slice of it:
-# the plan doc carries the whole table, `CLAUDE.md` the CRPS row plus the pre-block figures,
-# and `README.md` only the CRPS row. A union list would presence-check figures into docs
+# the plan doc carries the whole table, `docs/model-development-notes.md` the CRPS row plus
+# the pre-block figures, and `README.md` and `docs/train-validate-test-split.md` only the
+# CRPS row. A union list would presence-check figures into docs
 # that never had them, which reports a stale claim where nothing is stale.
 LADDER_HISTORICAL = ("10.795", "10.888", "10.896", "13.614", "15.39", "15.41", "18.94",
                      "0.283", "0.262", "0.275", "−0.084", "0.096", "0.079", "0.103",
@@ -1043,8 +1054,9 @@ def _availability_ladder_claims(doc: str, scope: str = "table",
                                 ) -> list[Claim]:
     """The availability model ladder and the paired interval that settles it.
 
-    Shared between `CLAUDE.md`, `README.md` and `docs/availability-plan.md` for the reason
-    `_season_total_claims` is: three docs quote one artifact, and a block going stale in one
+    Shared between `docs/model-development-notes.md`, `README.md`,
+    `docs/availability-plan.md` and `docs/train-validate-test-split.md` for the reason
+    `_season_total_claims` is: four docs quote one artifact, and a block going stale in one
     while staying current in another is the failure this file has already caught twice.
 
     The paired-bootstrap block is claimed at least as hard as the CRPS row, because the
@@ -1104,9 +1116,9 @@ def _availability_ladder_claims(doc: str, scope: str = "table",
     return C
 
 
-# `CLAUDE.md` quotes the CRPS row, the pre-block figures and the workload note; `README.md`
-# quotes only the CRPS row.
-LADDER_HISTORICAL_CLAUDE = ("10.795", "10.888", "10.896", "13.614", "10.914", "10.98",
+# The notes quote the CRPS row, the pre-block figures and the workload note; `README.md`
+# and `docs/train-validate-test-split.md` quote only the CRPS row.
+LADDER_HISTORICAL_NOTES = ("10.795", "10.888", "10.896", "13.614", "10.914", "10.98",
                             "11.04", "−0.152", "10,361", "911", "0.268")
 LADDER_HISTORICAL_README = ("10.795", "10.888", "10.896", "13.614")
 
@@ -1150,7 +1162,7 @@ def _workload_ablation_claims(doc: str, gain: bool = True) -> list[Claim]:
 def _season_total_claims(doc: str, rotation: bool = True) -> list[Claim]:
     """The season-total ladder, claimed from whichever doc quotes it.
 
-    Shared for the reason `_regime_claims` is: `CLAUDE.md` and
+    Shared for the reason `_regime_claims` is: `docs/model-development-notes.md` and
     `docs/availability-plan.md` carry the same table against the same artifact, and the
     one failure this repo has already shipped twice is a block going stale in one doc
     while staying current in the other.
@@ -1211,7 +1223,7 @@ def _minutes_pre_lock_claims(doc: str, keep: tuple[str, ...] | None = None
                              ) -> list[Claim]:
     """The retired minutes column, presence-checked from whichever doc still quotes it.
 
-    Shared for the reason `_season_total_claims` is: `CLAUDE.md` and
+    Shared for the reason `_season_total_claims` is: `docs/model-development-notes.md` and
     `docs/availability-plan.md` carry the same block, `docs/predictions-plan.md` quotes a
     subset, and one of them going stale while the others stay current is the failure this
     module has already caught twice. `keep` narrows the set for a doc that only quotes part
@@ -1226,7 +1238,7 @@ def _minutes_pre_lock_claims(doc: str, keep: tuple[str, ...] | None = None
 def _regime_claims(doc: str) -> list[Claim]:
     """The two regime confounds, tested rather than flagged.
 
-    Shared by `docs/availability-plan.md` and `CLAUDE.md` against the one artifact. The
+    Shared by `docs/availability-plan.md` and the notes against the one artifact. The
     Participation Policy arm is the one that matters: it is the era finding arriving as a
     dated policy step, from a different estimator than the era table.
     """
@@ -1286,9 +1298,10 @@ def _carry_bias_claims(doc: str,
                        retired: tuple[str, ...] | None = None) -> list[Claim]:
     """The no-fit floor's season bias, and the lag test that explains it.
 
-    Shared by `docs/predictions-plan.md` and `CLAUDE.md` against the one artifact, for the
-    reason this file keeps re-learning: the same block current in one doc and stale in the
-    other is the failure that has already happened twice here. `CLAUDE.md` carries only the
+    Shared by `docs/predictions-plan.md` and `docs/facts-archive.md` against the one
+    artifact, for the reason this file keeps re-learning: the same block current in one doc
+    and stale in the other is the failure that has already happened twice here. The archive
+    carries only the
     two components it names, so `components` narrows the cell claims and `retired` narrows
     the superseded ones, while the lag test — which both docs quote in full — is claimed
     either way.
@@ -1685,8 +1698,9 @@ def _predictions() -> list[Claim]:
             f"serial {comp} block inflation")
     add("592,796", SERIAL, lambda: max_of(SERIAL, "n_pairs") + 9052,
         "serial-correlation player-games")
-    # The pre-refresh cells, preserved in the ⚠️ note beside the table. `CLAUDE.md` had
-    # already been refreshed and this table had not, which is the drift the audit found.
+    # The pre-refresh cells, preserved in the ⚠️ note beside the table. The established-facts
+    # section had already been refreshed and this table had not, which is the drift the
+    # audit found.
     for comp, column, old in [("min", "lag1_excess", "+0.297"),
                               ("min", "lag1_null", "−0.017"),
                               ("fg3a", "lag1", "0.061"),
@@ -2019,8 +2033,8 @@ def _predictions() -> list[Claim]:
         "monotone step gain")
 
     # ── the season-term ablation ──────────────────────────────────────────────
-    # The full block. `CLAUDE.md` carries a summary of the same verdict and claims the
-    # overlapping figures against the SAME artifact — deliberately, because a block going
+    # The full block. `docs/facts-archive.md` carries a summary of the same verdict and
+    # claims the overlapping figures against the SAME artifact — deliberately, because a block going
     # stale in one doc while current in the other is this repo's recorded failure mode and
     # it has already happened twice.
     C += _season_term_claims(PRED)
@@ -2060,9 +2074,9 @@ def _term_margin(head: str) -> float:
 
 
 def _season_term_summary_claims(doc: str) -> list[Claim]:
-    """The subset of the verdict `CLAUDE.md` quotes, against the same artifact.
+    """The subset of the verdict `docs/facts-archive.md` quotes, against the same artifact.
 
-    A subset rather than the whole block because `CLAUDE.md` is a summary and does not
+    A subset rather than the whole block because the archive is a summary and does not
     carry every cell — forcing it to would make the two docs the same document. What it
     does carry is claimed here, so the two cannot drift apart on the figures they share.
     """
@@ -2509,17 +2523,29 @@ def _dk_no_prior_adp_share() -> float:
     return float((~now.isin(prior)).mean())
 
 
-def _claude() -> list[Claim]:
-    """`CLAUDE.md`'s established-facts section — the source of truth the plan docs defer to.
+def _established_facts() -> list[Claim]:
+    """The established-facts section — the source of truth the plan docs defer to.
+
+    It lived in `CLAUDE.md` until 2026-08-08 and now lives across `docs/`, split by
+    subject rather than moved as one block. So this is the one builder that is not
+    one-doc-one-function: `into(...)` names the destination for the section that
+    follows, and `add(..., doc=X)` overrides it for the individual figures that landed
+    somewhere other than the rest of their section.
 
     Only the *figures* are claimed. The project-layout, pipeline, conventions and dashboard
-    sections carry no measurements and need none, which is why this doc's coverage
-    denominator is smaller than its length suggests.
+    sections carry no measurements and need none, which is why these docs' coverage
+    denominators are smaller than their length suggests.
     """
     C: list[Claim] = []
+    here = FACTS
 
-    def add(quoted, artifact, actual, label, **kw):
-        C.append(_c(quoted, artifact, actual, label, doc=CLAUDE, **kw))
+    def into(doc: str) -> None:
+        """Set the destination for the claims that follow, until the next `into`."""
+        nonlocal here
+        here = doc
+
+    def add(quoted, artifact, actual, label, doc=None, **kw):
+        C.append(_c(quoted, artifact, actual, label, doc=doc or here, **kw))
 
     def context(feature: str, column: str) -> float:
         return _one(table(CONTEXT_A), column, feature=feature)
@@ -2541,6 +2567,7 @@ def _claude() -> list[Claim]:
                     season_type="regular")
 
     # ── the variance budget ───────────────────────────────────────────────────
+    into(FACTS)
     add("57.96%", VARIANCE, lambda: budget("player_season_identity"),
         "player-season identity share")
     add("46.40%", VARIANCE, lambda: budget("own_minutes"), "own minutes share")
@@ -2580,24 +2607,27 @@ def _claude() -> list[Claim]:
             lambda n=null: budget("opponent_x_archetype_x_season_above_null",
                                   null_construction=n),
             f"interaction above {null}")
+        # The ceilings and the two cell-importance figures below went to the notes
+        # rather than to the archive with the rest of the budget.
         add(ceiling, VARIANCE,
             lambda n=null: budget(
                 "opponent_x_archetype_x_season_above_null_variance_ceiling",
                 null_construction=n),
-            f"variance ceiling, {null}")
+            f"variance ceiling, {null}", doc=NOTES)
         add(gap, VARIANCE,
             lambda n=null: budget("null_reproduction_gap", null_construction=n) * 100,
             f"reproduction gap, {null}")
     add("0.9619%", VARIANCE,
         lambda: budget("opponent_x_archetype_x_season_above_null",
                        null_construction="shuffle_opponent_within_season"),
-        "cell_importance, shuffle opponent")
+        "cell_importance, shuffle opponent", doc=NOTES)
     add("0.3080%", VARIANCE,
         lambda: budget("opponent_x_archetype_x_season_above_null",
                        null_construction="shuffle_archetype_within_season"),
-        "cell_importance, shuffle archetype")
+        "cell_importance, shuffle archetype", doc=NOTES)
 
     # ── playoff scope and workload ────────────────────────────────────────────
+    into(NOTES)
     add("5,762", PROFILE,
         lambda: prof("playoff_scope", "all", "n_with_playoff_appearance"),
         "playoff-scope population")
@@ -2621,6 +2651,7 @@ def _claude() -> list[Claim]:
         "starters playing more")
 
     # ── game length and feasibility ───────────────────────────────────────────
+    into(SPEC)
     add("731,906", GAME_LEN, lambda: glen("player_games"), "feasibility population")
     add("100.0%", GAME_LEN, lambda: glen("join_coverage"), "feasibility coverage")
     add("1.0000", GAME_LEN, lambda: glen("max_min_over_length"), "max minutes ratio")
@@ -2637,6 +2668,7 @@ def _claude() -> list[Claim]:
         "overtime rate")
 
     # ── cross-component cancellation ──────────────────────────────────────────
+    into(FACTS)
     for feature, gross, net, ratio in [
             ("teammate_assist_supply", "2.106", "−0.254", "8.30"),
             ("role_crowding", None, None, "8.22"),
@@ -2683,6 +2715,7 @@ def _claude() -> list[Claim]:
         "team_pace vs dk_pts")
 
     # ── roster coverage ───────────────────────────────────────────────────────
+    into(FACTS)
     add("14.7%", ROSTER_A, lambda: roster("undescribed"),
         "roster minutes undescribed")
     add("8.7%", ROSTER_A, lambda: roster("rookie"), "rookie minutes")
@@ -2706,8 +2739,9 @@ def _claude() -> list[Claim]:
         "inclusive matrix rows")
 
     # ── persistence ───────────────────────────────────────────────────────────
+    into(NOTES)
     # `persistence.csv` keys on the prefixed column name, not the bare stat, because
-    # `blk` exists in four families — the same reason `CLAUDE.md` warns that
+    # `blk` exists in four families — the same reason the notes warn that
     # `adv_def_rating == def_def_rating`.
     persistence = [("bas_fg3a", "0.908"), ("bas_fga", "0.862"), ("bas_fta", "0.854"),
                    ("bas_fg3_pct", "0.500"), ("bas_fg_pct", "0.435"),
@@ -2721,9 +2755,13 @@ def _claude() -> list[Claim]:
                    ("adv_ast_pct", "0.845"), ("adv_usg_pct", "0.786"),
                    ("adv_def_rating", "0.116"), ("adv_net_rating", "0.180"),
                    ("adv_off_rating", "0.285")]
+    # Three of these rows are quoted in the archive's share-vs-conversion fact rather
+    # than in the notes' persistence table, so they are claimed from there.
+    persist_in_facts = {"bas_fga", "bas_fg_pct", "adv_ts_pct"}
     for feature, quoted in persistence:
         add(quoted, PERSIST, lambda f=feature: persist(f),
-            f"persistence {feature}")
+            f"persistence {feature}",
+            doc=FACTS if feature in persist_in_facts else NOTES)
     for feature, quoted in [("bas_stl", "0.401"), ("bas_tov", "0.456"),
                             ("bas_blk", "0.626"), ("bas_plus_minus", "0.154")]:
         add(quoted, PERSIST,
@@ -2741,6 +2779,7 @@ def _claude() -> list[Claim]:
     add("0.212", PERSIST, lambda: persist("adv_e_pace"), "e_pace within-season")
 
     # ── availability ──────────────────────────────────────────────────────────
+    into(NOTES)
     add("0.317", PROFILE, lambda: prof("persistence", "gp_share", "r_within_weighted"),
         "games-played persistence")
     add("22.7", PROFILE,
@@ -2768,13 +2807,14 @@ def _claude() -> list[Claim]:
     add("0.159", PROFILE,
         lambda: prof("predictor_r2", "prior_mpg", "r2_in_sample_unweighted"),
         "prior MPG ceiling")
-    C += _availability_ladder_claims(CLAUDE, scope="summary",
-                                     historical=LADDER_HISTORICAL_CLAUDE)
+    C += _availability_ladder_claims(NOTES, scope="summary",
+                                     historical=LADDER_HISTORICAL_NOTES)
     add("0.374", METRICS, lambda: metric(METRICS, "beta_binomial", "r2_gp_share"),
         "validation R2 of the shipped head")
 
     # ── the season total ──────────────────────────────────────────────────────
-    C += _season_total_claims(CLAUDE)
+    into(NOTES)
+    C += _season_total_claims(NOTES)
     add("210.3", SEASON_TOTAL,
         lambda: (treatment("full_season", "mae_dk_total")
                  - treatment("beta_binomial", "mae_dk_total")),
@@ -2790,6 +2830,7 @@ def _claude() -> list[Claim]:
         add(quoted, ABLATION, lambda: float("nan"), label, historical=True)
 
     # ── the component rate heads (Poisson / sklearn) ──────────────────────────
+    into(NOTES)
     # `fg2a` and `fg3a` are RETIRED count heads (shot-attempt basis, 2026-08-03) and their
     # rows are gone from the artifact; `fga` replaces both. The retired rows stay in the
     # doc beside the new one, value-exempt, because the table is the record of what the
@@ -2836,27 +2877,32 @@ def _claude() -> list[Claim]:
     for quoted in ("3.1021", "3.0822"):
         add(quoted, RATES, lambda: float("nan"),
             f"pre-lock held-out ftm|fta NLL: {quoted}", historical=True)
-    for alpha, quoted in [(1e-8, "0.9181"), (0.01, "0.9267"), (1.0, "0.6619")]:
+    # The alpha-sensitivity block is the `sklearn` regularization quirk, so it went to
+    # `data-quirks.md`; only the unpenalized reference figure stayed with the notes.
+    for alpha, quoted, where in [(1e-8, "0.9181", NOTES), (0.01, "0.9267", QUIRKS),
+                                 (1.0, "0.6619", QUIRKS)]:
         add(quoted, RATES,
             lambda a=alpha: _one(table(RATES), "r2", analysis="alpha_sensitivity",
                                  head="reb", variant="linear", alpha=a),
-            f"reb alpha sensitivity at {alpha}")
+            f"reb alpha sensitivity at {alpha}", doc=where)
     for quoted in ("0.9322", "0.6620"):
         add(quoted, RATES, lambda: float("nan"),
-            f"pre-lock held-out reb alpha figure: {quoted}", historical=True)
+            f"pre-lock held-out reb alpha figure: {quoted}", historical=True,
+            doc=QUIRKS)
     add("14", RATES,
         lambda: float((~table(RATES)[
             (table(RATES)["analysis"] == "alpha_sensitivity")
             & (table(RATES)["alpha"] == 10.0)]["beats_floor"]).sum()),
         "fits below the floor at alpha=10")
     add("0.200", RATES, lambda: _alpha_loss("linear"),
-        "median alpha=1.0 loss, linear")
+        "median alpha=1.0 loss, linear", doc=QUIRKS)
     add("0.305", RATES, lambda: _alpha_loss("log_own"),
         "median alpha=1.0 loss, log_own")
     add("0.497", RATES, lambda: _alpha_loss("log_own", head="blk"),
-        "worst alpha=1.0 loss")
+        "worst alpha=1.0 loss", doc=QUIRKS)
 
     # ── the Stan heads ────────────────────────────────────────────────────────
+    into(NOTES)
     # `fg2a` / `fg3a` are RETIRED count heads (shot-attempt basis, 2026-08-04) and their
     # rows are gone from the artifact; `fga` replaces both. They stay in the doc's table as
     # the record of the retired basis, value-exempt but presence-checked.
@@ -2959,7 +3005,7 @@ def _claude() -> list[Claim]:
     # Gate 0's. `10.797` was deliberately NOT re-pointed: the string survives elsewhere in
     # this doc as an unrelated availability CRPS, so a presence check on it would pass for
     # the wrong reason — the exact false-negative `check_presence` exists to avoid.
-    # Gate 0 is validation-only since the 2026-08-06 re-run. `CLAUDE.md` carries the summary
+    # Gate 0 is validation-only since the 2026-08-06 re-run. The notes carry the summary
     # and `docs/shot-attempt-basis-plan.md` carries the full retired test block, so the two
     # test figures kept here are the two the summary sentence actually names — the margin the
     # adoption was decided on and the best-of-16 it was checked against. Both presence-only.
@@ -3137,7 +3183,7 @@ def _claude() -> list[Claim]:
     add("171", STAN_MIN_G,
         lambda: cell(STAN_MIN_G, "wall_clock_s", label="linear/val"),
         "linear wall clock")
-    C += _minutes_pre_lock_claims(CLAUDE)
+    C += _minutes_pre_lock_claims(NOTES)
 
     # the composition, at full window (Gate E, 2026-08-04). `independent_comparator` never
     # trains on the composition window and scores identical rows, so it is invariant and is
@@ -3224,7 +3270,7 @@ def _claude() -> list[Claim]:
         lambda: (cell(COMP_RHO, "rho", variant="betabinom_ot_graded", bin=1)
                  / cell(COMP_RHO, "rho", variant="betabinom_ot_graded", bin=4)),
         "composition graded rho spread")
-    # The retired test / two-pass figures CLAUDE.md keeps beside their replacements. The
+    # The retired test / two-pass figures the notes keep beside their replacements. The
     # full retired block lives in `docs/minutes-composition-plan.md`; this is the subset
     # the summary quotes, claimed from here so it cannot go stale in one doc only.
     for quoted, label in [("4.5592", "retired test CRPS, selected"),
@@ -3256,6 +3302,7 @@ def _claude() -> list[Claim]:
         "OT tail predicted 1OT")
 
     # ── serial and residual correlation ───────────────────────────────────────
+    into(NOTES)
     for comp, excess, block in [("min", "+0.294", "2.43"),
                                 ("fg3a|fga", "+0.101", "1.57"),
                                 ("fga", "+0.061", "1.38"), ("ftm|fta", "+0.012",
@@ -3299,6 +3346,7 @@ def _claude() -> list[Claim]:
             f"superseded residual {label} (2021-22 onward)", historical=True)
 
     # ── report calibration ────────────────────────────────────────────────────
+    into(NOTES)
     add("12,338", REPORT_CAL, lambda: cal("all", "scored_rows", "coverage"),
         "report rows scored")
     add("12,007", REPORT_CAL, lambda: cal("all", "scored_rows", "coverage"),
@@ -3362,6 +3410,7 @@ def _claude() -> list[Claim]:
         "Out|Trade Pending absent")
 
     # ── bonus calibration ─────────────────────────────────────────────────────
+    into(FACTS)
     add("22.7%", BONUS,
         lambda: -bonus("player_season", 0.0, "relative_bias"),
         "independent sampling reads low")
@@ -3383,6 +3432,7 @@ def _claude() -> list[Claim]:
         "realized bonus")
 
     # ── aging ─────────────────────────────────────────────────────────────────
+    into(NOTES)
     for metric_name, age, quoted in [("dk_linear_per36", 26, "1.041"),
                                      ("dk_linear_per36", 34, "0.895"),
                                      ("minutes_per_game", 27, "1.111"),
@@ -3394,6 +3444,7 @@ def _claude() -> list[Claim]:
             f"aging {metric_name} at {age}")
 
     # ── target profile ────────────────────────────────────────────────────────
+    into(NOTES)
     def decomp(bucket: str, column: str) -> float:
         return _one(table(TARGET), column, analysis="season_total_decomposition",
                     bucket_kind="log_factor", bucket=bucket)
@@ -3410,6 +3461,7 @@ def _claude() -> list[Claim]:
         "decomposition population")
 
     # ── the absence-reason decomposition ──────────────────────────────────────
+    into(NOTES)
     add("7,673", PROFILE, lambda: prof("decomposition", "coverage", "usable_pairs"),
         "usable season pairs")
     add("0.696", PROFILE,
@@ -3440,6 +3492,7 @@ def _claude() -> list[Claim]:
         "missed_games incremental")
 
     # ── the serial availability structure ─────────────────────────────────────
+    into(NOTES)
     ap = "appearance"
     add("942,597", PROFILE,
         lambda: prof_n("serial_structure", "transition", "p_play_given_played", ap),
@@ -3470,7 +3523,7 @@ def _claude() -> list[Claim]:
         lambda: prof("serial_structure", "spell_shape", "mean_spell_observed", ap),
         "mean spell")
 
-    # The matched frame, claimed from CLAUDE.md as well as from the plan doc against the
+    # The matched frame, claimed from the notes as well as from the plan doc against the
     # one artifact — this exact block has already gone stale in one doc while current in
     # another, twice, which is why both sides are pinned.
     add("0.9443", PROFILE,
@@ -3505,6 +3558,7 @@ def _claude() -> list[Claim]:
         "stacking overshoot")
 
     # ── the nonlinearity ablations ────────────────────────────────────────────
+    into(NOTES)
     # Validation-only since 2026-08-08. Every val figure reproduced to five decimals on the
     # move, because `selection_split` returns exactly the frames this ablation's own inner
     # split used to carve — a determinism check, not a replication.
@@ -3544,9 +3598,10 @@ def _claude() -> list[Claim]:
             f"pre-lock held-out MPG probe: {quoted}", historical=True)
 
     # ── the workload ablation ─────────────────────────────────────────────────
-    C += _workload_ablation_claims(CLAUDE)
+    C += _workload_ablation_claims(NOTES)
 
     # ── the season total, derived ─────────────────────────────────────────────
+    into(NOTES)
     add("287.3", SEASON_TOTAL, lambda: treatment("beta_binomial", "crps_dk_total"),
         "head season-total CRPS")
     add("329.1", SEASON_TOTAL, lambda: treatment("league_age", "crps_dk_total"),
@@ -3585,6 +3640,7 @@ def _claude() -> list[Claim]:
             f"pre-lock held-out season total: {quoted}", historical=True)
 
     # ── target dispersion and the first-k ladder ──────────────────────────────
+    into(NOTES)
     def dist(metric_name: str, bucket: str, column: str,
              kind: str = "minutes") -> float:
         return _one(table(TARGET), column, analysis="distribution",
@@ -3612,6 +3668,7 @@ def _claude() -> list[Claim]:
             f"first-{k} season-total MAE")
 
     # ── aging by component and the cross-sectional trap ───────────────────────
+    into(NOTES)
     for metric_name, quoted in [("reb_per36", "0.977"), ("blk_per36", "1.011"),
                                 ("stl_per36", "0.962"), ("pts_per36", "0.844"),
                                 ("ast_per36", "0.867"), ("fg3m_per36", "0.872")]:
@@ -3625,7 +3682,8 @@ def _claude() -> list[Claim]:
             f"cross-sectional mean at {age}")
 
     # ── the opponent cancellation family ──────────────────────────────────────
-    # Only the shipped construction is on disk. The other three ratios CLAUDE.md quotes
+    into(FACTS)
+    # Only the shipped construction is on disk. The other three ratios the archive quotes
     # (2.01x raw per-season sd, 2.11x pooled, 1.84x ridge) were measured once and are
     # listed in `docs/provenance-plan.md` as prose-only.
     for quoted, label in [("1.105", "gross"), ("0.785", "net"), ("1.41", "ratio")]:
@@ -3633,13 +3691,16 @@ def _claude() -> list[Claim]:
             f"superseded opponent {label}", historical=True)
 
     # ── the ADP match audit ───────────────────────────────────────────────────
+    into(FACTS)
     def audit(metric_name: str, rule: str = "cascade") -> float:
         return _one(table(ADP_AUDIT), "value", section="summary", rule=rule,
                     metric=metric_name)
 
-    add("3,591", ADP_AUDIT, lambda: audit("rows_audited"), "rows audited")
+    # The two headline rates are quoted in the notes' name-matching block; the rule
+    # comparison below stayed with the archive.
+    add("3,591", ADP_AUDIT, lambda: audit("rows_audited"), "rows audited", doc=NOTES)
     add("0.50%", ADP_AUDIT, lambda: audit("unmatched_rate_cascade"),
-        "cascade unmatched rate")
+        "cascade unmatched rate", doc=NOTES)
     add("0.00%", ADP_AUDIT,
         lambda: audit("unmatched_rate_surname_initial", "surname_initial"),
         "rejected rule's unmatched rate")
@@ -3648,13 +3709,13 @@ def _claude() -> list[Claim]:
     # The season-term verdict, claimed against the SAME artifact `docs/predictions-plan.md`
     # claims it from. Both, deliberately: this file's copy of a block going stale while the
     # plan doc's stayed current is the exact failure that has already happened twice here.
-    C += _season_term_summary_claims(CLAUDE)
+    C += _season_term_summary_claims(FACTS)
 
     # Same arrangement for the carry-forward bias, restricted to the two components this
     # file names. It was the plan doc's alone until 2026-08-08, which is precisely the
     # unguarded shape described above — the block lived in both docs and only one was
     # checked.
-    C += _carry_bias_claims(CLAUDE, components=("fta", "blk"),
+    C += _carry_bias_claims(FACTS, components=("fta", "blk"),
                             retired=("−7.0%", "−10.7%", "+6.2%", "−0.865"))
 
     # The regime block, restricted to what this file's summary quotes — the availability
@@ -3738,7 +3799,7 @@ def _break_even_hurdle(tournament: str) -> float:
 def _readme() -> list[Claim]:
     """`README.md` — the project overview, in scientific-paper form.
 
-    Its figures are a **selection** from `CLAUDE.md` and the plan docs rather than new
+    Its figures are a **selection** from the established facts and the plan docs rather than new
     measurements, and that is precisely why it needs claiming. A headline copied once
     into an overview and never refreshed is the exact failure this module was built for,
     and the README is the most-read and least-maintained document in the repo — the two
@@ -3760,8 +3821,8 @@ def _readme() -> list[Claim]:
 
     Three figures are deliberately left unclaimed because no artifact holds them: the
     whole-block team-context delta R2 (`+0.0086`), mid-season churn (`13.6%`), and the
-    approximate skill split (`~90%`). They are unclaimed in `CLAUDE.md` for the same
-    reason, and coverage reports them rather than hiding them.
+    approximate skill split (`~90%`). They are unclaimed in the established facts for the
+    same reason, and coverage reports them rather than hiding them.
     """
     C: list[Claim] = []
 
@@ -3902,7 +3963,7 @@ def _readme() -> list[Claim]:
         "fg3a under a linear predictor", historical=True)
     # Rounded to 3dp here on purpose — this is the overview, and `implied_tolerance`
     # handles the rounding. The 3dp form is what makes the README's copy independently
-    # checkable rather than a transcription of CLAUDE.md's 4dp table.
+    # checkable rather than a transcription of the notes' 4dp table.
     add("0.673", STAN_C_M, lambda: stan_c("blk", "log_own", "val_r2"),
         "blk log_own R2, 3dp")
     add("0.831", STAN_C_M, lambda: stan_c("blk", "log_own_spline", "val_r2"),
@@ -4596,19 +4657,19 @@ def _games_played() -> list[Claim]:
     return C
 
 
-def _games_played_in_claude() -> list[Claim]:
-    """The games-played block as `CLAUDE.md` quotes it, against the same artifacts.
+def _games_played_in_notes() -> list[Claim]:
+    """The games-played block as `docs/model-development-notes.md` quotes it.
 
     A block quoted in two docs is claimed from both, because "current in one doc and stale
-    in the other" is the failure that has already happened twice here. `CLAUDE.md` carries a
+    in the other" is the failure that has already happened twice here. The notes carry a
     summary and `docs/games-played-plan.md` the full version, so this claims the subset the
     summary quotes rather than forcing it to carry every cell.
     """
     C: list[Claim] = []
 
     def add(quoted: str, artifact: str, actual: Callable[[], float],
-            label: str) -> None:
-        C.append(_c(quoted, artifact, actual, label, doc=CLAUDE))
+            label: str, doc: str = NOTES) -> None:
+        C.append(_c(quoted, artifact, actual, label, doc=doc))
 
     add("+5.29", GP_GATE, lambda: gp_gate_z("full_window_chain"),
         "plain chain z on the left tail")
@@ -4675,6 +4736,29 @@ def _games_played_in_claude() -> list[Claim]:
     return C
 
 
+def _train_validate_test() -> list[Claim]:
+    """`docs/train-validate-test-split.md` — the split discipline and what it reversed.
+
+    This doc quotes the availability ladder as the record of the reversal that motivated
+    the lock, so the block is claimed here as well as from the notes: "current in one doc
+    and stale in the other" is the failure this file exists to catch, and a reversal
+    narrative going stale is the worst version of it.
+
+    Its remaining figures are deliberately unclaimed. The sampler-cost measurements
+    (7.35 h against 9.78 h, 9,358 s against 9,615 s) were taken once during the
+    conversion and have no artifact to re-derive them from, and the reversal margins it
+    cites in passing are claimed from the docs that own those blocks.
+    """
+    C: list[Claim] = _availability_ladder_claims(
+        SPLIT, scope="headline",
+        historical=("10.795", "10.888", "10.896", "13.614"))
+    C.append(_c("−0.771", STAN_C_S,
+                lambda: cell(STAN_C_S, "reparam_minus_canonical", split="val",
+                             arm="two_counts"),
+                "substitution margin held across the chain-length change", doc=SPLIT))
+    return C
+
+
 def _tail_standard_error(metric: str) -> float:
     """`sqrt(p(1-p)/n)` on the rotation subpopulation — how well the Gate D *target* is
     known. Comparable in size to the differences between candidates, which is why the doc
@@ -4689,10 +4773,14 @@ def _tail_standard_error(metric: str) -> float:
 
 def _build() -> tuple[Claim, ...]:
     """Every claim, in doc order. One builder per doc — the registry is long enough that
-    a single function made it hard to see which doc a section belonged to."""
+    a single function made it hard to see which doc a section belonged to.
+
+    `_established_facts` is the one exception: the section it claims was split across five
+    docs by subject in the 2026-08-08 reorganization, so it names a destination per section
+    rather than taking one for the whole builder."""
     return tuple(_availability() + _composition() + _predictions() + _adp()
-                 + _claude() + _readme() + _shot_basis() + _games_played()
-                 + _games_played_in_claude())
+                 + _established_facts() + _readme() + _shot_basis() + _games_played()
+                 + _games_played_in_notes() + _train_validate_test())
 
 
 CLAIMS: tuple[Claim, ...] = _build()

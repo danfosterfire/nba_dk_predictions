@@ -48,27 +48,37 @@ twelve quantities and is never predicted directly.** Attempts and minutes enter 
 | Component | Distribution | Exposure / trials |
 |---|---|---|
 | `min` (given availability) | successes / trials | trials = **game length**: 48, or 53/58/… in OT. *Not* a count — it is bounded, and the bound is a random variable. |
-| `fg2a` | count — Poisson or NB | `min` |
-| `fg3a` | count — Poisson or NB | `min` |
-| `fta` | count, but **arrives in pairs** — model *trips* and double | `min` |
+| `fga` | count — negative binomial | `min` |
+| `fg3a` \| `fga` | successes / trials — the three-point **share of attempts** | `fga` |
+| *`fg2a`* | **derived**, `fga − fg3a` — not a head | — |
+| `fta` | count — negative binomial | `min` |
 | `fg2m` | successes / trials | `fg2a` |
 | `fg3m` | successes / trials | `fg3a` |
 | `ftm` | successes / trials | `fta` |
-| `reb` | count | `min` |
-| `ast` | count | `min` |
-| `stl` | count | `min` |
-| `blk` | count | `min` |
-| `tov` | count | `min` |
+| `reb` | count — negative binomial | `min` |
+| `ast` | count — negative binomial | `min` |
+| `stl` | count — negative binomial | `min` |
+| `blk` | count — negative binomial | `min` |
+| `tov` | count — negative binomial | `min` |
+
+**The shot-attempt basis is `fga` × `fg3a | fga`** — seven negative-binomial counts and four
+beta-binomial conversions, eleven heads. A three-point attempt *substitutes* for a two, so
+total attempts are the count and the three-point mix is a share of them; `fg2a` becomes
+derived, exactly as `pts` already is, and is still the trials for `fg2m | fg2a`. **The draw
+order is therefore `fga → fg3a | fga → fg2a = fga − fg3a → makes`** — a conversion head's own
+draw becomes a later head's trials. `season_terms._draw_components` materializes it; nothing
+else may reorder it. The measurement that settled this is below; the full argument is in
+`docs/shot-attempt-basis-plan.md`.
 
 Availability sits **upstream** of all twelve — it gates whether the player-game exists at all
 (`docs/availability-plan.md`), and `min` is drawn conditional on it.
 
 Reassembly is exact: `pts = 2·fg2m + 3·fg3m + ftm`, then `preprocess.compute_dk_pts` with
 `fg3m`, `reb`, `ast`, `stl`, `blk`, `tov`. Only **eight** components reach the scoring
-function — `fg2m`, `fg3m`, `ftm`, `reb`, `ast`, `stl`, `blk`, `tov`. `min` and the three
-attempt counts matter solely through the exposure and trials they supply to those eight, and
-`fg2a`/`fg2m` must be derived (`fga - fg3a`, `fgm - fg3m`) because the stored `FGA`/`FGM`
-*include* threes.
+function — `fg2m`, `fg3m`, `ftm`, `reb`, `ast`, `stl`, `blk`, `tov`. `min` and the attempt
+counts matter solely through the exposure and trials they supply to those eight. When the
+targets are built from the raw logs, `fg2a`/`fg2m` must be computed by subtraction
+(`fga - fg3a`, `fgm - fg3m`) because the stored `FGA`/`FGM` *include* threes.
 
 The double-double / triple-double bonus is a simultaneous threshold on
 `pts`/`reb`/`ast`/`stl`/`blk`, so **the deliverable is a joint draw, not twelve marginals** —

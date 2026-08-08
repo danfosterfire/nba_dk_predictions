@@ -229,11 +229,24 @@ def test_every_audited_doc_has_its_own_builder():
     """The registry is split per doc so a section's claims stay findable."""
     for build, doc in [(A._availability, A.AVAIL), (A._composition, A.COMP),
                        (A._predictions, A.PRED), (A._adp, A.ADP),
-                       (A._claude, A.CLAUDE), (A._readme, A.README),
-                       (A._shot_basis, A.SHOT)]:
+                       (A._readme, A.README), (A._shot_basis, A.SHOT),
+                       (A._train_validate_test, A.SPLIT)]:
         claims = build()
         assert claims, doc
         assert {c.doc for c in claims} == {doc}, doc
+
+
+def test_the_established_facts_builder_spans_exactly_its_declared_docs():
+    """The one builder that is not one-doc-one-function, because the section it claims
+    was split across `docs/` by subject rather than moved as a block.
+
+    Pinning the exact set is what makes the `into(...)` markers safe: a mistyped
+    destination, or a claim leaking into a doc that never quoted it, shows up here rather
+    than as a stale claim nobody reads. It also fails if a future split adds a
+    destination without anyone deciding to."""
+    docs = {c.doc for c in A._established_facts()}
+    assert docs == {A.FACTS, A.NOTES, A.QUIRKS, A.SPEC}, sorted(docs)
+    assert "CLAUDE.md" not in {c.doc for c in A.CLAIMS}
 
 
 def test_the_readme_claims_every_section_that_quotes_a_figure():

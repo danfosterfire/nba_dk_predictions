@@ -12,25 +12,37 @@ test. Missing artifacts are *skipped*, so a fresh checkout without `make eda` is
 It guards the artifact→prose direction tightly and the prose→artifact direction loosely;
 see the module docstring for exactly what it cannot catch.
 
-**It covers eight docs — `README.md`, `availability-plan`, `minutes-composition-plan`,
-`predictions-plan`, `games-played-plan`, `shot-attempt-basis-plan`, `adp-plan` and
-`CLAUDE.md` — with 2,230 claims and one builder per doc.**
-Coverage of measured figures: 80% (README), 79% (shot-attempt basis), 64% (composition),
-63% (predictions), 62% (adp), 60% (CLAUDE.md), 55% (availability), 46% (games played) —
-`make docs-audit` prints them live, so treat the
+**It covers twelve docs with 2,360 claims and one builder per doc**: `README.md`,
+`availability-plan`, `minutes-composition-plan`, `predictions-plan`, `games-played-plan`,
+`shot-attempt-basis-plan`, `adp-plan`, and the five files the 2026-08-08 reorganization
+split `CLAUDE.md` into — `facts-archive`, `model-development-notes`, `data-quirks`,
+`project-spec` and `train-validate-test-split`.
+Coverage of measured figures: 79% (README), 79% (shot-attempt basis), 67% (model
+development notes), 64% (composition), 63% (predictions), 60% (adp), 58% (availability),
+46% (games played), 40% (facts archive), 33% (project spec), 26% (train/validate/test),
+21% (data quirks) — `make docs-audit` prints them live, so treat the
 printout rather than this line as current. The uncovered remainder is prose-only figures
 (`docs/provenance-plan.md` lists all fourteen), costing estimates, and counts of things
 rather than measurements.
-**583 of the claims are superseded values held for the record**, which is the number that
+**668 of the claims are superseded values held for the record**, which is the number that
 grows fastest as heads move off the test split: each conversion retires a measurement
 without deleting it. The season-term conversion alone added **161** — the largest single
 jump so far, because that ablation quotes four arms across thirteen heads and five
 downstream tables, so a change of split retires figures by the table rather than by the
 line.
 
+**`_established_facts` is the one builder that is not one-doc-one-function**, because the
+established-facts section it claims was split across five docs *by subject* rather than
+moved as a block. It names a destination per section with `into(...)`, overrides that
+per claim where an individual figure landed elsewhere, and
+`test_the_established_facts_builder_spans_exactly_its_declared_docs` pins the resulting
+set — so a mistyped destination fails a test rather than surfacing as a stale claim
+nobody reads. Nothing claims `CLAUDE.md` any more: it is a router carrying no
+measurements, so there is nothing in it to drift.
+
 **`README.md` was added last and is the doc the guard fits best**, which is why its coverage
-is the highest: it holds no measurements of its own, only a selection of headlines copied
-from `CLAUDE.md` and the plan docs, and it is the most-read and least-maintained file in the
+is among the highest: it holds no measurements of its own, only a selection of headlines
+copied from the established facts and the plan docs, and it is the most-read and least-maintained file in the
 repo — the exact conditions under which a figure goes stale unnoticed. Two things its builder
 does that the others do not: it claims **roundings** (`58%` against 57.96%, `86%` against an
 R² of 0.859), because an overview should round and `implied_tolerance` already handles that
@@ -47,9 +59,10 @@ the two copies together.
 "current in one doc and stale in the other" is the failure that has already happened twice
 here (the season-total R² column, the report-calibration block). `_regime_claims` and
 `_season_term_claims` / `_season_term_summary_claims` are shared builders for exactly that
-reason — `CLAUDE.md` carries a summary of the season-term verdict and the plan doc carries
-it in full, so the summary claims the subset it quotes rather than being forced to carry
-every cell.
+reason — `docs/facts-archive.md` carries a summary of the season-term verdict and the plan
+doc carries it in full, so the summary claims the subset it quotes rather than being forced
+to carry every cell. The availability ladder is now quoted in four docs and claimed from
+all four, at three different scopes.
 
 **Some quoted figures must NOT agree with the artifact, and `Claim(historical=True)` is how
 they survive.** Two kinds: a superseded value preserved beside its correction ("corrected
