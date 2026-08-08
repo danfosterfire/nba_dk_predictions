@@ -22,6 +22,28 @@ scratch script rather than a `make` target, that is stated; Stage A turns them i
 > Correcting them to the artifact would erase the record of what implementing the plan changed,
 > which is the point of keeping both.
 
+## Current status
+
+> ⏰ **TODO — 2026-08-01: run `make adp-fantasypros -- --backfill`** (i.e.
+> `.venv/bin/python -m src.data.adp_fantasypros --backfill`). Only **23 of 259** archived
+> snapshots are on disk. The sweep was blocked on 2026-07-28 by Wayback throttling
+> (**HTTP 498** — its rate-limit code, returned after the planning-session sweep), which
+> clears on its own. The run is resumable and skips anything already archived, so
+> re-running costs nothing and a partial run is safe to repeat. **Delete this note once it
+> has completed** and update the season-coverage table in `docs/adp-plan.md`.
+
+**DraftKings ADP is the second thing in this repo with a deadline, and it is a manual
+one.** The board is login-gated, has **zero** Wayback snapshots, exposes no API, and is
+live only while contests are open (~Oct). It cannot be scraped or backfilled: a board not
+downloaded from the draft lobby while it is open is gone permanently. Two are captured
+(2025-10-17, 2026-07-28); the load-bearing one still to get is an **early-to-mid October
+2026** board, timing-matched to the 2025 anchor. **See `docs/adp-plan.md`.**
+
+**Tier A** = 30 seasons, box-score families, 10,900 player-seasons × 150 features.
+**Tier B** = 13 seasons (2013-14+), adds tracking/hustle, 5,077 × 287, strict column
+superset of Tier A. Artifacts that later modeling consumes go to `data/features/`;
+human-readable analysis reports go to `outputs/eda/`.
+
 ---
 
 ## The short version
