@@ -173,8 +173,13 @@ def test_test_seasons_agrees_with_every_model_module_that_defines_its_own():
 
 def test_fit_window_holds_out_the_same_seasons_as_split_seasons():
     """The two helpers key on different frames — a calibration frame against a design
-    matrix — so the invariant worth pinning is that they name the same seasons."""
-    from src.models.component_rates import split_seasons
+    matrix — so the invariant worth pinning is that they name the same seasons.
+
+    `split_seasons` comes from `models.availability` rather than `component_rates`, which
+    used to keep a private copy of it and was the one head the held-out lock could not
+    see. There is one definition now.
+    """
+    from src.models.availability import split_seasons
 
     frame = _seasons(["2020-21", "2021-22", "2022-23", "2023-24", "2024-25", "2025-26"])
     _, held = split_seasons(frame)

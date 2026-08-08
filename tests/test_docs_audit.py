@@ -293,3 +293,44 @@ def test_every_quoted_figure_agrees_with_its_artifact():
     if len(skipped) == len(A.CLAIMS):
         return                                  # nothing built; nothing to check
     assert bad == [], "\n".join(f"{f.label}: {f.detail}" for f in bad)
+
+
+def test_a_head_selecting_base_has_a_season_term_margin_of_exactly_zero():
+    """`_term_margin` must read the metric each head is actually SELECTED on.
+
+    The margin is `base` minus the best of the four arms, so a head whose selected arm is
+    `base` is the minimum by construction and can only have a margin of zero. A nonzero
+    one means the margin and the selection are reading different columns.
+
+    That is exactly what happened: `_term_margin` used to pick `val_nll` whenever the
+    column was fully populated, and the 2026-08-07 re-run began writing `val_nll` for the
+    count heads, which silently moved them onto a metric `season_terms._finalize` does not
+    select them on. `stl` selected `base` and reported a 0.0081% margin. Keying on `kind`
+    cannot drift that way, and this pins it.
+    """
+    frame = A.table(A.TERM_M)
+    if frame is None:
+        return                                  # artifact not built
+    for head in frame.loc[frame["selected"] & (frame["arm"] == "base"), "head"]:
+        assert A._term_margin(str(head)) == 0.0, (
+            f"{head} selects `base` but reports a nonzero margin — `_term_margin` and "
+            f"`_finalize` are reading different columns")
+
+
+def test_the_season_term_margin_uses_nll_for_conversions_and_crps_for_the_rest():
+    """The companion to the test above, stated as the rule rather than the symptom.
+
+    `season_terms._finalize` is called with `val_nll` for the conversion sweep and
+    `val_crps` for counts, minutes and availability. Reconstructing the margin from the
+    right column per `kind` has to reproduce `_term_margin` exactly.
+    """
+    frame = A.table(A.TERM_M)
+    if frame is None:
+        return
+    arms = ("base", "trend", "year", "trend_year")
+    for head, block in frame[frame["arm"].isin(arms)].groupby("head"):
+        column = "val_nll" if (block["kind"] == "conversion").all() else "val_crps"
+        by_arm = block.set_index("arm")[column]
+        base = float(by_arm["base"])
+        expected = abs(base - float(by_arm.min())) / abs(base)
+        assert A._term_margin(str(head)) == expected

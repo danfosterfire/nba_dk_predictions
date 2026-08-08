@@ -10,7 +10,7 @@ same identity holds for the binomial conversion heads with a hypergeometric fact
 ## The benchmark this module exists to enforce
 
 **`carry_forward`: prior per-36 rate × actual minutes / 36. No fitting at all.** It scores
-held-out R² of **0.82–0.95** across the seven count heads, and the best fitted model here
+validation R² of **0.82–0.95** across the seven count heads, and the best fitted model here
 beats it by only +0.001 to +0.019. Any proposed component head must be quoted against it —
 a head that does not clear it is not a model, it is a worse version of arithmetic. This is
 the sharpest available statement of the project's "attempts persist" finding (`fg3a` 0.908
@@ -40,6 +40,22 @@ against 0.879 / 0.820 on the log scale). Splines add a further +0.030 (`fg3a`) a
 (`blk`) and ≤ +0.003 elsewhere; `age × own` and `mpg × own` interactions are a null once the
 scale is right.
 
+## Which rows everything here is scored on
+
+**Validation**, since 2026-08-05, and this module needed the change more than any other:
+it defined its **own** `split_seasons` rather than importing the shared one, so it was the
+single head in the project with no held-out guard at all. `src/models/held_out.py` puts the
+lock inside `availability.split_seasons` precisely so that a head cannot forget to add it —
+and a private copy of the same six lines routes straight around that. The copy was
+behaviourally identical, so folding it onto the shared function changes nothing but the
+guard.
+
+Everything here is a **sweep**: seven count heads and four conversion heads across up to
+seven feature variants each, plus a seven-point regularization grid, all of it ranked. That
+is selection, so it belongs on validation. The `alpha_sensitivity` curve is the same in kind
+— it exists to catch an over-penalized fit, and catching it on the held-out seasons would
+mean the fix was tuned there too.
+
 Usage:
     python -m src.models.component_rates
 """
@@ -58,6 +74,7 @@ from sklearn.preprocessing import SplineTransformer, StandardScaler
 from src.eda.availability import load_ages, with_lags
 from src.models.availability import _neg_loglik as beta_binomial_nll
 from src.models.availability import fit_dispersion
+from src.models.held_out import selection_split
 
 # The shot-attempt basis: total attempts as a COUNT and the three-point mix as a SHARE,
 # rather than two independent attempt counts. A three substitutes for a two, so the two
@@ -170,11 +187,13 @@ def build_design(targets: pd.DataFrame, seasons: list[str],
     return d.reset_index(drop=True)
 
 
-def split_seasons(design: pd.DataFrame, test_seasons: int = TEST_SEASONS
-                  ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    order = sorted(design["season"].unique())
-    held = set(order[-test_seasons:])
-    return design[~design["season"].isin(held)], design[design["season"].isin(held)]
+#
+# `split_seasons` used to be defined here, and that is why this module was the only head in
+# the project with no held-out guard at all: `src/models/availability.py::split_seasons` is
+# the choke point `held_out.py` wraps, and a private copy routes around it. The two were
+# otherwise **behaviourally identical** — same `sorted(unique)`, same trailing-`n` slice,
+# same two frames — so deleting the copy changes nothing except that the held-out side is
+# now guarded. Nothing is lost with it.
 
 
 # ── The benchmark ─────────────────────────────────────────────────────────────
@@ -615,7 +634,7 @@ def alpha_feature_sets(train: pd.DataFrame, test: pd.DataFrame, component: str
 def alpha_sensitivity(train: pd.DataFrame, test: pd.DataFrame,
                       alphas: list[float] = None, heads: list[str] = None,
                       variants: tuple[str, ...] = ALPHA_VARIANTS) -> pd.DataFrame:
-    """Held-out R² per count head across an alpha grid, with the no-fit floor beside it.
+    """Validation R² per count head across an alpha grid, with the no-fit floor beside it.
 
     `floor_r2` rides on every row so the crossing is readable without a join, and
     `beats_floor` keeps the same meaning it has everywhere else in this module.
@@ -665,17 +684,23 @@ def run(cfg: dict) -> dict[str, Path]:
     print(f"  {with_pcs[pc_names[0]].notna().mean():.1%} of rows have PC scores "
           f"({len(matrix_feature_cols(matrix))} season-matrix columns in)")
 
-    train, test = split_seasons(with_pcs)
-    print(f"  {len(train):,} train / {len(test):,} test "
-          f"({', '.join(sorted(test['season'].unique()))} held out)\n")
+    train, val = selection_split(with_pcs, TEST_SEASONS)
+    print(f"  The test split is LOCKED — every variant here is RANKED, so the whole "
+          f"sweep\n  runs on VALIDATION (src/models/held_out.py).")
+    print(f"  {len(train):,} fit / {len(val):,} score "
+          f"({', '.join(sorted(val['season'].unique()))} as validation)\n")
 
-    table = evaluate(train, test, pc_names)
+    table = evaluate(train, val, pc_names)
     alpha_cfg = cfg.get("evaluation", {}).get("alpha_grid", ALPHA_GRID)
-    alphas = alpha_sensitivity(train, test, alpha_cfg)
+    alphas = alpha_sensitivity(train, val, alpha_cfg)
     out_dir = Path(cfg["evaluation"]["predictions_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
     dest = out_dir / "component_rate_metrics.csv"
-    pd.concat([table, alphas], ignore_index=True).to_csv(dest, index=False)
+    # `split` rather than a `val_` prefix on every metric: these columns were never
+    # split-tagged, so there is no ambiguity to remove by renaming — only the question of
+    # which rows they describe, which a column answers once for the whole file.
+    pd.concat([table, alphas], ignore_index=True).assign(
+        split="validation").to_csv(dest, index=False)
 
     for kind, metric in (("count", "r2"), ("conversion", "nll")):
         sub = table[table["kind"] == kind]
@@ -683,7 +708,7 @@ def run(cfg: dict) -> dict[str, Path]:
         cols = [c for c in ["carry_forward", "linear", "log_own", "log_own_spline",
                             "log_own_inter", "spline_own", "inter", "pca", "pca_spline",
                             "pca_inter"] if c in piv.columns]
-        print(f"Held-out {metric} by {kind} head "
+        print(f"Validation {metric} by {kind} head "
               f"({'higher' if metric == 'r2' else 'lower'} is better):")
         print(piv[cols].round(4).to_string())
         gain = piv.drop(columns=["carry_forward"]).sub(piv["carry_forward"], axis=0)
@@ -713,7 +738,7 @@ def run(cfg: dict) -> dict[str, Path]:
                               aggfunc="first").round(4).to_string())
 
     # ── the alpha curve, as a permanent regression guard ─────────────────────
-    print("\nRegularization sensitivity — held-out R² by alpha under exposure weights.\n"
+    print("\nRegularization sensitivity — validation R² by alpha under exposure weights.\n"
           "The floor is arithmetic with no parameters, so a fitted line dropping BELOW it "
           "is the\nsignature of the penalty dominating the data term:")
     for variant in ALPHA_VARIANTS:

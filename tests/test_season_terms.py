@@ -288,22 +288,27 @@ def test_the_manual_override_is_a_no_op_when_unset_and_scopes_to_its_own_season(
 
 def _table():
     return pd.DataFrame([
-        {"head": "reb", "arm": "carry_forward", "val_crps": np.nan, "test_crps": 10.0},
-        {"head": "reb", "arm": "base", "val_crps": 9.0, "test_crps": 9.5},
-        {"head": "reb", "arm": "year", "val_crps": 9.5, "test_crps": 8.0},
-        {"head": "reb", "arm": "oracle_league", "val_crps": np.nan, "test_crps": np.nan},
+        {"head": "reb", "arm": "carry_forward", "val_crps": 10.0},
+        {"head": "reb", "arm": "base", "val_crps": 9.0},
+        {"head": "reb", "arm": "year", "val_crps": 9.5},
+        # A point prediction with no predictive distribution, hence no CRPS at all.
+        {"head": "reb", "arm": "oracle_league", "val_crps": np.nan},
     ])
 
 
-def test_selection_reads_validation_and_ignores_a_better_test_column():
-    """`year` wins on test and loses on validation; the shipped choice must be `base`."""
-    out = _finalize(_table(), "val_crps", "test_crps", higher_is_better=False)
+def test_selection_reads_the_validation_column_and_there_is_no_other():
+    """The ablation used to fit every arm twice and report a test column beside the
+    validation one. It no longer scores those rows at all — `src/models/held_out.py`
+    raises on them — so `base` wins here because it wins on validation, and there is
+    nothing else a reader could have preferred."""
+    out = _finalize(_table(), "val_crps", higher_is_better=False)
     assert out.loc[out["arm"] == "base", "selected"].item()
     assert not out.loc[out["arm"] == "year", "selected"].item()
+    assert not [c for c in out.columns if c.startswith("test_")]
 
 
-def test_beats_floor_is_a_test_fact_and_is_NA_where_there_is_no_test_metric():
-    out = _finalize(_table(), "val_crps", "test_crps", higher_is_better=False)
+def test_beats_floor_is_NA_where_the_arm_has_no_scored_metric():
+    out = _finalize(_table(), "val_crps", higher_is_better=False)
     assert out.loc[out["arm"] == "base", "beats_floor"].item() is True
     assert out.loc[out["arm"] == "year", "beats_floor"].item() is True
     # The oracle is a point prediction with no predictive distribution. Recording it as
@@ -314,7 +319,7 @@ def test_beats_floor_is_a_test_fact_and_is_NA_where_there_is_no_test_metric():
 def test_the_floor_row_is_never_selected_even_when_it_would_win():
     table = _table()
     table.loc[table["arm"] == "carry_forward", "val_crps"] = 0.1
-    out = _finalize(table, "val_crps", "test_crps", higher_is_better=False)
+    out = _finalize(table, "val_crps", higher_is_better=False)
     assert not out.loc[out["arm"] == "carry_forward", "selected"].item()
 
 

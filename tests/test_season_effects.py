@@ -155,6 +155,14 @@ def _design(seasons, rate_by_season, minutes=1000.0, players=30):
     return pd.DataFrame(rows)
 
 
+# `carry_forward_bias` measures the floor's bias on the **validation** seasons, not the
+# held-out ones — it moved with everything else when `src/models/held_out.py` landed. So
+# the league move has to be put in the season the function actually scores, which with
+# `test_seasons=1` on five seasons is the second-to-last. Hard-coding "2025-26" here is
+# what these two tests used to do, and it is how they broke.
+SCORED_SEASON = "2024-25"
+
+
 def test_carry_forward_bias_recovers_a_known_league_move():
     """If the league rises 10%, carrying the prior season forward under-predicts by ~9.1%.
 
@@ -162,9 +170,11 @@ def test_carry_forward_bias_recovers_a_known_league_move():
     (old − new)/new = (1/1.1) − 1 = −9.09%.
     """
     seasons = ["2021-22", "2022-23", "2023-24", "2024-25", "2025-26"]
-    rates = [4.0, 4.0, 4.0, 4.0, 4.4]                 # +10% in the final season only
+    rates = [4.0, 4.0, 4.0, 4.4, 4.4]                 # +10% from the scored season on
     bias = carry_forward_bias(_design(seasons, rates), test_seasons=1)
-    row = bias[(bias["component"] == "fta") & (bias["season"] == "2025-26")].iloc[0]
+    assert set(bias["season"]) - {"all"} == {SCORED_SEASON}
+    row = bias[(bias["component"] == "fta")
+               & (bias["season"] == SCORED_SEASON)].iloc[0]
     assert np.isclose(row["bias_pct"], 100 * (4.0 / 4.4 - 1), atol=0.01)
     assert row["bias_pct"] < 0
 
@@ -172,8 +182,46 @@ def test_carry_forward_bias_recovers_a_known_league_move():
 def test_carry_forward_bias_is_zero_for_a_flat_league():
     seasons = ["2021-22", "2022-23", "2023-24", "2024-25", "2025-26"]
     bias = carry_forward_bias(_design(seasons, [4.0] * 5), test_seasons=1)
-    row = bias[(bias["component"] == "fta") & (bias["season"] == "2025-26")].iloc[0]
+    row = bias[(bias["component"] == "fta")
+               & (bias["season"] == SCORED_SEASON)].iloc[0]
     assert abs(row["bias_pct"]) < 1e-9
+
+
+def test_carry_forward_bias_opposes_the_league_move_it_lags():
+    """The lag's signature: a rising league leaves the floor short, and vice versa.
+
+    This is the check that replaced quoting a component's bias on its own. Two seasons
+    moving in opposite directions is the case the pooled column cannot represent, so the
+    fixture makes them opposite on purpose.
+    """
+    # Six seasons so that `selection_split` leaves TWO validation seasons to compare;
+    # `_design` drops the first, which has no prior season to carry forward from.
+    seasons = ["2020-21", "2021-22", "2022-23", "2023-24", "2024-25", "2025-26"]
+    rates = [4.0, 4.0, 4.4, 4.0, 4.0, 4.0]      # up into 2022-23, back down into 2023-24
+    design = _design(seasons, rates)
+    league = league_rates(_targets(seasons, rates))
+    bias = carry_forward_bias(design, test_seasons=2, rates=league)
+
+    scored = bias[(bias["component"] == "fta") & (bias["season"] != "all")]
+    assert set(scored["season"]) == {"2022-23", "2023-24"}
+    for _, row in scored.iterrows():
+        assert row["bias_pct"] * row["league_yoy_pct"] < 0
+        assert bool(row["opposes_league_move"])
+
+    # The pooled row is deliberately NOT joined to a league move: averaging two seasons
+    # whose moves oppose each other is what reported a lag as a level.
+    pooled = bias[(bias["component"] == "fta") & (bias["season"] == "all")].iloc[0]
+    assert pd.isna(pooled["league_yoy_pct"])
+    assert pd.isna(pooled["opposes_league_move"])
+
+
+def test_carry_forward_bias_omits_the_league_columns_unless_rates_are_given():
+    """The join is opt-in, so a caller without league rates still gets a valid frame."""
+    seasons = ["2021-22", "2022-23", "2023-24", "2024-25", "2025-26"]
+    bias = carry_forward_bias(_design(seasons, [4.0, 4.0, 4.0, 4.4, 4.4]),
+                              test_seasons=1)
+    assert "league_yoy_pct" not in bias.columns
+    assert "opposes_league_move" not in bias.columns
 
 
 def test_availability_rates_report_overall_and_role_split():

@@ -18,7 +18,7 @@ two usable forms is right for each quantity:
 This module measures which. For every modeled quantity it separates the league rate's
 **drift** (a smooth trend a fixed effect could extrapolate) from its **shock** (residual
 year-to-year movement no model can forecast), and it prices the cost of ignoring both by
-measuring the no-fit floor's systematic bias on the held-out seasons.
+measuring the no-fit floor's systematic bias on the **validation** seasons.
 
 ## Why this matters more than an equivalent amount of ordinary error
 
@@ -35,10 +35,16 @@ fit was built to capture.
   year-over-year sd and swings past +/-5% in 9 of 29 transitions — the 2004-05 hand-checking
   crackdown at **+7.6%** and the 2025-26 jump at **+8.6%** are refereeing interventions, not
   drift. A trend term cannot help; a year random effect can.
-- **`fg3a` is the opposite** — a smooth 2.97x climb with a trend correlation of +0.94.
-  Carry-forward lags a monotone trend by exactly one season, which is a *predictable* bias.
-- **The floor pays for it.** `fta` carries a **−7.0%** systematic bias on the held-out
-  seasons (**−10.7%** in 2025-26, which is the +8.6% league jump arriving one year late).
+- **The three-point MIX is the opposite** — `fg3a_pct` climbs 2.64x with a trend R2 of 0.93
+  at +3.58%/season. Carry-forward lags a monotone trend by exactly one season, which is a
+  *predictable* bias. (The retired `fg3a` **count** series read a 2.97x climb at +4.07%;
+  the shot-attempt basis split it into volume and mix, and the trend is almost all mix.)
+- **The floor pays for it, and the bias is a LAG rather than a level.** On the validation
+  seasons the sign of every component's bias is the opposite of that season's league move
+  in **13 of 14** cells, correlating at **−0.94** — `fta` runs −4.4% into the league's
+  +7.3% and +10.7% into its −7.5%. So the cost is real and its *direction reverses with the
+  league*, which is exactly why a trend term cannot fix it and a year effect is the only
+  candidate that addresses the spread.
 
 Usage:
     python -m src.eda.season_effects
@@ -51,8 +57,8 @@ import pandas as pd
 import yaml
 
 from src.models.component_rates import (COUNT_HEADS, CONVERSION_HEADS, PER36,
-                                        build_design, carry_forward,
-                                        split_seasons)
+                                        build_design, carry_forward)
+from src.models.held_out import selection_split
 
 # Availability is per player-season rather than a league rate, so it needs a population.
 # 10 games matches the bar used in the load-management look in `docs/availability-plan.md`.
@@ -403,18 +409,36 @@ def year_shock_correlation(rates: pd.DataFrame, group: str = "series") -> pd.Dat
 
 # ── What ignoring it costs ────────────────────────────────────────────────────
 
-def carry_forward_bias(design: pd.DataFrame, test_seasons: int = 2) -> pd.DataFrame:
-    """Systematic bias of the no-fit floor on the held-out seasons, per component.
+def carry_forward_bias(design: pd.DataFrame, test_seasons: int = 2,
+                       rates: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Systematic bias of the no-fit floor on the **validation** seasons, per component.
 
     `carry_forward` is prior per-36 rate x actual minutes, so it lags any league-level move
     by exactly one season. That makes its bias a **direct measurement of the season effect**
     on the quantity the heads are actually scored on — and because neither the floor nor any
     fitted head carries a season term, the fitted heads inherit it.
 
+    Measured on validation since 2026-08-05, with every head that reads it
+    (`src/models/season_terms.py`). It is not a selection, but it is the *premise* of one:
+    this is the number that says what a season term would have to recover, and reading it
+    off the held-out seasons while the arms compete on validation would mean sizing the
+    prize on one split and paying for it on another. `src/models/held_out.py` also simply
+    raises on the other frame now.
+
     Reported as a percentage of the realized total, since the components differ by an order
     of magnitude in scale.
+
+    **Pass `rates` and the lag becomes checkable rather than asserted.** The mechanism
+    claimed above — that the floor lags the league by one season — predicts a specific
+    thing: the bias on season S should carry the *opposite* sign to the league's own move
+    into S. `league_yoy_pct` and `opposes_league_move` put that prediction in the artifact
+    per cell, so the headline is a measured relationship instead of a pair of components
+    that happened to look biased across whichever two seasons were being scored. That
+    distinction is not hypothetical here — the retired held-out reading was quoted as
+    "`blk` is biased +6% in *both* seasons, which is drift, not noise", and on the
+    validation seasons `blk` reverses sign.
     """
-    _, test = split_seasons(design, test_seasons)
+    _, test = selection_split(design, test_seasons)
     rows = []
     for c in COUNT_HEADS:
         y = test[c].to_numpy(dtype=float)
@@ -430,7 +454,24 @@ def carry_forward_bias(design: pd.DataFrame, test_seasons: int = 2) -> pd.DataFr
                          "bias": float((f[m] - y[m]).mean()),
                          "bias_pct": float(100 * (f[m] - y[m]).sum() / y[m].sum())
                          if y[m].sum() else np.nan})
-    return pd.DataFrame(rows)
+    out = pd.DataFrame(rows)
+    return out if rates is None else attach_league_move(out, rates)
+
+
+def attach_league_move(bias: pd.DataFrame, rates: pd.DataFrame) -> pd.DataFrame:
+    """Join each per-season bias cell to that season's league move, and test the lag.
+
+    The `season == "all"` rows are left null rather than joined to a pooled league move:
+    averaging a bias across two seasons whose league moves point in opposite directions is
+    exactly the summary that made the retired reading look like a standing level bias.
+    """
+    move = (rates[rates["kind"] == "count_per36"][["season", "quantity", "yoy_pct"]]
+            .rename(columns={"quantity": "component", "yoy_pct": "league_yoy_pct"}))
+    out = bias.merge(move, on=["component", "season"], how="left")
+    out["opposes_league_move"] = np.where(
+        out["league_yoy_pct"].notna(),
+        out["bias_pct"] * out["league_yoy_pct"] < 0, np.nan)
+    return out
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -463,7 +504,7 @@ def run(cfg: dict) -> dict[str, Path]:
               "(run `make availability`)")
 
     design = build_design(targets, cfg["data"]["seasons"], cfg["data"]["raw_dir"])
-    bias = carry_forward_bias(design)
+    bias = carry_forward_bias(design, rates=rates)
     regimes = regime_tests(rates)
     shocks = year_shock_correlation(rates)
 
@@ -485,11 +526,25 @@ def run(cfg: dict) -> dict[str, Path]:
           "  addresses `yoy_sd_pct`. Give that effect `level_resid_sd_pct` when a trend is "
           "also fitted,\n  and `yoy_sd_pct` when it is not.")
 
-    print("\nWhat ignoring it costs — no-fit floor bias on the held-out seasons:")
+    print("\nWhat ignoring it costs — no-fit floor bias on the VALIDATION seasons:")
     piv = bias.pivot_table(index="component", columns="season", values="bias_pct")
     print(piv.round(1).sort_values("all").to_string())
     print("  The floor carries prior per-36 forward, so it lags any league move by exactly "
           "one season.\n  No fitted head corrects this: none of them has a season term.")
+
+    per_season = bias[bias["opposes_league_move"].notna()] if \
+        "opposes_league_move" in bias.columns else pd.DataFrame()
+    if not per_season.empty:
+        opposes = int(per_season["opposes_league_move"].sum())
+        r = float(np.corrcoef(per_season["bias_pct"],
+                              per_season["league_yoy_pct"])[0, 1])
+        print(f"\n  The lag is CHECKABLE, not merely asserted: the bias opposes that "
+              f"season's league move\n  in {opposes} of {len(per_season)} cells, "
+              f"correlating at {r:+.3f}. So the cost is real and its DIRECTION\n  reverses "
+              f"with the league — which is why a trend cannot fix it and only a year "
+              f"effect\n  addresses the spread. Read a per-season cell, never the pooled "
+              f"`all` row on its own:\n  averaging two seasons whose league moves oppose "
+              f"each other reports a lag as a level.")
 
     print("\n  A league shift is perfectly correlated across players, so it does NOT "
           "diversify away in a\n  portfolio — unlike the shared-beta term, which is worth "

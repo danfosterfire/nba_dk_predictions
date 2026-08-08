@@ -25,9 +25,9 @@ from src.models.component_rates import (
     matrix_feature_cols,
     nb_nll,
     season_totals,
-    split_seasons,
     walk_forward_pca,
 )
+from src.models.availability import split_seasons
 
 SEASONS = ["2018-19", "2019-20", "2020-21", "2021-22", "2022-23"]
 

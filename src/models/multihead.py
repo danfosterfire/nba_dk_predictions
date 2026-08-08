@@ -11,7 +11,7 @@ Structure, and why it is this shape:
   player-season, so feeding them through the sequence trunk would be wasteful.
 - A **minutes head** separate from the rate heads, because measured team-context
   effects push rates and minutes in opposite directions and cancel in the product.
-  Minutes alone explains 18.6% of within-player-season residual variance.
+  Minutes alone explains 46.4% of within-player-season residual variance.
 - **Poisson rate heads with a minutes exposure offset**, the canonical form for counts
   observed over varying exposure. Points are overdispersed for a true Poisson, but
   Poisson NLL remains a consistent quasi-likelihood for the mean, which is what the

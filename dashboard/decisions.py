@@ -1475,16 +1475,18 @@ REGISTRY: tuple[Decision, ...] = (
         claim="For minutes the logit scale is a dead wash and **curvature** is what "
               "pays — the opposite of the count heads, and the two answers must not be "
               "pooled into one rule.",
-        because="`logit(own)` reads test R² 0.8565 against linear's 0.8565 and is "
-                "*worse* on validation CRPS, while `logit(own) + spline` is selected at "
-                "146.85 test CRPS and 0.8572 R². Both splits move the same way, so "
-                "unlike the games-played arm this replicates. The selected variant "
-                "clears the no-fit floor by +0.0407 R² and −21.4 minutes of CRPS.",
+        because="`logit(own)` reads validation R² 0.8819 against linear's 0.8826 and is "
+                "worse on CRPS too (145.45 against 144.71), while `logit(own) + spline` "
+                "is selected at 143.93 CRPS and 0.8835 R², clearing the no-fit floor by "
+                "+0.0299 R² and −17.5 minutes. The selected variant survived the move to "
+                "validation-only scoring *and* the raising of selection to full-length "
+                "chains, which few selections in this project have — contrast the "
+                "season-term ablation, where 9 of 13 heads flipped their arm.",
         status="built",
         reproduce="make stan-minutes → outputs/predictions/stan_minutes_metrics.csv, "
                   "outputs/predictions/stan_minutes_diagnostics.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-06",
         date="2026-07-29",
         tags=("head",),
     ),
@@ -1514,7 +1516,7 @@ REGISTRY: tuple[Decision, ...] = (
         claim="The simulator needs **three** minutes numbers and they compose, they do "
               "not substitute. The season-level ρ is not one of the two the simulator "
               "draws with.",
-        because="(1) the season-level mean from the head, fitted ρ = 0.0495; (2) the "
+        because="(1) the season-level mean from the head, fitted ρ = 0.05025; (2) the "
                 "**game-level** dispersion, ρ = 0.0776 or **4.65× binomial** at a "
                 "48-minute game, for the marginal spread of a single game; (3) the "
                 "**2.43× ten-game block variance inflation** for serial dependence "
@@ -1527,7 +1529,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-minutes → "
                   "outputs/predictions/stan_minutes_dispersion.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-06",
         date="2026-07-29",
         tags=("simulator-input",),
     ),
@@ -1535,17 +1537,44 @@ REGISTRY: tuple[Decision, ...] = (
         id="minutes-head-held-out-bias",
         topic="minutes",
         claim="The fitted minutes heads carry a −33 to −41 minute held-out bias against "
-              "the floor's −5.7.",
-        because="About −2.7% on a ~1,500-minute mean, and it is the price of shrinkage "
-                "on a held-out season: the floor is unbiased because it does not "
-                "shrink. It costs nothing on R², MAE or CRPS, but it is a real "
-                "calibration defect and **it would compound through the eleven "
-                "component heads that take these minutes as exposure**. Worth a bias "
-                "correction before the simulator consumes it.",
-        status="open",
-        source="docs/predictions-plan.md",
-        reviewed="2026-07-30",
+              "the floor's −5.7, because the floor is unbiased and shrinkage is not.",
+        because="Measured on the held-out seasons only, and the second half of it is "
+                "false. Re-scored on validation the **floor** is the biased arm at "
+                "+23.91 minutes while the fitted arms run −3.26 to −14.00, so 'the "
+                "floor is unbiased because it does not shrink' does not survive a change "
+                "of seasons. The signed level was a property of which seasons were "
+                "scored, not of the head.",
+        status="withdrawn",
+        replaced_by="minutes-shrinkage-gap-below-the-floor",
+        caught_by="Re-running `make stan-minutes` on validation under "
+                  "`src/models/held_out.py` (2026-08-06), which added a `val_bias` "
+                  "column the artifact had never carried.",
+        reproduce="make stan-minutes → outputs/predictions/stan_minutes_metrics.csv",
+        source="docs/availability-plan.md",
+        reviewed="2026-08-06",
         date="2026-07-29",
+        tags=("defect",),
+    ),
+    Decision(
+        id="minutes-shrinkage-gap-below-the-floor",
+        topic="minutes",
+        claim="The minutes head's calibration defect is **relative, not signed**: every "
+              "fitted arm sits 27–38 minutes *below* the no-fit floor, and that gap is "
+              "what reproduces across splits.",
+        because="On validation the fitted arms run −27.2 (linear) to −37.9 (spline) "
+                "minutes below the carry-forward floor, against −27.1 to −35.3 on the "
+                "retired held-out column — while the absolute levels moved by ~29 "
+                "minutes across the same change. Shrinkage moves every arm about the "
+                "same distance down from the floor; where that lands depends on the "
+                "seasons scored. It still compounds through the eleven component heads "
+                "that take these minutes as exposure, so it is still worth correcting — "
+                "but a signed level must not be quoted for it, and the two columns are "
+                "not a controlled contrast in any case (different rows, different "
+                "training data, different chain lengths).",
+        status="open",
+        source="docs/availability-plan.md",
+        reviewed="2026-08-06",
+        date="2026-08-06",
         tags=("next", "defect"),
     ),
     Decision(
@@ -1554,25 +1583,32 @@ REGISTRY: tuple[Decision, ...] = (
         claim="The team-game **composition** — a multinomial decomposed into sequential "
               "binomial trials — beats the independent per-player minutes draw on its "
               "own marginal metric, *and* makes the team total exact by construction.",
-        because="Fitted on all 30 seasons and held out on 2024-25/2025-26 (52,957 "
-                "player-rows / 4,920 team-games), the selected variant scores **4.5592** "
-                "minutes of CRPS against the no-fit floor's 4.8576 (−0.2985) and the "
-                "incumbent independent draw's **4.9140** (−0.3548, −7.2%) — not the "
+        because="Fitted on all 30 seasons and scored on validation (2022-23/23-24, 52,295 "
+                "player-rows / 4,920 team-games), the selected variant scores **4.4945** "
+                "minutes of CRPS against the no-fit floor's 4.6776 (−0.1832) and the "
+                "incumbent independent draw's **4.7842** (−0.2898, −6.06%) — not the "
                 "expected wash. On top of that the incumbent misses the team's "
-                "`5 × game_length` total by **36.87** minutes per team-game on average "
+                "`5 × game_length` total by **33.89** minutes per team-game on average "
                 "where the composition is exact on every draw of every game. Zero-sum is "
                 "what makes teammate-absence redistribution a *fitted* quantity rather "
                 "than a hand-set rule. **Gate E taken 2026-08-04**: the head is now in "
                 "`make stan`. The `independent_comparator` row is the control — it never "
-                "trains on the composition window and reproduced 4.9140 exactly, which is "
-                "what makes the rest readable as a window effect. (The pilot read 4.5078 "
-                "and −0.406; the win shrank about a tenth at full window.)",
+                "trains on the composition window and reproduced to six decimals, which is "
+                "what makes the rest readable as a window effect. (The pilot read −0.406.) "
+                "✅ **Re-measured on validation 2026-08-08**, closing the last "
+                "code/artifact disagreement in the repo: the module went validation-only on "
+                "2026-08-05 and the artifact was regenerated three days later. **Nothing "
+                "reversed** — same selected arm, same ordering, and no arm moved more than "
+                "0.0019 CRPS across a doubling of chain length. The retired test column "
+                "(4.5592 selected against 4.9140, −0.3548 / −7.2%, 36.87 minutes of "
+                "team-sum error) is preserved in `docs/minutes-composition-plan.md` as "
+                "presence-checked historical claims.",
         status="built",
         reproduce="make stan-composition → "
                   "outputs/predictions/stan_composition_metrics.csv, "
                   "outputs/predictions/stan_composition_ppc.csv",
         source="docs/minutes-composition-plan.md",
-        reviewed="2026-08-04",
+        reviewed="2026-08-06",
         date="2026-07-31",
         tags=("simulator-input",),
     ),
@@ -1582,17 +1618,21 @@ REGISTRY: tuple[Decision, ...] = (
         claim="The **pure** stick-breaking decomposition is worse than the no-fit floor. "
               "The dispersion is the model, not a refinement.",
         because="The `binomial` arm — the demo's model with the cap fixed — scores "
-                "**4.9732** test CRPS against the floor's 4.8576, with PIT KS "
-                "**0.1948** against 0.0354: far too tight, exactly as the measured "
+                "**4.9388** validation CRPS against the floor's 4.6776, with PIT KS "
+                "**0.1919** against 0.0496: far too tight, exactly as the measured "
                 "game-level ρ (4.65× binomial) predicted. The beta-binomial arm at "
-                "4.5893 clears the floor comfortably. Same shape as the NB-vs-Poisson "
+                "4.5417 clears the floor comfortably. Same shape as the NB-vs-Poisson "
                 "finding on the count heads — the likelihood family decides whether "
-                "there is a model at all.",
+                "there is a model at all. ✅ **The PIT failure gained a validation twin "
+                "on 2026-08-08**: the pre-lock artifact wrote `test_pit_ks` and no "
+                "`val_pit_ks`, so the sharpest statement of this arm's failure used to be "
+                "a held-out number (0.1948 against 0.0354). It now reproduces on the split "
+                "that selects.",
         status="measured",
         reproduce="make stan-composition → "
                   "outputs/predictions/stan_composition_metrics.csv",
         source="docs/minutes-composition-plan.md",
-        reviewed="2026-08-04",
+        reviewed="2026-08-08",
         date="2026-07-31",
         tags=("specification",),
     ),
@@ -1600,28 +1640,30 @@ REGISTRY: tuple[Decision, ...] = (
         id="composition-shared-rho-is-role-graded",
         topic="minutes",
         claim="The allocation dispersion is **role-graded**: ρ per prior-share quartile "
-              "runs 0.1751 fringe to 0.0839 star, a 2.09× spread that one shared ρ of "
-              "0.1195 was splitting the difference on.",
+              "runs 0.1768 fringe to 0.0855 star, a 2.07× spread that one shared ρ of "
+              "0.1211 was splitting the difference on.",
         because="A 34-mpg starter's allocation step is genuinely steadier than a "
                 "reserve's, and the direction was predicted from the shared-ρ arm's "
-                "variance ratios (1.35 fringe to 0.60 star) before it was fitted. "
+                "variance ratios (1.22 fringe to 0.63 star) before it was fitted. "
                 "`betabinom_ot_graded` differs from its twin in the **dispersion "
                 "alone** — same features, same mean function — so the contrast is "
-                "clean. Worth −0.054 validation and −0.028 test CRPS, moving the same "
-                "way on both splits. **The calibration fix is the point**: mean "
-                "|variance ratio − 1| falls **0.2928 → 0.1796**, a 39% cut. ⚠️ The pilot "
-                "reported 0.2571 → 0.1055 (59%) with the star tier at 0.9880; at full "
-                "window the star tier lands at 0.7757 and three of four tiers sit below "
-                "1, so the head is mildly over-dispersed in aggregate. `n_rho = 1` is the shared model exactly, so the "
+                "clean. Worth −0.049 validation CRPS. **The calibration fix is the "
+                "point**: mean |variance ratio − 1| falls **0.2730 → 0.1782**, a 35% cut. "
+                "⚠️ The pilot reported 0.2571 → 0.1055 (59%) with the star tier at 0.9880; "
+                "at full window the star tier lands at 0.8136 and three of four tiers sit "
+                "below 1, so the head is mildly over-dispersed in aggregate. `n_rho = 1` "
+                "is the shared model exactly, so the "
                 "graded arm strictly generalizes it; bin edges come from **train** "
                 "quantiles only, since leakage in ρ never touches the mean and would "
-                "be invisible.",
+                "be invisible. (The pre-lock test-split artifact read 0.1751 / 0.0839, a "
+                "2.09× spread against a shared 0.1195, and a 0.2928 → 0.1796 / 39% cut; "
+                "every ρ rose ~0.0016 at full chain length and the ordering is untouched.)",
         status="built",
         reproduce="make stan-composition → "
                   "outputs/predictions/stan_composition_dispersion.csv, "
                   "outputs/predictions/stan_composition_ppc.csv",
         source="docs/minutes-composition-plan.md",
-        reviewed="2026-08-04",
+        reviewed="2026-08-08",
         date="2026-07-31",
         tags=("specification",),
     ),
@@ -1631,10 +1673,10 @@ REGISTRY: tuple[Decision, ...] = (
         claim="Grading a **step** dispersion does not map one-to-one onto **marginal** "
               "variance by tier — q2's calibration got *worse* while the two extremes "
               "got much better.",
-        because="Realized/simulated variance ratio by tier went 1.3466 / 0.8089 / "
-                "0.7691 / 0.5973 shared to 1.0845 / **0.7687** / 0.8217 / 0.7757 "
-                "graded: both extremes much improved, and q2 pushed further off a mark "
-                "it happened to hit. The fitted ρ "
+        because="Realized/simulated variance ratio by tier went 1.2224 / 0.8430 / "
+                "0.6589 / 0.6285 shared to 1.0465 / **0.8132** / 0.7071 / 0.8136 "
+                "graded: three of four tiers improved, and q2 was pushed further off a "
+                "mark it happened to hit. The fitted ρ "
                 "is the dispersion of a sequential step, while the ratio is measured "
                 "on a player's marginal minutes — and because the order is prior-share "
                 "*descending*, a low-share player breaks his stick last and inherits "
@@ -1654,8 +1696,8 @@ REGISTRY: tuple[Decision, ...] = (
         claim="The composition's joint-NLL win over independent draws is **not** the "
               "same kind of comparison as the 3PA/2PA reparameterization's, and must "
               "not be quoted as if it were.",
-        because="Composition **33.614** against independent **38.828** per team-game on "
-                "the held-out split — but the map is not a bijection with unit Jacobian. "
+        because="Composition **32.862** against independent **37.984** per team-game on "
+                "validation — but the map is not a bijection with unit Jacobian. "
                 "The composition's last step is deterministic, so it concentrates all "
                 "its mass on the simplex slice the data always satisfy and wins partly "
                 "by *knowing the constraint* rather than by fitting better. `fga` × "
@@ -1678,17 +1720,20 @@ REGISTRY: tuple[Decision, ...] = (
         because="Fitted on 30,626 regular-season training games: p_any = **0.0608**, "
                 "p_more = **0.1408**. The continuation probability is near-constant in "
                 "depth over the full sample (1,942 → 264 → 41 → 6 games at 1/2/3/4 OT), "
-                "which is what makes the geometric form enough. Held out, it predicts "
-                "**256.9** single-OT games against **222** observed — the shape holds "
-                "but it overpredicts OT by ~16% on recent seasons, which is one more "
+                "which is what makes the geometric form enough. On validation it predicts "
+                "**128.4** single-OT games against **120** observed — the shape holds "
+                "but it overpredicts OT by ~7% on recent seasons, which is one more "
                 "entry for the season-effects ledger rather than a defect in the form. "
                 "A covariate model is not worth it at a 6% base rate, and game "
-                "closeness is not knowable preseason.",
+                "closeness is not knowable preseason. The fitted parameters are invariant "
+                "to the split by construction — `fit_ot_tail` receives 1996-97 → 2021-22 "
+                "either way — and reproduced to six decimals on the 2026-08-08 refit; the "
+                "retired test reading was 256.9 against 222 on twice as many team-games.",
         status="built",
         reproduce="make stan-composition → "
                   "outputs/predictions/stan_composition_ot_tail.csv",
         source="docs/minutes-composition-plan.md",
-        reviewed="2026-08-04",
+        reviewed="2026-08-08",
         date="2026-07-31",
         tags=("simulator-input",),
     ),
@@ -1721,14 +1766,14 @@ REGISTRY: tuple[Decision, ...] = (
         claim="B-spline bases are badly conditioned for HMC — valid, just expensive.",
         because="The spline variants sample at treedepth 8 (255 leapfrog steps per "
                 "iteration) with a step size of 0.011, against treedepth 3–4 for the "
-                "linear ones — **752 s against 168 s** for the same data on the minutes "
+                "linear ones — **721 s against 171 s** for the same data on the minutes "
                 "head. An orthogonalized (QR-whitened) basis is the fix if spline "
                 "variants ever become the shipped spec.",
         status="measured",
         reproduce="make stan-minutes → "
                   "outputs/predictions/stan_minutes_diagnostics.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-06",
         date="2026-07-29",
         tags=("performance",),
     ),
@@ -1742,13 +1787,25 @@ REGISTRY: tuple[Decision, ...] = (
                 "Subtracting a linear trend shifts the **mean** of the year-over-year "
                 "changes and leaves their **variance** exactly unchanged, since "
                 "`diff(a + b·x)` is the constant `b` — so a trend fixes bias and only a "
-                "year effect addresses spread. `fg3a` is the only quantity worth "
-                "extrapolating a trend for (R² 0.93 at +4.07%/season); everything else "
+                "year effect addresses spread. The three-point **mix** (`fg3a_pct`) is "
+                "the only quantity worth extrapolating a trend for (R² 0.93 at "
+                "+3.58%/season); the shot-attempt basis decomposed the retired `fg3a` "
+                "count series (R² 0.93 at +4.07%/season) into +0.47%/season of total "
+                "volume and +3.58%/season of mix, so the revolution is almost entirely "
+                "*which* shots are taken. Everything else "
                 "is shock, `stl` most starkly at trend R² 0.03. `fta` is the sharpest "
                 "case and it is refereeing — a 1.21× band, 4.4% yoy sd, past ±5% in 9 "
                 "of 29 transitions. The cost is measured on the no-fit floor, which "
-                "lags any league move by exactly one season: `fta` −7.0% across the "
-                "held-out seasons (−10.7% in 2025-26) and `blk` +6.2% in both. This "
+                "lags any league move by exactly one season — and since 2026-08-08 the "
+                "lag is **checked** rather than asserted: on the validation seasons a "
+                "component's bias carries the opposite sign to that season's league "
+                "move in **13 of 14** cells, correlating at **−0.944**. `fta` runs "
+                "−4.4% into the league's +7.3% rise and +10.7% into its −7.5% fall. "
+                "⚠️ The retired held-out reading quoted `fta` −7.0% (−10.7% in 2025-26) "
+                "and `blk` +6.2% in *both* seasons as 'drift, not noise'; on validation "
+                "`fta` pools to +2.9% and **`blk` reverses sign** (+4.3% → −5.4%), "
+                "against a trend R² of 0.118. Never quote the pooled column alone — it "
+                "reports a lag as a level. This "
                 "outranks the shared-β correlation the Stan work was built for, "
                 "because a league shift is perfectly correlated across every player "
                 "and so does not diversify — against +0.2% for shared-β on a 15-man "
@@ -1760,60 +1817,69 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/eda/season_effects_league_rates.csv, "
                   "outputs/eda/season_effects_carry_forward_bias.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-07-31",
+        reviewed="2026-08-08",
         date="2026-07-30",
         tags=("method", "era"),
     ),
     Decision(
         id="no-trend-on-any-head",
         topic="components",
-        claim="No head carries a year-on-year trend — and the refutation is sharpest on "
-              "`fg3a`, the one quantity the league measurement said needed one.",
-        because="`fg3a` has trend R² 0.93 at +4.07%/season in the league series, and on "
-                "the head it selects **`base`** (validation CRPS 33.247 against trend "
-                "35.443) while a trend flips its held-out bias from **−3.74% to +8.44%**. "
-                "Two measured mechanisms: the three-point climb **decelerated** — "
-                "+4.07%/season over 30 seasons but **+1.61%/season over the last six** — "
-                "so a long-run slope extrapolated into a flattening series over-shoots; "
-                "and the head's dominant feature `log(fg3a_p36_lag1)` already carries the "
-                "league level forward, so a trend adds a second correction on top of one "
-                "that is already there. Across the count heads a trend worsens held-out "
-                "bias on **6 of 8**, and where it wins on test it wins on heads with no "
-                "era story at all (`stl`, trend R² 0.03). Its apparent win on season-total "
-                "dk_pts (bias −32.4 → +7.6) is **cross-component cancellation** — the "
-                "component biases move in both directions and cancel in the DK sum, the "
-                "same mechanism recorded at 8.30× on `teammate_assist_supply`.",
+        claim="No head carries a year-on-year trend — its apparent win on season-total "
+              "dk_pts is cross-component cancellation, confirmed on validation.",
+        because="On the 773-row validation frame an all-trend composition scores MAE "
+                "**105.76** against base's **105.71** — it does not win at all — while "
+                "flipping bias from **−16.44** to **+10.21**. The component biases behind "
+                "it move in both directions and cancel in the DK sum, the same mechanism "
+                "recorded at 8.30× on `teammate_assist_supply`. ⭐ This RESTORES the "
+                "original reading after the held-out column briefly undermined it: on test "
+                "the same table read trend 106.06 / −13.57 against base 108.56 / −36.89, "
+                "i.e. a trend improving *both* MAE and bias, which the cancellation story "
+                "could not explain and which `CLAUDE.md` flagged as needing a human "
+                "decision. On the split that decides, the anomaly is gone and no decision "
+                "is owed. The sharpest single refutation remains the **retired** `fg3a` "
+                "head — trend R² 0.93 at +4.07%/season in the league series, yet it "
+                "selected `base` (val CRPS 33.247 against trend 35.443) while a trend "
+                "flipped its bias from −3.74% to +8.44% — because the three-point climb "
+                "decelerated to +1.61%/season over the last six seasons and the head's "
+                "`log(fg3a_p36_lag1)` feature already carries the league level forward, so "
+                "a trend adds a second correction on top of one already there. That head "
+                "is no longer fitted; its successor `fg3a|fga` selects `year` on a 0.046% "
+                "margin, which is noise.",
         status="settled",
         reproduce="make season-terms → outputs/predictions/season_term_metrics.csv, "
                   "outputs/predictions/season_term_season_total.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-07-31",
+        reviewed="2026-08-07",
         date="2026-07-31",
         tags=("era", "method"),
     ),
     Decision(
         id="season-term-ablation",
         topic="components",
-        claim="A perfect league-level override is worth at most **3.1% of MAE**, which "
+        claim="A perfect league-level override is worth at most **~5% of MAE**, which "
               "bounds every form of season term — fitted or manual.",
-        because="`oracle_league` rescales each held-out season by its own realized total: "
+        because="`oracle_league` rescales each scored season by its own realized total: "
                 "a perfect per-season league multiplier, the most general form any "
                 "league-level term can take, and unusable as a model because it reads the "
-                "season it forecasts. As a share of the base arm's MAE it is worth `stl` "
-                "**3.11%**, `blk` 2.32%, `fta` **2.16%**, `reb` 1.71%, `fg3a` 0.92%, `ast` "
-                "0.58%, `tov` 0.01%, `fg2a` −0.06% — median **1.32%**. `fta` carries a "
-                "−7.0% systematic bias and removing it *entirely* recovers 2.2% of MAE, "
-                "because player-level error dominates a league-level one. So the whole "
-                "season-term question is bounded small on point accuracy, which is why "
-                "the answer is 'no term' despite the league movement being real. 108 "
-                "fits, 0 divergences, max R̂ 1.0142, 155.9 min — affordable only because "
+                "season it forecasts. On validation it is worth `fta` **4.97%**, `reb` "
+                "2.58%, `tov` **2.36%**, `ast` 1.29%, `blk` **1.17%**, `stl` 0.36%, `fga` "
+                "−0.00% — median **1.29%**. `fga` is negative because a perfect rescale "
+                "can cost a fraction on a head whose league level barely moves, which is "
+                "the cleanest statement that there is nothing to win. **Quote the "
+                "magnitude, never the order**: on the held-out split the same ceiling read "
+                "`stl` 3.11% first and `fta` 2.16% third with a median of 1.71%, so the "
+                "ranking fully reorders across two scored seasons while its size does not. "
+                "So the whole season-term question is bounded small on point accuracy, "
+                "which is why the answer is 'no term' despite the league movement being "
+                "real. 54 fits, 0 divergences, max R̂ 1.0105, 79.3 min — half the fits of "
+                "the both-splits run, and affordable at all only because "
                 "`metric=\"dense_e\"` cut the `blk` spline base from 236.6 s to 13.4 s.",
         status="settled",
         reproduce="make season-terms → outputs/predictions/season_term_metrics.csv, "
                   "outputs/predictions/season_term_diagnostics.csv, "
                   "outputs/predictions/season_term_bonus.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-07-31",
+        reviewed="2026-08-07",
         date="2026-07-31",
         tags=("era", "method"),
     ),
@@ -1821,58 +1887,68 @@ REGISTRY: tuple[Decision, ...] = (
         id="year-effect-is-a-simulator-input",
         topic="simulations",
         claim="The year random effect belongs in the SIMULATOR as a variance component, "
-              "not in any component head as a feature — it is worth ~95× the shared-β "
+              "not in any component head as a feature — it is worth ~50× the shared-β "
               "term on a 15-man roster.",
         because="It is mean-zero at prediction time, so it cannot move point accuracy and "
-                "measurably does not: median held-out ΔR² against base is **+0.00004** "
+                "measurably does not: median validation ΔR² against base is **−0.00027** "
                 "across thirteen heads. What it does is widen the JOINT distribution, and "
                 "a league shift is perfectly correlated across players so it grows as N "
                 "while independent error grows as sqrt(N). Roster season-total dk_pts sd "
-                "inflation: **+15.0%** at 12 players, **+19.0% at 15**, +37.7% at 30, "
-                "+138% at 150, **+364%** across all 791 — against shared-β's +0.2% / "
-                "+0.2% / +0.3% / +1.1% / +6.4% on the same board. It is also a defined "
-                "check rather than a hopeful one: `sigma_year`, fitted by NUTS on "
-                "player-season rows, lands within 20% of the directly measured league "
-                "yoy sd on 5 of 8 count heads (`blk` 0.99×, `tov` 0.94×, `fta` 0.87×, "
-                "`stl` 0.82×, `reb` 1.18×). **`fg3a` at 2.37× is the tell** — with no "
-                "trend term it absorbs drift as a sequence of shocks and then zeroes it, "
-                "which is why its bias goes to −9.01%. Take σ from the measured league "
-                "movement rather than the fitted value, and draw one per head: the "
-                "cross-component shock correlation is −0.009 on average, so there is no "
-                "common factor. Exception: the **minutes** head, where a year effect wins "
-                "on both splits (val 143.81, test 146.54) and improves the standing bias "
-                "to −38.2 — the one head that adopts a season term.",
+                "inflation: **+7.95%** at 12 players, **+10.4% at 15**, +21.0% at 30, "
+                "+83.5% at 150, **+254%** across all 773 — against shared-β's +0.2% / "
+                "+0.2% / +0.3% / +1.1% / +6.4%, which is a different board and a different "
+                "head, so the ratio is indicative rather than a like-for-like division. "
+                "(Superseded test-board reading: +8.9% / +11.6% / +22.1% / +91.1% / +278% "
+                "across 791.) It is also a defined check rather than a hopeful one: "
+                "`sigma_year`, fitted by NUTS on player-season rows, lands within 20% of "
+                "the directly measured league yoy sd on 3 of 7 count heads (`blk` 0.85×, "
+                "`tov` 0.89×, `reb` 1.07×) and within a factor of 1.4 on all seven. **The "
+                "shot-mix head at 1.84× is the tell** — with no trend term it absorbs "
+                "drift as a sequence of shocks and then zeroes it. ⚠️ Every σ moved on "
+                "2026-08-07 because the old `year_*` columns were written from the TEST "
+                "arm's fit (27 training seasons) into a row whose CRPS came from the "
+                "validation arm (25); `year_n_train_seasons` shows it. Take σ from the "
+                "measured league movement rather than the fitted value, and draw one per "
+                "head: the cross-component shock correlation is +0.011 on average, so "
+                "there is no common factor. Exception: the **minutes** head, where a year "
+                "effect wins at val 143.81 against base 144.09 — the one head that adopts "
+                "a season term.",
         status="settled",
         reproduce="make season-terms → "
                   "outputs/predictions/season_term_roster_spread.csv, "
                   "outputs/predictions/season_term_sigma_vs_league.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-07-31",
+        reviewed="2026-08-07",
         date="2026-07-31",
         tags=("era", "correlation", "simulation"),
     ),
     Decision(
         id="availability-season-x-role-is-a-null",
         topic="availability",
-        claim="The availability season × role interaction is a **validation null**, "
-              "despite being the best arm on test — the era effect does not transfer "
-              "into a better forecast.",
-        because="`trend_x_role` and `trend_x_role_year` are the best two of seven arms on "
-                "test (10.742, 10.736 against base 10.797) and the **worst two on "
-                "validation** (10.078, 10.087 against 10.007). That is the exact shape of "
-                "the false positive this project already shipped once — the nonlinearity "
-                "arm whose paired bootstrap on test read [−0.079, −0.015] with "
-                "P(Δ<0) = 99.7% and did not replicate — and it is caught only because "
-                "selection never reads the test column. The selected arm, `trend`, is "
-                "worth **0.010 games** of validation CRPS, which is nothing. The era "
-                "effect itself is real and independently confirmed (the 2023-24 policy "
-                "break is −4.63% at p = 0.008 on `gp_share [30+ mpg]`); it simply does "
-                "not survive as a feature, because a perfect league-level correction is "
-                "worth ≤3.1% of MAE anywhere.",
+        claim="The availability season × role interaction is a **validation null** — the "
+              "worst two arms of seven — and the era effect does not transfer into a "
+              "better forecast.",
+        because="`trend_x_role` and `trend_x_role_year` are the **worst two of seven arms "
+                "on validation** (10.078, 10.087 against base 10.007): the most expensive "
+                "arms in the ablation at 26 features, buying a loss of 0.08 games. They "
+                "were simultaneously the best two on test (10.742, 10.736 against base "
+                "10.797), which is the exact shape of the false positive this project "
+                "already shipped once — the nonlinearity arm whose paired bootstrap on "
+                "test read [−0.079, −0.015] with P(Δ<0) = 99.7% and did not replicate — "
+                "and it was caught only because selection never reads the test column. "
+                "⚠️ Since 2026-08-07 `src/models/held_out.py` stops that test column being "
+                "computed at all, so the val/test contrast is preserved as the record of "
+                "why the lock exists rather than as a re-runnable measurement; the verdict "
+                "does not depend on it. The selected arm, `trend`, is worth **0.010 "
+                "games** of validation CRPS, which is nothing. The era effect itself is "
+                "real and independently confirmed (the 2023-24 policy break is −4.63% at "
+                "p = 0.008 on `gp_share [30+ mpg]`); it simply does not survive as a "
+                "feature, because a perfect league-level correction is worth ≤5% of MAE "
+                "anywhere.",
         status="null",
         reproduce="make season-terms → outputs/predictions/season_term_metrics.csv",
         source="docs/availability-plan.md",
-        reviewed="2026-07-31",
+        reviewed="2026-08-07",
         date="2026-07-31",
         tags=("era", "availability"),
     ),
@@ -1883,22 +1959,31 @@ REGISTRY: tuple[Decision, ...] = (
               "30-season mean, **not** an era effect.",
         because="`docs/availability-plan.md` proposed the bias as 'the signature an era "
                 "effect would leave', with the obvious test being a trend. The test ran "
-                "and falsifies it: a trend makes the bias **worse by 15.5 minutes** "
-                "(−41.0 on `base` against **−56.6** on `trend`, and −56.6 on "
-                "`trend_year`). An era effect the head was failing to track would have "
-                "been corrected by a trend, not amplified by it. The year random effect "
-                "does help — it wins on both splits (val 143.81 / test 146.54 against "
-                "144.09 / 147.02) and nudges the bias to −38.2 — but that is a partial "
-                "improvement, so a genuine bias correction is still owed before the "
-                "simulator consumes these minutes as exposure for eleven other heads.",
+                "and falsifies it: on validation a trend makes the bias **worse by 10.8 "
+                "minutes** (−14.2 on `base` and −13.0 on `year` against **−25.0** on "
+                "`trend` and −26.9 on `trend_year`). An era effect the head was failing "
+                "to track would have been corrected by a trend, not amplified by it. The "
+                "year random effect does help — it wins at val 143.81 against base 144.09 "
+                "and is the least biased fitted arm — but that is a partial improvement, "
+                "so a genuine bias correction is still owed before the simulator consumes "
+                "these minutes as exposure for eleven other heads. **The −33 to −41 level "
+                "itself is withdrawn** (see `minutes-head-held-out-bias`): that was the "
+                "held-out column, and on validation the FLOOR is the biased one at "
+                "**+23.9** while the fitted arms run −13 to −27. What reproduces across "
+                "both splits is the GAP — the fitted arms sit 27–51 minutes below the "
+                "carry-forward — so quote the distance, never a signed level. The "
+                "conclusion here is unaffected, since a trend making the bias worse is a "
+                "statement about the trend, not about which seasons it was measured on. "
+                "Re-measured on validation 2026-08-07 (superseded held-out figures: "
+                "−41.0 / −56.6 / −38.2, worse by 15.5 minutes).",
         status="withdrawn",
         replaced_by="The bias is shrinkage toward the pooled mean; the year effect "
-                    "recovers ~3 minutes of it and no trend helps.",
+                    "recovers ~1 minute of it and no trend helps.",
         caught_by="make season-terms — the trend arm doubled the bias instead of "
                   "removing it",
         reproduce="make season-terms → outputs/predictions/season_term_metrics.csv",
         source="docs/availability-plan.md",
-        reviewed="2026-07-31",
+        reviewed="2026-08-07",
         date="2026-07-31",
         tags=("era", "minutes"),
     ),
@@ -1983,18 +2068,22 @@ REGISTRY: tuple[Decision, ...] = (
         topic="components",
         claim="Every component head must be quoted against the no-fit floor: prior "
               "per-36 rate × actual minutes / 36, with no fitting at all.",
-        because="The floor scores held-out R² **0.82–0.94** and the best of seven "
-                "fitted variants beats it by only +0.0019 to +0.0203. A head that does "
+        because="The floor scores validation R² **0.81–0.95** and the best of seven "
+                "fitted variants beats it by only +0.0013 to +0.0334. A head that does "
                 "not clear it is not a model — and the floor is what caught the sklearn "
                 "alpha artifact, which is why it is mandatory rather than advisory. "
                 "Every output row carries `beats_floor` and the runner warns when no "
                 "variant clears it for a head, because that is also the signature of "
-                "the regularization trap.",
+                "the regularization trap. Moved from the held-out seasons to validation "
+                "on 2026-08-05, where it read 0.82–0.94 and +0.0019 to +0.0203; this "
+                "module had been the only head in the project with **no split guard at "
+                "all**, because it defined its own `split_seasons` instead of importing "
+                "the shared one.",
         status="built",
         reproduce="make component-rates → "
                   "outputs/predictions/component_rate_metrics.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-06",
         date="2026-07-29",
         tags=("benchmark",),
     ),
@@ -2151,24 +2240,49 @@ REGISTRY: tuple[Decision, ...] = (
     Decision(
         id="the-free-throw-family-fails-its-floor",
         topic="components",
-        claim="Under the shipped negative binomial the **whole free-throw family** "
-              "falls below its no-fit floor — `fta` now joins `ftm|fta`.",
-        because="Best fitted `fta` scores held-out R² 0.8649 against the "
-                "carry-forward floor's 0.8673. For `ftm|fta` there is a standing "
-                "explanation — free-throw percentage is pure player skill, so an "
-                "empirical-Bayes shrink of the prior is already optimal — but there "
-                "is **no equivalent argument for trips to the line**, which are a "
-                "volume statistic like any other attempt count. So this deserves a "
-                "second look rather than acceptance, and it is the reason the floor "
-                "is mandatory rather than advisory: without it, a fitted head that "
-                "loses to doing nothing would have shipped looking reasonable.",
-        status="open",
+        claim="~~Under the shipped negative binomial the **whole free-throw family** "
+              "falls below its no-fit floor — `fta` now joins `ftm|fta`.~~ "
+              "**Withdrawn 2026-08-06: `fta` clears its floor on validation. Only "
+              "`ftm|fta` fails.**",
+        because="The finding rested on `fta` scoring **test** R² 0.8649 against the "
+                "carry-forward floor's 0.8673 — a shortfall of **0.0024**, which was "
+                "never distinguishable from zero. Re-run on the split that is allowed "
+                "to select (`src/models/held_out.py`), `fta` selects `log_own` and "
+                "scores **0.8909** against a floor of **0.8765**, clearing by "
+                "**+0.0144**. `ftm|fta` still fails at every variant and is now the "
+                "only head in the project that does — which was always the "
+                "better-founded half, since free-throw *percentage* has a "
+                "pure-player-skill argument that trips to the line never had. The "
+                "sklearn probe agrees on validation (0.8922 against the same floor), "
+                "so both instruments now say the same thing. **The floor stays "
+                "mandatory** — that argument is untouched; what changed is that a "
+                "two-parts-in-a-thousand shortfall was being reported as a head-level "
+                "defect. Fourth reversal of a sub-1% test margin since the lock.",
+        status="withdrawn",
+        replaced_by="**Only `ftm|fta` fails.** On validation `fta` selects `log_own` and "
+                    "scores **0.8909** against a carry-forward floor of **0.8765**, "
+                    "clearing by **+0.0144** — where the recorded reading had it 0.0024 "
+                    "*below* a test-split floor. `ftm|fta` still loses at every variant "
+                    "(3.0804 against 3.0541) and is now the only head in the project that "
+                    "fails its floor, which is the case that always had a mechanism behind "
+                    "it: free-throw percentage is pure player skill, so shrinking the prior "
+                    "is already optimal. There is still no equivalent argument for trips to "
+                    "the line — and now none is needed.",
+        caught_by="`src/models/held_out.py` moved the sweep off the test split, and `fta` "
+                  "changed sides. The margin that carried the original finding was 0.0024 "
+                  "R² — two parts in a thousand, on 791 rows — so it was never "
+                  "distinguishable from zero, and the entry read as a head-level defect "
+                  "rather than as noise. The sklearn probe independently agrees on "
+                  "validation (0.8922 against the same floor), so the two instruments that "
+                  "had disagreed now do not. Fourth reversal of a sub-1% test margin since "
+                  "the lock landed; the no-fit floor itself is untouched and still "
+                  "mandatory.",
         reproduce="make stan-components → "
                   "outputs/predictions/stan_component_metrics.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-06",
         date="2026-07-30",
-        tags=("next", "defect"),
+        tags=("defect",),
     ),
     Decision(
         id="fg3a-share-reparameterization",
@@ -2181,27 +2295,28 @@ REGISTRY: tuple[Decision, ...] = (
                 "raw counts trade off at −0.11 residual correlation. **Re-measured "
                 "un-handicapped (Gate 0, 2026-08-03) and it still wins**: arm A at each "
                 "head's own selected variant against arm B swept for real gives "
-                "**−0.501 nats on validation and −0.494 on test**, per player-season, "
-                "and **−0.492 even against arm A's best-of-16** configuration. The "
+                "**−0.501 nats on validation**, per player-season. The "
                 "recorded −0.771 / −0.793 was measured against a straw man — both arms "
-                "fitted at `log_own`, where `fg3a` reads test R² 0.3719 with "
+                "fitted at `log_own`, where `fg3a` reads R² 0.3719 with "
                 "`beats_floor = False` against 0.9046 for the spline it ships — and "
                 "0.306 of that margin was the handicap. The comparison is legitimate "
                 "because `(fg2a, fg3a) ↔ (fga, fg3a)` is a **bijection with unit "
                 "Jacobian on the integers**, so the two joint log-densities are "
-                "directly comparable. **The sharpest result is that arm B's *no-fit "
-                "floor* (10.086) beats arm A's *best fitted* configuration (10.476) by "
-                "−0.391**: writing the identity in the right basis is worth ~79% of the "
-                "margin, and arm B's own fitting adds only −0.101 on top of its floor. "
-                "Still measured, not adopted — `COUNT_HEADS` is unchanged and "
-                "`docs/shot-attempt-basis-plan.md` specifies what adoption requires.",
-        status="measured",
+                "directly comparable. **Re-run validation-only on 2026-08-06** with "
+                "`src/models/held_out.py`. The test column it used to carry (−0.494, and "
+                "−0.492 against arm A's best-of-16) is retired: the best-of-16 grid was "
+                "read from `stan_component_metrics.csv`'s `test_nll`, and adoption removed "
+                "those head rows while the split move removed the column. That grid was "
+                "worth 0.001640 nats over arm A's own selected pair, so the loss is "
+                "bookkeeping rather than evidence. Adopted — see "
+                "`shot-attempt-basis-adopted`.",
+        status="built",
         reproduce="make stan-substitution → "
                   "outputs/predictions/stan_component_substitution_sweep.csv, "
                   "outputs/predictions/stan_component_substitution_sweep_diagnostics.csv, "
                   "outputs/predictions/stan_component_substitution.csv",
         source="docs/shot-attempt-basis-plan.md",
-        reviewed="2026-08-03",
+        reviewed="2026-08-06",
         date="2026-08-03",
         tags=("specification",),
     ),
@@ -2258,14 +2373,15 @@ REGISTRY: tuple[Decision, ...] = (
                 "attempt mix and exactly right, while shooting percentage stays "
                 "`fg3m_pct`. (3) `fga` and `fg3a` are drawn from different posteriors, so "
                 "the derived `fg2a` needs a zero-clip. **`fga` is now the best-behaved "
-                "count head in the project**: the highest floor (0.9464), selected at "
-                "0.9505, and a linear predictor costs it 0.0068 R² where it cost `fg3a` "
-                "−19.00.",
+                "count head in the project**: the highest floor (0.9514), selected at "
+                "0.9584, and a linear predictor costs it 0.0025 R² where it cost `fg3a` "
+                "−19.00. (Those three read 0.9464 / 0.9505 / 0.0068 on the held-out "
+                "split, before the sweep moved to validation on 2026-08-06.)",
         status="built",
         reproduce="make stan-components → "
                   "outputs/predictions/stan_component_metrics.csv",
         source="docs/shot-attempt-basis-plan.md",
-        reviewed="2026-08-04",
+        reviewed="2026-08-06",
         date="2026-08-04",
         tags=("specification",),
     ),
@@ -2296,26 +2412,34 @@ REGISTRY: tuple[Decision, ...] = (
     Decision(
         id="gate-a-cost-model-is-a-lower-bound",
         topic="minutes",
-        claim="The composition's timing gate **under-predicted by 1.63×** at full window, "
-              "because per-row sampler cost is superlinear in rows.",
-        because="The probe extrapolated **12.8 h** for the four-arm sweep; it took "
-                "**20.9 h** of sampler time. Per-row cost runs 5.75 ms on the 26k-row "
-                "probe against **15.23 ms** on the 631k-row `betabinom` fit: more data "
+        claim="The composition's timing gate **under-predicts, and by a factor that is not "
+              "constant** — 1.63× two-pass, **1.17×** one-pass — because per-row sampler "
+              "cost is superlinear in rows.",
+        because="The one-pass probe extrapolated **8.3 h** for the four-arm sweep; it took "
+                "**9.78 h** of sampler time. Per-row cost runs 5.95 ms on the 26k-row "
+                "probe against **14.83 ms** on the 631k-row `betabinom` fit: more data "
                 "sharpens the posterior, which shrinks the step size, which buys more "
                 "leapfrog steps per iteration on top of an already-linear per-gradient "
-                "cost. The pilot's linear model was accurate to 1.2% over a 16× "
-                "extrapolation and is off by 63% over a 24× one, so **Gate A is a lower "
-                "bound, not an estimate**. Its recorded fallback order is also wrong: it "
-                "says cut `binomial` first, but `binomial` is the *cheapest* arm (15.3% of "
-                "sweep time against `betabinom`'s 40.4%) and cutting it removes the result "
-                "that dispersion is load-bearing. Shorten chains first, subsample train "
+                "cost. **Gate A is a lower bound, not an estimate.** ⚠️ The two-pass sweep "
+                "missed by 1.63× (12.8 h against 20.9 h), and the shrink is not the sampler "
+                "becoming predictable — the old figure was inflated by a second pass on a "
+                "larger frame that the linear model handled badly. "
+                "`stan_games_played.probe_timing` hard-codes `raw_hours * 1.63` and keeps "
+                "it deliberately: lowering it makes that gate more permissive, and "
+                "admitting an unaffordable run is far worse than aborting an affordable "
+                "one. Its recorded fallback order is also wrong: it "
+                "says cut `binomial` first, but `binomial` is the *cheapest* arm (20.5% of "
+                "sweep time against the graded arm's 27.3%) and cutting it removes the "
+                "result that dispersion is load-bearing. That spread narrowed from 2.6× to "
+                "1.33× when the test pass went, so the argument is weaker than it was. "
+                "Shorten chains first, subsample train "
                 "second, cut arms last — and never cut `betabinom_ot`, which `run()` reads "
                 "after the whole sweep and before any CSV is written.",
         status="measured",
         reproduce="make stan-composition → "
                   "outputs/predictions/stan_composition_diagnostics.csv",
         source="docs/minutes-composition-plan.md",
-        reviewed="2026-08-04",
+        reviewed="2026-08-08",
         date="2026-08-04",
         tags=("performance", "methodology"),
     ),
@@ -2327,21 +2451,25 @@ REGISTRY: tuple[Decision, ...] = (
               "configuration.",
         because="At their no-fit floors — prior per-36 rate × minutes for the count, a "
                 "shrunk carry-forward for the share, no features anywhere — the two bases "
-                "score **11.024** (canonical) against **10.086** (reparameterized), a "
-                "**−0.938** nat gap. Arm A's best of sixteen fitted combinations is "
-                "10.476, so the reparameterized floor beats it by **−0.391** with zero "
-                "features, and arm B's own fitted heads add only −0.101 on top of their "
-                "floor. This is the same shape as the standing finding that the component "
+                "score **11.174** (canonical) against **10.064** (reparameterized), a "
+                "**−1.110** nat gap. Arm A's fitted configuration scores 10.505, so the "
+                "reparameterized floor beats it by **−0.441** with zero features, and arm "
+                "B's own fitted heads add only −0.060 on top of their floor. This is the "
+                "same shape as the standing finding that the component "
                 "rate side is nearly saturated by a carry-forward: when the floor is that "
                 "strong, the parameterization is where the remaining leverage is, not the "
                 "feature set. It also reframes the substitution result — it is not a "
                 "better model of shot attempts, it is the same information in coordinates "
-                "where the dependence is structural instead of residual.",
+                "where the dependence is structural instead of residual. **Measured on "
+                "validation since 2026-08-06**, where the gap is wider than the test "
+                "column it replaces (11.024 / 10.086 / −0.938 / −0.391 / −0.101). The "
+                "floors are arithmetic and reproduce to the digit across the refit, so the "
+                "widening is the fitted side moving, not the benchmark.",
         status="measured",
         reproduce="make stan-substitution → "
                   "outputs/predictions/stan_component_substitution_sweep.csv",
         source="docs/shot-attempt-basis-plan.md",
-        reviewed="2026-08-03",
+        reviewed="2026-08-06",
         date="2026-08-03",
         tags=("specification", "methodology"),
     ),
@@ -2371,6 +2499,81 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("failure-mode",),
     ),
 
+    Decision(
+        id="held-out-split-is-locked-in-code",
+        topic="problem",
+        claim="The test seasons are a **capability**, not a convention: reaching them "
+              "raises unless `src/final_evaluation.py` has explicitly unlocked them.",
+        because="A rule that lives only in prose gets followed until it is inconvenient, "
+                "and this one already failed. The games-played head's Gate D was "
+                "specified with the incumbent's *test* figures as its bars, run on the "
+                "test split, and settled which model ships — on a 0.0013 CRPS margin a "
+                "paired bootstrap could not distinguish from zero, which **reversed** "
+                "when re-decided on validation. Nothing in the code objected because "
+                "nothing in the code knew. The guard now sits inside "
+                "`availability.split_seasons`, the one choke point every head goes "
+                "through, so a new head cannot forget to add it; it fires on *use* "
+                "rather than on carving, so `train, _ = split_seasons(...)` stays legal "
+                "and `score(model, test)` does not. Nine modules were converted and the "
+                "sweeps stopped emitting a test column at all, which cut roughly half "
+                "the sampler time and removed a confound — the test side used to refit "
+                "on train + validation at double the iterations, so a val/test "
+                "disagreement conflated the rows, the training data and the chain "
+                "length, and was never the replication check it looked like.",
+        status="built",
+        # The lock's own artifact is `final_evaluation.csv`, which deliberately does not
+        # exist yet — running it would spend the split. So this entry cites the artifact
+        # the lock *produced*: a gate that passed on test by 0.03 dk_pts and fails on
+        # validation by 6.34. See `final-evaluation-has-not-run` for the other half.
+        reproduce="make season-total → outputs/predictions/season_total_gate_e.csv",
+        source="CLAUDE.md",
+        reviewed="2026-08-06",
+        date="2026-08-05",
+        tags=("discipline",),
+    ),
+    Decision(
+        id="final-evaluation-has-not-run",
+        topic="problem",
+        claim="`make final-evaluation` has **never been run**, and the test seasons are "
+              "therefore unspent. Three heads are registered for it — availability, "
+              "games played and the season total.",
+        because="It is the one end-of-project measurement of the whole workflow, and the "
+                "workflow is not finished: the simulator, the ranking layer and the "
+                "backtested draft strategies are all still ahead. Running it now would "
+                "spend the split for a number that describes a partial system, and any "
+                "modelling decision taken afterwards would make the estimate biased. "
+                "Registering a head there is what makes its held-out number *takeable*, "
+                "which is why the registry is asserted by a test rather than assumed — a "
+                "head dropped from it silently loses its final measurement. The heads "
+                "that are not registered yet (minutes, components, composition, season "
+                "terms) have simply not had their refit wired.",
+        status="open",
+        unblocks="the simulator, ranking and drafting layers being finished",
+        source="CLAUDE.md",
+        reviewed="2026-08-06",
+        date="2026-08-05",
+        tags=("discipline",),
+    ),
+    Decision(
+        id="component-rates-had-no-split-guard",
+        topic="components",
+        claim="`component_rates.py` defined its own `split_seasons`, which routed around "
+              "the held-out lock entirely. Deleted; the shared split is now the only one.",
+        because="The lock lives inside `availability.split_seasons` precisely so a head "
+                "cannot forget to add it — and a private copy of the same six lines "
+                "defeats that completely, silently, while looking like ordinary "
+                "duplication. The copy was behaviourally identical, so folding it onto "
+                "the shared function changed nothing but the guard. A test now walks "
+                "every converted module with `ast` and fails if one names "
+                "`split_seasons` instead of `held_out.selection_split`.",
+        status="built",
+        reproduce="make component-rates → "
+                  "outputs/predictions/component_rate_metrics.csv",
+        source="CLAUDE.md",
+        reviewed="2026-08-06",
+        date="2026-08-05",
+        tags=("discipline",),
+    ),
     # ══ Season simulations ═══════════════════════════════════════════════════
     Decision(
         id="fit-stan-heads-separately",
@@ -2400,18 +2603,30 @@ REGISTRY: tuple[Decision, ...] = (
         topic="simulations",
         claim="The correlation the simulator needs enters at **draw time**, not fit "
               "time: draw `min` once and push it through all eleven heads.",
-        because="Minutes are the largest common factor by far. Beyond that, residual "
+        because="Minutes are the largest common factor by far, at **46.4%** of "
+                "within-player residual variance. Beyond that, residual "
                 "cross-component correlation is **small** — conditioning minutes out, "
-                "the off-diagonals average +0.012 with a max of +0.142 (`fg2a`–`reb`), "
-                "and the 3PA/2PA substitution appears exactly as predicted at −0.125. "
-                "Impose that matrix with a Gaussian copula at simulation time if the "
-                "shared minutes draw misses; do not fit jointly for it. The matrix is "
-                "PSD with minimum eigenvalue +0.756, so it needs no nearest-PSD "
-                "correction.",
+                "the off-diagonals average **+0.0070** with a max of **+0.1329** "
+                "(`fga`–`reb`). Impose that matrix with a Gaussian copula at simulation "
+                "time if the shared minutes draw misses; do not fit jointly for it. The "
+                "matrix is PSD with minimum eigenvalue **+0.7853**, so it needs no "
+                "nearest-PSD correction. ⚠️ **Every figure here was corrected on "
+                "2026-08-07**, and by two separate events rather than one. The minutes "
+                "share read 18.6%, which conditioned on the raw minutes *level* and is "
+                "attenuated by construction; and the off-diagonals read +0.012 / +0.142 "
+                "(`fg2a`–`reb`) / minimum eigenvalue +0.756, which are the retired "
+                "two-count basis. Adopting the shot-attempt basis removed the 3PA/2PA "
+                "substitution from this matrix **by construction** — the recorded "
+                "−0.125 pair no longer exists here, and it ships under "
+                "`basis == \"legacy_two_count_basis\"` at −0.1248 instead. What replaces "
+                "it is `fga`–`fg3a|fga` at −0.0836, a genuine residual relation between "
+                "shot volume and shot mix rather than an accounting identity. The "
+                "simulator must read `fit_window == \"train_val\"`, not the `full` "
+                "window quoted here.",
         status="measured",
         reproduce="make residual-correlation → outputs/eda/residual_correlation.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-07",
         date="2026-07-29",
         tags=("simulator-input",),
     ),
@@ -2548,20 +2763,232 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("simulator-input",),
     ),
     Decision(
+        id="games-played-is-a-tenure-decomposition",
+        topic="simulations",
+        claim="The games-played process is **entry index × exit index × a within-tenure "
+              "two-state chain**, not one recurrent chain over the schedule. A departure "
+              "is an absorbing hitting time, not a low recovery rate.",
+        because="A waived player's cell has a recovery hazard of about zero, so a "
+                "recurrent chain makes him absorbing from his *first* absence rather than "
+                "from the game he was actually cut — relocating the departure earlier in "
+                "the season and dragging the left tail out. Gate 0 measures it at the most "
+                "generous parameterization available, each cell running at its own "
+                "observed hazards, so the failure is a property of the **process class** "
+                "and no covariate block can rescue it: the plain full-window chain "
+                "over-predicts `P(GP < 41)` by 21.9% (z = +5.29 against the sampling error "
+                "of the observed proportion) where the tenure decomposition misses by 3.8% "
+                "(z = +0.93). The fix keeps all 30 seasons, because "
+                "`team_games = pre-tenure + tenure + post-tenure` is identifiable "
+                "structurally from `in_appearance_window`. Two things fall out free: every "
+                "within-tenure spell is **interior**, so the duration head needs no "
+                "censoring branch; and the initial state is **known**, which is the one "
+                "thing the collapse to sufficient statistics cannot supply.",
+        status="settled",
+        reproduce="make games-played → outputs/predictions/stan_games_played_gate.csv, "
+                  "outputs/predictions/stan_games_played_collapse.csv, "
+                  "outputs/predictions/stan_games_played_spells.csv",
+        source="docs/games-played-plan.md",
+        reviewed="2026-08-05",
+        date="2026-08-05",
+        tags=("architecture", "simulator-input"),
+    ),
+    Decision(
+        id="games-played-collapses-to-four-counts",
+        topic="simulations",
+        claim="The game-level Markov likelihood collapses **exactly** to four transition "
+              "counts per player-season — 1,297,766 transitions into 32,944 binomial "
+              "rows, a 39.4× reduction.",
+        because="Every feature the head uses is constant within a player-season, which is "
+                "the prediction-time constraint rather than a modelling choice, so for "
+                "observed states the per-transition probabilities are constant too and "
+                "`(onsets, at-risk, recoveries, at-risk-missed)` are sufficient. The same "
+                "algebraic collapse the count heads already use — an identity, not an "
+                "approximation, and the reason fitting a game-level process costs no more "
+                "than the season-level head it extends. Right-censoring needs no term at "
+                "all on this side: the product runs over *observed* transitions and the "
+                "terminal state contributes no factor.",
+        status="built",
+        reproduce="make games-played → "
+                  "outputs/predictions/stan_games_played_collapse.csv",
+        source="docs/games-played-plan.md",
+        reviewed="2026-08-05",
+        date="2026-08-05",
+        tags=("architecture",),
+    ),
+    Decision(
+        id="clustering-supplies-42-percent-of-the-gp-overdispersion",
+        topic="availability",
+        claim="Serial clustering explains roughly **a sixth** of the ~22.7× games-played "
+              "overdispersion; the rest is between-player heterogeneity.",
+        because="A 2-state chain with lag-1 ρ = 0.597 inflates variance 3.96× against the "
+                "22.7× measured, and 3.96 / 22.7 is about a sixth.",
+        status="withdrawn",
+        replaced_by="**Two independent errors, and they compound.** The composition is "
+                    "**additive**, not multiplicative — `inflation = C + ρ(n − C)`, which "
+                    "returns `1 + (n−1)ρ` at C = 1 — so dividing one figure by the other "
+                    "is not a decomposition of anything. And the two figures are measured "
+                    "on different frames: the 3.96× runs on the appearance window over "
+                    "**all** players, the 22.7× on the full window over **established "
+                    "rotation** players. Matched, the same population reads "
+                    "`P(play|played) = 0.9443` and `P(play|missed) = 0.1333`, giving "
+                    "**C = 9.58** — clustering supplies **42%** of the budget, not 17%. "
+                    "The direction of the correction matters more than its size: there is "
+                    "**no dispersion hole to fill, there is a surplus to avoid**. Stacking "
+                    "the incumbent's fitted ρ = 0.2757 on the measured clustering predicts "
+                    "29.55 against a 22.70 target, a 30.2% overshoot — which is why this "
+                    "head was decided in writing to ship on tail calibration with GP CRPS "
+                    "as a non-regression bar.",
+        caught_by="Building `docs/games-played-plan.md`, which needed the clustering term "
+                  "as an actual input to a simulator rather than as a rhetorical share. "
+                  "`serial_structure` now emits `*_rotation` keys on the matched frame so "
+                  "the two can never again be divided into each other; the original rows "
+                  "are untouched and still correct measurements of what they measure.",
+        reproduce="make availability-profile → outputs/eda/availability_profile.csv",
+        source="docs/availability-plan.md",
+        reviewed="2026-08-05",
+        date="2026-07-29",
+        tags=("reversal", "simulator-input"),
+    ),
+    Decision(
+        id="games-played-ships-the-calibration-not-the-fit",
+        topic="simulations",
+        claim="The games-played spell process ships **option (b)** — hazards inverted from "
+              "the incumbent's marginal — because it beats all four fitted arms on CRPS and "
+              "the tail.",
+        because="Inverting `inflation = C + rho(n - C)` gives a two-state chain whose "
+                "stationary play rate is exactly the incumbent's per-player predictive mean "
+                "and whose lag-1 autocorrelation is exactly the measured clustering, so it "
+                "reproduces a validated marginal by construction. On the TEST split it read "
+                "CRPS 10.7939 against 10.7952 and cut the tail error from 0.0264 to 0.0174.",
+        status="withdrawn",
+        replaced_by="**No arm ships; the incumbent stands.** The decision was made on the "
+                    "test split, and it reverses on validation. There the incumbent wins "
+                    "CRPS (**10.0057** against the fallback's 10.0173 and "
+                    "`duration_covariates`' 10.1625, the latter at P(better) = 0.1% on a "
+                    "paired bootstrap over 883 rows) **and** the tail (**0.0406** against "
+                    "0.0437 and 0.0537). The tail was the declared win condition and it "
+                    "flips sign on both challengers. Separately the fallback's one input "
+                    "leaked: `measured_clustering` ran over all 30 seasons giving C = "
+                    "9.5806 where train+validation gives 9.8126, and with the leak removed "
+                    "its test CRPS is 10.8008, failing that bar too — so both of its Gate D "
+                    "passes were artifacts. What survives is the oracle-tenure result "
+                    "(validation CRPS 7.2265 against 10.0057), everything descriptive, and "
+                    "`duration_covariates`' better PIT KS, which is the one metric that "
+                    "replicates in a challenger's favour on both splits.",
+        caught_by="A direct question about whether such small CRPS differences could be "
+                  "overfitting, followed by the standing instruction that test data must "
+                  "not inform modelling decisions. Gate D as specified in the plan defines "
+                  "its bars as the incumbent's *test* figures while the same plan says "
+                  "'select on validation'; the implementation resolved that conflict the "
+                  "wrong way instead of flagging it. Gates B and C are computed on the test "
+                  "frame too and must move before this is re-decided.",
+        reproduce="make stan-games-played → "
+                  "outputs/predictions/stan_games_played_metrics.csv, "
+                  "outputs/predictions/stan_games_played_gates.csv, "
+                  "outputs/predictions/spell_process.csv, "
+                  "outputs/predictions/stan_games_played_gp_pmf.csv, "
+                  "outputs/predictions/stan_games_played_coefficients.csv, "
+                  "outputs/predictions/stan_games_played_diagnostics.csv, "
+                  "outputs/predictions/stan_games_played_pit.csv, "
+                  "outputs/predictions/stan_games_played_predictions.csv",
+        source="docs/games-played-plan.md",
+        reviewed="2026-08-08",
+        date="2026-08-05",
+        tags=("reversal", "simulator-input"),
+    ),
+    Decision(
+        id="the-tenure-is-the-games-played-bottleneck",
+        topic="availability",
+        claim="Given the **observed** tenure the within-tenure chain scores CRPS 7.0391 "
+              "against the season-level beta-binomial's 10.9870 — 36% better. The "
+              "bottleneck is not the absence process, it is knowing when a player joins "
+              "and leaves a roster.",
+        because="The oracle-tenure arm is not shippable — it reads the realized season — "
+                "but it separates two questions the aggregate metric fuses. The process "
+                "class is dramatically better than the incumbent *given* the tenure, and "
+                "every bit of that advantage is destroyed by having to predict entry and "
+                "exit from preseason covariates: the fitted full-window arms land at "
+                "10.8981 and 10.8026 against the incumbent's 10.7952. That is mid-season "
+                "roster churn, which `CLAUDE.md` already scopes out as irreducible — and "
+                "this is a far more specific statement of where the remaining value sits "
+                "than 'availability is hard'. It also says where NOT to spend: more "
+                "flexibility on the absence process cannot recover what the tenure factors "
+                "lose.",
+        status="measured",
+        reproduce="make stan-games-played → "
+                  "outputs/predictions/stan_games_played_metrics.csv",
+        source="docs/games-played-plan.md",
+        reviewed="2026-08-05",
+        date="2026-08-05",
+        tags=("next",),
+    ),
+    Decision(
+        id="three-state-tenure-is-a-null",
+        topic="availability",
+        claim="Identifying the tenure from the box-score `status` rather than structurally "
+              "does **not** help — it is the only arm that fails its own floor.",
+        because="The three-state arm reaches the 16.74% of missed games that fall outside "
+                "the appearance window while the player is still rostered — season-ending "
+                "and preseason injury, the highest-value population in the head, and the "
+                "one the structural proxy files under 'not on the team'. It still loses: "
+                "test CRPS 11.2470 against a floor refit on the same 2006-07+ rows at "
+                "10.9795, +0.2676. Recorded so it is not rebuilt on the strength of the "
+                "mechanism, which is real, rather than the result, which is negative.",
+        status="null",
+        reproduce="make stan-games-played → "
+                  "outputs/predictions/stan_games_played_metrics.csv",
+        source="docs/games-played-plan.md",
+        reviewed="2026-08-05",
+        date="2026-08-05",
+        tags=(),
+    ),
+    Decision(
+        id="gate-e-fails-on-validation",
+        topic="availability",
+        claim="**Gate E of the games-played plan fails.** Composed through "
+              "`season_total.py`, the spell process scores 406.80 dk_pts of MAE and "
+              "291.80 CRPS against the incumbent beta-binomial's 400.46 / 287.26 — "
+              "worse on both.",
+        because="It had been recorded as a ✅ on the **test** split, at 435.1053 MAE "
+                "against a 435.1352 bar: a margin of 0.03 dk_pts on a ~435 quantity, "
+                "seven parts in a hundred thousand, which was never evidence of "
+                "anything. Re-run on validation it lands 6.34 the wrong side and loses "
+                "CRPS and bias too. That is the third gate in this head to reverse on "
+                "moving off the test split. The bars are no longer written down: "
+                "`season_total.gate_e` reads the incumbent's own row out of whichever "
+                "table it is scoring, the same fix `stan_games_played._gate_d` took. "
+                "**It does not speak to the `hybrid` arm**, whose games-played pmf is "
+                "the incumbent's by construction and which would therefore tie Gate E "
+                "exactly — the same marginal-gate category error as Gate D, one level "
+                "down.",
+        status="settled",
+        reproduce="make season-total → outputs/predictions/season_total_gate_e.csv",
+        source="docs/games-played-plan.md",
+        reviewed="2026-08-06",
+        date="2026-08-05",
+        tags=("gate",),
+    ),
+    Decision(
         id="spell-simulator-not-built",
         topic="simulations",
-        claim="The spell process and the residual copula over a shared `min` draw are "
-              "specified but not built. This is the next piece of work.",
-        because="The specification is already pinned by measurements — block variance "
+        claim="**The spell process is now built** (`make stan-games-played`, 2026-08-05). "
+              "The residual copula over a shared `min` draw is not, and is the next piece "
+              "of work.",
+        because="The specification was already pinned by measurements — block variance "
                 "inflation per component, a falsified 2-state Markov chain, a PSD "
                 "residual correlation matrix ready to use as a copula input, and the "
-                "per-game bonus overdispersion. What is missing is the simulator that "
-                "consumes them. Validation will be posterior-predictive checks on "
+                "per-game bonus overdispersion. The half that consumes the *availability* "
+                "measurements now exists: an entry x exit x within-tenure chain whose "
+                "hazards are calibrated to the incumbent's marginal, emitting a per-player "
+                "games-played pmf and a game-level absence sequence. What remains is the "
+                "composition step that turns eleven marginal posteriors into one "
+                "correlated season. Validation will be posterior-predictive checks on "
                 "held-out team-total variance and same-team pairwise covariance — not "
                 "point accuracy.",
         status="open",
+        reproduce="make stan-games-played → outputs/predictions/spell_process.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-05",
         date="2026-07-29",
         tags=("next",),
     ),

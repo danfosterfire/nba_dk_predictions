@@ -394,36 +394,46 @@ def _build_tracker(ctx: Ctx) -> None:
         m = optional(metrics_path, target="make stan-components")
         if m is not None:
             selected = m[m["selected"]].copy()
+            # `val_r2` since 2026-08-05; `test_r2` on artifacts written before the
+            # held-out lock landed. Read whichever the file carries rather than assuming,
+            # because this tab must render an old artifact and a new one identically —
+            # the alternative is a KeyError on the first refresh after a conversion.
+            r2 = "val_r2" if "val_r2" in m.columns else "test_r2"
+            crps = "val_crps" if "val_crps" in m.columns else "test_crps"
+            ks = "val_pit_ks" if "val_pit_ks" in m.columns else "test_pit_ks"
+            split = "validation" if r2 == "val_r2" else "held-out"
             floor = (m[m["variant"] == "carry_forward"]
-                     .set_index("head")["test_r2"].rename("floor_r2"))
+                     .set_index("head")[r2].rename("floor_r2"))
             view = selected.merge(floor, on="head", how="left")
-            view["gain"] = view["test_r2"] - view["floor_r2"]
+            view["gain"] = view[r2] - view["floor_r2"]
 
             stat_tiles([
                 ("Heads fitted", f"{m['head'].nunique()}",
-                 "Eight negative-binomial counts and three beta-binomial "
+                 "Seven negative-binomial counts and four beta-binomial "
                  "conversions, each its own fit."),
                 ("Selected variants clearing the floor",
                  f"{int(selected['beats_floor'].sum())} / {len(selected)}",
                  "The selected variant per head against its no-fit carry-forward."),
                 ("Median gain over the floor", f"{view['gain'].median():+.4f}",
-                 "Held-out R². The floor really is nearly the whole model."),
+                 f"{split.capitalize()} R². The floor really is nearly the whole model."),
             ])
 
             st.plotly_chart(
-                fig_bars(view.sort_values("test_r2", ascending=False), "head",
-                         ["floor_r2", "test_r2"], ctx.th,
+                fig_bars(view.sort_values(r2, ascending=False), "head",
+                         ["floor_r2", r2], ctx.th,
                          "Stan heads — no-fit floor against the selected variant",
-                         axis_title="held-out R²", height=380),
+                         axis_title=f"{split} R²", height=380),
                 width="stretch")
-            note("Variant selection is on **validation**, quoting test for "
-                 "confirmation only — the discipline the availability head's "
-                 "nonlinearity false positive bought.")
+            note("Variant selection is on **validation**, and since 2026-08-05 there is "
+                 "no test column at all: `src/models/held_out.py` raises on the held-out "
+                 "seasons and `make final-evaluation` reads them once. The discipline "
+                 "the availability head's nonlinearity false positive bought, now "
+                 "enforced rather than remembered.")
             with detail("Selected variant per head"):
                 st.dataframe(
-                    view[["head", "kind", "variant", "n_features", "val_r2",
-                          "test_r2", "floor_r2", "gain", "test_crps", "test_pit_ks",
-                          "beats_floor"]].round(4),
+                    view[[c for c in ["head", "kind", "variant", "n_features", r2,
+                                      "floor_r2", "gain", crps, ks, "beats_floor"]
+                          if c in view.columns]].round(4),
                     width="stretch", hide_index=True)
             table_view(m.round(4), "Every head × variant — table view")
 

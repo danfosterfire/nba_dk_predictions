@@ -56,9 +56,10 @@ predictor, exactly as the count heads' log link wants `log(prior rate)`. `logit_
 the one-term version of the fix; the quadratic and spline arms then ask whether curvature
 buys anything *on top of* the right scale.
 
-**Selection is on a validation split carved out of train. The test column is confirmation
-only.** This repo has already produced one false positive whose paired bootstrap on test
-read [-0.079, -0.015] with P(delta<0) = 99.7% and did not replicate.
+**Selection is on a validation split, and there is no test column at all.** This repo has
+already produced one false positive whose paired bootstrap on test read [-0.079, -0.015]
+with P(delta<0) = 99.7% and did not replicate; `src/models/held_out.py` now raises on the
+held-out frame and `src/final_evaluation.py` reads it once, at the end.
 
 Usage:
     python -m src.models.stan_minutes
@@ -75,7 +76,8 @@ from src.data.preprocess import (FULL_WINDOW, TRAIN_VAL_WINDOW, fit_window,
                                  held_out_seasons)
 from src.eda.availability import with_lags
 from src.models.availability import (EPS, FEATURE_COLS, RHO_MAX, RHO_MIN,
-                                     fit_dispersion, split_seasons)
+                                     fit_dispersion)
+from src.models.held_out import selection_split
 from src.models.stan_availability import availability_design
 from src.models.stan_utils import (YearTerm, compile_model, crps_from_samples,
                                    diagnostics_frame, ks_uniform,
@@ -426,10 +428,19 @@ def score(model, frame: pd.DataFrame, label: str, seed: int = 0) -> dict:
     }
 
 
-def sweep(train: pd.DataFrame, val: pd.DataFrame, test: pd.DataFrame,
-          full_train: pd.DataFrame, cfg_stan: dict, n_knots: int
+def sweep(train: pd.DataFrame, val: pd.DataFrame, cfg_stan: dict, n_knots: int
           ) -> tuple[pd.DataFrame, list[dict]]:
-    """Every variant on both splits. **Selection reads the validation column only.**"""
+    """Every variant on the VALIDATION split. The test seasons are not touched.
+
+    This used to fit each variant twice — once on `train` scored against `val`, once refit
+    on `train + val` scored against `test` — and report both columns. Two things were wrong
+    with that, and `src/models/held_out.py` now prevents both. The test column was an
+    invitation to select on it, which the games-played head did and had to reverse; and the
+    refit meant a val/test disagreement conflated the evaluation rows with the training data
+    and the chain length, so it could not serve as the replication check it looked like.
+
+    The held-out number is taken once, by `src/final_evaluation.py`.
+    """
     seed = int(cfg_stan.get("seed", 42))
     fast = {"warmup": int(cfg_stan.get("select_warmup", 500)),
             "samples": int(cfg_stan.get("select_samples", 500))}
@@ -438,55 +449,46 @@ def sweep(train: pd.DataFrame, val: pd.DataFrame, test: pd.DataFrame,
     chains = int(cfg_stan.get("chains", 4))
 
     val_variants = variants(train, val, n_knots)
-    test_variants = variants(full_train, test, n_knots)
 
     rows, diagnostics = [], []
     floor_val = score(FloorMinutes().fit(train), val, "carry_forward", seed)
-    floor_test = score(FloorMinutes().fit(full_train), test, "carry_forward", seed)
     rows.append({"variant": "carry_forward", "n_features": 0,
                  "val_crps": floor_val["crps_minutes"],
-                 "test_crps": floor_test["crps_minutes"],
-                 "val_r2": floor_val["r2_minutes"], "test_r2": floor_test["r2_minutes"],
-                 "test_mae": floor_test["mae_minutes"], "test_pit_ks": floor_test["pit_ks"],
-                 "test_rho": floor_test["rho"], "test_bias": floor_test["bias_minutes"]})
+                 "val_r2": floor_val["r2_minutes"], "val_mae": floor_val["mae_minutes"],
+                 "val_pit_ks": floor_val["pit_ks"], "val_rho": floor_val["rho"],
+                 "val_bias": floor_val["bias_minutes"]})
 
     for label in val_variants:
         v_tr, v_te, v_features = val_variants[label]
+        # Full-length chains now: with the test side gone there is no reason to run
+        # selection short, and the shorter chains were a second confound in the old
+        # val/test comparison.
         v_model = StanMinutes(v_features, name=f"{label}/val", chains=chains,
-                              seed=seed, **fast).fit(v_tr)
+                              seed=seed, **full).fit(v_tr)
         v = score(v_model, v_te, label, seed)
         diagnostics.append(v_model.diagnostics)
-
-        t_tr, t_te, t_features = test_variants[label]
-        t_model = StanMinutes(t_features, name=f"{label}/test", chains=chains,
-                              seed=seed, **full).fit(t_tr)
-        t = score(t_model, t_te, label, seed)
-        diagnostics.append(t_model.diagnostics)
-
-        rows.append({"variant": label, "n_features": len(t_features),
-                     "val_crps": v["crps_minutes"], "test_crps": t["crps_minutes"],
-                     "val_r2": v["r2_minutes"], "test_r2": t["r2_minutes"],
-                     "test_mae": t["mae_minutes"], "test_pit_ks": t["pit_ks"],
-                     "test_rho": t["rho"], "test_bias": t["bias_minutes"]})
+        rows.append({"variant": label, "n_features": len(v_features),
+                     "val_crps": v["crps_minutes"], "val_r2": v["r2_minutes"],
+                     "val_mae": v["mae_minutes"], "val_pit_ks": v["pit_ks"],
+                     "val_rho": v["rho"], "val_bias": v["bias_minutes"]})
 
     out = pd.DataFrame(rows)
     fitted = out[out["variant"] != "carry_forward"]
     best = fitted.loc[fitted["val_crps"].idxmin(), "variant"]
     out["selected"] = out["variant"] == best
-    floor_r2 = float(out.loc[out["variant"] == "carry_forward", "test_r2"].iloc[0])
-    floor_crps = float(out.loc[out["variant"] == "carry_forward", "test_crps"].iloc[0])
-    out["beats_floor"] = (out["test_r2"] > floor_r2) & (out["test_crps"] < floor_crps)
+    floor_r2 = float(out.loc[out["variant"] == "carry_forward", "val_r2"].iloc[0])
+    floor_crps = float(out.loc[out["variant"] == "carry_forward", "val_crps"].iloc[0])
+    out["beats_floor"] = (out["val_r2"] > floor_r2) & (out["val_crps"] < floor_crps)
     out.loc[out["variant"] == "carry_forward", "beats_floor"] = True
     return out, diagnostics
 
 
-def inner_split(train: pd.DataFrame, test_seasons: int
-                ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    n_seasons = train["season"].nunique()
-    if n_seasons < 2:
-        raise ValueError(f"need >= 2 training seasons to carve a validation split; "
-                         f"got {n_seasons}")
-    return split_seasons(train, test_seasons=min(test_seasons, n_seasons - 1))
+# `inner_split` used to live here — carve validation out of train, then `as_plain` the
+# right-hand side because `split_seasons` guards it. `held_out.selection_split` is that
+# function, generalized to start from the full design, and having both meant two ways to
+# reach the same frames with only one of them named after the rule it enforces. Deleted
+# 2026-08-06; `stan_games_played` and `stan_composition` were its only other callers and
+# both now take `selection_split` directly.
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -501,14 +503,14 @@ def run(cfg: dict) -> dict[str, Path]:
 
     print("Stan minutes head — successes out of actual game length, never 48")
     design = build_design(cfg)
-    full_train, test = split_seasons(design, test_seasons)
-    train, val = inner_split(full_train, test_seasons)
+    train, val = selection_split(design, test_seasons)
 
     clamped = int(design["rounding_clamped"].sum())
-    print(f"  {len(design):,} player-seasons, {len(full_train):,} train / {len(test):,} "
-          f"test ({', '.join(sorted(test['season'].unique()))} held out)")
-    print(f"  validation split: {len(train):,} fit / {len(val):,} select "
-          f"({', '.join(sorted(val['season'].unique()))})")
+    print(f"  {len(design):,} player-seasons. The test split is LOCKED — selection reads "
+          f"VALIDATION only\n  (src/models/held_out.py); the held-out number is taken once "
+          f"by `make final-evaluation`.")
+    print(f"  {len(train):,} fit / {len(val):,} select "
+          f"({', '.join(sorted(val['season'].unique()))} as validation)")
     print(f"  trials = summed game length over games played: median "
           f"{design['trials'].median():,.0f}, max {design['trials'].max():,.0f} minutes; "
           f"{clamped} rows clamped by rounding")
@@ -516,19 +518,20 @@ def run(cfg: dict) -> dict[str, Path]:
           f"max {design['minutes_share'].max():.4f} (1.0 would be every minute of "
           f"every game)")
 
-    table, diagnostics = sweep(train, val, test, full_train, cfg_stan, n_knots)
+    table, diagnostics = sweep(train, val, cfg_stan, n_knots)
     print("\nVariant sweep (CRPS in minutes, lower is better):")
-    print(table[["variant", "n_features", "val_crps", "test_crps", "val_r2", "test_r2",
-                 "test_mae", "selected", "beats_floor"]].round(4).to_string(index=False))
+    print(table[["variant", "n_features", "val_crps", "val_r2", "val_mae",
+                 "val_pit_ks", "selected", "beats_floor"]].round(4).to_string(index=False))
     selected = table.loc[table["selected"], "variant"].iloc[0]
     floor = table[table["variant"] == "carry_forward"].iloc[0]
     chosen = table[table["variant"] == selected].iloc[0]
-    print(f"\n  Selected on VALIDATION: {selected}. The test column is confirmation "
-          f"only —\n  this repo has already shipped a false positive selected on test.")
-    print(f"  vs the no-fit floor: R2 {chosen['test_r2']:.4f} against "
-          f"{floor['test_r2']:.4f} ({chosen['test_r2'] - floor['test_r2']:+.4f}), "
-          f"CRPS {chosen['test_crps']:.3f} against {floor['test_crps']:.3f} "
-          f"({chosen['test_crps'] - floor['test_crps']:+.3f} minutes)")
+    print(f"\n  Selected on VALIDATION: {selected}. There is no test column — this repo "
+          f"has already\n  shipped one false positive selected on test and caught a "
+          f"second.")
+    print(f"  vs the no-fit floor: R2 {chosen['val_r2']:.4f} against "
+          f"{floor['val_r2']:.4f} ({chosen['val_r2'] - floor['val_r2']:+.4f}), "
+          f"CRPS {chosen['val_crps']:.3f} against {floor['val_crps']:.3f} "
+          f"({chosen['val_crps'] - floor['val_crps']:+.3f} minutes)")
     if not bool(chosen["beats_floor"]):
         print("  /!\\  The selected variant does NOT clear the no-fit floor. Per "
               "CLAUDE.md that is not a\n       model — check the specification before "
@@ -541,7 +544,7 @@ def run(cfg: dict) -> dict[str, Path]:
                  for w in (FULL_WINDOW, TRAIN_VAL_WINDOW)]
     game_rho = game_rhos[0]
     simulator_rho = game_rhos[1]
-    season_rho = float(chosen["test_rho"])
+    season_rho = float(chosen["val_rho"])
     print(f"\nTwo dispersions, and they are different quantities:")
     print(f"  season-level rho (what this fit estimates): {season_rho:.5f}")
     print(f"  game-level rho   (what the simulator needs): {game_rho['rho']:.5f} "
@@ -566,9 +569,10 @@ def run(cfg: dict) -> dict[str, Path]:
     artifacts = {
         "metrics": (table, out_dir / "stan_minutes_metrics.csv"),
         "diagnostics": (diag, out_dir / "stan_minutes_diagnostics.csv"),
-        # The season-level row is tagged `train_val` because that is genuinely the window
-        # it was fitted on: the selected variant's test-side fit trains on `full_train`,
-        # which is train + validation. The game-level rows carry both windows.
+        # The season-level row is tagged `train_val` in the sense the label carries
+        # everywhere here — "excludes the held-out seasons" — which is still true and now
+        # conservative: since the sweep became validation-only the selected variant fits on
+        # `train` alone, a strict subset. The game-level rows carry both windows.
         "dispersion": (pd.DataFrame(game_rhos + [{"metric": "season_level_rho",
                                                   "fit_window": TRAIN_VAL_WINDOW,
                                                   "rho": season_rho}]),

@@ -3,8 +3,8 @@
 `docs/predictions-plan.md` and `docs/simulations-plan.md` both settle where cross-component
 correlation enters: **at draw time, not fit time.** Minutes are drawn once per player-game
 and pushed through all eleven heads as exposure, which captures the single largest common
-factor (18.6% of within-player residual variance). Whatever is left over is imposed with a
-Gaussian copula on the residuals.
+factor (**46.4%** of within-player residual variance — `make variance-budget`, the
+`own_minutes` row). Whatever is left over is imposed with a Gaussian copula on the residuals.
 
 That copula needs **the matrix**, not a summary of it, which is why this module exists as a
 target rather than as three numbers in a docstring. Long form (`component_a`, `component_b`,

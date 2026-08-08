@@ -117,3 +117,50 @@ def test_rate_model_never_predicts_a_negative_rate():
     model = RateModel().fit(train)
     extreme = pd.DataFrame({f: np.full(3, -50.0) for f in RATE_FEATURES})
     assert (model.predict(extreme) >= 0).all()
+
+
+# ── Gate E: the spell-process pmf ─────────────────────────────────────────────
+
+def _pmf_artifact(tmp_path, rows: list[dict]):
+    from src.models.season_total import SPELL_PMF_FILE
+    pd.DataFrame(rows).to_csv(tmp_path / SPELL_PMF_FILE, index=False)
+    return tmp_path
+
+
+def _long_pmf(season: str, player_id: int, mass: dict[int, float]) -> list[dict]:
+    return [{"arm": "a", "season": season, "player_id": player_id,
+             "team_games": 82, "gp": k, "p": p} for k, p in mass.items()]
+
+
+def test_spell_process_pmf_reads_long_form_and_normalizes(tmp_path):
+    from src.models.season_total import spell_process_pmf
+
+    test = pd.DataFrame({"season": ["2024-25", "2024-25"], "player_id": [1, 2]})
+    # Deliberately unnormalized: the reader must not trust the file's arithmetic.
+    _pmf_artifact(tmp_path, _long_pmf("2024-25", 1, {10: 2.0, 20: 2.0})
+                  + _long_pmf("2024-25", 2, {70: 1.0}))
+
+    pmf = spell_process_pmf(tmp_path, test, max_games=82)
+    assert pmf is not None
+    assert np.allclose(pmf.sum(axis=1), 1.0)
+    assert pmf[0, 10] == 0.5 and pmf[0, 20] == 0.5
+    assert pmf[1, 70] == 1.0
+
+
+def test_spell_process_pmf_refuses_partial_coverage_rather_than_zero_filling(tmp_path):
+    """A row the head did not predict would otherwise get an all-zero pmf, which is an
+    infinitely confident forecast of zero games rather than a missing one."""
+    from src.models.season_total import spell_process_pmf
+
+    test = pd.DataFrame({"season": ["2024-25"] * 3, "player_id": [1, 2, 3]})
+    _pmf_artifact(tmp_path, _long_pmf("2024-25", 1, {40: 1.0})
+                  + _long_pmf("2024-25", 2, {50: 1.0}))
+    assert spell_process_pmf(tmp_path, test, max_games=82) is None
+
+
+def test_spell_process_pmf_is_absent_without_the_artifact(tmp_path):
+    """A fresh checkout scores the original five treatments and says so."""
+    from src.models.season_total import spell_process_pmf
+
+    test = pd.DataFrame({"season": ["2024-25"], "player_id": [1]})
+    assert spell_process_pmf(tmp_path, test, max_games=82) is None

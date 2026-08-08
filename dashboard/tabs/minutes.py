@@ -165,22 +165,30 @@ def _variant_ladder(ctx: Ctx) -> None:
     floor = m[m["variant"] == "carry_forward"].iloc[0]
     best = m[m["selected"]].iloc[0] if m["selected"].any() else m.iloc[-1]
 
+    # `val_*` since the held-out lock landed; `test_*` on artifacts written before it.
+    # Read whichever the file carries — this tab has to render both identically, or the
+    # first refresh after a conversion is a KeyError instead of a number.
+    crps = "val_crps" if "val_crps" in m.columns else "test_crps"
+    r2 = "val_r2" if "val_r2" in m.columns else "test_r2"
+    bias = "val_bias" if "val_bias" in m.columns else "test_bias"
+    split = "Validation" if crps == "val_crps" else "Held-out"
+
     stat_tiles([
         ("Selected variant", str(best["variant"]),
          "Chosen on **validation** CRPS, per the lesson from the games-played arm."),
-        ("Test CRPS", f"{float(best['test_crps']):.2f}",
-         f"Against the no-fit floor's {float(floor['test_crps']):.2f} — "
-         f"{float(best['test_crps']) - float(floor['test_crps']):+.1f} minutes."),
-        ("Test R²", f"{float(best['test_r2']):.4f}",
-         f"Against the floor's {float(floor['test_r2']):.4f} — "
-         f"{float(best['test_r2']) - float(floor['test_r2']):+.4f}."),
+        (f"{split} CRPS", f"{float(best[crps]):.2f}",
+         f"Against the no-fit floor's {float(floor[crps]):.2f} — "
+         f"{float(best[crps]) - float(floor[crps]):+.1f} minutes."),
+        (f"{split} R²", f"{float(best[r2]):.4f}",
+         f"Against the floor's {float(floor[r2]):.4f} — "
+         f"{float(best[r2]) - float(floor[r2]):+.4f}."),
         ("Clears the floor", "yes" if bool(best["beats_floor"]) else "no",
          "Every head is quoted against a no-fit carry-forward baseline."),
     ])
 
     st.plotly_chart(
-        fig_bars(m, "variant", ["val_crps", "test_crps"], ctx.th,
-                 "CRPS by variant and split", axis_title="CRPS (minutes)",
+        fig_bars(m, "variant", [c for c in ("val_crps", "test_crps") if c in m.columns],
+                 ctx.th, "CRPS by variant", axis_title="CRPS (minutes)",
                  height=340),
         width="stretch")
 
@@ -189,22 +197,29 @@ def _variant_ladder(ctx: Ctx) -> None:
     st.info(
         f"**The specification answer is the OPPOSITE of the count heads', and that is "
         f"the finding.** There, scale is everything and curvature is nearly nothing. "
-        f"Here the logit scale is a **dead wash** — test R² "
-        f"{float(logit['test_r2']):.4f} against linear's "
-        f"{float(linear['test_r2']):.4f}, and it is *worse* on validation CRPS — "
-        f"while **curvature is what pays**. Both splits move the same way, so unlike "
-        f"the games-played arm this replicates. Do not generalize 'put it on the "
+        f"Here the logit scale is a **dead wash** — R² "
+        f"{float(logit[r2]):.4f} against linear's "
+        f"{float(linear[r2]):.4f}, and it is worse on CRPS too — "
+        f"while **curvature is what pays**. The selected variant survived both the move "
+        f"to validation-only scoring and the raising of selection to full-length chains, "
+        f"which is what distinguishes it from the noise-dominated selections elsewhere "
+        f"in this project. Do not generalize 'put it on the "
         f"link's scale' from the counts to the minutes head.")
 
     st.warning(
-        f"**`open` defect — the fitted heads carry a held-out bias the floor does "
-        f"not.** {float(best['test_bias']):.1f} minutes against the floor's "
-        f"{float(floor['test_bias']):.1f}, about −2.7% on a ~1,500-minute mean. It is "
-        f"the price of shrinkage on a held-out season: the floor is unbiased because "
-        f"it does not shrink. It costs nothing on R², MAE or CRPS here, but it is a "
-        f"real calibration defect and **it would compound through the eleven "
-        f"component heads that take these minutes as exposure**. Worth a bias "
-        f"correction before the simulator consumes it.")
+        f"**`open` defect — the fitted heads sit below the floor, and the *gap* is the "
+        f"defect, not a signed level.** The selected variant reads "
+        f"{float(best[bias]):.1f} minutes of bias against the floor's "
+        f"{float(floor[bias]):+.1f} — a gap of "
+        f"{float(best[bias]) - float(floor[bias]):+.1f}. That gap is what reproduces "
+        f"across splits; the absolute levels moved by roughly 29 minutes when scoring "
+        f"moved from the held-out seasons to validation, which is why the recorded "
+        f"'−33 to −41 against the floor's −5.7' was withdrawn. Shrinkage moves every "
+        f"arm about the same distance down from the carry-forward, and where that "
+        f"lands depends on the seasons scored. It costs nothing on R², MAE or CRPS "
+        f"here, but **it would compound through the eleven component heads that take "
+        f"these minutes as exposure**, so it is still worth correcting before the "
+        f"simulator consumes it.")
 
     diag = optional(ctx.predictions("stan_minutes_diagnostics.csv"),
                     target="make stan-minutes")

@@ -102,6 +102,38 @@ FEATURE_COLS = [
 # minutes into the total mixes team quality into what was a clean regular-season workload
 # measure. Keep the two effects in separate columns.
 
+class _HeldOut(pd.DataFrame):
+    """A DataFrame that refuses to be read while the held-out split is locked.
+
+    Subclassing rather than wrapping so it stays a DataFrame everywhere — the final
+    evaluation unlocks and uses it exactly as before. Only the accessors that actually
+    surface data are guarded; `len()` and `.columns` stay free, because reporting how many
+    rows are held out is not the same as reading them.
+    """
+
+    _metadata: list = []
+
+    @property
+    def _constructor(self):
+        return _HeldOut
+
+    def _check(self):
+        from src.models.held_out import assert_unlocked
+        assert_unlocked("the held-out frame from `split_seasons`")
+
+    def __getitem__(self, key):
+        self._check()
+        return pd.DataFrame(self)[key]
+
+    def to_numpy(self, *a, **k):
+        self._check()
+        return pd.DataFrame(self).to_numpy(*a, **k)
+
+    def merge(self, *a, **k):
+        self._check()
+        return pd.DataFrame(self).merge(*a, **k)
+
+
 TEST_SEASONS = 2
 AGE_SHRINKAGE = 50.0      # pseudo-observations pulling each age toward the league mean
 RIDGE_ALPHA = 100.0
@@ -188,10 +220,23 @@ def assert_point_in_time(design: pd.DataFrame) -> pd.DataFrame:
 
 def split_seasons(design: pd.DataFrame, test_seasons: int = TEST_SEASONS
                   ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Temporal walk-forward: the last `test_seasons` target seasons are held out."""
+    """Temporal walk-forward: the last `test_seasons` target seasons are held out.
+
+    **The second frame is the held-out split and is guarded.** `split_seasons` is the one
+    choke point every head goes through to reach it, so the lock lives here rather than at
+    each call site — a new head cannot forget to add it. Callers that only want the
+    selection frames should use `held_out.selection_split`, which never materializes the
+    held-out rows at all.
+
+    The guard is on *use*, not on the split itself: carving the frame is how a module
+    discovers what to exclude. `_HeldOut` therefore raises when the rows are read rather
+    than when they are separated, so `train, _ = split_seasons(...)` stays legal and
+    `score(model, test)` does not.
+    """
     order = sorted(design["season"].unique())
     held = set(order[-test_seasons:])
-    return design[~design["season"].isin(held)], design[design["season"].isin(held)]
+    kept = design[~design["season"].isin(held)]
+    return kept, _HeldOut(design[design["season"].isin(held)])
 
 
 # ── The predictive distribution ───────────────────────────────────────────────

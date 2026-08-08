@@ -387,6 +387,186 @@ def _select_window(panel: pd.DataFrame, window: str) -> pd.DataFrame:
     raise ValueError(f"window must be 'appearance' or 'full', got {window!r}")
 
 
+# ── The spell process: sufficient statistics and spell classes ────────────────
+#
+# Both of these exist for `src/models/games_played.py`. They are *reductions* of the
+# panel, not features: the game-level Markov likelihood and the game-level duration
+# likelihood are exactly recoverable from them, so a head fitted on these rows has the
+# identical posterior a head fitted on 1.3M panel rows would. See
+# `docs/games-played-plan.md`.
+
+SPELL_CLASSES = ["interior", "left_truncated", "right_censored"]
+TENURE_POSITIONS = ["pre", "interior", "post"]
+CELL_KEYS = ["season", "player_id", "team_id"]
+
+
+def collapse_transitions(panel: pd.DataFrame, window: str = "full") -> pd.DataFrame:
+    """The four transition counts per (season, player, team) — sufficient statistics.
+
+    Every feature the availability head uses is **constant within a player-season** (all
+    lag-1/2/3 plus age), which is the prediction-time constraint rather than a modelling
+    choice. For a two-state chain with observed states and cell-constant transition
+    probabilities the game-level likelihood is therefore
+
+        L = h^onsets (1-h)^(at_risk_played - onsets)
+            * r^recoveries (1-r)^(at_risk_missed - recoveries)
+
+    up to a factor free of the parameters, so `(onsets, at_risk_played, recoveries,
+    at_risk_missed)` are sufficient. This is the same algebraic collapse the count heads
+    already use, not an approximation, and `tests/test_games_played.py` pins it against an
+    explicit product over transitions.
+
+    **The collapse is conditional on the initial state**, which it deliberately does not
+    carry into the likelihood: the first game of a cell contributes no transition, so `s0`
+    needs its own head. The tenure decomposition supplies it — a tenure begins on a game
+    the player appeared in, by construction.
+
+    Right-censoring needs no term at all on this side: the product runs over *observed*
+    transitions and the terminal state contributes no factor.
+    """
+    df = _select_window(panel, window)
+    if df.empty:
+        return pd.DataFrame(columns=CELL_KEYS + [
+            "n_games", "played_games", "initial_state", "onsets", "at_risk_played",
+            "recoveries", "at_risk_missed"])
+    df = df.sort_values(CELL_KEYS + ["team_game_index"])
+
+    played = df["played"].to_numpy(dtype=np.int64)
+    prior = df.groupby(CELL_KEYS, sort=False)["played"].shift()
+    seen = prior.notna().to_numpy()
+    prior_played = np.nan_to_num(prior.to_numpy(), nan=0.0).astype(np.int64)
+
+    work = df[CELL_KEYS].copy()
+    work["n_games"] = 1
+    work["played_games"] = played
+    work["at_risk_played"] = np.where(seen & (prior_played == 1), 1, 0)
+    work["onsets"] = np.where(seen & (prior_played == 1) & (played == 0), 1, 0)
+    work["at_risk_missed"] = np.where(seen & (prior_played == 0), 1, 0)
+    work["recoveries"] = np.where(seen & (prior_played == 0) & (played == 1), 1, 0)
+
+    out = work.groupby(CELL_KEYS, as_index=False).sum()
+    first = (df.groupby(CELL_KEYS, as_index=False)
+             .agg(initial_state=("played", "first"),
+                  first_index=("team_game_index", "min"),
+                  last_index=("team_game_index", "max")))
+    return out.merge(first, on=CELL_KEYS, how="left")
+
+
+def spell_classes(panel: pd.DataFrame, window: str = "full") -> pd.DataFrame:
+    """`absence_spells` plus the censoring class and where the spell sits in the tenure.
+
+    Three classes, and the split matters because the duration likelihood treats them
+    differently and because two of them are mostly roster mechanics rather than health:
+
+    | class | meaning | likelihood contribution |
+    |---|---|---|
+    | `interior` | starts and ends inside the timeline | `P(T = t)` |
+    | `left_truncated` | already in progress at the cell's first game | residual duration |
+    | `right_censored` | still running at the cell's last game | `P(T >= t)` |
+
+    On the **appearance** window every spell is interior by construction — the window
+    opens and closes on games he played — which is exactly why the tenure decomposition
+    removes censoring from the within-tenure duration head rather than having to model it.
+
+    `tenure_position` is the second, independent split: whether the spell falls before a
+    player's first appearance, after his last, or between them. `not_rostered_share`
+    rides along per spell because 61.4% of full-window missed games sit in edge spells and
+    roughly half of *those* games are `not_rostered` — so a duration head fitted on the
+    full window is fitting roster mechanics, and this column is what makes that visible
+    beside every coefficient rather than argued about.
+    """
+    spells = absence_spells(panel, window)
+    if spells.empty:
+        return spells.assign(spell_class=[], tenure_position=[], censored=[],
+                             truncated=[], not_rostered_share=[])
+
+    df = _select_window(panel, window)
+    bounds = (df.groupby(CELL_KEYS, as_index=False)
+              .agg(cell_first=("team_game_index", "min"),
+                   cell_last=("team_game_index", "max")))
+    appeared = df[df["played"] == 1]
+    tenure = (appeared.groupby(CELL_KEYS, as_index=False)
+              .agg(first_appearance=("team_game_index", "min"),
+                   last_appearance=("team_game_index", "max")))
+
+    out = spells.merge(bounds, on=CELL_KEYS, how="left").merge(
+        tenure, on=CELL_KEYS, how="left")
+    out["truncated"] = (out["start_index"] <= out["cell_first"]).astype(int)
+    out["censored"] = (out["end_index"] >= out["cell_last"]).astype(int)
+    # A cell only exists for a team the player appeared for, so a spell cannot be both.
+    out["spell_class"] = np.where(
+        out["truncated"] == 1, "left_truncated",
+        np.where(out["censored"] == 1, "right_censored", "interior"))
+    out["tenure_position"] = np.where(
+        out["end_index"] < out["first_appearance"], "pre",
+        np.where(out["start_index"] > out["last_appearance"], "post", "interior"))
+
+    if "status" in df.columns:
+        missed = df[df["played"] == 0]
+        share = _spell_status_share(missed, out)
+        out["not_rostered_share"] = share
+    else:
+        out["not_rostered_share"] = np.nan
+    return out.drop(columns=["cell_first", "cell_last"])
+
+
+def _spell_status_share(missed: pd.DataFrame, spells: pd.DataFrame) -> np.ndarray:
+    """Share of each spell's games whose box-score status is `not_rostered`.
+
+    Joined on the interval rather than on a spell id, because `absence_spells` does not
+    carry one back to the panel. An interval join over ~83k spells and ~580k missed rows
+    is done per cell with `searchsorted`, which keeps it linear.
+    """
+    flag = (missed["status"] == "not_rostered").to_numpy(dtype=float)
+    frame = missed[CELL_KEYS + ["team_game_index"]].copy()
+    frame["_flag"] = flag
+    frame = frame.sort_values(CELL_KEYS + ["team_game_index"])
+
+    keyed: dict[tuple, tuple[np.ndarray, np.ndarray]] = {}
+    for key, grp in frame.groupby(CELL_KEYS, sort=False):
+        idx = grp["team_game_index"].to_numpy()
+        keyed[key] = (idx, np.concatenate([[0.0], np.cumsum(grp["_flag"].to_numpy())]))
+
+    out = np.full(len(spells), np.nan)
+    starts = spells["start_index"].to_numpy()
+    ends = spells["end_index"].to_numpy()
+    lengths = spells["spell_games"].to_numpy(dtype=float)
+    for i, key in enumerate(zip(*(spells[k] for k in CELL_KEYS))):
+        hit = keyed.get(key)
+        if hit is None:
+            continue
+        idx, cum = hit
+        lo = int(np.searchsorted(idx, starts[i], side="left"))
+        hi = int(np.searchsorted(idx, ends[i], side="right"))
+        out[i] = (cum[hi] - cum[lo]) / max(lengths[i], 1.0)
+    return out
+
+
+def tenure_frame(panel: pd.DataFrame) -> pd.DataFrame:
+    """Per (season, player, team): the entry index, the exit index, and what is inside.
+
+    `team_games = pre_tenure + tenure_games + post_tenure` exactly, and
+    `gp = played games inside the tenure`, so the full-window games-played share is
+    reconstructed by the three factors with no residual. That identity is what lets the
+    two-state chain be confined to the interval where it demonstrably works — a departure
+    is an absorbing hitting time, not a low recovery rate, and a chain that has to
+    represent it as the latter relocates it to the player's first absence.
+    """
+    keys = CELL_KEYS
+    appeared = panel[panel["played"] == 1]
+    tenure = (appeared.groupby(keys, as_index=False)
+              .agg(entry_index=("team_game_index", "min"),
+                   exit_index=("team_game_index", "max"),
+                   gp=("played", "sum")))
+    schedule = (panel.groupby(keys, as_index=False)
+                .agg(team_games=("team_game_index", lambda s: int(s.max()) + 1)))
+    out = tenure.merge(schedule, on=keys, how="left")
+    out["pre_tenure"] = out["entry_index"]
+    out["post_tenure"] = out["team_games"] - 1 - out["exit_index"]
+    out["tenure_games"] = out["exit_index"] - out["entry_index"] + 1
+    return out
+
+
 def _trailing_missed(played: pd.Series) -> int:
     """Consecutive missed games at the very end of the timeline.
 

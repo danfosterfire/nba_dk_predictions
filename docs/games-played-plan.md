@@ -3,16 +3,125 @@
 This is a planning doc, not a measurement report. Update it in place as pieces get built, the
 way `docs/availability-plan.md` was.
 
-It resolves the design question `docs/availability-plan.md` left open:
-
-> Either **(a)** fit the game-level spell/hazard model hierarchically in Stan directly, which
-> gets the per-game process and the posterior in one object but is **a much larger fit**, or
-> **(b)** keep the season-level beta-binomial in Stan and calibrate the spell simulator to
-> match its posterior predictive GP marginal per player. **(b) is the cheaper first step.**
-
-**The answer is (a), and the premise that it is "a much larger fit" is wrong.** Every figure
-below was measured during planning; each is marked with how it was obtained. Nothing here is
-an artifact yet — the first implementation task is to make it one.
+> ## ✅ Built 2026-08-05 — `make games-played` and `make stan-games-played`
+>
+> `src/models/games_played.py` is the numpy reference (the collapse, the spell classes, the
+> closed-form duration fits, the simulator and Gate 0 — **no Stan**, so it runs without a
+> CmdStan toolchain and rejects a process class in seconds rather than in NUTS hours).
+> `src/models/stan_games_played.py` fits the arms. `src/stan/betageometric_duration.stan` is
+> the only new `.stan` file; the onset, entry and exit heads reuse `betabinomial_glm.stan`
+> verbatim, which is the factorization argument as code for the fourth, fifth and sixth time.
+>
+> **Every planning figure that is a fitted quantity reproduced exactly** — the collapse ratio
+> 39.4×, the three spell-class counts and their missed-game shares, the `not_rostered` shares
+> 0.010 / 0.587 / 0.462, the censored beta-geometric's `a = 0.721, b = 0.978`, the interior
+> fit's `a = 1.762, b = 1.926` and its 126,171.9 nll, and the matched-population **C = 9.58**.
+> Three *derived* figures did not, and are corrected in place below with the reason.
+>
+> ## ⚠️ The first verdict was decided on TEST and is withdrawn. Re-decided on VALIDATION:
+>
+> **No arm clears Gate D. The incumbent stands.** But the reason is more interesting than a
+> loss, and it is a defect in the gate rather than in one of the arms — see the hybrid row.
+>
+> `make stan-games-played`, validation only. **13 fits** (was 25 before the test side was
+> removed), 0 divergences.
+>
+> | arm | val CRPS | its floor | vs floor | PIT KS | implied od | tail error |
+> |---|---|---|---|---|---|---|
+> | `floor` (the incumbent) | **10.0057** | 10.0057 | — | 0.0939 | 23.7251 | **0.0406** |
+> | *`within_tenure`* (oracle) | **7.2265** | 10.0992 | **−2.8726** | 0.1232 | 11.4526 | 0.0091 |
+> | `full_window` | 10.2705 | 10.0057 | +0.2647 | 0.0733 | 22.1365 | 0.0495 |
+> | `three_state` | 10.3484 | 10.0501 | +0.2983 | 0.1171 | 20.3721 | **0.0041** |
+> | `duration_covariates` | 10.1625 | 10.0057 | +0.1568 | **0.0672** | 22.0664 | 0.0537 |
+> | `calibrated_fallback` | 10.0207 | 10.0057 | +0.0149 | 0.1017 | 23.7251 | 0.0440 |
+> | **`hybrid`** | **10.0057** | 10.0057 | **0.0000** | 0.0939 | 23.7251 | **0.0406** |
+>
+> ### Gate D cannot pass the hybrid, and that is a flaw in Gate D
+>
+> The hybrid draws its games-played count *from* the incumbent's pmf, so its marginal is not
+> approximated but **identical** — 10.0057 against 10.0057, PIT 0.0939 against 0.0939, tail
+> 0.0406 against 0.0406, to every decimal. Gate D asks three questions and all three are
+> about the marginal; its tail test is a strict inequality; so a marginal-neutral arm ties
+> every bar and fails on the tie. **Gate D is a marginal gate being asked to judge an arm
+> whose entire contribution is orthogonal to the marginal.** That is a category error in the
+> instrument, not a verdict on the arm.
+>
+> The other three fail on their merits: `duration_covariates` loses CRPS by +0.1568 (a
+> paired bootstrap on 883 rows puts it at 95% CI [+0.0737, +0.2393], P(better) = 0.1%),
+> `calibrated_fallback` loses CRPS *and* PIT, and `three_state` is worst on CRPS while
+> posting the best tail of any arm (0.0041) — a reminder that the tail alone is a noisy
+> criterion on 359 rotation rows.
+>
+> ### The spell shape is where the arms actually differ
+>
+> Absence-spell lengths simulated on the validation rows, against those player-seasons' own
+> observed spells:
+>
+> | arm | P(T=1) | P(≥10) | P(≥26) | mean spell | mean abs rel error |
+> |---|---|---|---|---|---|
+> | observed | 0.4924 | 0.0581 | 0.0079 | 3.0857 | — |
+> | **hybrid** | 0.4904 | 0.0572 | 0.0202 | 3.8220 | **0.5310** |
+> | `full_window` | 0.4534 | 0.1052 | 0.0419 | 4.9653 | 1.7408 |
+> | `duration_covariates` | 0.4435 | 0.1083 | 0.0430 | 5.0581 | 1.8105 |
+> | `calibrated_fallback` | 0.1171 | 0.3544 | 0.0799 | 10.0594 | 5.0082 |
+>
+> **The hybrid is 3.3x better than the best fitted arm and 9.4x better than the fallback**,
+> and it is within 2% on both the single-game share and the ten-plus-game share — the
+> statistic a Round 1 knockout actually turns on. Its weakness is the extreme tail, +157% on
+> month-long absences. The fallback is disqualifying for this purpose: a constant recovery
+> hazard gives a mean spell of **10.06 games against an observed 3.09**.
+>
+> So the honest summary is that **the hybrid costs exactly nothing on the marginal and is
+> far the best on shape** — but it cannot be *selected* by Gate D, because Gate D cannot see
+> the axis it wins on. Whether to ship it is a judgement about what the simulator needs, made
+> with both numbers in view, not a gate outcome.
+>
+> ### The two results that survive from the fitted arms
+>
+> 1. **The process class is right; the tenure is the bottleneck.** The oracle-tenure arm
+>    scores **7.2265** against the incumbent's 10.0057 — 28% better, on validation. Given the
+>    observed tenure the within-tenure chain is far better than the season-level
+>    beta-binomial, and all of that is destroyed by predicting entry and exit from preseason
+>    covariates. That is mid-season roster churn, already out of scope.
+> 2. **`duration_covariates` has the best PIT** (0.0672 against 0.0939): its predictive
+>    *shape* is better calibrated than the incumbent's even though its location is worse.
+>
+> ### Gates
+>
+> | gate | verdict | figure |
+> |---|---|---|
+> | **0** | ✅ | plain chain **z = +5.29** (rejected); tenure decomposition **z = +0.93** |
+> | **A** | ✅ | 0.5 h linear → **0.79 h** corrected against a 6 h budget |
+> | **B** | ✅ | onset head **−0.330658** per at-risk transition against the floor's **−0.350239** (**+0.019580**), shrinkage `k` = **48.1** toward a league rate of **0.0741** |
+> | **C** | ✅ | the simulated hazard curve keeps falling past a streak of 20 |
+> | **D** | ❌ | no arm clears. `duration_covariates` **10.1625** / 0.0672 / 0.0537; `calibrated_fallback` **10.0207** / **0.1017** / 0.0440; `hybrid` 10.0057 / 0.0939 / 0.0406 against observed **0.1003** / **0.3259** |
+> | **E** | ❌ | **ran 2026-08-05 on validation.** `spell_process` scores MAE **406.80** and CRPS **291.80** against the incumbent's **400.46** / **287.26** — worse on both, by **+6.34** and **+4.55** dk_pts |
+>
+> Gate D's per-arm tail predictions are `P(GP<41)` / `P(GP<60)` of **0.1597** / **0.3740**
+> (`duration_covariates`), **0.1499** / **0.3643** (`calibrated_fallback`) and **0.1553** /
+> **0.3521** (`hybrid`).
+>
+> ### ⚠️ Gate E passed on TEST by 0.03 dk_pts and FAILS on validation by 6.34
+>
+> The recorded verdict was ✅ at **435.1053 MAE against a 435.1352 bar** — a margin of
+> **0.0299 dk_pts on a ~435 dk_pts quantity**, i.e. seven parts in a hundred thousand. On
+> validation the same treatment, the same rate model and the same six-row ladder put it
+> **6.34 dk_pts the wrong side**, and it loses CRPS and bias too (−16.65 against −3.06).
+> This is the third gate in this head to reverse when moved off the test split, and it is
+> the cleanest example of why: a bar cleared by 0.03 was never evidence of anything, and
+> reading it on the split that is not allowed to decide is what made it look like it was.
+> The recorded figures remain true of the pre-lock artifact and are preserved below.
+>
+> **The bars are no longer written down.** `season_total.gate_e` reads the incumbent's own
+> row out of whichever table it is scoring, so the gate cannot be passed by refreshing the
+> constant it is compared against — the same fix `stan_games_played._gate_d` took.
+>
+> Gate E failing is *consistent* with Gate D rather than new information: `spell_process`
+> composes the `duration_covariates` pmf, which already loses games-level CRPS by +0.1568,
+> and 6.34 dk_pts is roughly that loss times a ~40 dk_pts-per-game rate. **It does not
+> speak to the hybrid**, whose games-played pmf is the incumbent's by construction and
+> which would therefore tie Gate E to every decimal — the same category error Gate D has,
+> one level down, because a season *total* is as marginal a quantity as a season *count*.
 
 ---
 
@@ -89,13 +198,30 @@ under ~30 parameters.
 
 ### The onset hazard's decline is sorting, not state dependence — checked
 
-The empirical onset hazard falls steeply with games-since-return: **0.3164** at a one-game
-streak to **0.0265** past 41, an 11.9× fall. That looks like it should break the collapse. It
+The empirical onset hazard falls steeply with games-since-return. ✅ Measured by
+`make games-played` (`analysis == "hazard_by_streak"`) over the appearance window:
+
+| played streak | 1 | 2 | 3 | 4 | 5 | 6–10 | 11–20 | 21–41 | 42+ |
+|---|---|---|---|---|---|---|---|---|---|
+| **onset hazard** | **0.2976** | 0.1912 | 0.1386 | 0.1067 | 0.0926 | 0.0672 | 0.0463 | 0.0338 | **0.0208** |
+| at risk | 81,525 | 55,387 | 43,601 | 36,694 | 32,125 | 120,539 | 142,519 | 133,322 | 74,226 |
+
+A **14.3×** fall from a one-game streak to past 42.
+
+> ⚠️ The recorded **0.3164** → **0.0265** and its 11.9× are superseded: the endpoints move
+> with where the last bucket is cut, and the shipped buckets put 21–41 and 42+ in separate
+> rows rather than pooling them. The *shape* is unchanged and it is the shape that carries
+> the argument.
+
+That looks like it should break the collapse. It
 does not: a pure-frailty model with *zero* state dependence reproduces almost exactly that
-shape, **11.8×**, purely by sorting — players with high onset hazards break their streaks
-early, so long streaks are populated by low-hazard players. Bucket by bucket, simulated and
-observed agree within 10% across streaks of 4–20. **The frailty the beta-binomial marginalizes
-is precisely what generates this curve, so the collapse keeps it for free.**
+shape, purely by sorting — players with high onset hazards break their streaks
+early, so long streaks are populated by low-hazard players. **The frailty the beta-binomial
+marginalizes is precisely what generates this curve, so the collapse keeps it for free**, and
+Gate C checks that the *simulated* curve keeps falling past a streak of 20 for exactly that
+reason: a simulator whose frailty has collapsed to a point mass produces a flat curve, and
+that failure is invisible in the GP marginal because a shared hazard and a distribution of
+hazards with the same mean give the same mean.
 
 What survives is small and localized: the observed hazard is **2.0× / 1.5× / 1.2×** the
 frailty-only prediction at streaks of 1 / 2 / 3, gone by game 4. A post-return reintegration
@@ -168,15 +294,46 @@ mechanism is not.
 
 Gate 0 is a numpy Monte Carlo with **per-cell empirical hazards**: the most generous
 parameterization possible, since no covariate block can beat a cell's own observed rates. If
-the process class fails there, it fails everywhere. On the 5,267 established-rotation
-player-seasons:
+the process class fails there, it fails everywhere.
 
-| | mean | sd | overdispersion | P(GP<41) | P(GP<60) |
-|---|---|---|---|---|---|
-| **observed** | 0.759 | 0.243 | 26.40× | **0.109** | 0.318 |
-| simulated, full window | 0.742 | 0.253 | 27.45× | **0.190** | 0.356 |
+> ### ✅ Measured — `make games-played`, `outputs/predictions/stan_games_played_gate.csv`
+>
+> **The frame is single-team established-rotation player-seasons, and that is not a
+> detail.** The panel's process runs per (season, player, team) while games played is a per
+> (player, season) quantity, so on a multi-team row `gp` counts one team's games against
+> that team's whole schedule — a traded player reads as having missed half the season twice
+> over. Leaving them in moves the **observed** left tail from 0.111 to 0.237, which is large
+> enough to hide the very overshoot the gate exists to detect: the gate then *passes* the arm
+> this doc rejects, for a reason that has nothing to do with the process class. That is the
+> third construction of this frame and it is the one that ships; the two planning-session
+> reconstructions disagreed on levels and agreed on direction, and the levels below supersede
+> both.
+>
+> On **4,667** single-team rotation player-seasons, 200 simulated seasons each:
+>
+> | arm | mean | sd | overdispersion | P(GP<41) | P(GP<60) |
+> |---|---|---|---|---|---|
+> | **observed** | 0.8070 | 0.2120 | 23.66× | **0.1112** | 0.3107 |
+> | `full_window_chain` | 0.7988 | 0.2399 | 29.37× | **0.1356** | 0.3189 |
+> | `tenure_decomposition` | 0.8132 | 0.2197 | 26.05× | **0.1155** | 0.3009 |
+>
+> **The plain full-window chain over-predicts the left tail by 21.9% and the tenure
+> decomposition by 3.8%.** The bar is the sampling error of the observed proportion rather
+> than a chosen tolerance — Monte Carlo error here is negligible, but the observed tail is
+> itself an estimate from a few thousand player-seasons, and `sqrt(p(1-p)/n)` = 0.0046 is
+> that uncertainty. At two of them the plain chain fails at **z = +5.29** and the tenure
+> decomposition passes at **z = +0.93**.
+>
+> **Read the overdispersion column too.** At its *empirical ceiling* the tenure
+> decomposition already overshoots the observed variance by 10% (26.05 against 23.66) — so
+> the dispersion surplus this doc warns about is visible before any head is fitted, and it is
+> a property of the process class rather than of the covariate block.
+>
+> The gate is judged on `P(GP < 41)` and not on the mean, deliberately: every arm reproduces
+> the mean to within a point, because a chain running at a cell's own observed rates can
+> hardly miss it. A gate on the mean would pass the arm this doc rejects.
 
-**The left tail is ~75% over-predicted** — and under a second reconstruction that keys the
+**The left tail is over-predicted** — and under a second reconstruction that keys the
 denominator on `team_games` rather than summing panel rows, the miss is worse still (mean 7.4
 points low, P(<41) 0.212). Both reconstructions agree on the direction and on the diagnosis.
 
@@ -203,10 +360,19 @@ missed while there. That is what `in_appearance_window` was built for. Measured 
 single-team player-seasons: **34.4%** have a delayed first appearance and **37.3%** a trailing
 absence — so roughly a third of player-seasons have a tenure factor to fit at each end.
 
-> The *shares* above reproduced across two independent reconstructions during planning; the
+> ~~The *shares* above reproduced across two independent reconstructions during planning; the
 > mean lengths did not (19.7 / 17.7 games under one construction against 6.8 / 6.6 under
 > another, on identical shares). The gap is a denominator convention and is unresolved. Do not
-> quote a mean tenure length until `spell_classes` emits one.
+> quote a mean tenure length until `spell_classes` emits one.~~
+>
+> ✅ **Resolved 2026-08-05 — the two constructions are conditional and unconditional means of
+> the same measurement, and both are correct.** `tenure_frame` on the 12,787 single-team
+> player-seasons gives mean pre/post tenure of **19.67 / 17.67 games conditional on being
+> nonzero** and **6.76 / 6.59 unconditional**. The shares are unchanged (34.4% / 37.3%), which
+> is exactly why they reproduced while the means did not: the conditional mean divides by the
+> 34.4%, and `19.67 × 0.3436 = 6.76`. Neither figure was wrong; naming the denominator is the
+> whole fix. Quote the **conditional** pair when describing how long a late arrival or an
+> early departure lasts, and the unconditional pair when describing the league.
 
 ### Multi-team player-seasons must be excluded from the fit
 
@@ -228,7 +394,10 @@ is a *tenure* fact, not an availability one: 58.6% of its rows precede the playe
 appearance, 40.2% follow his last, **1.1% are interior**.
 
 Cross-tabulating "outside the appearance window" against "`not_rostered`" over all missed games
-from 2006-07 gives **82.7% agreement**. The interesting cell is the **16.75%** that are missed
+from 2006-07 gives **82.7% agreement** over 422,219 missed games. ✅ Reproduced by
+`make games-played` (`analysis == "status_agreement"`), along with the 98.5% persistence
+above; the recorded **16.75%** below is **16.74%** measured, a rounding difference and not a
+correction. The interesting cell is the **16.74%** that are missed
 *outside* the appearance window while **still rostered** — season-ending and preseason injury.
 That is the highest-value population in the whole head, and the structural proxy cannot see it.
 **That, not "separating injury from roster mechanics" in the abstract, is what the arm buys.**
@@ -290,23 +459,61 @@ Beta-geometric fitted three ways on the full window:
 
 | treatment | a | b | E[T] | P(T≥26) |
 |---|---|---|---|---|
-| drop censored | 1.088 | 1.323 | 5.84 | 0.0377 |
-| censored treated as complete | 0.917 | 1.252 | 7.68 | 0.0549 |
-| **proper right-censoring** | **0.721** | **0.978** | **9.95** | **0.0741** |
+| drop censored | **1.088** | **1.323** | 16.03 | **0.0398** |
+| censored treated as complete | **0.917** | **1.252** | — | **0.0598** |
+| **proper right-censoring** | **0.721** | **0.978** | — | **0.0861** |
 
-Dropping censored spells understates `P(T≥26)` by **2.0×**; treating them as complete still
-understates by 1.35×. Both fail silently.
+Dropping censored spells understates `P(T≥26)` by **2.16×**; treating them as complete still
+understates by 1.44×. Both fail silently.
 
-> With proper censoring `a = 0.721 < 1`, so the fitted beta-geometric has **no finite mean**.
-> The simulator is unaffected — a spell is truncated by the remaining schedule anyway — but
-> `E[T]` must never be quoted from that fit, and `make docs-audit` will happily pin a
-> meaningless number if allowed to.
+> ⚠️ **The three fitted `(a, b)` pairs reproduced exactly; the E[T] and P(T≥26) columns did
+> not, and are corrected above (was 5.84 / 7.68 / 9.95 and 0.0377 / 0.0549 / 0.0741).** The
+> planning session computed the two derived columns by a construction that does not follow
+> from its own fitted parameters — `E[T] = (a+b−1)/(a−1)` at `a = 1.088, b = 1.323` is
+> **16.03**, not 5.84, and the two E[T] rows below it were quoted from a distribution that has
+> no mean at all. Since the *parameters* agree to three decimals across two independent
+> implementations, the fits were right and the derivation on top of them was not.
+> `tests/test_games_played.py` now pins `sum P(T=t) + P(T>t) == 1` at every truncation point
+> and the mean identity numerically, so the derived column cannot drift from the fitted one
+> again.
+
+> With proper censoring `a = 0.721 < 1`, so the fitted beta-geometric has **no finite mean**
+> — and its tail is *polynomial* rather than geometric, `P(T ≥ t) ~ t^−a`, which is why 40,000
+> terms capture only 73% of the mass. The simulator is unaffected — a spell is truncated by
+> the remaining schedule anyway — but `E[T]` must never be quoted from that fit, and
+> `make docs-audit` will happily pin a meaningless number if allowed to. `fit_beta_geometric`
+> returns `mean_defined` beside `mean_spell` so the two cannot be separated.
 
 **Left truncation has an exact answer.** By memorylessness the forward recurrence time of a
 geometric is geometric with the same hazard, so under a Beta(a,b) frailty the *residual*
 duration of an in-progress spell is beta-geometric with the frailty size-biased by `1/e` —
 i.e. **Beta(a−1, b)**. Fit the in-progress offset freely and compare against `a − 1`:
 agreement validates the renewal assumption, disagreement localizes it.
+
+> ### ✅ Measured — and it **disagrees**, which is the informative outcome
+>
+> Fitted jointly with the interior spells (the offset is unidentified on the truncated
+> spells alone — the base `mu` and the shift are then the same parameter and the optimizer
+> walks it to infinity, measured), the free offset is **−1.7042** on the logit scale, giving
+> an in-progress `mu` of **0.1367** against the identity's prediction of **0.3027**. The
+> in-progress spells are **2.2× longer** than length-biased renewal allows.
+>
+> **That is the roster-mechanics signal, arriving through a completely different door.** The
+> left-truncated spells are **58.7%** `not_rostered` games: a player absent on opening night
+> is mostly not an injury in progress, he is someone who was not on the team yet. A renewal
+> process cannot represent that, and the identity says so rather than absorbing it. This is
+> the third independent measurement pointing the same way, after the spell-class table and
+> the 82.7% status agreement — and it is why the within-tenure duration head is fitted on
+> **interior spells only**.
+>
+> Two things had to be right for this to be a check rather than an artifact, and one of them
+> was wrong on the first attempt. The identity requires **length-biased** selection — a fixed
+> time point falls inside a spell with probability proportional to its length, which is what
+> size-biases the frailty by `E[T|q] = 1/q` and turns Beta(a, b) into Beta(a−1, b). Sampling
+> spells *uniformly* instead reproduces the base distribution; `tests/test_games_played.py`
+> caught that at 0.29 in the first pmf cell. And it needs `a > 1`, since length-biasing is
+> normalizable only then — the full-window fit lands at `a = 0.721`, so the identity is
+> reported as **undefined** there rather than computed anyway.
 
 ### `src/stan/betageometric_duration.stan`
 
@@ -401,6 +608,27 @@ src/eda/availability.py           EXTEND — `serial_structure` gains a rotation
 src/models/season_total.py        EXTEND — one new GP treatment consuming the simulated pmf.
 ```
 
+**As built, with the three places it differs from the sketch above and why:**
+
+- **`spell_classes` and `collapse_transitions` landed in `src/features/availability.py`
+  as planned, alongside a third — `tenure_frame`.** The tenure identity
+  (`team_games = pre + tenure + post`, `gp` = played inside the tenure) is used by Gate 0,
+  by the design builder and by the simulator, so deriving it in three places was the
+  alternative.
+- **`season_total.py` consumes an artifact, not an import.** It reads
+  `stan_games_played_gp_pmf.csv` — the held-out games-played pmf in long form — because
+  `make season-total` has to run on a machine with no CmdStan toolchain. Long form rather
+  than one column per game index, for the reason `residual_correlation.csv` is long: a wide
+  schema breaks the first time a season is not 82 games.
+- **`betageometric_duration.stan`'s censoring branches are live code, and A3 is what
+  exercises them.** Within an *appearance* tenure every spell is interior, so the shipped
+  arms never reach them — but A3's tenure is the **rostered** window, where a player who
+  tore an ACL in March stays on the roster and his absence genuinely runs to the season's
+  end — so spells inside the rostered window *can* be censored, and thousands are.
+  `spell_rows_for(..., require_interior=)` asserts the interior property where it is
+  supposed to hold rather than assuming it, and that assertion is what surfaced the
+  distinction: the first three-state run failed on it.
+
 Gate 0 must not live in `stan_games_played.py`: it is a numpy job that has to run without a
 CmdStan toolchain.
 
@@ -428,6 +656,71 @@ same head.**
 | **G** | winner | `season_total.py` wiring, against 435.1 MAE / 316.9 CRPS | the number that justifies the work |
 | **B** | fallback | calibrate rather than fit (below) | always ships |
 
+> ### ⚠️ RETIRED — the pre-lock ladder, whose verdict was read off the TEST column
+>
+> **Kept as the record of a reversal, not as a result.** The heading used to read "THE LADDER
+> RAN — and the two-line **calibration** beats every fitted arm", and every conclusion in this
+> block was taken from the `test CRPS` column. The summary at the top of this doc is what
+> replaces it: no arm ships, the incumbent stands, and the fallback loses CRPS *and* PIT on
+> the split that is allowed to decide. The `val CRPS` column below is the only one that was
+> ever admissible, and reading it alone already gives the current verdict — which is the
+> point of preserving the table rather than deleting it.
+>
+> `make stan-games-played`, 2026-08-05. **25 fits, 0 divergences, max R̂ 1.0071, min ESS 856,
+> 0 treedepth-saturated draws, 42.7 min.** 11,272 player-seasons, 10,361 train / 911 test
+> (2024-25, 2025-26 held out), validation on 2022-23/23-24. 9,753 of 11,272 rows (86.5%) are
+> single-team and therefore fittable; the rest keep their row and lose their process targets.
+>
+> | arm | val CRPS | test CRPS | its own floor | vs floor | PIT KS | implied od | tail error | selected |
+> |---|---|---|---|---|---|---|---|---|
+> | `floor` (the incumbent) | 10.0057 | 10.7952 | 10.7952 | — | 0.0963 | 23.33 | 0.0264 | |
+> | *`within_tenure`* (oracle) | *7.2265* | *7.0391* | *10.9870* | *−3.9479* | *0.1227* | *10.84* | *0.0123* | |
+> | `full_window` | 10.2705 | 10.8981 | 10.7952 | +0.1029 | 0.0679 | 21.48 | 0.0205 | |
+> | `three_state` | 10.3484 | 11.2470 | 10.9795 | +0.2676 | 0.0992 | 19.83 | 0.0271 | |
+> | **`duration_covariates`** | **10.1625** | 10.8026 | 10.7952 | +0.0074 | 0.0679 | 21.35 | 0.0192 | **✓** |
+> | **`calibrated_fallback`** | 10.0207 | **10.7939** | 10.7952 | **−0.0013** | 0.0907 | 23.33 | **0.0174** | *not selectable* |
+>
+> **⭐ The sharpest result is the oracle arm, and it is not the one that ships.** Hand the
+> process the *observed* tenure and it scores **7.0391** against its own floor's 10.9870 — a
+> **−3.95 game** improvement, 36%, on the same rows. So the process class is not merely
+> adequate, it is dramatically better than the season-level beta-binomial **given the
+> tenure** — and every bit of that advantage is destroyed by having to predict the tenure
+> from preseason covariates. **The bottleneck is not the absence process. It is knowing when
+> a player joins and leaves a roster**, which is mid-season churn, which `CLAUDE.md` already
+> scopes out as irreducible. That is a much more specific statement of where the remaining
+> value is than "availability is hard".
+>
+> **Every fitted full-window arm loses to the incumbent**, by +0.007 to +0.268 CRPS. That is
+> what the dispersion-budget argument predicted *in writing before the sweep ran*, and it is
+> why GP CRPS was fixed as a non-regression bar rather than the win condition. Note the
+> mechanism is visible in the `implied od` column: the fitted arms land at 21.3–21.5 against
+> the incumbent's 23.33, so they are not over-dispersed as feared — the tenure factors cost
+> them accuracy rather than calibration.
+>
+> **`three_state` is a null and the only arm that fails its own floor** (+0.2676 against a
+> floor refit on the same 2006-07+ rows). Identifying the tenure from the box-score `status`
+> rather than structurally does **not** help, even though it reaches the 16.74% of missed
+> games the structural proxy cannot see. Recorded so it is not rebuilt.
+>
+> **⚠️ THIS IS THE CLAIM THAT REVERSED.** It read: *what ships is option (b) — the fallback —
+> and it beats all four fitted arms.* Two
+> lines of algebra, no features, no Stan: invert `inflation = C + ρ(n − C)` at the measured
+> `C = 9.5806` to get hazards that reproduce the incumbent's marginal by construction while
+> getting the game-level clustering right. It scores **10.7939** against the incumbent's
+> 10.7952 — a wash, exactly as predicted — and cuts the tail error from **0.0264 to 0.0174**.
+>
+> On validation it loses on both counts it was selected for: CRPS **10.0207** against the
+> incumbent's **10.0057**, and PIT KS **0.1017** against **0.0963**. **Two independent defects
+> produced that ✅ and either alone would have been enough.** The margin was −0.0013 on a
+> ~10.8 game quantity, which is nothing; and the single input the closed form takes was itself
+> contaminated, because `measured_clustering` computed `C` over all 30 seasons rather than
+> over train plus validation — so the fallback's one "measured" constant had seen the rows it
+> was later certified on. `dashboard/decisions.py::games-played-ships-the-calibration-not-the-fit`
+> carries the corrected `C` and the test CRPS it implies, at which the arm fails that bar too.
+> **The "coordinate change beats the fitting" reading does not survive here.** That shape is
+> real for the shot-attempt basis, where it is measured on validation and the margin is
+> −0.501 nats; it was borrowed for this head on the strength of a number that was neither.
+
 **The fallback is a closed form, not a fit.** Given the incumbent's per-player predictive mean
 `μ*` and inflation `I*`, and a within-player clustering `C` from the measured transition rates,
 invert the additive identity:
@@ -443,16 +736,99 @@ Two lines, exact. It reproduces the incumbent's marginal *by construction* while
 game-level clustering right — and it is worth pinning as a test regardless of which arm wins,
 since it is the invariant every arm should satisfy at its own fitted `C`.
 
+> ### ⚠️ RETIRED — "it is what ships". The identities do still hold.
+>
+> The heading read "It is what ships, and the identities hold", and the second half is the
+> half that survives. `tests/test_games_played.py` still pins the simulator against the
+> algebra: the mean is exact by construction, and the variance lands within 2% of the target
+> at `C = 9.58` and **exactly** at `C = 1`, where there is no clustering term to approximate.
+> (The ~2% shortfall is not an error — `(1+ρ)/(1−ρ)` is the *asymptotic* inflation and a
+> season is 82 games, not infinitely many.) An invariant worth pinning regardless of which
+> arm wins is worth pinning when none does, so that test stays.
+>
+> Fitted values on the held-out board: `ρ_M` = **0.8110**, residual `ρ` = **0.1899**, mean
+> onset hazard **0.0700**, mean recovery hazard **0.1190**. **This block is now the only copy
+> of those four numbers.** `spell_process.csv` writes the calibrated parameters only when the
+> fallback is the shipping arm, and it no longer is, so `src/docs_audit.py` holds `ρ_M` as a
+> presence-checked historical claim instead of a value-checked one — deletion, not drift, is
+> what can still go wrong here.
+>
+> **The explanation of why it won is retired along with the win.** It ran: *it inherits a
+> marginal that a validated head already calibrated, and then spends its own structure on the
+> shape — which games, clustered the way the transition data says.* The mechanism is sound and
+> it is exactly what the **hybrid** arm is built on; what was wrong was attributing it to the
+> fallback, whose simulated spells are the worst of any arm — mean length **10.0594** games
+> against an observed **3.0857**. A constant recovery hazard cannot produce the observed spell
+> shape, so the fallback inherits the marginal and then gets the shape wrong, which is the
+> opposite of the claim above. The hybrid inherits the same marginal and gets the shape right.
+
 ## Gates
 
-| Gate | Pass condition |
-|---|---|
-| **0** | the process class reproduces the GP marginal at its **ceiling** (per-cell empirical hazards). Full window fails; the tenure decomposition is the response |
-| **A** | cost probe under budget — **treat as a lower bound**, it under-predicted `stan-composition` by 1.63× |
-| **B** | onset head clears its no-fit floor (prior-season onset rate carried forward) |
-| **C** | simulated spell shape matches `availability_profile.csv`, **and the hazard-by-k curve keeps falling past k = 20** |
-| **D** | **the head gate** — GP CRPS ≤ **10.795**, PIT KS ≤ **0.096**, and the tail: `P(GP<41)` near **0.109**, `P(GP<60)` near **0.318** on the rotation subpopulation. The incumbent reads 15.0% / 34.8% against 11.8% / 36.9%, so the tail is where the win has to come from |
-| **E** | season-total MAE ≤ **435.1** and CRPS ≤ **316.9** dk_pts through `season_total.py` |
+| Gate | Pass condition | as implemented |
+|---|---|---|
+| **0** | the process class reproduces the GP marginal at its **ceiling** (per-cell empirical hazards). Full window fails; the tenure decomposition is the response | `P(GP<41)` within **2 standard errors of the observed proportion** — the weakest bar that still separates the arms, and derived rather than chosen |
+| **A** | cost probe under budget — **treat as a lower bound**, it under-predicted `stan-composition` by 1.63× | the extrapolation is **multiplied by 1.63** and compared against the budget, so the known bias is applied rather than remembered |
+| **B** | onset head clears its no-fit floor (prior-season onset rate carried forward) | held-out binomial log-likelihood **per at-risk transition**, against a floor whose shrinkage constant is fitted on train only |
+| **C** | simulated spell shape matches `availability_profile.csv`, **and the hazard-by-k curve keeps falling past k = 20** | the curve is read off *simulated* seasons and compared with the observed one bucket for bucket |
+| **D** | **the head gate** — GP CRPS ≤ **10.795**, PIT KS ≤ **0.096**, and the tail: `P(GP<41)` near **0.109**, `P(GP<60)` near **0.318** on the rotation subpopulation. The incumbent reads 15.0% / 34.8% against 11.8% / 36.9%, so the tail is where the win has to come from | CRPS and PIT are non-regression bars; the win condition is **mean absolute tail error** across the two thresholds, against the incumbent's on the same rows |
+| **E** | season-total MAE ≤ **435.1** and CRPS ≤ **316.9** dk_pts through `season_total.py` | a sixth GP treatment, `spell_process`, holding the rate model and every other row fixed |
+
+**Gate 0 is judged on the left tail and not on the mean, and that is a decision rather than
+a convenience.** Every arm reproduces the mean to within a point — a chain running at each
+cell's own observed rates can hardly miss it — so a gate on the mean would pass the arm this
+doc rejects. `P(GP < 41)` is where a relocated departure shows up, and it is what Gate D is
+later judged on.
+
+### ✅ Every gate ran, and every one passes — but not for the arm that was expected to carry it
+
+| gate | verdict | figure |
+|---|---|---|
+| **0** | ✅ | plain chain **z = +5.29** (rejected); tenure decomposition **z = +0.93** |
+| **A** | ✅ | 0.4 h linear → **0.7 h** corrected against a 6 h budget; **actual 42.7 min** |
+| **B** | ✅ | onset head **−0.350374** per at-risk transition against the floor's −0.366963 (**+0.016590**) |
+| **C** | ✅ | the simulated hazard curve keeps falling past a streak of 20 |
+| **D** | ✅ | **not** by the fitted arm — `duration_covariates` fails CRPS at 10.8026. The **calibrated fallback** passes all three: CRPS **10.7939**, PIT KS **0.0907**, tail error **0.0174** against the incumbent's 0.0264 |
+| **E** | ✅ | season-total MAE **435.1053** against the 435.1352 bar, CRPS **316.6483** against 316.9385, bias **+3.75** against +6.12 |
+
+**Gate A's correction is worth recording on its own.** `stan-composition` measured a 1.63×
+under-prediction and this head applied it rather than remembering it: 0.4 h linear × 1.63 =
+**0.7 h** against an actual **42.7 min = 0.71 h**. A bias that is measured once and then
+applied is worth more than a bias that is measured once and then written down.
+
+**Gate E is a wash on MAE and a small real gain on CRPS and bias**, which is exactly what a
+head calibrated to reproduce the incumbent's marginal should produce. It clears the bar by
+0.03 dk_pts of MAE and 0.29 of CRPS, and it halves the bias. Nobody should read those as the
+justification for the work — the justification is the game-level process, which the
+season-total marginal cannot see at all.
+
+**Gate B's floor is a shrunk carry-forward and the shrinkage is fitted, not chosen**: `k` =
+**42.8** pseudo-observations toward a league onset rate of **0.0771**. An unshrunk
+carry-forward would be meaningless here for the reason `component_rates` records for the
+conversion heads — a player whose prior season carried two at-risk transitions and no onsets
+has a prior rate of exactly 0.000, and a binomial likelihood at `p = 0` on real exposure is
+non-finite.
+
+**The two Gate D candidates, in full:**
+
+| | CRPS | PIT KS | `P(GP<41)` | `P(GP<60)` | tail error |
+|---|---|---|---|---|---|
+| observed | — | — | **0.1180** | **0.3687** | — |
+| incumbent (`floor`) | 10.7952 | 0.0963 | 0.1499 | 0.3478 | 0.0264 |
+| `duration_covariates` | 10.8026 ❌ | 0.0679 ✅ | **0.1551** | **0.3700** | 0.0192 ✅ |
+| **`calibrated_fallback`** | **10.7939** ✅ | **0.0907** ✅ | **0.1443** | **0.3601** | **0.0174** ✅ |
+
+Both challengers beat the incumbent on the tail; only the fallback also holds the CRPS bar.
+Note that the fitted arm *over*-shoots `P(GP<41)` (0.1551 against 0.1499) while improving the
+aggregate tail error — its gain comes entirely from the 60-game threshold, where it lands at
+0.3700 against an observed 0.3687. The fallback improves both.
+
+> ⚠️ **The tail comparison is weaker than the point estimates make it look, and the
+> denominator is why.** Gate D's target is measured on **339** rotation test rows, so the
+> observed `P(GP<41) = 0.1180` carries a standard error of **0.0175** and `P(GP<60) = 0.3687`
+> one of **0.0262**. Both candidates and the incumbent sit within ~2 of those of the target.
+> The *ordering* is a deterministic property of three predictive distributions and is not in
+> doubt; how far any of them is from the truth is. Do not quote "34% closer" as though the
+> truth were known to three decimals.
 
 **Failing D lands in option (b), not in the bin** — the same simulator, hazards calibrated by
 the closed form above. Say so in the module docstring so the fallback is a documented branch
@@ -461,12 +837,21 @@ rather than a rescue.
 ## Artifacts, target, config
 
 ```
-outputs/predictions/stan_games_played_metrics.csv       one row per (arm, group, metric)
+# make games-played — numpy only, no CmdStan toolchain required
+outputs/predictions/stan_games_played_gate.csv          Gate 0 — sim vs obs, per arm
+outputs/predictions/stan_games_played_spells.csv        the three spell classes, the
+                                                        censoring-bias table, the duration
+                                                        candidates, the hazard-by-streak
+                                                        curve and the left-truncation check
+outputs/predictions/stan_games_played_collapse.csv      the sufficient-statistic reduction
+
+# make stan-games-played — the fitted arms
+outputs/predictions/stan_games_played_metrics.csv       one row per arm
 outputs/predictions/stan_games_played_coefficients.csv  onset / duration / entry / exit
 outputs/predictions/stan_games_played_diagnostics.csv   diagnostics_frame(), one row per fit
-outputs/predictions/stan_games_played_spells.csv        the three spell classes per window,
-                                                        with the censoring-bias table
-outputs/predictions/stan_games_played_gate.csv          Gate 0 — sim vs obs, per window
+outputs/predictions/stan_games_played_gates.csv         the A-D verdicts, one row per gate
+outputs/predictions/stan_games_played_gp_pmf.csv        the held-out GP pmf, long form —
+                                                        Gate E's input to season_total.py
 outputs/predictions/stan_games_played_pit.csv
 outputs/predictions/stan_games_played_predictions.csv
 outputs/predictions/spell_process.csv                   the dashboard's registered slot
@@ -478,9 +863,17 @@ six `stan_games_played_*` families as unreachable — trading one finding for si
 repoint the `CHAIN` row at `stan_games_played_metrics.csv`.
 
 ```makefile
-stan-games-played:
+games-played:
+	$(PYTHON) -m src.models.games_played
+
+stan-games-played: games-played
 	$(PYTHON) -m src.models.stan_games_played
 ```
+
+**Two targets, not one, and the split is the point.** `games-played` is Gate 0 and the
+closed forms — pure numpy, no CmdStan, ~6 seconds. Rejecting a process class should not
+require a toolchain or an overnight run, and this doc's frame changed *because* that check
+was cheap enough to run first.
 
 Add to `.PHONY` beside `stan-availability`, and to the `stan` aggregate **after** it — this
 head imports the incumbent as its floor, the same ordering constraint `stan-composition` has
@@ -566,6 +959,13 @@ make dashboard-audit            # spell_process.csv fills a reserved pending mar
 1. **The full-window two-state process cannot reproduce `gp_share`.** Not a risk — a measured
    failure, and the reason this doc's frame changed. *Cheap check: Gate 0, ~1 minute of numpy,
    before any Stan.*
+   - ✅ **Confirmed, and the cheap check was cheaper than budgeted**: `make games-played` is
+     **6 seconds** end to end, including the closed-form duration fits. The plain chain
+     over-predicts the left tail at **z = +5.29**. Two things about the *check* rather than
+     the result are worth keeping: the gate had to be judged on the tail rather than the
+     mean (every arm reproduces the mean), and it had to be run on **single-team** rows —
+     the first version of the frame included traded players, which moved the *observed*
+     tail from 0.111 to 0.237 and made the gate pass the arm it exists to reject.
 2. **The head wins nothing on GP-marginal CRPS, discovered after the sweep instead of before.**
    The dispersion budget is already over-supplied (`C + ρ(n−C)` overshoots by 30% at the
    incumbent's ρ). *Cheap check: evaluate that identity at the fitted `C` before scoring
@@ -575,3 +975,11 @@ make dashboard-audit            # spell_process.csv fills a reserved pending mar
    `not_rostered`. *Cheap check: emit the spell-class table as an artifact before fitting, and
    report the `not_rostered` share of the fitted population beside every duration
    coefficient.*
+   - ✅ **Confirmed three independent ways, which is why the shipped duration head fits
+     interior spells only.** The spell-class table puts `not_rostered` at **58.7%** of
+     left-truncated and **46.2%** of right-censored games against **1.0%** of interior ones.
+     The structural proxy agrees with `not_rostered` on 82.7% of missed games from 2006-07.
+     And the renewal identity — which knows nothing about rosters — **fails in the same
+     direction**: in-progress spells are 2.2× longer than length-biased renewal allows,
+     because a player absent on opening night is mostly not an injury in progress, he is
+     someone who was not on the team yet. Three doors, one room.

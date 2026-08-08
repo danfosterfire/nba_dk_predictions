@@ -407,33 +407,46 @@ def test_gate0_arm_a_grid_is_empty_rather_than_wrong_without_its_artifact(tmp_pa
 
 def _sweep_table():
     return pd.DataFrame([
-        {"head": "reb", "variant": "carry_forward", "val_r2": 0.90, "test_r2": 0.94},
-        {"head": "reb", "variant": "log_own", "val_r2": 0.93, "test_r2": 0.945},
-        {"head": "reb", "variant": "log_own_spline", "val_r2": 0.91, "test_r2": 0.99},
+        {"head": "reb", "variant": "carry_forward", "val_r2": 0.90},
+        {"head": "reb", "variant": "log_own", "val_r2": 0.93},
+        {"head": "reb", "variant": "log_own_spline", "val_r2": 0.91},
     ])
 
 
-def test_selection_reads_validation_and_ignores_a_better_test_column():
-    """The protocol this project exists to enforce. `log_own_spline` wins on test by a
-    mile and loses on validation; selecting it would repeat a false positive whose paired
-    bootstrap read [-0.079, -0.015] with P(delta<0) = 99.7% and did not replicate."""
+def test_selection_reads_the_validation_column_and_there_is_no_other():
+    """The protocol this project exists to enforce.
+
+    This test used to hand `_finalize` a table where `log_own_spline` won on test by a
+    mile and lost on validation, and assert that validation won. Since 2026-08-05 the
+    stronger statement is available: there is **no test column to prefer**, because the
+    sweep never scores those rows. `src/models/held_out.py` raises on them and
+    `src/final_evaluation.py` reads them once.
+    """
     from src.models.stan_components import _finalize
 
-    out = _finalize(_sweep_table(), "val_r2", "test_r2", higher_is_better=True)
-    selected = out.loc[out["selected"], "variant"].tolist()
-    assert selected == ["log_own"]
+    out = _finalize(_sweep_table(), "val_r2", higher_is_better=True)
+    assert out.loc[out["selected"], "variant"].tolist() == ["log_own"]
+    assert not [c for c in out.columns if c.startswith("test_")]
 
 
-def test_beats_floor_is_a_test_fact_and_selection_is_a_validation_fact():
+def test_beats_floor_and_selection_now_read_the_same_column():
+    """`beats_floor` used to be a TEST fact beside a validation `selected`.
+
+    That meant a head could be chosen on one split and certified on another — which reads
+    as rigour and is actually the two halves of a decision disagreeing about what they
+    are measured on. Both now read validation; certification against the held-out seasons
+    is `src/final_evaluation.py`'s job and nothing else's.
+    """
     from src.models.stan_components import _finalize
 
     table = _sweep_table()
-    table.loc[table["variant"] == "log_own", "test_r2"] = 0.90   # now below the floor
-    out = _finalize(table, "val_r2", "test_r2", higher_is_better=True)
-    row = out[out["variant"] == "log_own"].iloc[0]
-    # Selected on validation, and still correctly reported as failing the floor. A head
-    # that does not clear `carry_forward` is not a model, however it was chosen.
-    assert bool(row["selected"]) and not bool(row["beats_floor"])
+    table.loc[table["variant"] == "log_own", "val_r2"] = 0.89   # now below the floor
+    out = _finalize(table, "val_r2", higher_is_better=True)
+    row = out[out["variant"] == "log_own_spline"].iloc[0]
+    # `log_own_spline` is now the best fitted arm and clears the floor.
+    assert bool(row["selected"]) and bool(row["beats_floor"])
+    beaten = out[out["variant"] == "log_own"].iloc[0]
+    assert not bool(beaten["beats_floor"])
     assert bool(out[out["variant"] == "carry_forward"].iloc[0]["beats_floor"])
 
 
@@ -441,12 +454,11 @@ def test_lower_is_better_selection_flips_direction_for_the_nll_heads():
     from src.models.stan_components import _finalize
 
     table = pd.DataFrame([
-        {"head": "ftm|fta", "variant": "carry_forward", "val_nll": 3.08, "test_nll": 3.08},
-        {"head": "ftm|fta", "variant": "logit_own", "val_nll": 3.05, "test_nll": 3.09},
-        {"head": "ftm|fta", "variant": "logit_own_spline", "val_nll": 3.11,
-         "test_nll": 3.01},
+        {"head": "ftm|fta", "variant": "carry_forward", "val_nll": 3.08},
+        {"head": "ftm|fta", "variant": "logit_own", "val_nll": 3.09},
+        {"head": "ftm|fta", "variant": "logit_own_spline", "val_nll": 3.11},
     ])
-    out = _finalize(table, "val_nll", "test_nll", higher_is_better=False)
+    out = _finalize(table, "val_nll", higher_is_better=False)
     assert out.loc[out["selected"], "variant"].tolist() == ["logit_own"]
     # The known case: nothing beats the floor on free-throw percentage.
     assert not bool(out[out["variant"] == "logit_own"].iloc[0]["beats_floor"])

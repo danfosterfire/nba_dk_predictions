@@ -33,10 +33,13 @@ Nine measurements, each of which changed the plan in `docs/availability-plan.md`
    can, and reports `status_coverage` beside every figure — a decomposition measured where
    the backfill has not reached is a statement about the backfill.
 9. **`serial_structure`** — whether a 2-state Markov chain is the right model for
-   game-to-game availability. Serial correlation is strong (ρ = 0.60) but explains only
-   ~4× of the ~22.7× overdispersion, and the geometric spell distribution it implies gets
-   the mean right while missing both tails. Reported because "absences are clustered, so
-   use an AR model" is the obvious instinct and it is only half correct.
+   game-to-game availability. Serial correlation is strong (ρ = 0.60) and the geometric
+   spell distribution it implies gets the mean right while missing both tails. Reported
+   because "absences are clustered, so use an AR model" is the obvious instinct and it is
+   only half correct. It is emitted **twice**: once on the appearance window over all
+   players (the recorded rows, unchanged) and once on the frame `overdispersion` uses —
+   full window, established rotation players — under `*_rotation` keys, because the two
+   figures were being divided into each other across a window *and* a population change.
 
 Season is absorbed throughout and pairs are minutes-weighted, reusing
 `persistence.py`'s `demean_within` / `pair_weights` / `weighted_corr` so the numbers sit on
@@ -658,8 +661,28 @@ def playoff_scope(panel: pd.DataFrame, frame: pd.DataFrame, playoffs: pd.DataFra
 
 # ── 9. Is availability a Markov chain? ────────────────────────────────────────
 
+def rotation_players(frame: pd.DataFrame, seasons: list[str],
+                     min_mpg: float = ROTATION_MIN_MPG,
+                     min_gp_share: float = ROTATION_MIN_GP_SHARE
+                     ) -> set[tuple[str, int]]:
+    """(season, player_id) pairs that were regulars *last* season.
+
+    Exactly the population `overdispersion` quotes its 22.7x variance ratio on, factored
+    out so `serial_structure` can be measured on the same rows. That matching is the whole
+    point: the recorded 3.96x clustering figure is measured on the appearance window over
+    **all** players while the 22.7x runs on the full window over **rotation** players, so
+    dividing one by the other compares two different frames.
+    """
+    lagged = with_lags(frame, seasons, ["minutes_per_game", "gp_share"], max_lag=1)
+    rot = lagged[(lagged["minutes_per_game_lag1"] >= min_mpg)
+                 & (lagged["gp_share_lag1"] >= min_gp_share)]
+    return set(zip(rot["season"], rot["player_id"]))
+
+
 def serial_structure(panel: pd.DataFrame, window: str,
-                     long_spell_games: int = 10) -> list[dict]:
+                     long_spell_games: int = 10,
+                     population: set[tuple[str, int]] | None = None,
+                     key_suffix: str = "") -> list[dict]:
     """Game-to-game transition structure, against the 2-state Markov chain it implies.
 
     Absences are obviously clustered, so an autoregressive availability process is the
@@ -676,8 +699,15 @@ def serial_structure(panel: pd.DataFrame, window: str,
       `P(spell = 1) = q` and `P(spell ≥ k) = (1-q)^(k-1)` exactly. The observed
       distribution is a mixture, so this is the specific, falsifiable way the simple
       chain is wrong.
+
+    `population` restricts the rows to a set of (season, player_id) pairs and
+    `key_suffix` tags the emitted keys, so the same measurement can be reported on the
+    **matched** frame the overdispersion figure uses. The unsuffixed rows are unchanged.
     """
     sel = _select_window(panel, window)
+    if population is not None:
+        sel = sel[[(s, p) in population
+                   for s, p in zip(sel["season"], sel["player_id"])]]
     if sel.empty:
         return []
     keys = ["season", "player_id", "team_id"]
@@ -697,36 +727,41 @@ def serial_structure(panel: pd.DataFrame, window: str,
     stationary = q / (1 - p + q) if (1 - p + q) > 0 else np.nan
 
     n = int(seen.sum())
+    trans, markov, shape = (f"transition{key_suffix}", f"markov{key_suffix}",
+                            f"spell_shape{key_suffix}")
     rows = [
-        _row("serial_structure", window, "transition", "p_play_given_played", p, n),
-        _row("serial_structure", window, "transition", "q_play_given_missed", q, n),
-        _row("serial_structure", window, "transition", "lag1_autocorrelation", rho, n),
-        _row("serial_structure", window, "markov", "clustering_variance_inflation",
+        _row("serial_structure", window, trans, "p_play_given_played", p, n),
+        _row("serial_structure", window, trans, "q_play_given_missed", q, n),
+        _row("serial_structure", window, trans, "lag1_autocorrelation", rho, n),
+        _row("serial_structure", window, markov, "clustering_variance_inflation",
              clustering, n),
-        _row("serial_structure", window, "markov", "stationary_play_rate", stationary, n),
-        _row("serial_structure", window, "markov", "observed_play_rate",
+        _row("serial_structure", window, markov, "stationary_play_rate", stationary, n),
+        _row("serial_structure", window, markov, "observed_play_rate",
              float(played.mean()), n),
     ]
 
     spells = absence_spells(panel, window)
+    if population is not None and not spells.empty:
+        spells = spells[[(s, pid) in population
+                         for s, pid in zip(spells["season"], spells["player_id"])]]
     if spells.empty:
         return rows
     lengths = spells["spell_games"]
     m = len(lengths)
     # The geometric null the chain implies, given the same q.
     rows += [
-        _row("serial_structure", window, "spell_shape", "share_single_observed",
+        _row("serial_structure", window, shape, "share_single_observed",
              float((lengths == 1).mean()), m),
-        _row("serial_structure", window, "spell_shape", "share_single_geometric", q, m),
-        _row("serial_structure", window, "spell_shape",
+        _row("serial_structure", window, shape, "share_single_geometric", q, m),
+        _row("serial_structure", window, shape,
              f"share_ge{long_spell_games}_observed",
              float((lengths >= long_spell_games).mean()), m),
-        _row("serial_structure", window, "spell_shape",
+        _row("serial_structure", window, shape,
              f"share_ge{long_spell_games}_geometric",
              float((1 - q) ** (long_spell_games - 1)), m),
-        _row("serial_structure", window, "spell_shape", "mean_spell_observed",
+        _row("serial_structure", window, shape, "mean_spell_observed",
              float(lengths.mean()), m),
-        _row("serial_structure", window, "spell_shape", "mean_spell_geometric",
+        _row("serial_structure", window, shape, "mean_spell_geometric",
              1.0 / q if q > 0 else np.nan, m),
     ]
     return rows
@@ -758,6 +793,13 @@ def measure(panel: pd.DataFrame, seasons: list[str], raw_dir: str | Path,
         rows += decomposition(frame, seasons, window, min_coverage, min_pairs,
                               n_shuffles, seed)
         rows += serial_structure(panel, window)
+        # The same measurement on the rows `overdispersion` quotes its 22.7x on. The
+        # unsuffixed rows above are untouched — the two are different frames, and the
+        # error this exists to prevent is reading them as one.
+        rows += serial_structure(panel, window,
+                                 population=rotation_players(frame, seasons, min_mpg,
+                                                             min_gp_share),
+                                 key_suffix="_rotation")
 
     # Once, not per window: the scope evidence is about season-level role, and the two
     # roster windows do not change a player's regular-season minutes per game.
@@ -838,8 +880,18 @@ def run(cfg: dict) -> Path:
     print(f"  spells of 10+ games observed {obsl:.4f} vs geometric {geol:.4f}")
     print("  Serial correlation is real, but a constant-hazard chain gets the MEAN spell "
           "right and\n  both tails wrong — absences are a mixture of two processes, not "
-          "one. And clustering\n  explains ~4x of the ~22.7x overdispersion; the rest is "
-          "between-player heterogeneity.")
+          "one.")
+    c_matched = pick("serial_structure", "full", "markov_rotation",
+                     "clustering_variance_inflation")
+    print(f"\n  MATCHED to the frame the 22.7x is measured on (full window, established "
+          f"rotation\n  players): P(play|played) "
+          f"{pick('serial_structure', 'full', 'transition_rotation', 'p_play_given_played'):.4f}, "
+          f"P(play|missed) "
+          f"{pick('serial_structure', 'full', 'transition_rotation', 'q_play_given_missed'):.4f}, "
+          f"C = {c_matched:.2f}.")
+    print("  Do NOT divide 22.7 by 3.96: they are different windows AND different "
+          "populations, and\n  the composition is additive rather than multiplicative — "
+          "inflation = C + rho*(n - C).")
 
     print("\nDoes splitting absences by reason beat the aggregate? (full window)")
     dec = table[(table.measurement == "decomposition") & (table.window == "full")]
