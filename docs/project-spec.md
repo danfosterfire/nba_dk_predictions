@@ -1,7 +1,8 @@
-# NBA Deep Learning
+# NBA DK Predictions
 
-Predicts a player's DraftKings fantasy points (dk_pts) for each game of an upcoming season,
-plus the running season total. 
+Predicts a player's DraftKings NBA Best Ball fantasy points (dk_pts) for each 
+game of an upcoming season, plus the running season total. Uses predictions to 
+simulate historical and upcoming seasons and develop drafting strategies.
 
 
 ## 1. Introduction
@@ -153,7 +154,9 @@ train/validate/test split across these seasons:
 - Train: 1996 through 2022 seasons. Use for exploratory analysis, model selection, 
 and model fitting.
 - Validate: 2023 and 2024 seasons. Use to evaluate fitted models and compare 
-the efficacy of hyperparameters and model selection decisions. Use the the actual 
+the efficacy of hyperparameters and model selection decisions. Train models on 
+the training dataset, and then make predictions based on the validation dataset,
+comparing the predictions against the observed values. Use the the actual 
 data from these seasons for backtesting drafting strategies, and use predictions 
 for these seasons to develop the drafting strategies.
 - Test: 2025 season. **Do not use at any point during data preparation, 
