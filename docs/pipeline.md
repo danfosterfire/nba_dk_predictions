@@ -44,7 +44,8 @@ make availability-profile # → outputs/eda/availability_profile.csv
 make report-calibration   # → report_transfer.parquet + outputs/eda/report_calibration.csv
                           #    P(play | injury-report designation, reason)
 make eda              # all of the above, in dependency order
-make dashboard        # nine-tab project walkthrough over the precomputed artifacts
+make dashboard        # data visualizations over the precomputed artifacts
+                      #    (today: the PCA player-style fingerprint)
 make dashboard-audit  # registry drift report — a report, not a gate; exits 0 with findings
 make docs-audit       # every quoted figure in the plan docs vs its artifact — a GATE
 ```

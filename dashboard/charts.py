@@ -1,154 +1,135 @@
-"""Generic figure builders, moved verbatim from the pre-split `app.py`.
+"""The two figures this dashboard draws: the radial fingerprint and a loadings panel.
 
-Kept whole even though tab 3's figures are deferred: they are tested, reusable, and
-needed the moment a figure section comes back. Like `theme.py` this imports no
-Streamlit — a figure is built here and handed to `st.plotly_chart` by a tab.
+Both obey the palette rules `theme.py` documents. Two of those bind here in particular:
+
+- **Colour never carries a value alone.** The radial chart is read off a fixed radial
+  axis with labelled rings, and every loadings panel ships a table twin in an expander.
+- **Polarity gets the diverging pair, not two categorical slots.** A loading's sign is
+  a direction on one axis, so the bars take the two ends of `th["diverging"]` — the
+  same encoding the project's heatmaps use for a signed quantity.
+
+Like `theme.py` this imports no Streamlit: a figure is built here and handed to
+`st.plotly_chart` by `app.py`.
 """
 
-import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
-from dashboard.theme import ALL_PAIRS_CAP, apply_theme
+from dashboard.theme import apply_theme
+
+#: The first spoke sits at the top and the rest run counterclockwise, so components
+#: 1–5 fall down the left of the circle in order and 6–10 climb the right. The panels
+#: beside the chart are laid out to match, which is the only reason the direction is
+#: pinned here rather than left to plotly's default.
+ANGULAR_ROTATION = 90
+ANGULAR_DIRECTION = "counterclockwise"
+
+#: The radial tick arm, placed halfway between the first and last spokes so the ring
+#: labels never sit on top of a data line.
+TICK_ARM_ANGLE = 72
 
 
-def fig_heatmap(z: pd.DataFrame, th: dict, title: str, colorbar: str,
-                diverging: bool = False, zmid: float | None = None,
-                height: int = 460, hover: str = "%{y} · %{x}<br>%{z:.3f}") -> go.Figure:
-    """Sequential for magnitude, diverging (two hues + neutral) for polarity."""
-    fig = go.Figure(go.Heatmap(
-        z=z.to_numpy(dtype=float), x=[str(c) for c in z.columns],
-        y=[str(i) for i in z.index],
-        colorscale=th["diverging"] if diverging else th["sequential"],
-        zmid=zmid if diverging else None,
-        colorbar=dict(title=dict(text=colorbar, side="right", font=dict(size=11)),
-                      thickness=10, outlinewidth=0,
-                      tickfont=dict(color=th["muted"], size=10)),
-        hovertemplate=hover + "<extra></extra>",
+def fig_radar(frame: pd.DataFrame, th: dict, name: str, limit: float = 2.0,
+              overlay: pd.DataFrame | None = None, overlay_name: str = "",
+              height: int = 620) -> go.Figure:
+    """One player-season's component scores as a closed polygon on a fixed axis.
+
+    `frame` is `pca.fingerprint()`: one row per component with `label`, `title`, `sd`
+    (the true score) and `radius` (that score pinned to ±`limit`). The polygon is drawn
+    at `radius` and the hover reports `sd`, so a pinned spoke cannot quietly read as a
+    2.0. An `overlay` frame of the same shape draws a second, unfilled polygon —
+    two series, an adjacent pair in the validated slot order.
+    """
+    fig = go.Figure()
+
+    def close(seq):
+        values = list(seq)
+        return values + values[:1]
+
+    labels = close(frame["label"])
+
+    # The league-average ring, drawn first so both polygons sit above it. Not a data
+    # series: it is the zero line of a radial axis, which plotly will not draw itself,
+    # and it is the reference every radius on the chart is measured against.
+    fig.add_trace(go.Scatterpolar(
+        r=[0.0] * len(labels), theta=labels, mode="lines", name="league average",
+        line=dict(color=th["muted"], width=1.5), hoverinfo="skip", showlegend=False))
+
+    if overlay is not None and len(overlay):
+        fig.add_trace(go.Scatterpolar(
+            r=close(overlay["radius"]), theta=close(overlay["label"]),
+            mode="lines+markers", name=overlay_name or "comparison",
+            line=dict(color=th["series"][1], width=2), legendrank=2,
+            marker=dict(size=6, color=th["series"][1]),
+            customdata=close(overlay[["title", "sd"]].to_numpy()),
+            hovertemplate="<b>%{theta}</b> %{customdata[0]}<br>"
+                          "%{customdata[1]:+.2f} SD<extra>" +
+                          (overlay_name or "comparison") + "</extra>"))
+
+    # Open markers where the true score is off the axis, so a pinned spoke is visible
+    # as pinned without reading the hover.
+    symbols = ["circle-open" if p else "circle" for p in frame["pinned"]]
+    fig.add_trace(go.Scatterpolar(
+        r=close(frame["radius"]), theta=labels, mode="lines+markers", name=name,
+        fill="toself", fillcolor=_translucent(th["series"][0], 0.22), legendrank=1,
+        line=dict(color=th["series"][0], width=2),
+        marker=dict(size=9, color=th["series"][0], symbol=close(symbols),
+                    line=dict(color=th["surface"], width=1)),
+        customdata=close(frame[["title", "sd"]].to_numpy()),
+        hovertemplate="<b>%{theta}</b> %{customdata[0]}<br>"
+                      "%{customdata[1]:+.2f} SD<extra>" + name + "</extra>"))
+
+    fig.update_layout(polar=dict(
+        bgcolor=th["surface"],
+        # The tick arm sits between two spokes (72° = halfway from PC1 to PC10) so the
+        # numbers never sit on top of a data line.
+        # Two plotly-isms on the radial axis, both found by rendering it. A polar tick
+        # label is rotated by `angle - tickangle`, so upright text needs the two equal
+        # rather than `tickangle=0`; and `ticksuffix` is ignored here, so the unit is
+        # written into `ticktext` instead of appended.
+        radialaxis=dict(range=[-limit, limit],
+                        tickvals=[-limit, -limit / 2, 0, limit / 2, limit],
+                        ticktext=[f"−{limit:g} SD", f"−{limit / 2:g}", "0",
+                                  f"+{limit / 2:g}", f"+{limit:g} SD"],
+                        angle=TICK_ARM_ANGLE, tickangle=TICK_ARM_ANGLE,
+                        gridcolor=th["grid"], linecolor=th["axis"],
+                        tickfont=dict(color=th["muted"], size=10)),
+        angularaxis=dict(rotation=ANGULAR_ROTATION, direction=ANGULAR_DIRECTION,
+                         gridcolor=th["grid"], linecolor=th["axis"],
+                         tickfont=dict(color=th["ink2"], size=12)),
     ))
-    fig.update_layout(title=title)
-    fig.update_xaxes(showgrid=False)
-    fig.update_yaxes(showgrid=False, autorange="reversed")
-    return apply_theme(fig, th, height, legend=False)
+    fig = apply_theme(fig, th, height, legend=overlay is not None and len(overlay) > 0)
+    fig.update_layout(margin=dict(l=56, r=56, t=56, b=32))
+    return fig
 
 
-def fig_bars(df: pd.DataFrame, category: str, series: list[str], th: dict,
-             title: str, axis_title: str = "", horizontal: bool = True,
-             height: int = 420, emphasis: str | None = None) -> go.Figure:
-    """One bar series per column in `series`, in fixed slot order.
+def fig_loadings(frame: pd.DataFrame, th: dict, title: str,
+                 height: int | None = None) -> go.Figure:
+    """A component's largest loadings as signed horizontal bars, largest first.
 
-    `emphasis` names a single category to keep in slot 1 while the rest go muted —
-    the one-number story told without eight hues.
+    `frame` is `pca.top_loadings()`. Positive and negative take the two ends of the
+    diverging scale rather than two categorical slots, because the sign is a direction
+    on one axis and not a second category.
     """
-    fig = go.Figure()
-    cats = df[category].astype(str)
-    for i, col in enumerate(series):
-        if emphasis is not None:
-            colors = [th["series"][0] if c == emphasis else th["muted"] for c in cats]
-        else:
-            colors = th["series"][i % len(th["series"])]
-        common = dict(name=col, marker=dict(color=colors, line=dict(width=0)),
-                      hovertemplate="%{customdata}<br>" + col + " %{value:.4g}"
-                                    "<extra></extra>",
-                      customdata=cats)
-        if horizontal:
-            fig.add_bar(y=cats, x=df[col], orientation="h", **common)
-        else:
-            fig.add_bar(x=cats, y=df[col], **common)
-
-    fig.update_layout(title=title, bargap=0.35, bargroupgap=0.12)
-    # A 2px surface gap between adjacent fills rather than a border around marks.
-    fig.update_traces(marker_line_color=th["surface"], marker_line_width=2)
-    if horizontal:
-        fig.update_xaxes(title=axis_title)
-        fig.update_yaxes(autorange="reversed", showgrid=False)
-    else:
-        fig.update_yaxes(title=axis_title)
-        fig.update_xaxes(showgrid=False)
-    return apply_theme(fig, th, height, legend=len(series) > 1)
+    negative, positive = th["diverging"][0][1], th["diverging"][-1][1]
+    colors = [positive if v >= 0 else negative for v in frame["loading"]]
+    fig = go.Figure(go.Bar(
+        y=frame["pretty"], x=frame["loading"], orientation="h",
+        marker=dict(color=colors, line=dict(color=th["surface"], width=2)),
+        customdata=frame["feature"],
+        hovertemplate="%{customdata}<br>loading %{x:+.3f}<extra></extra>"))
+    fig.update_layout(title=title, bargap=0.3)
+    fig.update_xaxes(title="", zeroline=True, zerolinecolor=th["axis"],
+                     zerolinewidth=1)
+    fig.update_yaxes(autorange="reversed", showgrid=False)
+    fig = apply_theme(fig, th, height or (58 + 22 * len(frame)), legend=False)
+    fig.update_layout(margin=dict(l=8, r=8, t=42, b=24),
+                      title_font=dict(size=13))
+    return fig
 
 
-def fig_lines(df: pd.DataFrame, x: str, series: dict[str, str], th: dict,
-              title: str, y_title: str = "", x_title: str = "",
-              colors: list[str] | None = None, height: int = 420,
-              label_last: bool = True) -> go.Figure:
-    """2px lines, ≥8px markers, endpoint direct labels rather than a value per point."""
-    palette = colors or th["series"]
-    fig = go.Figure()
-    for i, (col, label) in enumerate(series.items()):
-        if col not in df:
-            continue
-        colour = palette[i % len(palette)]
-        g = df[[x, col]].dropna()
-        fig.add_scatter(x=g[x], y=g[col], mode="lines+markers", name=label,
-                        line=dict(color=colour, width=2),
-                        marker=dict(size=8, color=colour,
-                                    line=dict(color=th["surface"], width=2)),
-                        hovertemplate=f"{label}<br>%{{x}} · %{{y:.4g}}<extra></extra>")
-        if label_last and len(g):
-            fig.add_annotation(x=g[x].iloc[-1], y=g[col].iloc[-1], text=label,
-                               showarrow=False, xanchor="left", xshift=8,
-                               font=dict(color=th["ink2"], size=11))
-    fig.update_layout(title=title)
-    fig.update_xaxes(title=x_title)
-    fig.update_yaxes(title=y_title)
-    return apply_theme(fig, th, height, legend=len(series) > 1)
-
-
-def fig_scatter(df: pd.DataFrame, x: str, y: str, th: dict, title: str,
-                color_by: str | None = None, highlight: list | None = None,
-                hover_cols: list[str] | None = None, continuous: bool = False,
-                height: int = 520, x_title: str = "", y_title: str = "") -> go.Figure:
-    """A scatter is an all-pairs form, so identity colour caps at three slots.
-
-    Past three, or for any high-cardinality key, `highlight` switches to
-    emphasis: the chosen entities take the leading slots and everything else goes
-    muted and translucent. Continuous keys (age, season) use the sequential ramp,
-    which has no pair limit.
-    """
-    hover_cols = hover_cols or []
-    fig = go.Figure()
-
-    def _hover(sub: pd.DataFrame) -> tuple[str, np.ndarray]:
-        if not hover_cols:
-            return f"{x} %{{x:.3g}}<br>{y} %{{y:.3g}}<extra></extra>", None
-        tpl = "<br>".join(f"%{{customdata[{i}]}}" for i in range(len(hover_cols)))
-        return (tpl + f"<br>{x} %{{x:.3g}}<br>{y} %{{y:.3g}}<extra></extra>",
-                sub[hover_cols].to_numpy())
-
-    if continuous and color_by:
-        tpl, cd = _hover(df)
-        fig.add_scattergl(
-            x=df[x], y=df[y], mode="markers", customdata=cd, hovertemplate=tpl,
-            marker=dict(size=6, opacity=0.75, color=df[color_by],
-                        colorscale=th["sequential"], showscale=True,
-                        colorbar=dict(title=dict(text=color_by, side="right",
-                                                 font=dict(size=11)),
-                                      thickness=10, outlinewidth=0,
-                                      tickfont=dict(color=th["muted"], size=10))))
-        legend = False
-    elif color_by and highlight:
-        rest = df[~df[color_by].isin(highlight)]
-        tpl, cd = _hover(rest)
-        fig.add_scattergl(x=rest[x], y=rest[y], mode="markers", name="everything else",
-                          customdata=cd, hovertemplate=tpl,
-                          marker=dict(size=5, color=th["muted"], opacity=0.30))
-        for i, key in enumerate(highlight[:ALL_PAIRS_CAP]):
-            sub = df[df[color_by] == key]
-            tpl, cd = _hover(sub)
-            fig.add_scattergl(x=sub[x], y=sub[y], mode="markers", name=str(key),
-                              customdata=cd, hovertemplate=tpl,
-                              marker=dict(size=7, color=th["series"][i], opacity=0.85,
-                                          line=dict(color=th["surface"], width=1)))
-        legend = True
-    else:
-        tpl, cd = _hover(df)
-        fig.add_scattergl(x=df[x], y=df[y], mode="markers", name=y, customdata=cd,
-                          hovertemplate=tpl,
-                          marker=dict(size=5, color=th["series"][0], opacity=0.5))
-        legend = False
-
-    fig.update_layout(title=title, hovermode="closest")
-    fig.update_xaxes(title=x_title or x)
-    fig.update_yaxes(title=y_title or y)
-    return apply_theme(fig, th, height, legend=legend)
+def _translucent(hex_color: str, alpha: float) -> str:
+    """`#2a78d6` → `rgba(42,120,214,0.22)`, for a fill under a solid stroke."""
+    h = hex_color.lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    return f"rgba({r},{g},{b},{alpha})"
