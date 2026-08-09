@@ -408,13 +408,32 @@ they are good for is direction and magnitude, and on both the story is unchanged
 - **Joint per-team-game NLL** (plug-in, non-bijection caveat) — composition **32.862**
   against independent **37.984** on validation. Contrast, not a headline.
 
-**OT tail** — invariant to the split by construction: `fit_ot_tail` receives 1996-97 →
-2021-22 either way, and the fitted parameters reproduced to six decimals across the re-run.
-Fit on 30,626 regular-season training games: p_any = **0.0608**, p_more = **0.1408**. Scored
-on 2,460 validation team-games: predicted **128.4** / 18.1 / 3.0 games at 1/2/3+ OT against
-observed **120** / 18 / 0 — the two-parameter form holds and overpredicts single-OT by
-**7.0%**, a milder era decline in OT rate than the 15.7% the retired test column showed.
-`sample_game_length` is the simulator's game-length draw and carries that caveat with it.
+**OT tail** — ⚠️ **moved out of this head on 2026-08-09.** `fit_ot_tail`,
+`sample_game_length` and `ot_tail_check` are deleted from `stan_composition.py`, and
+`stan_composition_ot_tail.csv` with them; `src/models/stan_game_length.py`
+(`make stan-game-length`) owns the game-length draw now, as a Bayesian head with a full
+posterior and a fitted season trend. This head was never a consumer — it reads the
+**realized** `game_length` on every row it fits or scores, and only a forward simulation
+needs a draw — so the tail was parked here rather than belonging here. See
+`docs/simulations-plan.md`, "The second prerequisite".
+
+**The figures below did not move**, because the retired pair survives as the new head's
+mandatory no-fit floor: the same function on the same rows. They are re-derived by
+`make stan-game-length` and audited from
+`outputs/predictions/stan_game_length_{metrics,ppc}.csv`.
+
+Invariant to the split by construction: the floor receives 1996-97 → 2021-22 either way, and
+the fitted parameters reproduced to six decimals across the re-run. Fit on 30,626
+regular-season training games: p_any = **0.0608**, p_more = **0.1408**. Scored on 2,460
+validation team-games: predicted **128.4** / 18.1 / 3.0 games at 1/2/3+ OT against observed
+**120** / 18 / 0 — the two-parameter form holds and overpredicts single-OT by **7.0%**, a
+milder era decline in OT rate than the 15.7% the retired test column showed.
+
+**That 7.0% is what the replacement fixes**, and it is the reason the two-parameter form was
+retired rather than merely relocated: a fitted season slope takes the summed OT-class error
+on the same 2,460 games from **22.97** to **9.42**. The caveat this paragraph used to end
+with — "`sample_game_length` is the simulator's game-length draw and carries that caveat with
+it" — no longer applies to anything the simulator will call.
 
 ### The retired TEST column, held for the record
 

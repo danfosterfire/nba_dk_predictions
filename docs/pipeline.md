@@ -78,8 +78,15 @@ make stan-minutes      # min | available, trials = real game length (NEVER 48)
 make stan-components   # 8 NB count heads + 3 beta-binomial conversion heads
 make stan-composition  # the team-game minutes COMPOSITION — the per-game allocation
                        #   (zero-sum + the cap); see docs/minutes-composition-plan.md
-make stan              # all four, in chain order — composition AFTER stan-minutes,
-                       #   which it imports from and measures itself against
+make stan-game-length  # does a game go to OVERTIME, and how deep. The one thing a
+                       #   forward simulation cannot look up: both minutes heads need a
+                       #   length, and in a replay it comes from the parquet. Two
+                       #   existing .stan sources, ~30 collapsed rows, 0.3 s of sampler
+                       #   — the cheapest head in the project, which is why it runs
+                       #   first in the aggregate. Replaced stan_composition.fit_ot_tail.
+make stan              # all five, cheapest first so a plumbing failure surfaces in
+                       #   seconds, and composition AFTER stan-minutes, which it imports
+                       #   from and measures itself against
 make games-played      # the games-played spell process, numpy only — the collapse, the
                        #   spell classes, the closed-form beta-geometric fits and Gate 0's
                        #   empirical-hazard Monte Carlo. NO Stan, so a process class can
@@ -98,7 +105,7 @@ make season-terms      # does any head need a season term, and which kind? A tre
                        #   season × role arm the availability era effect calls for.
                        #   An ABLATION over the shipped heads, so also not in `stan`;
                        #   it reads their selected specs from their artifacts.
-make posteriors        # PERSIST the fits: 18 heads refitted once at the variant their
+make posteriors        # PERSIST the fits: 20 heads refitted once at the variant their
                        #   own sweep selected, each writing thinned draws + the design
                        #   recipe + provenance to
                        #   data/features/posteriors/<window>/<head>.pkl.
@@ -129,6 +136,19 @@ make scoring-periods   # one row per (season, game_id): its scoring period and i
                        #   period PLAYED, the NBA Cup final scores nowhere, and the
                        #   all-star gap moves no Monday. Schedules cache to data/raw, so
                        #   a rebuild needs no network; REFRESH=1 re-pulls them.
+
+make draft-pool        # the board: one row per (season, player) with team, DK position
+                       #   eligibility, ADP and the prior-season key the heads score him
+                       #   from → data/features/draft_pool.parquet. 13,105 player-seasons
+                       #   over 31 seasons, 942 of them the 2026-27 production board.
+                       #   IT REVERSED A PLAN ASSUMPTION: DK is SINGLE-position — both
+                       #   boards print exactly one of G/F/C for all 1,640 rows, zero
+                       #   duals — so NBA.com's `G-F` duals are not DK-shaped. Validated
+                       #   on the persistent DK id, DK's letter equals NBA.com's primary
+                       #   on 86.63% of players and lies inside its set on 92.61%
+                       #   → outputs/eda/draft_pool_position_audit.csv. Membership is
+                       #   season-start rosters from the game logs, never the roster CSV,
+                       #   which is a current-status snapshot carrying February signings.
 ```
 
 **After `make posteriors`, nothing else in the simulation layer needs CmdStan.** That is the

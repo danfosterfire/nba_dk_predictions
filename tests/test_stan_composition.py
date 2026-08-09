@@ -492,21 +492,19 @@ def test_composition_source_enforces_the_sum_and_cap_as_rejects():
     assert "beta_binomial_lupmf(y[lik] | m[lik]" in code
 
 
-def test_ot_tail_fits_and_samples_on_the_length_grid():
-    from src.models.stan_composition import fit_ot_tail, sample_game_length
+def test_the_ot_tail_no_longer_lives_in_this_module():
+    """`fit_ot_tail` / `sample_game_length` moved to `src/models/stan_game_length.py`.
 
-    lengths = pd.DataFrame({
-        "season": ["2018-19"] * 100,
-        "season_type": ["regular"] * 100,
-        "n_overtimes": [0] * 94 + [1] * 5 + [2] * 1,
-    })
-    params = fit_ot_tail(lengths, {"2018-19"})
-    assert abs(params["p_any_ot"] - 0.06) < 1e-12
-    assert abs(params["p_more_ot"] - 1 / 6) < 1e-12
-    drawn = sample_game_length(np.random.default_rng(0), 5000,
-                               params["p_any_ot"], params["p_more_ot"])
-    assert set(np.unique(drawn)) <= {48, 53, 58, 63, 68, 73}
-    assert abs((drawn > 48).mean() - 0.06) < 0.02
+    Pinned as an absence, because the failure this guards is a *reintroduction*: the tail
+    was parked here once and a second copy beside the real head is how the simulator ends
+    up drawing game lengths from a point estimate again.
+    `tests/test_stan_game_length.py` carries the same synthetic case against the floor that
+    replaced it.
+    """
+    import src.models.stan_composition as C
+
+    for gone in ("fit_ot_tail", "sample_game_length", "ot_tail_check"):
+        assert not hasattr(C, gone), f"{gone} is back in stan_composition"
 
 
 # ── Sampler-backed ────────────────────────────────────────────────────────────

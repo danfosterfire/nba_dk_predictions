@@ -12,8 +12,17 @@ through the trials — `m_k = min(U, R_k)`, the remaining capacity.
 
 Design and gates: `docs/minutes-composition-plan.md`. Settled there: one pooled fit
 with N/U as per-row data (never per-OT-class fits), K = players who played (the
-availability head owns the played margin), a pilot window before any full-window
-commitment, and a geometric tail for the game-length class predictor.
+availability head owns the played margin), and a pilot window before any full-window
+commitment.
+
+**Game length is an INPUT to this head, and it is no longer defined here.** This module
+used to carry `fit_ot_tail` / `sample_game_length` — a two-parameter point-MLE geometric
+tail, parked here because the composition was the first thing that needed a game-length
+class. `src/models/stan_game_length.py` owns it as of 2026-08-09: a Bayesian head with a
+full posterior and a fitted season trend, seven seconds of sampler time rather than a
+by-product of a nine-hour one. Nothing here changed — this head consumes the *realized*
+`game_length` column on every row it fits or scores, and only a forward simulation needs
+the draw.
 
 ## The offset is the floor, and the floor is already a redistribution model
 
@@ -847,9 +856,9 @@ def _checkpoint(ckpt_dir: Path | None, label: str, row: dict,
                 diagnostics: list[dict], models: dict) -> None:
     """Flush one completed arm to disk: its metric row, its two diagnostics, its draws.
 
-    `run` writes its six CSVs only at the very end, and at full window the sweep is a
+    `run` writes its five CSVs only at the very end, and at full window the sweep is a
     ~14 h loop — so without this a crash in the last arm loses every fit before it.
-    With it the PPC / joint-NLL / OT-tail tail of `run` can be re-driven from the
+    With it the PPC and joint-NLL tail of `run` can be re-driven from the
     pickles in minutes. Follows the `data.boxscore_status.flush_every` precedent:
     append as you go, and never let the flush itself take the run down.
     """
@@ -1069,57 +1078,15 @@ def joint_nll_table(models: dict, selected: str, comparator: dict,
     return pd.DataFrame(rows)
 
 
-# ── The game-length class predictor: a geometric tail ─────────────────────────
-
-def fit_ot_tail(lengths: pd.DataFrame, train_seasons: set[str]) -> dict:
-    """P(any OT) and P(one more OT | current) on regular-season training games.
-
-    Two parameters cover 3OT/4OT for free, because the continuation probability is
-    nearly constant in depth (0.138 / 0.151 / 0.128 over the full 37,986 games).
-    """
-    reg = lengths[(lengths["season_type"] == "regular")
-                  & lengths["season"].isin(train_seasons)]
-    k = reg["n_overtimes"].to_numpy(int)
-    n_ot = int((k >= 1).sum())
-    return {"p_any_ot": float((k >= 1).mean()),
-            "p_more_ot": float((k >= 2).sum() / max(n_ot, 1)),
-            "n_games": int(len(reg)), "n_ot_games": n_ot}
-
-
-def sample_game_length(rng: np.random.Generator, size: int, p_any_ot: float,
-                       p_more_ot: float) -> np.ndarray:
-    """Game lengths on the 48/53/58/... grid — the simulator's game-length draw."""
-    n_ot = np.zeros(size, dtype=int)
-    any_ot = rng.random(size) < p_any_ot
-    n_ot[any_ot] = rng.geometric(1 - p_more_ot, size=int(any_ot.sum()))
-    return 48 + 5 * n_ot
-
-
-def ot_tail_check(lengths: pd.DataFrame, held_seasons: set[str],
-                  params: dict) -> pd.DataFrame:
-    """Predicted vs observed OT-class counts on the held-out seasons."""
-    reg = lengths[(lengths["season_type"] == "regular")
-                  & lengths["season"].isin(held_seasons)]
-    k = reg["n_overtimes"].to_numpy(int)
-    n = len(reg)
-    p_any, p_more = params["p_any_ot"], params["p_more_ot"]
-    rows = []
-    for depth in (0, 1, 2, 3):
-        if depth == 0:
-            predicted = n * (1 - p_any)
-            observed = int((k == 0).sum())
-            label = "regulation"
-        elif depth < 3:
-            predicted = n * p_any * (1 - p_more) * p_more ** (depth - 1)
-            observed = int((k == depth).sum())
-            label = f"{depth}OT"
-        else:
-            predicted = n * p_any * p_more ** 2
-            observed = int((k >= 3).sum())
-            label = "3OT+"
-        rows.append({"class": label, "observed": observed,
-                     "predicted": float(predicted), "n_games": n})
-    return pd.DataFrame(rows)
+# `fit_ot_tail`, `sample_game_length` and `ot_tail_check` lived here until 2026-08-09 and
+# are now `src/models/stan_game_length.py`. Three things were wrong with leaving them: they
+# were a point estimate where every other simulator input is a posterior; the simulator
+# would have had to import this nine-hour head to draw a game length; and they were
+# unconditional, where a fitted season trend cuts the OT-class error on validation from
+# 22.97 to 9.42 summed games. The pooled pair survives there as the head's mandatory no-fit
+# floor and still reads p_any = 0.0608 / p_more = 0.1408 on the same 30,626 training games,
+# so nothing about the incumbent's numbers moved — only who owns them. Registered as
+# `withdrawn` in `dashboard/decisions.py`.
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -1220,22 +1187,11 @@ def run(cfg: dict) -> dict[str, Path]:
           "  composition's last step is deterministic on the simplex slice, so it\n"
           "  wins partly by knowing the constraint. Contrast, not a headline.")
 
-    lengths = pd.read_parquet(Path(cfg["data"]["features_dir"])
-                              / "game_length.parquet")
-    train_seasons = set(train["season"].unique()) \
-        | {s for s in frame["season"].unique()
-           if s < min(train["season"].unique())}
-    held_seasons = set(val["season"].unique())
-    tail = fit_ot_tail(lengths, train_seasons - held_seasons)
-    tail_check = ot_tail_check(lengths, held_seasons, tail)
-    print(f"\nOT tail (train seasons): p_any = {tail['p_any_ot']:.4f}, "
-          f"p_more = {tail['p_more_ot']:.4f} over {tail['n_games']:,} games")
-    print(tail_check.round(1).to_string(index=False))
+    print("\nGame length: this head consumes the REALIZED length on every row it fits or "
+          "scores.\n  The forward draw moved to `make stan-game-length` on 2026-08-09 — "
+          "see the module docstring.")
 
     diag = diagnostics_frame(diagnostics)
-    ot_frame = pd.concat([pd.DataFrame([{**tail, "class": "params",
-                                         "observed": np.nan, "predicted": np.nan}]),
-                          tail_check], ignore_index=True)
     rho_rows = []
     for label, holder in models.items():
         model = holder["val"]
@@ -1252,7 +1208,6 @@ def run(cfg: dict) -> dict[str, Path]:
         "dispersion": (pd.DataFrame(rho_rows),
                        out_dir / "stan_composition_dispersion.csv"),
         "joint_nll": (joint, out_dir / "stan_composition_joint_nll.csv"),
-        "ot_tail": (ot_frame, out_dir / "stan_composition_ot_tail.csv"),
     }
     paths = {}
     for name, (df, dest) in artifacts.items():

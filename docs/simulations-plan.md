@@ -97,6 +97,9 @@ everything downstream is numpy.**
 composition, and the games-played process's four (`gp_entry`, `gp_exit`, `gp_onset`,
 `gp_duration`). Each is refitted once at the variant its own sweep selected — read from that
 sweep's artifact rather than re-decided, the rule `src/final_evaluation.py` follows.
+**Twenty since 2026-08-09**, when the game-length head added `game_length_ot` and
+`game_length_depth` — they cost 0.3 s between them and go first in the group order, so a
+failure in the plumbing surfaces before any expensive head runs.
 
 ### The recipe is captured from the real ladder, and verified against it every run
 
@@ -244,7 +247,7 @@ the union instead of the last writer clobbering the first.
 
 ---
 
-## The second prerequisite: game length is a random variable forward, not a lookup
+## The second prerequisite: game length is a random variable forward, not a lookup ✅ built 2026-08-09
 
 Raised 2026-08-08, after the build order was first written. **Every backtest so far has read
 `game_length` from `data/features/game_length.parquet`, because in a replay the games already
@@ -332,10 +335,104 @@ constant rate, carried forward):
 argument for doing it properly rather than for expanding its scope: it must not become a
 research project, and the ladder above is the whole of it.
 
-Once it ships, `stan_game_length` owns the game-length draw, `stan_composition` **imports** it
-rather than defining its own — the same ordering constraint the composition already has on
-`stan_minutes` — and `fit_ot_tail` / `sample_game_length` are withdrawn from `stan_composition`
-with a registry entry recording the move.
+### What was built, and what it measured — 2026-08-09
+
+`src/models/stan_game_length.py`, `make stan-game-length`. **Four Stan fits, 0.3 s of
+sampler time, 0 divergences, max R̂ 1.0048** — the cheapest head in the project by three
+orders of magnitude, as sized. No new `.stan` file: `betabinomial_glm.stan` on 26 season
+cells and `betageometric_duration.stan` on four collapsed depth rows. The head classes were
+reused too, not rewritten — `stan_games_played.BetaBinomialHead` and `BetaGeometricHead` are
+these likelihoods with different data.
+
+**Both gates pass, and only one of them is close.**
+
+| arm | fit games | onset nats/game | complete nats/game | pred. OT rate | Σ\|obs − pred\| over the 4 OT classes |
+|---|---|---|---|---|---|
+| `floor` (the incumbent) | 30,626 | −0.216288 | −0.239145 | 0.06077 | **22.97** |
+| **`season_trend`** ✅ | 30,626 | **−0.216068** | **−0.239122** | 0.05545 | **9.42** |
+| `season_trend_covered` | 8,289 | −0.216384 | −0.239438 | 0.05003 | 35.48 |
+| `season_trend_matchup` | 8,289 | −0.216655 | −0.239708 | 0.04940 | 38.49 |
+
+Observed on the 2,460 validation games is an OT rate of **0.056098**. The class counts are
+2,322 / 120 / 18 / 0 against the incumbent's 2,310.5 / 128.4 / 18.1 / 2.96 and the trend
+arm's **2,323.6 / 117.4 / 15.8 / 3.1** — so the head is **2.4× closer** on the statistic the
+gate names, and the whole of that comes from the OT *rate* rather than from the depth shape.
+
+**The log-likelihood gate passes on a margin that is not a result.** +0.000023 nats per game
+on the complete model, 95% paired bootstrap **[−0.000918, +0.000908]**. That is honest and it
+is expected: 94% of games are regulation, and moving `p` from 0.0608 to 0.0555 against a
+truth of 0.0561 is worth almost nothing per game. The counts are where the win is, which is
+why the plan specified them as the gate. Selection reads the **onset half** (+0.000219), since
+every fitted arm shares one depth head and the arms differ in nothing else.
+
+**Three findings the plan did not anticipate.**
+
+- **The matchup arm is a null, as predicted, but the reason is not the one expected.**
+  `|prior-season net rating difference|` fits a coefficient of **−0.0119** per rating point —
+  the *right sign*, since evenly matched teams should be likelier to be tied — and still
+  loses to its own same-window control by **−0.000270** nats per game. `team_estimated_metrics_*.csv`
+  starts at 2014-15, so the arm can only fit 8,289 of 30,626 training games, and the
+  `season_trend_covered` control exists to separate "the covariate is worthless" from "seven
+  seasons is not enough to fit a trend on". The control answers that plainly: fitted on the
+  short window the *trend itself* degrades from −0.00701 to −0.02901 logit per season and the
+  class error triples to 35.48. **The covariate costs a little; the window costs a lot.**
+- **The plan's stated reason for the Beta frailty is backwards, and it is corrected here.**
+  "It over-predicts 3OT+ by 3 games in 2,460" describes a *validation* over-prediction, and a
+  frailty puts **more** mass in the tail, not less — the beta-geometric predicts 3.1 there
+  against the plain geometric's 3.0, so it is marginally worse at exactly the miss it was
+  motivated by. What the frailty actually fixes is the opposite miss on the fitting half,
+  where the geometric **under**-predicts 3OT: 37 observed against **31.7** geometric and
+  **34.5** beta-geometric on 1,861 overtime games. On validation the plain geometric is ahead
+  by 0.00350 nats per overtime game over 138 of them — about one 2OT game's worth of evidence,
+  so the two are not distinguishable there. **The frailty ships anyway, on a reason that is
+  not fit**: it *nests* the geometric (κ → ∞, fitted at **κ = 37.7**) and it is the only form
+  of the depth model that carries a posterior, which is the entire point of moving this out of
+  `fit_ot_tail`.
+- **The trend-versus-wander answer is a trend, but `rho` is weakly identified and must not be
+  quoted as a measurement.** With the slope in, the residual season dispersion is
+  **2.49e-4 [1.66e-5, 7.14e-4]**, i.e. 1.22× binomial at the posterior median — but on 26
+  cells, against the uniform prior `betabinomial_glm.stan` deliberately puts on `rho`, that
+  posterior leans upward. A Pearson dispersion around the fitted trend reads **0.91**, i.e.
+  *under*-dispersed. Read the fitted `rho` as an upper bound on the wander, not as a
+  measurement of it. The direction of the conclusion is unaffected: the era movement is in the
+  slope, which extrapolates, and not in a residual spread, which does not.
+
+**The fitted slope is −0.00701 logit per season, not −0.00893.** The plan's figure is the
+full-window fit over 30 seasons; this one is fitted on `train` (1996-97 → 2021-22) as the
+split requires. Extrapolated, this fit reads **0.0542** for 2026-27 against the floor's
+0.0608 — the same ~11% relative overstatement the plan flagged at 17% off the wider window.
+The production board refits at the `full` window through `make posteriors`.
+
+**The draw is checked as a draw, not only as a set of probabilities.** `simulated_slate`
+redraws the whole validation season 500 times *through `sample_game_length` itself*, one
+posterior draw per slate, and the sampled class counts reproduce the analytic ones
+(2,324.2 / 117.0 / 15.7 / 3.0 against 2,323.6 / 117.4 / 15.8 / 3.1). That is the only check on
+the sampler: a length drawn per team-game, a frailty applied per game instead of per season, or
+a wrong grid step would leave every probability in the module correct and every simulated
+season wrong. The 90% interval on the validation OT count, *with* the season frailty, is
+**[111, 162]** against 138 observed.
+
+**Artifacts.** `outputs/predictions/stan_game_length_{metrics,ppc,depth,diagnostics}.csv`,
+plus `game_length_ot.pkl` / `game_length_depth.pkl` under
+`data/features/posteriors/<window>/` — **twenty heads** now, not eighteen. Both round-trip at
+0.00e+00 design error and 2.22e-16 prediction error.
+
+### What moved out of `stan_composition`
+
+`fit_ot_tail`, `sample_game_length` and `ot_tail_check` are **deleted**, and
+`stan_composition_ot_tail.csv` with them; `src/docs_audit.py`'s five claims on those figures
+re-derive from the new head's artifacts instead, and the values did not move — the floor
+reads p_any **0.0608** and p_more **0.1408** on the same 30,626 games, because it is the same
+function on the same rows. Registered as `withdrawn`.
+
+**One clause of the specification was not followed, deliberately.** The plan says
+`stan_composition` should afterwards *import* the new head. It does not. Nothing in that
+module calls a game-length draw — it consumes the **realized** `game_length` column on every
+row it fits or scores, and only a forward simulation needs the draw — so the import would be
+dead code, and re-emitting the OT artifact from a 9.9-hour target rather than a 7-second one
+is worse provenance, not better. `stan-game-length` still runs ahead of `stan-composition` in
+the `stan` aggregate, for the ordinary reason: cheapest first, so a plumbing failure surfaces
+in seconds.
 
 ---
 
@@ -592,17 +689,19 @@ make posteriors ✅   src/models/posteriors.py      thinned draws + design recip
                                                    -> data/features/posteriors/<head>.pkl
                                                       + manifest.csv
 
-make stan-game-length src/models/stan_game_length.py  does a game go to OT, and how deep
+make stan-game-length ✅ src/models/stan_game_length.py does a game go to OT, and how deep
                                                    -> outputs/predictions/stan_game_length_*.csv
-                                                      + a posteriors/ entry. Replaces
-                                                      stan_composition.fit_ot_tail
+                                                      + two posteriors/ entries. Replaced
+                                                      stan_composition.fit_ot_tail, which
+                                                      is deleted
 
 make scoring-periods ✅ src/features/scoring_periods.py NBA week grid -> DK round windows
                                                    -> data/features/scoring_periods.parquet
 
-make draft-pool      src/features/draft_pool.py    the board: player x season, DK position
+make draft-pool ✅   src/features/draft_pool.py    the board: player x season, DK position
                                                    eligibility, team, ADP, prior-season row
                                                    -> data/features/draft_pool.parquet
+                                                      + draft_pool_position_audit.csv
 
 make simulate-season src/sim/season.py             THE tensor
                                                    -> data/features/sim_tensor_<season>.npz
@@ -624,7 +723,7 @@ Assembly, not invention. Every piece already exists and is measured:
 
 | Step | Source | Number |
 |---|---|---|
-| **how long the game is** | **`stan_game_length`** | **5.94%** of games go to OT; see below |
+| **how long the game is** | **`stan_game_length.sample_game_length`** ✅ | fitted OT rate **0.0542** for 2026-27 at the `train` window; **once per game, shared by both teams** |
 | which games he plays | `stan_games_played.sequences` | entry × exit × within-tenure chain, all gates pass |
 | minutes, team-constrained | `stan_composition.simulate_minutes` | CRPS 4.4945 vs 4.7842 independent |
 | minutes, game-level noise | the composition's **own** role-graded rho | 0.1768 fringe → 0.0855 star. `stan_minutes_dispersion.csv`'s **4.65×** is a *diagnostic* to check draws against, **not** an input — see "The third prerequisite" |
@@ -747,12 +846,17 @@ N = 2 seasons of correlated pods will not distinguish `α = 0.3` from `α = 0.5`
 should not pretend otherwise. Its job is to catch a strategy that is broken in a way the
 simulated world cannot see, and to put an honest — wide — interval on the measured edge.
 
-**A cheap widening exists if it turns out to be needed.** ADP also covers 2014-15, 2017-18,
-2018-19 and 2019-20. The fitted heads are in-sample on those, but the **no-fit carry-forward
-floor is out-of-sample by construction** and scores only 0.001–0.03 R² below the fitted heads.
-A floor-ranked backtest across six seasons is a legitimate robustness check on strategy
-*shape*, even though it cannot price the fitted model's edge. Build it only if the two-season
-result is ambiguous.
+**A cheap widening exists if it turns out to be needed — but it is half the size this plan
+thought.** ADP was said to also cover 2014-15, 2017-18, 2018-19 and 2019-20. Under
+`adp.training_rows` **only 2014-15 survives**: in the other three, every archived snapshot
+postdates the season's first game, so the board those seasons drafted on was never captured
+(`make draft-pool`, and see "Point-in-time costs four of the nine ADP seasons"). The widening
+is therefore **three seasons, not six**. What it buys is unchanged in kind: the fitted heads are
+in-sample on 2014-15, but the **no-fit carry-forward floor is out-of-sample by construction**
+and scores only 0.001–0.03 R² below the fitted heads, so a floor-ranked backtest is a legitimate
+robustness check on strategy *shape* even though it cannot price the fitted model's edge. Build
+it only if the two-season result is ambiguous, and expect less from it than the original note
+promised.
 
 ### The test split — a pure readout, mechanized as one
 
@@ -801,20 +905,124 @@ on the critical path and should not gate the draft room shipping.
 
 ## Data the layer needs, and where it comes from
 
-- **DK position eligibility** — `data/raw/team_rosters_*.csv` carries `POSITION` with DK-shaped
-  dual eligibility (`G-F`, `F-C`, `C-F`, `F-G`) for all 30 seasons with **zero** nulls on the
-  historical files. Without it no lineup can be filled at all. The two
-  `data/raw/dk_draft_rankings/*.csv` boards carry DK's *own* positions for 698 and 942 players,
-  which is what the NBA.com → DK mapping is validated against. 2026-27 rosters carry nulls for
-  unsigned players; the DK board covers them.
-- **ADP** — `data/features/adp_panel.parquet`, 15,012 rows. Coverage is 2014-15, 2017-18,
-  2018-19, 2019-20, 2022-23, 2023-24, 2024-25, 2025-26 (both sources) and 2026-27 (DK only).
-  Both validation seasons are covered, which is the coverage that matters.
+- ~~**DK position eligibility** — `data/raw/team_rosters_*.csv` carries `POSITION` with
+  DK-shaped dual eligibility (`G-F`, `F-C`, `C-F`, `F-G`)…~~ ✅ **Built 2026-08-09 as `make
+  draft-pool`, and the validation reversed the assumption** — see below. `POSITION` is still the
+  right source and is still complete for all 30 seasons with zero nulls; what was wrong is that
+  its duals are DK-shaped.
+- **ADP** — `data/features/adp_panel.parquet`, 15,012 rows. It *holds* nine seasons, but under
+  `adp.training_rows` only **five** are point-in-time legal: 2014-15, 2022-23, 2023-24, 2025-26
+  and 2026-27. **Both validation seasons survive**, which is the coverage that matters — but the
+  "cheap widening" above gains one season rather than four. See below.
 - **Schedule** — realized game dates from `data/processed/game_logs.parquet` for backtests;
   `ScheduleLeagueV2` for the production season, **once it is published**.
 - **Tournament structure** — the two `dk_best_ball_tournament_*.csv` files, through
   `dashboard.economics`. Re-verify against the live 2026-27 contests before any backtest
   number is treated as load-bearing.
+
+### 🔴 DraftKings is single-position, and this plan assumed otherwise
+
+Measured 2026-08-09 by `make draft-pool`, which was told to validate the NBA.com → DK mapping
+rather than trust it. It does not survive.
+
+**Both DK boards print exactly one of `G` / `F` / `C` for every player — 1,640 rows across two
+seasons, zero duals, zero slashes.** NBA.com hands a dual to 18.2% of rostered players; DK hands
+out none. That is not a quirk of one file: it reproduces independently on both boards, and DK's
+own label is **99.85% stable** across them (1 change in 667 shared ids), so the label is a
+settled per-player attribute rather than something the board recomputes.
+
+The two sources are therefore two *opinions*, not a coarse view and a fine one. Joined on the
+persistent DK id through `adp_dk_id_map.parquet` — never on a name — against the contemporaneous
+2025-26 roster (n = 501):
+
+| | agreement |
+|---|---|
+| DK's letter lies inside NBA.com's position set | **92.61%** |
+| DK's letter equals NBA.com's **primary** letter | **86.63%** |
+| …restricted to NBA singles (`G`, `F`, `C`) | 90.98% |
+| …restricted to NBA duals (`G-F`, `F-C`, …) | **100.00%** inside the pair, 67.03% on the primary |
+
+Read the last two rows together. Where NBA.com commits to one letter, DK contradicts it **9.02%**
+of the time. Where NBA.com says "tweener", DK always picks one of the two it named — but which
+one is close to a coin toss, and on `G-F` it is 16 G against 19 F on 35 players. **Every
+disagreement is between adjacent classes; there is not one G↔C swap in either board.**
+
+**What ships.** `position` is a single letter for every row, because that is the shape DK uses:
+DK's own where a board exists, NBA.com's primary otherwise. The alternative — granting both
+letters of a dual — is better on one error and much worse on the other. It never *misses* DK's
+letter (100% containment) but hands a second slot to the 18.2% NBA.com calls tweeners, and a
+spurious eligibility inflates every lineup it touches. Primary-only misassigns ~13% of players
+symmetrically, which is noise in *which* slot a player fills; dual grants systematic extra
+flexibility, which is upward bias in every simulated score and in exactly the direction that
+makes a strategy look profitable when it is not. **Between symmetric noise and optimistic bias,
+take the noise.** `dual_g` / `dual_f` / `dual_c` carry the rejected convention anyway, so the
+sensitivity run is a column swap — and they are NBA.com's set **union** the shipped letter,
+because NBA.com's set on its own is not a superset of what ships. It names nothing at all for
+the 2026 draft class (205 rows of the production board) and it names the *other* class wherever
+DK contradicts a single NBA.com letter, so a bare swap would leave 219 players eligible nowhere
+and 310 eligible somewhere they cannot play. Unioning keeps the difference to the one thing the
+convention is about: whether a tweener gets his second slot. `assert_pool` pins it.
+
+A *fitted* majority map was also rejected, deliberately: it scores 87.2% against the primary
+rule's 86.6%, and the entire difference is flipping `G-F` to `F` on a 19-vs-16 split. Fitting a
+coin toss on 35 observations to buy 0.6 points is not a map, it is noise with a lookup table.
+
+**The caveat this leaves.** Backtest seasons get mapped positions (86.6% right) and the
+production season gets DK's own (right by definition), so the backtest understates lineup fit
+relative to the live board. That is the conservative direction — it makes the measured edge
+smaller — but a strategy tuned on how *awkward* rosters are to fill is tuned partly on an
+artifact.
+
+**Is validating against the boards a split read?** The only boards that exist are Oct-2025 (a
+**test** season) and Jul-2026 (production), so this plan's own instruction cannot be followed
+without touching 2025-26. It is not a violation: a position label is not a target-season outcome,
+carries nothing about 2025-26 scoring, and `held_out.py` guards frames so a *score* cannot be
+read, not roster attributes. The audit reports the same measurement against **train-only** roster
+rows so the argument is checkable rather than asserted — restricted to rosters through 2021-22
+the 2026-27 board reads **95.42%** containment and **88.55%** primary agreement against the
+contemporaneous 92.61% / 86.63%. The finding does not come from the held-out rows and does not
+move when they are removed.
+
+### What else the board build found
+
+- **The pool is season-start rosters, not the roster CSV.** `team_rosters_<season>.csv` is a
+  *current-status* snapshot — the 2025-26 file carries `HOW_ACQUIRED = "Signed on 03/04/26"` —
+  so using it for membership would put February signings in an October draft pool. Membership is
+  `team_context.season_start_roster` (first appearance inside the team's first 10 games), which
+  is this project's existing point-in-time definition; the CSV is read for `POSITION` only, which
+  is a static attribute rather than a season outcome.
+- **2026-27's pool is the DK board itself**, 942 players, because that season has no game log.
+  That is the authoritative answer rather than a fallback: DK's player pool *is* the draftable
+  set. When `commonteamroster` is fetched for 2026-27, its `POSITION` nulls (unsigned and
+  two-way) resolve through the same board and `position_source` records how many needed it.
+- 🔴 **The 2026 draft class is kept, not dropped.** 162 board rows carry no `player_id` because
+  they have never played an NBA game, and `adp_dk_id_map` correctly reports them as
+  `no_nba_history` rather than as a join failure. They are nonetheless draftable and several go
+  early — **AJ Dybantsa at ADP 41.8** is a fourth-round pick. Dropping them would break the draft
+  simulator for a reason unrelated to whether the model can score them, because the field takes
+  them at their ADP regardless and *who is still on the board at pick k* is what a snake draft
+  turns on. They carry a negative surrogate id (`-dk_player_id`) that can never collide with an
+  `nba_api` id, flagged `has_nba_id`. **How to price them is still open** and belongs to item 4.
+- **132 players (1.0%) are dropped as unslottable** — no `POSITION` in any roster file and no DK
+  board row, a coverage hole in the 1996-2007 files. Keeping them would be worse than dropping
+  them: eligible at no class, a player can still be drafted, consumes a roster spot and can never
+  be started, silently shrinking a 16-man roster. Worst season is 1996-97 at 26; both validation
+  seasons lose at most 4.
+
+### 🔴 Point-in-time costs four of the nine ADP seasons
+
+This plan's coverage list was panel *presence*, not legality. Under `adp.training_rows` — a row
+is filled only from a board observed at or before the season's first game, the qualifying
+*observation* rather than the qualifying value — only **five** seasons survive: 2014-15, 2022-23,
+2023-24, 2025-26 and 2026-27. In 2017-18, 2018-19, 2019-20 and 2024-25 *every* archived snapshot
+postdates the first game, which `docs/adp-plan.md` already predicted for two of them ("2016-17
+and 2024-25 are recoverable only from mid-season snapshots") without following it through to what
+the point-in-time rule then does.
+
+Two consequences. **Both validation seasons survive** — 424 ADP'd players over 912 pool rows —
+which is the coverage the realized backtest needs. And **2024-25, a test season, carries no legal
+ADP at all**, which item 10's risk readout has to account for: half the test window cannot be
+drafted against a contemporaneous market at all.
 
 ---
 
@@ -873,7 +1081,14 @@ stan:
     season_type: regular
     # Half-normal scale on the beta-geometric concentration, mirroring games_played.
     kappa_scale: 25.0
+    # Added at build time: the matchup arm's cells. A beta-binomial at one game per row is
+    # a Bernoulli and its dispersion is unidentified, so the per-game gap is binned.
+    matchup_bins: 10
 ```
+
+`season_trend_covered` is not listed and does not need to be — the sweep inserts it whenever
+`season_trend_matchup` is present, because the matchup arm is uninterpretable without a
+same-window control and an optional control is a control that gets switched off.
 
 ---
 
@@ -904,6 +1119,17 @@ Plain `assert` with synthetic builders, no fixtures or classes, mirroring
   than an untested claim.
 - **draw order** — `fga → fg3a|fga → fg2a → makes` is materialized in that order; reordering it
   must fail loudly.
+- **the game-length draw** ✅ `tests/test_stan_game_length.py` — 20 tests, no sampler. The
+  three that matter are about the *draw* rather than the fit, because its failures are all
+  silent: one length **per game** and not per team-game (the shape is pinned); the season
+  frailty **shared across the slate**, checked in both directions since a frailty drawn per
+  game reproduces the marginal and shows binomial spread; and the 48/53/58 grid. A fourth
+  pins that handing the draw a *cell* frame raises instead of truncating — the wiring error
+  that would otherwise produce a plausible season from the wrong frame — and a fifth pins
+  that `posterior_inputs` (from the pickles) equals `draw_inputs` (from live heads), since
+  two producers of one contract is how a simulator ends up drawing from something subtly
+  different from what was fitted. `tests/test_stan_composition.py` pins the *absence* of
+  `fit_ot_tail`, because the failure there is reintroduction.
 
 ---
 
@@ -1011,7 +1237,14 @@ verify — which is why no item prompt repeats any of it.
 > weeks and Rounds 2–4 = one double week each. Flip the `scoring-periods-are-nba-weeks` registry
 > entry from `open` to `built`.
 
-### 3. `make draft-pool` — the board, with DK position eligibility
+### 3. `make draft-pool` — the board, with DK position eligibility ✅ built 2026-08-09
+
+**13,105 player-seasons over 31 seasons**, 942 of them the 2026-27 production board. The
+validation it was told to run **reversed this plan's position assumption** — DK is
+single-position — and turned up two more things worth carrying forward: the 2026 draft class has
+no `player_id` and must be kept anyway, and point-in-time discipline costs four of the nine ADP
+seasons. All three are written up under "Data the layer needs" above.
+
 
 > Read `docs/simulations-plan.md` ("Data the layer needs") and `docs/adp-plan.md`. Build
 > `src/features/draft_pool.py` + `make draft-pool` writing `data/features/draft_pool.parquet`:
@@ -1024,11 +1257,13 @@ verify — which is why no item prompt repeats any of it.
 > board for the 2026-27 rows whose `POSITION` is null (unsigned / two-way). Reuse
 > `adp_dk_id_map.parquet` for the id join; never name-match where an id exists.
 
-### 3b. `make stan-game-length` — the overtime head ⛔ blocks 4
+### 3b. `make stan-game-length` — the overtime head ✅ built 2026-08-09
 
-Added 2026-08-08, after the rest of the order was written — see "The second prerequisite"
-above. Independent of items 1–3 and can run alongside them, but must land before item 4, and
-must be added to `make posteriors`' head list once it exists.
+Added 2026-08-08, after the rest of the order was written; built 2026-08-09. The measured
+outcome is under "The second prerequisite" above — both gates pass, the matchup arm is the
+predicted null, and one of the plan's stated *reasons* turned out to be backwards. The
+opening prompt is kept below as written, because the record of what a session was asked for
+is worth as much as the record of what it found.
 
 > Build `src/models/stan_game_length.py` plus a `make stan-game-length` target: the Bayesian
 > game-length head, with a full posterior, that the forward simulator draws from.

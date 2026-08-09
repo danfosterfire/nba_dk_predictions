@@ -123,6 +123,74 @@ def test_a_superseded_figure_is_still_presence_checked(tmp_path):
     assert len(stale) == 1 and stale[0].check == "stale-claim"
 
 
+# ── Cost figures ──────────────────────────────────────────────────────────────
+
+def _cost_claim(quoted: str, seconds: float, column: str = "wall_clock_s") -> A.Claim:
+    """A claim whose value comes from a real column read, so the rule can see it.
+
+    Deliberately routed through `A.total` rather than a bare lambda: the whole point of
+    the design is that the rule keys on the artifact column that was actually read, so a
+    test that hand-declared "this is a cost claim" would be testing nothing.
+    """
+    return A.Claim(doc="docs/fake.md", quoted=quoted,
+                   artifact="outputs/eda/fake.csv",
+                   actual=lambda: A.total("outputs/eda/fake.csv", column),
+                   label=f"synthetic {column}")
+
+
+def _cost_artifact(tmp_path: Path, seconds: float, column: str = "wall_clock_s"):
+    (tmp_path / "outputs/eda").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "outputs/eda/fake.csv").write_text(f"{column}\n{seconds}\n")
+    A._CACHE.clear()
+
+
+def test_a_wall_clock_figure_is_presence_checked_not_value_checked(tmp_path, monkeypatch):
+    """The reason this exists: re-running a fit at a fixed seed reproduces every
+    statistic exactly and moves the timings, because a timing measures the machine and
+    whatever else is running on it. Failing the gate on that forces a refit whose only
+    product is a number nobody consumes."""
+    monkeypatch.setattr(A, "ROOT", tmp_path)
+    _doc(tmp_path, "docs/fake.md", "the sweep took 721 s")
+    _cost_artifact(tmp_path, 955.032)
+    bad, skipped = A.check_values((_cost_claim("721", 955.032),), tmp_path)
+    assert bad == []
+    assert len(skipped) == 1 and skipped[0].check == "cost-figure"
+    # The artifact's actual value is reported, so the doc can still be refreshed by hand.
+    assert "955" in skipped[0].detail
+
+
+def test_a_cost_figure_is_still_presence_checked(tmp_path, monkeypatch):
+    """Presence-checked, not unchecked — deleting the figure must still be caught."""
+    monkeypatch.setattr(A, "ROOT", tmp_path)
+    _doc(tmp_path, "docs/fake.md", "the sweep was quick")
+    stale = A.check_presence((_cost_claim("721", 955.032),), tmp_path)
+    assert len(stale) == 1 and stale[0].check == "stale-claim"
+
+
+def test_a_statistical_figure_from_the_same_artifact_is_still_value_checked(
+        tmp_path, monkeypatch):
+    """The rule must be narrow. A claim reading `max_rhat` from the very same diagnostics
+    file stays a hard failure — convergence and divergences are how an overlong run from
+    bad geometry actually surfaces, now that the timing no longer does."""
+    monkeypatch.setattr(A, "ROOT", tmp_path)
+    _doc(tmp_path, "docs/fake.md", "R-hat 1.0054")
+    _cost_artifact(tmp_path, 1.0210, column="max_rhat")
+    bad, skipped = A.check_values((_cost_claim("1.0054", 1.0210, "max_rhat"),), tmp_path)
+    assert len(bad) == 1 and bad[0].check == "value-mismatch"
+    assert skipped == []
+
+
+def test_every_cost_column_is_actually_read_by_some_claim():
+    """A column in `COST_COLUMNS` that no claim touches is a rule with no subject —
+    either a typo or a leftover from a renamed artifact."""
+    A._CACHE.clear()
+    results = A.run()
+    exempted = {f.label for f in results["skipped"] if f.check == "cost-figure"}
+    assert exempted, "no claim was exempted; the cost rule is not wired up"
+    # And the exemption must not have swallowed the whole registry.
+    assert len(exempted) < len(A.CLAIMS) / 10
+
+
 def test_historical_claims_are_counted_separately_in_coverage():
     for doc in (A.ADP, A.PRED):
         cov = A.coverage(doc)

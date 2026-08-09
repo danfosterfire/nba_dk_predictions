@@ -502,7 +502,7 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     on 9,478 train / 883 **validation**: CRPS **10.0063** (Stan plug-in) / **10.0071**
     (posterior) against the MLE's **10.0057**, ρ **0.2808** vs **0.2806**, max coefficient gap
     **0.00335**, largest gap **0.085 posterior sd**, and the MLE inside the 95% credible
-    interval for **21/21** terms. R̂ **1.0019**, min ESS 2,314, **0 divergences**, 195 s
+    interval for **21/21** terms. R̂ **1.0019**, min ESS 2,314, **0 divergences**, 196 s
     wall clock over 4 chains.
     - **⚠️ This block was measured on the held-out seasons until 2026-08-05 and read
       10.7947 / 10.7953 / 10.7952, ρ 0.2759 vs 0.2757, gap 0.0127 / 0.095 sd, R̂ 1.0025,
@@ -560,7 +560,7 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     does not exist here, since Stan differentiates exactly.
   - **B-spline bases are badly conditioned for HMC.** The spline variants sample at treedepth
     8 (255 leapfrog steps per iteration) with a step size of 0.011, against treedepth 3–4 for
-    the linear ones — **721 s against 171 s** for the same data on the minutes head. Valid,
+    the linear ones — **955 s against 175 s** for the same data on the minutes head. (Both figures were re-measured on 2026-08-08 while the composition head was sampling on the same machine, so they are an UPPER bound on the uncontended cost — the earlier idle-machine pair was 721 s against 171 s. The ratio is the claim; the levels move with whatever else is running.) Valid,
     just expensive; an orthogonalized (QR-whitened) basis is the fix if spline variants ever
     become the shipped spec. (The recorded **899** s / **189** s pair is the same contrast
     on the retired test refits, which ran at double the iterations.)
@@ -583,7 +583,7 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
   | **`logit(own)` + spline** | **143.93** | **0.8835** | 199.60 | −14.00 | **✓** |
 
   Clears the floor by **+0.0299 R² and −17.5 minutes of CRPS**. Max R̂ **1.0054**,
-  **0 divergences** over 4 fits, 1,227 s total.
+  **0 divergences** over 4 fits, 1,503 s total.
   - ⚠️ **This table was a TEST evaluation until 2026-08-06** and read, as
     `val CRPS / test CRPS / test R²`: floor 161.45 / **168.24** / **0.8166**, linear
     **144.62** / **147.18** / **0.8565**, `logit(own)` **145.44** / **147.35** / 0.8565,

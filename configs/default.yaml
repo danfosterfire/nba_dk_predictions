@@ -254,6 +254,24 @@ stan:
     # `stan_games_played.probe_timing`.
     max_extrapolated_hours: 6.0
 
+  # The game-length head — docs/simulations-plan.md, "The second prerequisite". Whether a
+  # game goes to overtime and how deep, so a FORWARD simulation can draw a length instead
+  # of looking one up. It sits under `stan:` rather than under `sim:` because it is a
+  # fitted model; only its draws are a simulator input.
+  game_length:
+    # Depth counts 33,433 / 1,821 / 250 / 37 / 5 over 35,546 regular-season games; nothing
+    # past 4OT. Continuation is 0.1382 / 0.1438 / 0.1190 by depth, so a geometric in depth
+    # covers 2OT-4OT for free and there is no depth dependence to fit.
+    arms: [floor, season_trend, season_trend_matchup]
+    # Regular season only, matching every other fitting frame and the contest window.
+    season_type: regular
+    # Half-normal scale on the beta-geometric concentration, mirroring games_played.
+    kappa_scale: 25.0
+    # Cells for the matchup arm only. A beta-binomial at one game per row is a Bernoulli
+    # and its dispersion is unidentified, so the per-game gap is binned; the edges are
+    # quantiles of the FITTING half.
+    matchup_bins: 10
+
   # The team-game minutes composition head — docs/minutes-composition-plan.md.
   composition:
     # The frame is built over every season (lags and the expanding rookie prior need

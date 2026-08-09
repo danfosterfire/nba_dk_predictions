@@ -107,7 +107,8 @@ POSTERIOR_DIR = "posteriors"
 
 # Head groups, in the order `make posteriors` runs them: cheapest first, so a failure in
 # the plumbing surfaces in three minutes rather than three hours.
-GROUPS = ("availability", "games-played", "minutes", "components", "composition")
+GROUPS = ("game-length", "availability", "games-played", "minutes", "components",
+          "composition")
 
 
 # ── The design recipe ─────────────────────────────────────────────────────────
@@ -924,6 +925,71 @@ def _composition_steps(train: pd.DataFrame, tr: pd.DataFrame, features: list[str
     return steps
 
 
+def game_length_artifacts(cfg: dict, window: str, draws_kept: int):
+    """The two halves of the game-length draw: does a game go to OT, and how deep.
+
+    Two artifacts rather than one, because they are two likelihoods on two frames — the
+    onset head fits season *cells* and the depth head fits collapsed *depth rows*. The
+    simulator recombines them through `stan_game_length.draw_inputs`, which is the same
+    factorization the rest of the chain runs on.
+
+    This is the one head family whose fitting frame is games rather than player-seasons, so
+    its probe frames are small by construction: at the shipped arm the validation cells are
+    one row per validation season and the depth rows are one per observed depth. That is
+    thin for a round-trip and it is the honest probe — there is nothing else on that frame.
+    """
+    from src.models.games_played import MU_MAX, MU_MIN
+    from src.models.stan_game_length import (ARMS, KAPPA_SCALE, MATCHUP_BINS,
+                                             MATCHUP_COL, SEASON_COL, depth_rows,
+                                             fit_depth, fit_overtime, game_frame,
+                                             matchup_edges, overtime_cells)
+
+    cfg_stan = cfg.get("stan", {})
+    cfg_gl = cfg_stan.get("game_length", {})
+    test_seasons = int(cfg.get("features", {}).get("availability", {})
+                       .get("test_seasons", 2))
+    arm = selected_variant(cfg, "stan_game_length_metrics.csv", "season_trend")
+    features = ARMS[arm]["features"]
+
+    games = game_frame(cfg)
+    fit_games, val_games = windowed(games, window, test_seasons)
+    edges = matchup_edges(fit_games, int(cfg_gl.get("matchup_bins", MATCHUP_BINS)))
+    if MATCHUP_COL in features:
+        fit_games = fit_games[fit_games[MATCHUP_COL].notna()]
+        val_games = val_games[val_games[MATCHUP_COL].notna()]
+
+    cells = overtime_cells(fit_games, features, edges)
+    probe_cells = overtime_cells(val_games, features, edges)
+    started = time.perf_counter()
+    onset = fit_overtime(cells, features, "posteriors/game_length_ot", cfg_stan)
+    seconds = time.perf_counter() - started
+    yield _finish(
+        head="game_length_ot", head_label="overtime onset", family="betabinomial",
+        response="plug_in_mu", variant=arm, features=list(features), model=onset,
+        fit_frame=cells, probe_transformed=probe_cells, probe_raw=probe_cells, steps=[],
+        builder="src.models.stan_game_length.overtime_cells",
+        extras={"successes": "y", "trials": "n", "dispersion": "rho_draws",
+                "arm": arm, "season_column": SEASON_COL,
+                "matchup_edges": np.asarray(edges, dtype=float)},
+        window=window, cfg_stan=cfg_stan, draws_kept=draws_kept, seconds=seconds)
+
+    spells = depth_rows(fit_games)
+    probe_depth = depth_rows(val_games)
+    started = time.perf_counter()
+    depth = fit_depth(spells, cfg_stan,
+                      float(cfg_gl.get("kappa_scale", KAPPA_SCALE)),
+                      name="posteriors/game_length_depth")
+    seconds = time.perf_counter() - started
+    yield _finish(
+        head="game_length_depth", head_label="overtime depth", family="betageometric",
+        response="mean_mu", variant=arm, features=[], model=depth, fit_frame=spells,
+        probe_transformed=probe_depth, probe_raw=probe_depth, steps=[],
+        builder="src.models.stan_game_length.depth_rows",
+        extras={"length": "t", "weight": "w", "dispersion": "kappa_draws",
+                "arm": arm, "mu_clip": (MU_MIN, MU_MAX)},
+        window=window, cfg_stan=cfg_stan, draws_kept=draws_kept, seconds=seconds)
+
+
 def games_played_artifacts(cfg: dict, window: str, draws_kept: int):
     """Entry, exit, onset and the spell-duration head of the games-played process."""
     from src.models.availability import FEATURE_COLS
@@ -1071,6 +1137,7 @@ def run(cfg: dict, window: str = FIT_WINDOW, groups: tuple[str, ...] = GROUPS,
               "`require_window`.")
 
     builders = {
+        "game-length": lambda: game_length_artifacts(cfg, window, draws_kept),
         "availability": lambda: [availability_artifact(cfg, window, draws_kept)],
         "games-played": lambda: games_played_artifacts(cfg, window, draws_kept),
         "minutes": lambda: [minutes_artifact(cfg, window, draws_kept)],

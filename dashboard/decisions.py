@@ -1789,11 +1789,29 @@ REGISTRY: tuple[Decision, ...] = (
                 "to the split by construction — `fit_ot_tail` receives 1996-97 → 2021-22 "
                 "either way — and reproduced to six decimals on the 2026-08-08 refit; the "
                 "retired test reading was 256.9 against 222 on twice as many team-games.",
-        status="built",
-        reproduce="make stan-composition → "
-                  "outputs/predictions/stan_composition_ot_tail.csv",
+        status="withdrawn",
+        replaced_by="Three parameters, in `src/models/stan_game_length.py` "
+                    "(`make stan-game-length`), 2026-08-09. The ~7% overprediction this "
+                    "entry logged as 'one more entry for the season-effects ledger' was a "
+                    "real season trend and is now fitted: a logit slope on the season index "
+                    "takes the summed OT-class error on the same 2,460 validation games "
+                    "from **22.97** to **9.42**, and the predicted rate from 0.0608 to "
+                    "0.0555 against 0.0561 observed. Depth keeps its one parameter and "
+                    "gains a Beta frailty (kappa **37.7**) so it carries a posterior. "
+                    "'A covariate model is not worth it at a 6% base rate' survives for "
+                    "the *matchup* covariate and not for the season index — the two arms "
+                    "went opposite ways. `fit_ot_tail` / `sample_game_length` / "
+                    "`ot_tail_check` are deleted from `stan_composition`, which was never "
+                    "a consumer: it reads the realized game length on every row it fits.",
+        caught_by="`make stan-game-length`, the arm ladder against this pair as its no-fit "
+                  "floor. The floor still reads p_any 0.0608 / p_more 0.1408 on the same "
+                  "30,626 games, so the figures above are reproduced rather than revised — "
+                  "what changed is that they are no longer what ships.",
+        reproduce="make stan-game-length → "
+                  "outputs/predictions/stan_game_length_metrics.csv, "
+                  "outputs/predictions/stan_game_length_ppc.csv",
         source="docs/minutes-composition-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-09",
         date="2026-07-31",
         tags=("simulator-input",),
     ),
@@ -3177,13 +3195,74 @@ REGISTRY: tuple[Decision, ...] = (
                 "frailty device the absence-spell process uses one level down, and the "
                 "natural fix for the plain geometric's only miss (it over-predicts 3OT+ by 3 "
                 "games in 2,460). Roughly 30 collapsed rows and 2-4 parameters: the cheapest "
-                "head in the project.",
-        status="open",
-        unblocks="make stan-game-length, registered in make posteriors",
+                "head in the project. **Built 2026-08-09** and it came in as sized: four Stan "
+                "fits, **0.3 s** of sampler time, 0 divergences, max R-hat **1.0048**. Both "
+                "gates pass — the summed OT-class error on the 2,460 validation games falls "
+                "from the incumbent's **22.97** to **9.42**, and the complete model clears the "
+                "no-fit floor on held-out log-likelihood per game. The frailty's stated "
+                "motivation turned out to be backwards; see "
+                "`overtime-depth-frailty-ships-for-the-posterior-not-the-fit`.",
+        status="built",
+        reproduce="make stan-game-length → "
+                  "outputs/predictions/stan_game_length_metrics.csv, "
+                  "outputs/predictions/stan_game_length_ppc.csv, "
+                  "outputs/predictions/stan_game_length_depth.csv, "
+                  "outputs/predictions/stan_game_length_diagnostics.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-09",
         date="2026-08-08",
-        tags=("next", "architecture"),
+        tags=("architecture",),
+    ),
+    Decision(
+        id="overtime-depth-frailty-ships-for-the-posterior-not-the-fit",
+        topic="simulations",
+        claim="The Beta frailty on overtime depth was motivated by a miss it does **not** "
+              "fix, and ships anyway — for a reason that is not fit quality.",
+        because="`docs/simulations-plan.md` argued the frailty is 'the natural fix for the "
+                "plain geometric's one miss — it over-predicts 3OT+ by 3 games in 2,460'. "
+                "Those 3 games are a *validation* OVER-prediction, and a frailty puts MORE "
+                "mass in the tail: the beta-geometric predicts **3.1** there against the "
+                "geometric's **3.0**, so it is marginally worse at exactly the miss it was "
+                "named for. What it does fix is the opposite miss on the fitting half, where "
+                "the geometric UNDER-predicts 3OT — **37** observed against **31.7** "
+                "geometric and **34.5** beta-geometric on 1,861 overtime games. On validation "
+                "the plain geometric leads by **0.00350** nats per overtime game over 138 of "
+                "them, about one 2OT game's worth of evidence, so the two are not "
+                "distinguishable there. It ships because it NESTS the geometric (kappa to "
+                "infinity, fitted at **37.7**) and is the only form of the depth model that "
+                "carries a posterior — which is the whole point of moving this off a pair of "
+                "hardcoded floats.",
+        status="measured",
+        reproduce="make stan-game-length → outputs/predictions/stan_game_length_depth.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("simulator-input",),
+    ),
+    Decision(
+        id="matchup-closeness-does-not-predict-overtime",
+        topic="simulations",
+        claim="`|prior-season net rating difference|` between the two scheduled teams is a "
+              "**null** for overtime — right sign, no value.",
+        because="The speculative third arm of the game-length ladder, and the plan expected a "
+                "null. It fits **−0.0119** per net-rating point, which is the direction the "
+                "story predicts (evenly matched teams should be likelier to be tied at the "
+                "buzzer), and still loses to its own same-window control by **−0.000270** "
+                "nats per game. The control is the load-bearing part: "
+                "`team_estimated_metrics_*.csv` starts at 2014-15, so the arm fits only "
+                "**8,289** of 30,626 training games, and without a matched control a loss "
+                "would not separate 'the covariate is worthless' from 'seven seasons cannot "
+                "fit a trend'. It separates them, and the answer is that the WINDOW is what "
+                "costs: on the short window the season slope degrades from **−0.00701** to "
+                "**−0.02901** logit per season and the OT-class error triples from 9.42 to "
+                "**35.48**. Recorded so the covariate is not rebuilt.",
+        status="null",
+        reproduce="make stan-game-length → "
+                  "outputs/predictions/stan_game_length_metrics.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("null-result",),
     ),
     Decision(
         id="overtime-rate-is-a-trend-not-a-wander",
@@ -3202,12 +3281,23 @@ REGISTRY: tuple[Decision, ...] = (
                 "overtime is where 40+ minute games come from (1,650 player-games exceed 48 "
                 "minutes, maximum 63.0), and under a best-ball weekly max plus a threshold "
                 "bonus an OT frequency 17% too high inflates every star's simulated ceiling, "
-                "which is the statistic a 2-of-12 pod is most sensitive to.",
-        status="measured",
-        reproduce="make game-length → data/features/game_length.parquet, "
-                  "outputs/eda/game_length_coverage.csv",
+                "which is the statistic a 2-of-12 pod is most sensitive to. **Fitted "
+                "2026-08-09** and it holds, with one caveat the measurement added: on the "
+                "`train` window the slope is **−0.00701** rather than −0.00893 (the plan's "
+                "figure is the full 30 seasons; selection may only read 26), extrapolating to "
+                "**0.0542** for 2026-27. The residual season rho is **2.49e-4** "
+                "[1.66e-5, 7.14e-4], 1.22x binomial at the posterior median — but on 26 cells, "
+                "against the uniform prior `betabinomial_glm.stan` deliberately puts on rho, "
+                "that leans upward, and a Pearson dispersion around the fitted trend reads "
+                "**0.91**, i.e. UNDER-dispersed. Read the fitted rho as an upper bound on the "
+                "wander, not a measurement of it. The conclusion is unchanged: the movement is "
+                "in the slope, which extrapolates to a season that has not happened, and not "
+                "in a residual spread, which does not.",
+        status="built",
+        reproduce="make stan-game-length → "
+                  "outputs/predictions/stan_game_length_metrics.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-09",
         date="2026-08-08",
         tags=("season-effects",),
     ),
@@ -3223,11 +3313,19 @@ REGISTRY: tuple[Decision, ...] = (
                 "shares its overtimes. It joins the four existing rules the season simulator "
                 "must not violate, and it is the kind of wiring error that produces a "
                 "plausible marginal and a wrong joint, which is exactly what this layer is "
-                "built to get right.",
-        status="settled",
-        reproduce="make game-length → data/features/game_length.parquet",
+                "built to get right. **Implemented 2026-08-09** as "
+                "`stan_game_length.sample_game_length(rng, n_games, draws)`, which returns "
+                "exactly `n_games` lengths and raises if handed a per-cell probability vector "
+                "instead of a per-game one — the truncation that would otherwise produce a "
+                "plausible season from the wrong frame. Three tests pin it: the shape, the "
+                "48/53/58 grid, and that the season frailty is shared across the slate rather "
+                "than drawn per game (checked in BOTH directions, since a per-game frailty "
+                "reproduces the marginal and shows binomial spread).",
+        status="built",
+        reproduce="make stan-game-length → "
+                  "outputs/predictions/stan_game_length_ppc.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-09",
         date="2026-08-08",
         tags=("architecture",),
     ),
@@ -3633,12 +3731,110 @@ REGISTRY: tuple[Decision, ...] = (
                 "NBA.com → DK mapping gets validated against rather than assumed. The "
                 "2026-27 rosters do carry nulls, for unsigned and two-way players, and "
                 "the DK board covers exactly those.",
-        status="measured",
-        reproduce="make fetch → data/raw/team_rosters_2023_24.csv, "
-                  "data/features/adp_dk_id_map.parquet",
+        status="withdrawn",
+        replaced_by="**DraftKings is single-position.** Both boards print exactly one of "
+                    "`G` / `F` / `C` for every player — 1,640 rows across two seasons, "
+                    "zero duals — and DK's own label is 99.85% stable across them (1 "
+                    "change in 667 shared ids). NBA.com hands a dual to 18.2% of "
+                    "rostered players and DK hands out none, so the two are competing "
+                    "opinions rather than a coarse and a fine view. `POSITION` is still "
+                    "the right source and is still complete; what was wrong is that its "
+                    "duals are DK-shaped. See "
+                    "`dk-is-single-position-and-the-map-is-86-percent`.",
+        caught_by="`make draft-pool`, doing the validation this entry called for instead "
+                  "of assuming it. The disagreement is not a parsing artifact of one "
+                  "file: it reproduces independently on both boards, and every "
+                  "disagreement is between adjacent classes — there is not one G↔C swap "
+                  "in either board.",
+        reproduce="make draft-pool → outputs/eda/draft_pool_position_audit.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-09",
         date="2026-08-08",
+        tags=("joins", "rules", "reversal"),
+    ),
+    Decision(
+        id="dk-is-single-position-and-the-map-is-86-percent",
+        topic="drafting",
+        claim="A player is eligible at **exactly one** of G / F / C, because that is what "
+              "DK's own board says. Joined on the persistent DK id against the "
+              "contemporaneous 2025-26 roster, DK's letter equals NBA.com's **primary** "
+              "on **86.63%** of players and lies inside NBA.com's position set on "
+              "**92.61%**.",
+        because="Read the two halves of that measurement separately. Where NBA.com "
+                "commits to one letter DK contradicts it 9.02% of the time; where "
+                "NBA.com says tweener, DK always picks one of the two it named "
+                "(**100.00%**) but takes the primary only 67.03% of the time — on `G-F` "
+                "it is 16 G against 19 F. So mapping NBA.com onto DK's single slot is "
+                "~87% correct and the residual is genuine label disagreement, not a bug. "
+                "Granting both letters of a dual was measured and rejected: it never "
+                "misses DK's letter but hands a spurious second slot to 18.2% of "
+                "players, and a spurious eligibility inflates every lineup it touches. "
+                "Primary-only misassigns ~13% symmetrically, which is noise in *which* "
+                "slot a player fills; dual is an upward bias in every simulated score, in "
+                "exactly the direction that makes a strategy look profitable when it is "
+                "not. A fitted majority map was also rejected — it scores 87.2% against "
+                "86.6% and the whole difference is flipping `G-F` on a 19-vs-16 split, "
+                "which is a coin toss with a lookup table. Backtest seasons therefore "
+                "carry mapped positions and the production season carries DK's own, so "
+                "the backtest understates lineup fit — the conservative direction.",
+        status="measured",
+        reproduce="make draft-pool → outputs/eda/draft_pool_position_audit.csv, "
+                  "data/features/draft_pool.parquet",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
         tags=("joins", "rules"),
+    ),
+    Decision(
+        id="draft-pool-is-the-board",
+        topic="drafting",
+        claim="`make draft-pool` writes the board: one row per (season, player) with "
+              "team, single-class eligibility, ADP and the prior-season key — **13,105 "
+              "player-seasons over 31 seasons**, 942 of them the 2026-27 production "
+              "board.",
+        because="Membership is `team_context.season_start_roster` rather than the roster "
+                "CSV, because that CSV is a *current-status* snapshot — the 2025-26 file "
+                "carries `HOW_ACQUIRED = 'Signed on 03/04/26'` — and would put February "
+                "signings in an October draft pool. It is read for `POSITION` only, which "
+                "is a static attribute rather than a season outcome. 2026-27 has no game "
+                "log, so its pool is the DK board itself, which is the authoritative "
+                "answer rather than a fallback. **162 board rows carry no `player_id` and "
+                "are kept, not dropped**: they are the 2026 draft class, several of whom "
+                "go early (AJ Dybantsa at ADP 41.8), and the field takes them at their "
+                "ADP whether or not the model can score them — who is on the board at "
+                "pick k is the quantity a snake draft turns on. They get a negative "
+                "surrogate id that can never collide with an `nba_api` id, flagged "
+                "`has_nba_id`. 132 players (1.0%) get no position from any source and are "
+                "dropped as unslottable; they are a coverage hole in the 1996-2007 roster "
+                "files, worst 26 in 1996-97 and at most 4 in either validation season.",
+        status="built",
+        reproduce="make draft-pool → data/features/draft_pool.parquet, "
+                  "outputs/eda/draft_pool_coverage.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("artifact",),
+    ),
+    Decision(
+        id="adp-coverage-is-five-seasons-not-nine",
+        topic="drafting",
+        claim="Point-in-time-legal ADP covers **five** seasons, not the nine "
+              "`adp_panel.parquet` holds: 2014-15, 2022-23, 2023-24, 2025-26 and 2026-27.",
+        because="In 2017-18, 2018-19, 2019-20 and 2024-25 *every* archived snapshot "
+                "postdates the season's first game, so `adp.training_rows` admits none of "
+                "them — the board those seasons drafted on was never captured, and the "
+                "frozen value that survives is not the qualifying observation. Two "
+                "consequences. Both validation seasons survive, which is the coverage the "
+                "realized backtest needs (424 ADP'd players over 912 pool rows). But the "
+                "plan's 'cheap widening' to 2014-15 / 2017-18 / 2018-19 / 2019-20 loses "
+                "three of its four extra seasons, so that fallback is a two-season "
+                "widening. And 2024-25 — a test season — carries no legal ADP at all, "
+                "which item 10's risk readout has to account for.",
+        status="measured",
+        reproduce="make draft-pool → outputs/eda/draft_pool_coverage.csv",
+        source="docs/adp-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("joins", "leakage"),
     ),
 )

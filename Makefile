@@ -12,7 +12,7 @@ PIP    := .venv/bin/pip
         variance-budget residual-correlation season-effects \
         stan stan-availability stan-minutes stan-components stan-composition \
         stan-substitution season-terms games-played stan-games-played \
-        posteriors scoring-periods final-evaluation
+        stan-game-length posteriors scoring-periods draft-pool final-evaluation
 
 venv:
 	/opt/homebrew/bin/python3.14 -m venv .venv
@@ -199,6 +199,17 @@ stan-components:
 stan-substitution:
 	$(PYTHON) -m src.models.stan_components --gate0
 
+# The game-length head — docs/simulations-plan.md, "The second prerequisite: game length is
+# a random variable forward, not a lookup". Whether a game goes to overtime
+# (betabinomial_glm.stan on ~30 season cells) x how deep (betageometric_duration.stan on
+# four collapsed depth rows). NO new .stan source, ~2-4 parameters, seconds of sampler
+# time: the cheapest head in the project.
+#
+# `stan-composition` imports its floor and its draw, so this target has to be ahead of it —
+# the same ordering constraint the composition already has on `stan-minutes`.
+stan-game-length:
+	$(PYTHON) -m src.models.stan_game_length
+
 # The team-game minutes composition (docs/minutes-composition-plan.md). Gates A-E all
 # pass at the full window, so it is now part of the `stan` aggregate.
 stan-composition:
@@ -218,7 +229,7 @@ stan-composition:
 # one arm rather than the run. Sleeping the machine mid-run is safe: the sampler suspends
 # and resumes, and perf_counter does not advance while asleep, so the reported cost stays
 # honest while elapsed wall clock does not.
-stan: stan-availability stan-minutes stan-components stan-composition
+stan: stan-availability stan-minutes stan-game-length stan-components stan-composition
 
 # ── The simulation layer's step zero ──────────────────────────────────────────
 # `make stan` writes metrics, diagnostics and per-row predictions and THROWS THE
@@ -260,6 +271,21 @@ posteriors:
 # rebuild does not need the endpoint; `REFRESH=1` re-pulls them.
 scoring-periods:
 	$(PYTHON) -m src.features.scoring_periods $(if $(REFRESH),--refresh,)
+
+# One row per (season, player): team, DK position eligibility, ADP, and the prior-season
+# key the heads score him from. This is the board the draft simulator picks from, and
+# eligibility is the load-bearing half — a best-ball week starts 2 G / 2 F / 1 C / 2 UTIL,
+# so it decides which slots a player can fill and therefore every weekly max downstream.
+#
+# 🔴 IT REVERSES A PLAN ASSUMPTION. docs/simulations-plan.md said team_rosters_*.csv
+# carries "DK-shaped dual eligibility". It does not: both DK boards print exactly ONE of
+# G / F / C for all 1,640 rows, and DK's label is 99.85% stable across them. Validated on
+# the persistent DK id (never a name), DK's letter equals NBA.com's primary on 86.63% of
+# players and lies inside NBA.com's position set on 92.61%. So `position` ships a single
+# letter — DK's own where a board exists, NBA.com's primary otherwise — and the rejected
+# dual convention rides along as `dual_*` so a sensitivity run is a column swap.
+draft-pool:
+	$(PYTHON) -m src.features.draft_pool
 
 # Does any head need a season term, and which kind? A trend covariate and a year-level
 # random effect for every head, plus the season x role interaction the availability era

@@ -249,20 +249,22 @@ matrix, conditioned on minutes, as an explicit simulator input.
 
 ### The fitted heads — what ships today
 
-Three `.stan` sources in [src/stan/](src/stan/) serve every head, which is the
+Four `.stan` sources in [src/stan/](src/stan/) serve every head, which is the
 factorization argument as code:
 
 | Source | Serves | Driver | In `make stan` |
 |---|---|---|---|
-| `betabinomial_glm.stan` | availability, minutes, the 4 conversion heads | [stan_availability.py](src/models/stan_availability.py), [stan_minutes.py](src/models/stan_minutes.py), [stan_components.py](src/models/stan_components.py) | **yes** |
+| `betabinomial_glm.stan` | availability, minutes, the 4 conversion heads, **overtime onset** | [stan_availability.py](src/models/stan_availability.py), [stan_minutes.py](src/models/stan_minutes.py), [stan_components.py](src/models/stan_components.py), [stan_game_length.py](src/models/stan_game_length.py) | **yes** |
 | `negbinomial_glm.stan` | the 7 count heads | [stan_components.py](src/models/stan_components.py) | **yes** |
 | `composition_glm.stan` | the team-game minutes allocation | [stan_composition.py](src/models/stan_composition.py) | **yes** |
+| `betageometric_duration.stan` | **overtime depth**, and the absence-spell length | [stan_game_length.py](src/models/stan_game_length.py), [stan_games_played.py](src/models/stan_games_played.py) | **yes** (game length only) |
 
 Shared plumbing — compilation, sampling, and diagnostic extraction into a CSV rather than a
 scrollback buffer — is in [src/models/stan_utils.py](src/models/stan_utils.py).
-`make stan` runs all four: `stan-availability`, `stan-minutes`, `stan-components`,
-`stan-composition` — in that order, because the composition imports the minutes head and
-measures itself against it.
+`make stan` runs all five: `stan-availability`, `stan-minutes`, `stan-game-length`,
+`stan-components`, `stan-composition` — cheapest first, so a plumbing failure surfaces in
+seconds rather than after the composition's nine hours, and with the composition last
+because it imports the minutes head and measures itself against it.
 
 **Availability** ([src/models/availability.py](src/models/availability.py) is the point-MLE
 reference, [stan_availability.py](src/models/stan_availability.py) the Bayesian port) is a
@@ -292,6 +294,15 @@ binomial counts and four beta-binomial conversions, each against a mandatory no-
 Its head lists come from [component_rates.py](src/models/component_rates.py), which models
 total attempts as a count and the three-point mix as a share — see the output contract above.
 
+**Game length** ([stan_game_length.py](src/models/stan_game_length.py), `make
+stan-game-length`) is the one input a *forward* simulation cannot look up. Both minutes heads
+need a length, and every backtest so far read it from `game_length.parquet` because the games
+had already happened. It is two heads on two existing sources — a beta-binomial on whether a
+game goes to overtime, collapsed to ~30 season cells, and a beta-geometric on how deep — and
+it is the only head besides `min` that ships a season term. Four fits and **0.3 s** of
+sampler time, the cheapest in the project by three orders of magnitude. Its draw is taken
+**once per game and shared by both teams**, because overtime is a property of the game.
+
 **Season terms** ([src/models/season_terms.py](src/models/season_terms.py), `make
 season-terms`) is a 108-fit ablation asking whether any head needs a year trend or a year
 random effect to track league-wide era movement. [src/eda/season_effects.py](src/eda/season_effects.py)
@@ -299,10 +310,16 @@ measures the league series it would be correcting for.
 
 ### Simulation — planned
 
-Not built. [docs/simulations-plan.md](docs/simulations-plan.md) holds the specification,
-which is pinned by measurements rather than guesses:
+Not built, though its first three prerequisites now are —
+[posteriors.py](src/models/posteriors.py) (`make posteriors`, twenty heads),
+[scoring_periods.py](src/features/scoring_periods.py) and
+[stan_game_length.py](src/models/stan_game_length.py).
+[docs/simulations-plan.md](docs/simulations-plan.md) holds the specification, which is pinned
+by measurements rather than guesses:
 
-- **Draw, never plug in.** `E[min]` and `E[gp]` are wrong inputs to a threshold bonus.
+- **Draw, never plug in.** `E[min]` and `E[gp]` are wrong inputs to a threshold bonus. That
+  now includes the length of the game itself: `stan_game_length` draws it, once per game and
+  shared by both teams.
 - **Three minutes numbers, which compose rather than substitute**: the season-level mean
   from the minutes head, the **game-level** dispersion (4.65× binomial, measured separately
   because a season total cannot separate per-game from per-season noise), and the **2.43×**
@@ -354,9 +371,11 @@ re-deriving a season mean the season matrix already holds.
 ## 3. Results
 
 Headlines only. Every figure is reproduced by the `make` target named beside it and lands in
-`outputs/`. **This file is audited**: `make docs-audit` re-derives each quoted figure from
+`outputs/`. **This file is audited**: `make docs-audit` re-derives each quoted result from
 its artifact and **exits non-zero** on disagreement, so a headline copied here and never
-refreshed fails the build rather than quietly misleading.
+refreshed fails the build rather than quietly misleading. Sampler timings are the one
+exception — presence-checked, not value-checked, because they measure the machine rather
+than the model.
 
 **The availability head is the largest measured win.** `make availability-model` /
 `make season-total`. Scored by CRPS in games on validation, the beta-binomial GLM reads
@@ -439,7 +458,7 @@ with the MLE inside the 95% credible interval for 21 of 21 terms. Cost is concen
 entirely in the spline variants. Dropping the test side halved the component fit count from
 74 and cut sampler time from 305.0 to **137.4** minutes *while* raising every selection fit
 to full-length chains — which incidentally fixed the one fit that used to miss its R̂ bar.
-846 tests pass (`.venv/bin/pytest tests/`).
+877 tests pass (`.venv/bin/pytest tests/`).
 
 ---
 
@@ -487,10 +506,10 @@ src/features/   component targets, game length, team context, opponent, availabi
                 and scoring periods — the NBA week grid DK's tournament rounds sit on
 src/eda/        the season-level analysis pipeline — one module per artifact
 src/models/     the Stan heads (availability, minutes, composition, components,
-                season terms) plus the sklearn references they are checked against,
-                and `posteriors.py`, which persists every fitted head's thinned draws
-                and design recipe so nothing downstream has to refit
-src/stan/       three .stan sources for eleven-plus heads
+                game length, season terms) plus the sklearn references they are checked
+                against, and `posteriors.py`, which persists every fitted head's thinned
+                draws and design recipe so nothing downstream has to refit
+src/stan/       four .stan sources for twenty-plus heads
 dashboard/      data visualizations over the artifacts — today the PCA player-style
                 fingerprint; reads artifacts only, never refits
 docs/           plan docs — predictions, availability, minutes composition, ADP,
@@ -515,6 +534,7 @@ The Stan heads need a CmdStan toolchain, which pip does not manage:
 ```
 
 Always use `.venv`, never the system Python. Two guards run over the documentation itself:
-`make docs-audit` re-derives every quoted figure in the plan docs from its artifact and
-fails on a mismatch, and `make dashboard-audit` reports drift between the decision registry
+`make docs-audit` re-derives every quoted *result* in the plan docs from its artifact and
+fails on a mismatch — sampler timings are presence-checked instead, since they measure the
+machine rather than the model, and `make dashboard-audit` reports drift between the decision registry
 and the docs it distills. See `CLAUDE.md` for conventions.

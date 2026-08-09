@@ -339,7 +339,8 @@ must be made on those terms, not as "a better minutes model". The season head al
 R² 0.8835 against a no-fit floor of 0.8536, so the headroom being competed for is small.
 
 **Costs, with real numbers.** 731,863 played regular-season player-games against the season
-head's 8,306 rows — **88× the data**. The season spline fit took 721 s (linear: 171 s), so a
+head's 8,306 rows — **88× the data**. The season spline fit took 955 s (linear: 175 s) —
+measured while another head sampled alongside it, so an upper bound — and so a
 plain per-game beta-binomial GLM with no latent state is order **6–16 h**: tolerable, and it
 delivers per-game covariates and heterogeneous dispersion. Adding a **latent AR state per
 player-season** introduces ~500,000 latent variables, which HMC handles badly without
@@ -1083,7 +1084,7 @@ player-seasons, scored on validation (2022-23/23-24). Three results bind on ever
 > against 10.0057, ρ 0.2808 against 0.2806, and the MLE inside the 95% credible interval for
 > **21/21** coefficients. The prior is set to `normal(0, 1/sqrt(2·l2))` precisely so the
 > posterior *mode* is the penalized MLE, making that a defined check. R̂ 1.0019, 0
-> divergences, 195 s. What the posterior adds is `Var_θ(Σ_i E[Y_i|θ])` — exactly 0 for any
+> divergences, 196 s. What the posterior adds is `Var_θ(Σ_i E[Y_i|θ])` — exactly 0 for any
 > point estimate — but **its size depends on the portfolio**, and this plan's framing
 > oversold it. The independent term grows as sqrt(N) and the shared-β term as N, so measured
 > on the validation board the spread inflation is **+0.2% on a 15-player roster** and **+6.7%
