@@ -1,12 +1,13 @@
-"""The dashboard's pure layer: palette rules, figure builders, registry, audit.
+"""The dashboard's pure layer: palette rules, the PCA view's logic, registry, audit.
 
-After the package split the palette tests import `dashboard.theme` and
-`dashboard.charts` directly rather than loading `app.py` by file path through
-`importlib` — simpler, and it stops a test from executing the whole app module to
-check a colour constant.
+`theme.py`, `charts.py`, `pca.py`, `decisions.py`, `economics.py` and `audit.py` import
+no Streamlit, which is what lets every rule below be exercised as a plain function
+rather than through a rendered page.
 
-`decisions.py`, `economics.py` and `audit.py` import no Streamlit, which is what lets
-the registry and the audit checks be exercised here as plain functions.
+A handful of tests read the real `data/features/pca_tierA_within_season_*` artifacts.
+Those are the ones that keep the ten typed component titles honest — a title is an
+interpretation of loadings that live on disk, so nothing but the artifact can confirm
+the anchor feature still exists and still loads the way the title claims.
 """
 
 import ast
@@ -16,29 +17,45 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import pytest
 
-from dashboard import audit, charts, decisions, economics, theme
-from dashboard.tabs import TAB_NAMES, TABS
+from dashboard import audit, charts, decisions, economics, pca, theme
 
 ROOT = Path(__file__).resolve().parent.parent
+FEATURES = ROOT / "data" / "features"
 
 
 # ── Synthetic builders ────────────────────────────────────────────────────────
 
-def _bars_frame(n: int = 6) -> pd.DataFrame:
-    return pd.DataFrame({"feature": [f"f{i}" for i in range(n)],
-                         "a": np.linspace(0.1, 0.9, n),
-                         "b": np.linspace(0.9, 0.1, n)})
-
-
-def _scatter_frame(n: int = 300) -> pd.DataFrame:
+def _scores(n: int = 40, seasons: tuple[str, ...] = ("2021-22", "2022-23")
+            ) -> pd.DataFrame:
+    """A scores frame shaped like the artifact: identity columns plus pc1…pc10."""
     rng = np.random.default_rng(0)
-    return pd.DataFrame({
-        "pc1": rng.normal(size=n), "pc2": rng.normal(size=n),
-        "age": rng.integers(20, 38, n).astype(float),
-        "archetype_name": rng.choice(list("abcdefghi"), n),
-        "player_name": [f"P{i}" for i in range(n)],
-    })
+    rows = []
+    for s, season in enumerate(seasons):
+        for i in range(n):
+            rows.append({"player_id": i, "player_name": f"Player {i:02d}",
+                         "season": season, "team_abbreviation": "XYZ",
+                         "age": 20.0 + (i % 15), "gp": 30 + (i % 50),
+                         "min": 5.0 + (i % 30), "dk_pts_per_game": 5.0 + i,
+                         **{f"pc{k}": float(rng.normal(0, 6 - 0.4 * k))
+                            for k in range(1, 11)},
+                         "_seed": s})
+    return pd.DataFrame(rows).drop(columns="_seed")
+
+
+def _loadings(flip: tuple[str, ...] = ()) -> pd.DataFrame:
+    """Loadings carrying every anchor, with the named components sign-flipped."""
+    features = [c.anchor for c in pca.COMPONENTS] + ["bas_pts", "adv_ast_ratio_x"]
+    frame = pd.DataFrame({"feature": features})
+    for k, c in enumerate(pca.COMPONENTS, start=1):
+        column = np.linspace(0.30, 0.02, len(features))
+        column[k - 1] = 0.5                       # the anchor loads hardest
+        column[-1] = -0.4                         # and something loads negative
+        if c.pc in flip:
+            column = -column
+        frame[c.pc] = column
+    return frame
 
 
 def _decision(**kw) -> decisions.Decision:
@@ -47,6 +64,17 @@ def _decision(**kw) -> decisions.Decision:
                 reviewed="2026-07-30", date="2026-07-30",
                 reproduce="make thing → outputs/eda/thing.csv")
     return decisions.Decision(**{**base, **kw})
+
+
+def _real():
+    """The shipped decomposition, oriented — or a skip if `make pca` has not run."""
+    paths = [FEATURES / name for name in
+             (pca.SCORES_FILE, pca.LOADINGS_FILE, pca.VARIANCE_FILE)]
+    if not all(p.exists() for p in paths):
+        pytest.skip("PCA artifacts absent — run `make pca`")
+    scores, loadings = pd.read_parquet(paths[0]), pd.read_parquet(paths[1])
+    variance = pd.read_csv(paths[2])
+    return (*pca.orient(scores, loadings)[:2], variance)
 
 
 # ── Palette rules ─────────────────────────────────────────────────────────────
@@ -111,135 +139,447 @@ def test_light_mode_pins_the_surface_the_palette_was_validated_against():
     assert theme.theme("light")["surface"] == "#fcfcfb"
 
 
-# ── Figure builders ───────────────────────────────────────────────────────────
+def test_an_untitled_figure_gets_an_empty_title_rather_than_a_bare_font():
+    """plotly.js renders a title object with a font and no text as "undefined".
 
-def test_bars_assign_slots_in_order_and_separate_fills_with_the_surface():
+    Only in a browser — kaleido draws nothing — so this is invisible to a PNG check
+    and was found by screenshotting the running page.
+    """
     th = theme.theme("light")
-    fig = charts.fig_bars(_bars_frame(), "feature", ["a", "b"], th, "t")
-    assert len(fig.data) == 2
-    assert fig.data[0].marker.color == th["series"][0]
-    assert fig.data[1].marker.color == th["series"][1]
-    # a 2px surface gap, not a border drawn around the marks
-    assert all(t.marker.line.color == th["surface"] and t.marker.line.width == 2
-               for t in fig.data)
-    assert fig.layout.showlegend is True
+    assert theme.apply_theme(go.Figure(), th).layout.title.text == ""
+    kept = theme.apply_theme(go.Figure(layout=dict(title="Kept")), th)
+    assert kept.layout.title.text == "Kept"
 
 
-def test_a_single_bar_series_carries_no_legend_box():
-    fig = charts.fig_bars(_bars_frame(), "feature", ["a"], theme.theme("light"), "t")
+def test_the_radar_is_untitled_and_a_loadings_panel_keeps_its_heading():
+    th = theme.theme("light")
+    assert charts.fig_radar(_fingerprint(), th, "P").layout.title.text == ""
+    panel = charts.fig_loadings(pca.top_loadings(_loadings(), "pc1", 4), th, "PC1")
+    assert panel.layout.title.text == "PC1"
+
+
+# ── Component specification ───────────────────────────────────────────────────
+
+def test_the_spec_declares_one_component_per_spoke_in_order():
+    assert len(pca.COMPONENTS) == pca.N_COMPONENTS
+    assert pca.PC_NAMES == tuple(f"pc{i}" for i in range(1, pca.N_COMPONENTS + 1))
+    assert len(set(pca.PC_NAMES)) == pca.N_COMPONENTS
+
+
+def test_every_component_carries_a_short_title_an_anchor_and_a_reading():
+    for c in pca.COMPONENTS:
+        assert c.title.strip() and len(c.title.split()) <= 5, c.pc
+        assert c.anchor.strip() and c.reads.strip(), c.pc
+
+
+def test_every_anchor_is_a_real_feature_in_the_shipped_loadings():
+    """The typed titles' one dependency on the artifact, so it cannot rot silently."""
+    _, loadings, _ = _real()
+    features = set(loadings["feature"])
+    for c in pca.COMPONENTS:
+        assert c.anchor in features, f"{c.pc} anchors on missing {c.anchor}"
+
+
+def test_the_shipped_decomposition_already_points_the_labelled_way():
+    """Orientation is a guard, not a correction — today every flip is a no-op.
+
+    If this ever fails the titles are still right and the guard did its job; it is
+    here so a refit that flips an axis is *noticed* rather than silently corrected.
+    """
+    if not (FEATURES / pca.LOADINGS_FILE).exists():
+        pytest.skip("PCA artifacts absent — run `make pca`")
+    loadings = pd.read_parquet(FEATURES / pca.LOADINGS_FILE)
+    assert set(pca.orientation(loadings).values()) == {1}
+
+
+# ── Orientation ───────────────────────────────────────────────────────────────
+
+def test_orientation_reads_the_anchor_sign():
+    assert pca.orientation(_loadings())["pc3"] == 1
+    assert pca.orientation(_loadings(flip=("pc3",)))["pc3"] == -1
+
+
+def test_orient_flips_the_score_and_the_loading_together():
+    """Flipping one without the other stops the bars explaining the radius."""
+    scores, loadings = _scores(), _loadings(flip=("pc2",))
+    before = scores["pc2"].to_numpy().copy()
+    out_scores, out_loadings, signs = pca.orient(scores, loadings)
+    assert signs["pc2"] == -1 and signs["pc1"] == 1
+    assert np.allclose(out_scores["pc2"], -before)
+    assert np.allclose(out_loadings["pc2"], -loadings["pc2"])
+    assert np.allclose(out_scores["pc1"], scores["pc1"])       # untouched
+    # and the anchor now loads positive, which is what the title claims
+    anchor = pca.BY_PC["pc2"].anchor
+    assert float(out_loadings.set_index("feature").at[anchor, "pc2"]) > 0
+
+
+def test_orient_leaves_the_caller_s_frames_alone():
+    scores, loadings = _scores(), _loadings(flip=("pc1",))
+    original = scores["pc1"].to_numpy().copy()
+    pca.orient(scores, loadings)
+    assert np.allclose(scores["pc1"], original)
+
+
+def test_a_missing_anchor_or_component_defaults_to_no_flip():
+    thin = pd.DataFrame({"feature": ["something_else"], "pc1": [-0.9]})
+    assert set(pca.orientation(thin).values()) == {1}
+
+
+# ── Scaling ───────────────────────────────────────────────────────────────────
+
+def test_sd_units_put_every_spoke_on_one_scale():
+    """A raw PC1 of 6 and a raw PC10 of 6 are not the same distance from average."""
+    scores = _scores()
+    raw = pca.sd_scale(scores)
+    assert raw["pc1"] > 2 * raw["pc10"]                # the artifact's own spread
+    scaled = pca.in_sd_units(scores)
+    assert np.allclose(scaled.std(ddof=1).to_numpy(), 1.0)
+    assert np.allclose(scaled.mean().to_numpy(), 0.0, atol=1e-12)
+
+
+def test_a_degenerate_component_does_not_divide_by_zero():
+    scores = _scores()
+    scores["pc7"] = 0.0
+    assert pca.in_sd_units(scores)["pc7"].eq(0.0).all()
+
+
+def test_clamp_pins_rather_than_rescales():
+    values = pd.Series([-9.0, -1.5, 0.0, 1.5, 9.0])
+    assert list(pca.clamp(values, 2.0)) == [-2.0, -1.5, 0.0, 1.5, 2.0]
+
+
+# ── The fingerprint ───────────────────────────────────────────────────────────
+
+def test_the_fingerprint_keeps_the_true_score_beside_the_pinned_radius():
+    scores = _scores()
+    scores.loc[0, "pc1"] = 400.0                       # far off the axis
+    frame = pca.fingerprint(scores, int(scores.loc[0, "player_id"]),
+                            scores.loc[0, "season"])
+    assert list(frame["pc"]) == list(pca.PC_NAMES)
+    row = frame[frame["pc"] == "pc1"].iloc[0]
+    assert row["radius"] == pca.AXIS_LIMIT and row["sd"] > pca.AXIS_LIMIT
+    assert bool(row["pinned"])
+    assert frame["radius"].abs().max() <= pca.AXIS_LIMIT
+    # the label a reader sees comes from the spec, not from the column name
+    assert row["title"] == pca.BY_PC["pc1"].title
+
+
+def test_the_fingerprint_refuses_a_player_season_it_does_not_have():
+    try:
+        pca.fingerprint(_scores(), 999, "1996-97")
+    except KeyError:
+        return
+    raise AssertionError("an absent player-season must raise")
+
+
+# ── Loadings ──────────────────────────────────────────────────────────────────
+
+def test_top_loadings_are_sorted_signed_so_the_bars_diverge_around_zero():
+    frame = pca.top_loadings(_loadings(), "pc1", 4)
+    assert len(frame) == 4
+    assert frame["loading"].is_monotonic_decreasing
+    assert list(frame.columns) == ["feature", "loading", "pretty"]
+    assert frame["pretty"].str.len().gt(0).all()
+
+
+def test_top_loadings_balance_the_sign_rather_than_taking_the_top_by_magnitude():
+    """PC1's eight largest are all positive; its negative end lands ninth.
+
+    A plain top-`n` would show "rebounding big" and drop the "not a shooter" half of
+    an axis defined by the opposition, so each side is guaranteed half the slots.
+    """
+    _, loadings, _ = _real()
+    plain = loadings.reindex(
+        loadings["pc1"].abs().sort_values(ascending=False).index).head(8)
+    assert (plain["pc1"] > 0).all()                    # the rule that would fail
+
+    frame = pca.top_loadings(loadings, "pc1", 8)
+    assert (frame["loading"] > 0).sum() == 4 and (frame["loading"] < 0).sum() == 4
+    assert any("fg3" in f or "3pt" in f for f in
+               frame.loc[frame["loading"] < 0, "feature"])
+
+
+def test_a_one_sided_component_backfills_rather_than_shrinking_the_panel():
+    loadings = pd.DataFrame({"feature": [f"bas_f{i}" for i in range(6)],
+                             "pc1": [0.5, 0.4, 0.3, 0.2, 0.1, -0.05]})
+    frame = pca.top_loadings(loadings, "pc1", 5)
+    assert len(frame) == 5
+    assert (frame["loading"] < 0).sum() == 1           # only one negative exists
+
+
+def test_feature_names_are_prettified_family_first():
+    assert pca.pretty_feature("usg_pct_oreb") == "usage · % OREB"
+    assert pca.pretty_feature("adv_ts_pct") == "advanced · TS%"
+    assert pca.pretty_feature("sco_pct_pts_2pt_mr") == "scoring · % PTS 2PT mid-range"
+    # a compound the one-token-at-a-time pass would render as "AST to"
+    assert pca.pretty_feature("adv_ast_to") == "advanced · AST/TOV"
+    assert pca.pretty_feature("adv_ast_ratio") == "advanced · AST ratio"
+    # an unknown family passes through rather than losing its first token
+    assert pca.pretty_feature("mystery_column") == "mystery column"
+
+
+def test_a_click_resolves_to_a_component_by_its_spoke_label():
+    assert pca.component_from_click([{"theta": "PC4", "point_index": 99}]) == "pc4"
+
+
+def test_a_click_falls_back_to_the_point_index_when_theta_is_absent():
+    for key in ("point_index", "pointIndex", "point_number", "pointNumber"):
+        assert pca.component_from_click([{key: 2}]) == "pc3"
+
+
+def test_the_repeated_closing_vertex_wraps_to_the_first_component():
+    """The polygon repeats its first point to close itself, so index 10 is PC1."""
+    assert pca.component_from_click([{"point_index": pca.N_COMPONENTS}]) == "pc1"
+
+
+def test_an_empty_or_unrecognisable_selection_changes_nothing():
+    assert pca.component_from_click([]) is None
+    assert pca.component_from_click(None) is None
+    assert pca.component_from_click([{"theta": "not a spoke"}]) is None
+
+
+def test_variance_share_keys_on_the_pc_name_not_the_index():
+    variance = pd.DataFrame({"component": [1, 2, 3],
+                             "explained_variance_ratio": [0.4, 0.3, 0.2],
+                             "cumulative": [0.4, 0.7, 0.9]})
+    assert pca.variance_share(variance) == {"pc1": 0.4, "pc2": 0.3, "pc3": 0.2}
+
+
+# ── Exemplars ─────────────────────────────────────────────────────────────────
+
+def test_exemplars_ignore_seasons_too_thin_to_name_an_axis():
+    """Without the filter every extreme is a 200-minute player's noise."""
+    scores = _scores()
+    scores["min"], scores["gp"] = 30.0, 70
+    scores.loc[0, ["min", "gp"]] = [4.0, 6]            # a cup-of-coffee season
+    scores.loc[0, "pc1"] = 1e6                         # and an absurd score
+    high, _ = pca.exemplars(scores, "pc1")
+    assert scores.loc[0, "player_name"] not in high
+
+
+def test_exemplars_fall_back_rather_than_going_blank():
+    scores = _scores()
+    scores["min"], scores["gp"] = 1.0, 1               # nobody clears the bar
+    high, low = pca.exemplars(scores, "pc1")
+    assert high != "—" and low != "—" and high != low
+
+
+def test_every_component_names_two_real_player_seasons():
+    scores, _, _ = _real()
+    for c in pca.COMPONENTS:
+        high, low = pca.exemplars(scores, c.pc)
+        assert " · " in high and " · " in low, c.pc
+        assert high != low, c.pc
+
+
+# ── Nearest neighbours ────────────────────────────────────────────────────────
+
+def test_neighbours_exclude_the_player_s_own_other_seasons():
+    """They are usually the three nearest, which is true and tells you nothing."""
+    scores = _scores()
+    target = scores.iloc[0]
+    # the same player's other season sits on top of this one and must still be dropped
+    same = (scores["player_id"] == target["player_id"]) & (scores["season"] != target["season"])
+    scores.loc[same, list(pca.PC_NAMES)] = target[list(pca.PC_NAMES)].to_numpy()
+
+    out = pca.neighbors(scores, int(target["player_id"]), target["season"])
+    assert len(out) == 3
+    assert (out["player_id"] != target["player_id"]).all()
+
+
+def test_same_season_only_restricts_the_pool():
+    scores = _scores()
+    target = scores.iloc[0]
+    out = pca.neighbors(scores, int(target["player_id"]), target["season"],
+                        same_season_only=True)
+    assert set(out["season"]) == {target["season"]}
+
+
+def test_neighbours_are_sorted_and_carry_a_distance():
+    scores = _scores()
+    target = scores.iloc[0]
+    out = pca.neighbors(scores, int(target["player_id"]), target["season"], k=5)
+    assert len(out) == 5
+    assert out["distance"].is_monotonic_increasing
+    assert (out["distance"] > 0).all()
+
+
+def test_distance_is_raw_not_standardized_so_the_big_axes_dominate():
+    """Scaling each component to one SD first would be Mahalanobis distance.
+
+    That gives PC10 — team pace, 1.9% of variance — the same say as PC1, which is not
+    what "nearest in PCA space" means. Here candidate B is closer in raw space and
+    candidate A is closer once every axis is stretched to unit variance; raw must win.
+    """
+    base = {f"pc{k}": 0.0 for k in range(1, 11)}
+    ident = dict(player_name="x", season="2022-23", team_abbreviation="XYZ",
+                 age=25.0, gp=70, min=30.0, dk_pts_per_game=20.0)
+    rows = [{"player_id": 0, **ident, **base},
+            {"player_id": 1, **ident, **base, "pc1": 1.0},        # A
+            {"player_id": 2, **ident, **base, "pc10": 0.5}]       # B
+    # spread pc1 wide and pc10 narrow, so the two metrics disagree
+    for i, extra in enumerate([(20.0, 0.0), (-20.0, 0.0)], start=3):
+        rows.append({"player_id": i, **ident, **base,
+                     "pc1": extra[0], "pc10": extra[1]})
+    scores = pd.DataFrame(rows)
+
+    out = pca.neighbors(scores, 0, "2022-23", k=2)
+    assert list(out["player_id"]) == [2, 1]
+
+    scaled = pca.in_sd_units(scores)
+    assert abs(scaled.loc[2, "pc10"]) > abs(scaled.loc[1, "pc1"])   # the reversal
+
+
+def test_an_empty_pool_returns_an_empty_frame_rather_than_raising():
+    scores = _scores(seasons=("2022-23",))
+    scores["player_id"] = 7                     # every row is the same player
+    out = pca.neighbors(scores, 7, "2022-23")
+    assert out.empty
+
+
+def test_neighbours_refuse_a_player_season_they_do_not_have():
+    try:
+        pca.neighbors(_scores(), 999, "1996-97")
+    except KeyError:
+        return
+    raise AssertionError("an absent player-season must raise")
+
+
+# ── Figures ───────────────────────────────────────────────────────────────────
+
+def _fingerprint(pinned: bool = False) -> pd.DataFrame:
+    scores = _scores()
+    if pinned:
+        scores.loc[0, "pc4"] = 1e4
+    return pca.fingerprint(scores, int(scores.loc[0, "player_id"]),
+                           scores.loc[0, "season"])
+
+
+def test_the_score_to_radius_map_puts_the_centre_at_minus_two_and_the_rim_at_plus_two():
+    assert charts.unit_radius(-2.0, 2.0) == 0.0
+    assert charts.unit_radius(0.0, 2.0) == 0.5
+    assert charts.unit_radius(2.0, 2.0) == charts.RIM == 1.0
+
+
+def test_the_first_spoke_sits_at_the_top_and_the_rest_run_counterclockwise():
+    """The side panel order follows the circle, so the direction is load bearing."""
+    assert charts.spoke_angle(0, 10) == charts.ANGULAR_ROTATION == 90
+    assert charts.spoke_angle(1, 10) == 126          # counterclockwise, to the left
+    assert charts.ANGULAR_DIRECTION == "counterclockwise"
+
+
+def test_the_radar_axis_is_fixed_so_two_fingerprints_differ_in_shape():
+    th = theme.theme("light")
+    for fig in (charts.fig_radar(_fingerprint(), th, "P"),
+                charts.fig_radar(_fingerprint(pinned=True), th, "P")):
+        assert list(fig.layout.xaxis.range) == [-charts.AXIS_EXTENT,
+                                                charts.AXIS_EXTENT]
+        # every plotted vertex is inside the rim however extreme the player is
+        player = fig.data[-1]
+        assert max(x * x + y * y for x, y in zip(player.x, player.y)) <= 1.0 + 1e-9
+    # and circles stay circular when the container is not square
+    assert fig.layout.yaxis.scaleanchor == "x" and fig.layout.yaxis.scaleratio == 1
+
+
+def test_the_grid_is_shapes_so_nothing_but_a_data_point_can_be_clicked():
+    """Streamlit reports a click as a trace point index; a grid trace would alias."""
+    fig = charts.fig_radar(_fingerprint(), theme.theme("light"), "P")
+    assert len(fig.data) == 2                            # the hit layer and the player
+    rings = [s for s in fig.layout.shapes if s.type == "circle"]
+    spokes = [s for s in fig.layout.shapes if s.type == "line"]
+    assert len(rings) == 4        # −2 is the centre, so four rings are drawable
+    assert len(spokes) == pca.N_COMPONENTS
+    assert len(fig.layout.annotations) == pca.N_COMPONENTS + 5   # spokes + ring labels
+
+
+def test_the_radar_closes_its_polygon():
+    player = charts.fig_radar(_fingerprint(), theme.theme("light"), "P").data[-1]
+    assert len(player.x) == pca.N_COMPONENTS + 1          # first point repeated
+    assert (player.x[0], player.y[0]) == (player.x[-1], player.y[-1])
+    assert player.fill == "toself"
+
+
+def test_a_generous_invisible_hit_layer_sits_under_the_visible_markers():
+    """A click near a vertex has to land, and it must not steal the hover."""
+    fig = charts.fig_radar(_fingerprint(), theme.theme("light"), "P")
+    hit, player = fig.data[0], fig.data[-1]
+    assert hit.marker.size == charts.HIT_MARKER > charts.SELECTED_MARKER
+    assert hit.marker.color == "rgba(0,0,0,0)"
+    assert hit.hoverinfo == "skip" and hit.showlegend is False
+    # same order as the visible points, so either one resolves to the same component
+    assert list(hit.x) == list(player.x)[:-1]
+
+
+def test_a_pinned_spoke_is_drawn_open_and_hovers_its_true_score():
+    fig = charts.fig_radar(_fingerprint(pinned=True), theme.theme("light"), "P")
+    player = fig.data[-1]
+    assert "circle-open" in player.marker.symbol
+    assert "circle" in player.marker.symbol              # only the pinned one is open
+    # the hover reads customdata, not the plotted radius, so a pinned spoke cannot
+    # claim to be a 2.0
+    assert "customdata[2]" in player.hovertemplate
+    assert any(abs(float(c[2])) > pca.AXIS_LIMIT for c in player.customdata)
+
+
+def test_the_hover_score_is_preformatted_to_one_decimal():
+    """A d3 spec over a mixed-dtype customdata array is how 14 digits reach the screen."""
+    player = charts.fig_radar(_fingerprint(), theme.theme("light"), "P").data[-1]
+    assert ":.2f" not in player.hovertemplate
+    for _, _, score in player.customdata:
+        assert isinstance(score, str)
+        whole, _, decimals = score.partition(".")
+        assert len(decimals) == 1 and whole[0] in "+-"
+
+
+def test_the_selected_spoke_is_enlarged_and_ringed():
+    """The chart has to say which component the panel beside it is explaining."""
+    fig = charts.fig_radar(_fingerprint(), theme.theme("light"), "P", selected="PC4")
+    marker = fig.data[-1].marker
+    index = pca.PC_NAMES.index("pc4")
+    assert marker.size[index] == charts.SELECTED_MARKER
+    assert all(s == charts.MARKER for i, s in enumerate(marker.size) if i != index)
+    assert marker.line.width[index] == 2
+
+
+def test_nothing_is_enlarged_when_no_spoke_is_selected():
+    fig = charts.fig_radar(_fingerprint(), theme.theme("light"), "P")
+    assert set(fig.data[-1].marker.size) == {charts.MARKER}
+
+
+def test_an_overlay_takes_the_second_slot_and_turns_the_legend_on():
+    th = theme.theme("light")
+    plain = charts.fig_radar(_fingerprint(), th, "P")
+    with_overlay = charts.fig_radar(_fingerprint(), th, "P",
+                                    overlay=_fingerprint(), overlay_name="Q")
+    assert plain.layout.showlegend is False
+    assert with_overlay.layout.showlegend is True
+    overlay = next(t for t in with_overlay.data if t.name == "Q")
+    assert overlay.line.color == th["series"][1] and overlay.fill is None
+
+
+def test_loading_bars_take_the_diverging_ends_not_two_categorical_slots():
+    """A loading's sign is a direction on one axis, not a second category."""
+    th = theme.theme("light")
+    frame = pca.top_loadings(_loadings(), "pc1", 6)
+    fig = charts.fig_loadings(frame, th, "PC1")
+    colors = set(fig.data[0].marker.color)
+    assert colors <= {th["diverging"][0][1], th["diverging"][-1][1]}
+    assert len(colors) == 2                              # both signs are present
     assert fig.layout.showlegend is False
 
 
-def test_emphasis_paints_one_category_and_mutes_the_rest():
+def test_a_loading_panel_grows_with_its_bar_count():
     th = theme.theme("light")
-    df = _bars_frame(4)
-    fig = charts.fig_bars(df, "feature", ["a"], th, "t", emphasis="f2")
-    colors = list(fig.data[0].marker.color)
-    assert colors == [th["muted"], th["muted"], th["series"][0], th["muted"]]
+    short = charts.fig_loadings(pca.top_loadings(_loadings(), "pc1", 4), th, "t")
+    tall = charts.fig_loadings(pca.top_loadings(_loadings(), "pc1", 10), th, "t")
+    assert tall.layout.height > short.layout.height
 
 
-def test_scatter_emphasis_never_exceeds_the_all_pairs_cap():
-    th = theme.theme("light")
-    df = _scatter_frame()
-    fig = charts.fig_scatter(df, "pc1", "pc2", th, "t", color_by="archetype_name",
-                             highlight=list("abcdefghi"))
-    highlighted = [t for t in fig.data if t.name != "everything else"]
-    assert len(highlighted) == theme.ALL_PAIRS_CAP
-    assert [t.marker.color for t in highlighted] == th["series"][:theme.ALL_PAIRS_CAP]
-
-
-def test_scatter_mutes_the_unhighlighted_population():
-    th = theme.theme("light")
-    fig = charts.fig_scatter(_scatter_frame(), "pc1", "pc2", th, "t",
-                             color_by="archetype_name", highlight=["a"])
-    rest = next(t for t in fig.data if t.name == "everything else")
-    assert rest.marker.color == th["muted"]
-    assert rest.marker.opacity < 0.5
-
-
-def test_a_continuous_key_uses_the_sequential_ramp_and_has_no_pair_limit():
-    th = theme.theme("light")
-    fig = charts.fig_scatter(_scatter_frame(), "pc1", "pc2", th, "t", color_by="age",
-                             continuous=True)
-    assert len(fig.data) == 1
-    assert list(fig.data[0].marker.colorscale) == [
-        (s[0], s[1]) for s in th["sequential"]]
-    assert fig.data[0].marker.showscale is True
-
-
-def test_a_single_series_scatter_uses_slot_one_and_no_legend():
-    th = theme.theme("light")
-    fig = charts.fig_scatter(_scatter_frame(), "pc1", "pc2", th, "t")
-    assert fig.data[0].marker.color == th["series"][0]
-    assert fig.layout.showlegend is False
-
-
-def test_heatmap_picks_sequential_for_magnitude_and_diverging_for_polarity():
-    th = theme.theme("light")
-    z = pd.DataFrame(np.random.default_rng(0).normal(size=(4, 5)),
-                     index=list("abcd"), columns=list("vwxyz"))
-    mag = charts.fig_heatmap(z, th, "t", "c")
-    pol = charts.fig_heatmap(z, th, "t", "c", diverging=True, zmid=0.0)
-    assert list(mag.data[0].colorscale) == [(s[0], s[1]) for s in th["sequential"]]
-    assert list(pol.data[0].colorscale) == [(s[0], s[1]) for s in th["diverging"]]
-    assert pol.data[0].zmid == 0.0
-    assert mag.data[0].zmid is None
-
-
-def test_lines_are_two_px_with_markers_ringed_in_the_surface():
-    th = theme.theme("dark")
-    df = pd.DataFrame({"age": range(20, 30), "a": range(10), "b": range(10, 20)})
-    fig = charts.fig_lines(df, "age", {"a": "A", "b": "B"}, th, "t")
-    assert len(fig.data) == 2
-    for i, trace in enumerate(fig.data):
-        assert trace.line.width == 2
-        assert trace.marker.size >= 8
-        assert trace.marker.line.color == th["surface"]
-        assert trace.line.color == th["series"][i]
-
-
-def test_lines_direct_label_the_endpoint_rather_than_every_point():
-    th = theme.theme("light")
-    df = pd.DataFrame({"age": range(20, 30), "a": range(10)})
-    fig = charts.fig_lines(df, "age", {"a": "A"}, th, "t", label_last=True)
-    assert len(fig.layout.annotations) == 1
-    assert fig.layout.annotations[0].text == "A"
-
-
-def test_lines_skip_a_series_the_frame_does_not_carry():
-    th = theme.theme("light")
-    df = pd.DataFrame({"age": range(5), "a": range(5)})
-    fig = charts.fig_lines(df, "age", {"a": "A", "missing": "M"}, th, "t")
-    assert len(fig.data) == 1
+def test_translucent_converts_a_hex_fill_without_touching_the_stroke():
+    assert charts._translucent("#2a78d6", 0.22) == "rgba(42,120,214,0.22)"
 
 
 # ── Wiring ────────────────────────────────────────────────────────────────────
-
-def test_the_module_declares_nine_tabs():
-    """Nine *topics* now, not nine `src/eda/` modules — the point of the revamp.
-
-    The count coinciding with the pre-split app's nine is worth noticing and not
-    relying on, so this asserts the declaration rather than a remembered number
-    twice.
-    """
-    assert len(TABS) == 9
-    assert len(TAB_NAMES) == len(TABS)
-    assert TAB_NAMES[0] == "Problem" and TAB_NAMES[-1] == "Decision log"
-    assert len(set(TAB_NAMES)) == 9
-
-
-def test_every_tab_name_has_a_renderer():
-    from dashboard.tabs import (availability, components, data, decision_log,
-                                drafting, eda, minutes, problem, simulations)
-
-    modules = [problem, data, eda, availability, minutes, components, simulations,
-               drafting, decision_log]
-    assert len(modules) == len(TABS)
-    for module in modules:
-        assert callable(module.render)
-    # and the declaration dispatches to exactly those callables
-    assert [render for _, render in TABS] == [m.render for m in modules]
-
 
 def test_the_repo_root_is_on_the_path_for_package_imports():
     from dashboard import artifacts
@@ -247,10 +587,10 @@ def test_the_repo_root_is_on_the_path_for_package_imports():
 
 
 def test_the_dashboard_imports_nothing_from_src():
-    """The invariant the revamp bought: it reads artifacts and nothing else.
+    """The invariant: it reads artifacts and nothing else.
 
-    `season_pairs()` in the pre-split app was the single `src/` import, so dropping
-    tab 3's figures made this checkable rather than merely conventional.
+    The PCA view reads three files `make pca` wrote; it never imports `src.eda.pca` to
+    re-project anything, which is what stops the dashboard drifting from the fit.
     """
     offenders = []
     for path in sorted((ROOT / "dashboard").rglob("*.py")):
@@ -269,11 +609,11 @@ def test_the_dashboard_imports_nothing_from_src():
 
 
 def test_pure_modules_do_not_import_streamlit():
-    """decisions / economics / audit hold the only new logic worth testing."""
-    for name in ("decisions.py", "economics.py", "audit.py"):
+    """Everything but `app.py` and `artifacts.py` stays testable without a runtime."""
+    for name in ("theme.py", "charts.py", "pca.py", "decisions.py", "economics.py",
+                 "audit.py"):
         path = ROOT / "dashboard" / name
-        if not path.exists():
-            continue
+        assert path.exists(), name
         assert "streamlit" not in path.read_text(), f"{name} must stay Streamlit-free"
 
 
@@ -359,7 +699,6 @@ def test_status_mix_counts_every_status_in_the_vocabulary():
 
 
 def test_every_topic_has_at_least_one_entry():
-    """A tab whose registry slice is empty renders a heading and nothing else."""
     for topic in decisions.TOPICS:
         assert decisions.by_topic(topic), topic
 
@@ -388,17 +727,16 @@ def test_the_staleness_check_uses_commit_dates_not_mtime(tmp_path):
     assert audit.last_commit_date("CLAUDE.md", tmp_path) is None
 
 
-def test_the_orphan_check_flags_an_artifact_no_entry_and_no_tab_references(tmp_path):
+def test_the_orphan_check_flags_an_artifact_no_entry_and_no_view_references(tmp_path):
     art = tmp_path / "outputs" / "eda"
     art.mkdir(parents=True)
     (art / "referenced_by_registry.csv").write_text("a\n1\n")
-    (art / "referenced_by_a_tab.csv").write_text("a\n1\n")
+    (art / "referenced_by_a_view.csv").write_text("a\n1\n")
     (art / "nobody_reads_this.csv").write_text("a\n1\n")
 
     pkg = tmp_path / "dashboard"
     pkg.mkdir()
-    (pkg / "some_tab.py").write_text(
-        'path = ctx.eda("referenced_by_a_tab.csv")\n')
+    (pkg / "some_view.py").write_text('path = features_dir() / "referenced_by_a_view.csv"\n')
 
     registry = (_decision(reproduce="make thing → outputs/eda/referenced_by_registry.csv"),)
     flagged = audit.orphaned_artifacts(root=tmp_path, registry=registry, package=pkg,
@@ -433,8 +771,8 @@ def test_a_tier_parameterized_read_credits_the_whole_family(tmp_path):
 
     pkg = tmp_path / "dashboard"
     pkg.mkdir()
-    (pkg / "tab.py").write_text(
-        'p = ctx.features(f"team_context_tier{ctx.tier}.parquet")\n')
+    (pkg / "view.py").write_text(
+        'p = features_dir() / f"team_context_tier{tier}.parquet"\n')
 
     assert audit.orphaned_artifacts(root=tmp_path, registry=(), package=pkg,
                                     dirs=["data/features"]) == []
@@ -614,24 +952,3 @@ def test_optional_reads_a_real_table(tmp_path):
     pd.DataFrame({"a": [1, 2]}).to_csv(path, index=False)
     frame = optional(path)
     assert frame is not None and list(frame["a"]) == [1, 2]
-
-
-def test_the_inventory_counts_parquet_rows_from_metadata(tmp_path):
-    """A 37 MB parquet must cost a footer seek, not a load."""
-    from dashboard.artifacts import _row_count
-    path = tmp_path / "f.parquet"
-    pd.DataFrame({"a": range(37)}).to_parquet(path)
-    assert _row_count(path) == 37
-
-
-def test_the_inventory_counts_csv_rows_without_the_header(tmp_path):
-    from dashboard.artifacts import _row_count
-    path = tmp_path / "f.csv"
-    pd.DataFrame({"a": range(5)}).to_csv(path, index=False)
-    assert _row_count(path) == 5
-
-
-def test_pipeline_health_expects_exactly_what_the_registry_names():
-    from dashboard.artifacts import pipeline_health
-    health = pipeline_health()
-    assert set(health["artifact"]) == set(decisions.all_artifacts())

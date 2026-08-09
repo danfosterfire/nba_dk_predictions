@@ -491,7 +491,8 @@ src/models/     the Stan heads (availability, minutes, composition, components,
                 and `posteriors.py`, which persists every fitted head's thinned draws
                 and design recipe so nothing downstream has to refit
 src/stan/       three .stan sources for eleven-plus heads
-dashboard/      nine-tab project walkthrough; reads artifacts only, never refits
+dashboard/      data visualizations over the artifacts — today the PCA player-style
+                fingerprint; reads artifacts only, never refits
 docs/           plan docs — predictions, availability, minutes composition, ADP,
                 simulations, EDA, provenance, dashboard, contest rules
 ```

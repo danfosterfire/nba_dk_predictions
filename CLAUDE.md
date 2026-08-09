@@ -26,8 +26,9 @@ to the relevant docs for the task at hand. The docs are:
   - adp-plan.md: Plan and notes for collecting average draft position ("adp") data
   - availability-plan.md: Plan and notes for modeling availability (games played 
   and minutes per game). Work completed and mostly archival.
-  - dashboard-plan.md: Plan and notes for implementing a streamlit dashboard 
-  presenting project findings. To be updated.
+  - dashboard-plan.md: Plan and notes for the streamlit dashboard. As of 
+  2026-08-08 the dashboard is a **data-visualization surface**, not a project 
+  walkthrough — read this before adding or editing a view.
   - data-quirks.md: Notes and findings in exploring the raw data.
   - dk_best_ball_rules.md: Copy of the tournament rules for draft kings best 
   ball tournaments **always read this**.

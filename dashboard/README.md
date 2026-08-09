@@ -1,100 +1,106 @@
 # The dashboard
 
-A nine-tab walkthrough of the project, for a reader who wants a birds-eye view of the
-decisions rather than an EDA explorer. Run it with `make dashboard`.
+Data visualizations over the artifacts the pipeline wrote. One view today — the PCA
+player-style fingerprint. Run it with `make dashboard`; the plan is
+`docs/dashboard-plan.md`.
 
-## Precedence — read this before trusting a number on the page
+**The dashboard shows data. Prose about the project belongs in `docs/`.** The nine-tab
+project walkthrough that used to live here was documentation rendered as an app, and every
+claim on it had to be kept in sync with a document that already made the claim. It was
+removed on 2026-08-08; commit `e8e58b0` holds it.
 
-> `CLAUDE.md` and the `docs/*-plan.md` files are the source of truth for every claim on this
-> dashboard. The registry in `decisions.py` is a **distillation** of them for browsing, not an
-> authority. Where the two disagree, the docs are right and the registry is stale — fix the
-> registry.
+## The two rules
 
-Drift is the main risk in this package, and it gets four mitigations: this rule, the standing
-instruction in `CLAUDE.md`'s Conventions section, `make dashboard-audit`, and a weekly job that
-appends the audit to `outputs/dashboard_audit.log`.
+> **Every figure is read from an artifact that a `make` target produced.** If a number is
+> not in an artifact, it does not go on the page.
 
-## The provenance rule
+> **Nothing in this package imports from `src/`.** The dashboard cannot refit, re-project
+> or re-cluster anything — it opens files. `test_the_dashboard_imports_nothing_from_src`
+> walks the package with `ast` and fails if one appears.
 
-> **Every figure on the dashboard is read from an artifact that a `make` target produced.**
-> Where no such artifact exists yet, the figure does not go on the page until one does — see
-> `docs/provenance-plan.md`. The only exception is an `incident` entry, which carries a date
-> and a doc reference instead of a number.
-
-A panel that needs an unbacked figure renders `layout.pending_marker(...)` naming the target
-that will supply it, rather than the typed number. `make dashboard-audit` counts the markers,
-so the count trends to zero. It is **zero today** — all ten items in `docs/provenance-plan.md`
-landed on 2026-07-29.
+Where a view *interprets* an artifact — naming a principal component, say — the
+interpretation carries a machine-checkable anchor so it cannot silently invert. See
+`pca.COMPONENTS` and `pca.orient()`.
 
 ## Layout
 
 ```
 dashboard/
   README.md       this file
-  app.py          page config, sidebar, tab dispatch — thin
+  app.py          the PCA fingerprint view: page, controls, layout
+  pca.py          its pure layer — orientation, SD scaling, loadings, neighbours
+  charts.py       fig_radar / fig_loadings
   theme.py        SERIES, THEMES, ALL_PAIRS_CAP, theme(), apply_theme(), ordinal_colors()
-  charts.py       fig_heatmap / fig_bars / fig_lines / fig_scatter
-  layout.py       table_view, note, stat_tiles, decision_card, status_badge, pending_marker
-  artifacts.py    load_cfg, features_dir, eda_dir, read_table, read_pickle, optional, inventory
-  decisions.py    the registry — pure data, no streamlit import
-  economics.py    tournament rake / hurdle / advance-rate derivations — pure, no streamlit
-  audit.py        make dashboard-audit — pure logic + a __main__ block
-  tabs/           one render(ctx) per tab, in project order
+  artifacts.py    load_cfg, features_dir, read_table, optional
+  decisions.py    ─┐
+  economics.py     ├ not the dashboard — see below
+  audit.py        ─┘
 ```
 
-Three constraints hold this shape:
+`app.py` and `artifacts.py` are the only modules that import Streamlit. Everything else is
+pure, which is what lets `tests/test_dashboard.py` exercise the palette rules, the component
+spec, the scaling, the neighbour metric and both figures as plain functions rather than
+through a rendered page.
 
-- **`decisions.py`, `economics.py` and `audit.py` must not import Streamlit.** They hold the
-  only new logic worth testing, and keeping them pure means `tests/test_dashboard.py` exercises
-  them directly rather than through an `importlib` file-loading trick.
-- **The dashboard reads artifacts and nothing else.** There is no import from `src/` anywhere
-  in the package. Dropping tab 3's `season_pairs()` helper — the single such import — turned
-  that from a convention into an invariant, and a test pins it.
-- Each tab exposes one `render(ctx)`, where `ctx` carries the theme dict, tier, era mode and
-  resolved artifact paths. One context object stops nine signatures from growing nine ways.
+### Three files that are not the dashboard
+
+They live here for historical reasons and are load bearing elsewhere. Do not delete them
+with the rendering code:
+
+- **`decisions.py`** — the project's decision registry, wired to a standing instruction in
+  `CLAUDE.md` and to `make dashboard-audit`. `CLAUDE.md` and the `docs/*-plan.md` files are
+  the source of truth; the registry is a distillation of them, and where the two disagree
+  the docs are right.
+- **`audit.py`** — `make dashboard-audit`, a report on registry drift. A **report, not a
+  gate**: it exits 0 with findings, because failing the suite when somebody edits a doc
+  trains people to ignore the suite. Only its missing-artifact check is also a `pytest`
+  test.
+- **`economics.py`** — rake, break-even hurdle and advance rates derived from the two real
+  tournament CSVs. Pure arithmetic the drafting and backtest layers will consume.
 
 ## Colour
 
-`theme.py` is the validated reference palette instance, used **unmodified**. Two rules from that
-validation constrain every chart, and neither is a style preference:
+`theme.py` is the validated reference palette instance, used **unmodified**. Two rules from
+that validation constrain every chart, and neither is a style preference:
 
 - The eight categorical slots clear the colour-blind gates on *adjacent* pairs (bars, lines,
-  stacks), but only the **first three** clear them on *all* pairs. Any scatter, and any chart
-  where non-adjacent series sit side by side, caps at `ALL_PAIRS_CAP = 3` and uses
-  highlight-and-gray past that.
-- Three light-mode slots fall below 3:1 contrast on the light surface, which obliges the relief
-  rule: **every chart ships a table-view twin in an expander**, so no value is reachable by
-  colour alone.
+  stacks), but only the **first three** clear them on *all* pairs. Any chart where
+  non-adjacent series sit side by side caps at `ALL_PAIRS_CAP = 3` and uses
+  highlight-and-gray past that. The radial chart draws at most two series for this reason.
+- Three light-mode slots fall below 3:1 contrast on the light surface, which obliges the
+  relief rule: **no value is reachable by colour alone.** The radial chart is read off a
+  labelled axis with rings at −2/−1/0/+1/+2 SD and ships a table twin; every loadings panel
+  ships one too.
 
-Sequential is a single blue hue; diverging is blue↔red with a **neutral gray** midpoint, never a
-rainbow. Plot surfaces are pinned to the exact surfaces the palette was validated against
-(`#fcfcfb` / `#1a1a19`) rather than inherited from Streamlit's chrome, so the measured contrast
-figures apply as documented.
+Sequential is a single blue hue; diverging is blue↔red with a **neutral gray** midpoint,
+never a rainbow. A loading's sign is a direction on one axis, so the loadings bars take the
+two ends of the diverging scale rather than two categorical slots. Plot surfaces are pinned
+to the exact surfaces the palette was validated against (`#fcfcfb` / `#1a1a19`) rather than
+inherited from Streamlit's chrome, so the measured contrast figures apply as documented.
 
-## `make dashboard-audit`
+## Adding a view
 
-Four checks, run as `python -m dashboard.audit`:
+1. Put the pure logic in its own module with no Streamlit import, and test it directly.
+2. Read artifacts through `artifacts.optional()`, which names the `make` target when a file
+   is missing instead of raising.
+3. Build figures in `charts.py` and hand them to `st.plotly_chart` — a figure builder takes
+   the theme dict and returns a `go.Figure`, so it stays testable.
+4. Verify in three layers, because each one sees what the one above it cannot.
+   **`AppTest`** in both appearance modes proves the page runs. **A figure rendered to PNG**
+   proves the figure is legible — it caught a loadings panel that silently dropped the
+   negative half of an axis. **The live page in a real browser** proves the page is, and
+   is the only layer that can: it caught a plotly `title_font` with no text rendering as
+   the literal string "undefined", metric tiles clipping their own values, and a click
+   handler that never fired.
 
-| check | catches |
-|---|---|
-| every `reproduce` artifact exists | an entry citing a target that was renamed or never built |
-| no `source` doc has a commit newer than the entry's `reviewed` date | the docs-folder sweep the drift risk needs |
-| artifacts on disk that no tab and no entry references | the inverse check — orphaned families accumulate silently |
-| pending provenance markers remaining | a rising count is a regression |
+## Two things plotly and Streamlit do that cost a day
 
-It is a **report, not a gate** — it exits 0 with findings, because failing the suite when
-somebody edits a doc trains people to ignore the suite. Only the first check is also a `pytest`
-test, so the anti-drift guard cannot rot.
+Recorded because neither is discoverable from the docs and both were found by looking at
+the running page:
 
-## Adding a decision
-
-Add the `Decision` to `decisions.py` alongside the `CLAUDE.md` / plan-doc edit, with `source`
-naming the doc it was distilled from and `reviewed` set to the date you checked it. Statuses
-come from a closed vocabulary (`built`, `settled`, `measured`, `null`, `withdrawn`, `open`,
-`blocked`, `deadline`, `incident`). A reversal becomes `withdrawn` and **keeps its entry** —
-deleting it throws away the most useful row on the decision-log tab.
-
-`null` is for nulls that are *measurements* and therefore carry an artifact. A dated diagnosis
-of an external system is an `incident`: it renders without a live-number claim, because
-re-deriving it would mean re-probing a third party to no purpose. That boundary is
-`docs/provenance-plan.md`'s figures-versus-incidents line.
+- **Streamlit reports no selection for a click on a `polar` trace.** `on_select="rerun",
+  selection_mode="points"` returns `[]` for every click on a `Scatterpolar` and a full
+  payload for a `Scatter` in the same app. The radial chart is therefore drawn on cartesian
+  axes with its grid as shapes; see the header comment in `charts.py`.
+- **A title object with a font and no text renders as "undefined".** Only in a browser —
+  kaleido draws nothing — so `apply_theme` sets `title.text` explicitly.

@@ -102,10 +102,11 @@ configs/       default.yaml — all hyperparams and paths
 data/          raw → processed → features pipeline
 outputs/       checkpoints, prediction CSVs, eda reports, stan/ (compiled binaries,
                gitignored — cmdstanpy builds them from a copy of src/stan/)
-dashboard/     nine-tab project walkthrough over the precomputed artifacts.
-               app/theme/charts/layout/artifacts + decisions (the registry),
-               economics (tournament derivations), audit (make dashboard-audit),
-               tabs/ (one render(ctx) each). decisions/economics/audit import no
+dashboard/     data visualizations over the precomputed artifacts — today the PCA
+               player-style fingerprint. app/pca/charts/theme/artifacts, plus three
+               files that are NOT the dashboard and are load bearing elsewhere:
+               decisions (the registry), economics (tournament derivations), audit
+               (make dashboard-audit). Everything but app/artifacts imports no
                streamlit; nothing in the package imports src/ — see dashboard/README.md
 docs/          eda-plan (season-level EDA spec), availability-plan (games played /
                minutes), games-played-plan (the spell process: entry x exit x a

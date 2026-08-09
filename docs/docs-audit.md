@@ -83,10 +83,10 @@ is now claimed from both docs against the one artifact so that cannot recur.
 
 **The dashboard reads artifacts and nothing else — that is an invariant, not a
 convention.** It never refits, and there is **no import from `src/`** anywhere in the
-package; a test walks it with `ast` and fails if one appears. The nine tabs follow the
-project end to end rather than mirroring `src/eda/`: problem · data collection · EDA ·
-availability · minutes · components · simulations · drafting · decision log.
-`.streamlit/config.toml` sets `headless = true`, without which Streamlit's first-run email
+package; a test walks it with `ast` and fails if one appears. Since 2026-08-08 it is a
+visualization surface rather than a project walkthrough — one view, the PCA player-style
+fingerprint — so the claims it used to render live only in the docs and in
+`dashboard/decisions.py`. `.streamlit/config.toml` sets `headless = true`, without which Streamlit's first-run email
 prompt makes `make dashboard` exit 255 instead of serving.
 
 **Every figure on the dashboard is read from an artifact a `make` target produced.** Where
