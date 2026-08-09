@@ -13,7 +13,7 @@ PIP    := .venv/bin/pip
         stan stan-availability stan-minutes stan-components stan-composition \
         stan-substitution season-terms games-played stan-games-played \
         stan-game-length posteriors minutes-unification composition-effects \
-        scoring-periods draft-pool simulate-season final-evaluation
+        scoring-periods draft-pool simulate-season bracket final-evaluation
 
 venv:
 	/opt/homebrew/bin/python3.14 -m venv .venv
@@ -327,6 +327,25 @@ draft-pool:
 # CmdStan. Defaults to the two VALIDATION seasons; `--season` and `--n-sims` override.
 simulate-season:
 	$(PYTHON) -m src.sim.season
+
+# The contest itself: best 7 of 16 by slot each scoring period, the four-round advance
+# chain, the cascading tie-break, wildcards and payouts. Every structural number — round
+# count, pod size, advance count, cash table — is read from dashboard/economics.py, which
+# derives it from the two captured DK CSVs, so pointing this at the live 2026-27 contests
+# is a data change and not a code change.
+#
+# The lineup is an ASSIGNMENT problem, not a greedy fill: seating a dual-eligible player in
+# the first slot he fits can lock a better player out, and it never raises. Seatable
+# 7-subsets are the independent sets of a transversal matroid, so sorting by score and
+# keeping every player who preserves seatability is exactly optimal.
+#
+# Its own check is the symmetric-field null, which is known in closed form: an exchangeable
+# entry advances at n_advance/pod_size and is worth exactly -rake, because the prize pool is
+# paid out in full. That exercises the pod sizes, the advance chain, the wildcard fill and
+# every cash band at once — and it is what caught a transcription slip in the 15k_and_one
+# prize CSV. `--n-field` sets deep-round resolution; see configs/default.yaml.
+bracket:
+	$(PYTHON) -m src.sim.bracket
 
 # Does any head need a season term, and which kind? A trend covariate and a year-level
 # random effect for every head, plus the season x role interaction the availability era

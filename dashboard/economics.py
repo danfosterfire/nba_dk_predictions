@@ -121,8 +121,10 @@ def advance_table(root: Path = ROOT,
             elif n_advance:
                 pod = int(r["low_place"].max())
             else:
-                # The final round is one contest of everyone who got there, and it
-                # need not pay all of them — `15k_and_one` pays 24 of 42.
+                # The final round is one contest of everyone who got there. All five
+                # captured tournaments pay every finalist, but the pod is still taken
+                # from the chained field rather than from the paid places, because
+                # nothing in the rules says a final table has to pay out in full.
                 pod = int(round(field))
             rows.append({
                 "tournament": tournament,
@@ -154,8 +156,17 @@ def round_one_pod_evidence(root: Path = ROOT,
       but not sufficient: any divisor of 12 also passes, since halving the pod just
       doubles the next field.
     - `final_field_equals_paid` — how many of the five have a final round that pays
-      *exactly* its field. At 12 this is 4 of 5 (only `15k_and_one` differs, paying
-      24 of 42); every other pod size scores 0 or 1. That is what pins it.
+      *exactly* its field. At 12 this is **5 of 5**; every other pod size scores 0
+      or 1. That is what pins it.
+
+    It read 4 of 5 until 2026-08-09, `15k_and_one` appearing to pay 24 of 42 — a
+    transcription slip in the prize CSV, corrected at source. It was found by
+    `src/sim/bracket.py`'s symmetric-field null, which prices an exchangeable entry
+    and must return exactly `-rake`: that tournament's bands paid $13,200 of its
+    stated $15,000 pool while the other four reconciled to the cent. The tolerance
+    here (`>= n - 1`) is what let it through, and it is deliberately kept — a real
+    contest need not pay its whole final table — so the tight data check lives in
+    the null instead, where a test pins all five.
     """
     table = advance_table(root, round_one_pod)
     fields = table["field_entries"]

@@ -4322,4 +4322,191 @@ REGISTRY: tuple[Decision, ...] = (
         date="2026-08-09",
         tags=("joins", "leakage"),
     ),
+    Decision(
+        id="weekly-lineup-is-an-assignment-problem",
+        topic="drafting",
+        claim="The best-ball weekly lineup is solved **exactly**, by matroid greedy — not "
+              "by seating each player in the first slot he fits.",
+        because="A week starts 2 G / 2 F / 1 C / 2 UTIL out of 16, and a dual-eligible "
+                "player put in the first slot he fits can lock a better player out of the "
+                "lineup entirely. On the roster `tests/test_bracket.py` pins, first-fit "
+                "scores **186** against the true **188** — it seats a G/F dual at guard, "
+                "which fills both guard seats and both UTIL seats with guards and strands "
+                "the fifth guard, so the lineup has to reach down to a 23-point centre. "
+                "The error is one-sided (it can only understate) and silent. No solver is "
+                "needed: a lineup's value depends on *which* seven are picked and never on "
+                "where they sit, and the seatable 7-subsets are the independent sets of a "
+                "transversal matroid, so sorting by score and keeping every player who "
+                "preserves seatability is provably optimal. Seatability is Hall's "
+                "condition — eight inequalities over the subsets of {G, F, C}, of which "
+                "the full set is the roster-size constraint. Sixteen vectorized steps, no "
+                "dependency. DK ships single-position players today "
+                "(`dk-is-single-position-and-the-map-is-86-percent`), so this costs "
+                "nothing now and is what makes `dual_*` a column swap rather than a "
+                "rewrite.",
+        status="built",
+        reproduce="make bracket → src/sim/bracket.py, outputs/predictions/"
+                  "bracket_structure.csv, outputs/predictions/bracket_entries.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("contest-rules", "algorithm"),
+    ),
+    Decision(
+        id="symmetric-field-null-is-the-brackets-gate",
+        topic="drafting",
+        claim="The bracket checks itself against the **symmetric-field null**: an "
+              "exchangeable entry advances at `n_advance / pod_size` and is worth exactly "
+              "`-rake`. All five captured tournaments reconcile to **1e-16**.",
+        because="The identity holds only if the pod sizes, the advance chain, the wildcard "
+                "fill and every cash band are simultaneously right, because a field of "
+                "identical entries must collect the whole prize pool and nothing more. "
+                "That makes it a single arithmetic check over the entire contest layer, "
+                "and it earned its keep twice on the day it was written. It caught a "
+                "tie-break that handed our own entries every tie — they carried a real "
+                "per-player split and the field a column of zeros, which is not a missing "
+                "level but a winning one — worth **+68%** on P(reach round 4) and the "
+                "difference between a -11% ROI and a **+71%** one. And it caught a "
+                "transcription error in the prize CSV: `15k_and_one` appeared to pay 24 of "
+                "its 42 finalists for $13,200 against a stated $15,000, while the other "
+                "four reconciled to the cent. A brute force over every pod-size assignment "
+                "consistent with the CSV found none that closed the gap, which is what "
+                "identified the rows rather than the inferred pods as the fault; the "
+                "source was corrected the same day.",
+        status="built",
+        reproduce="make bracket → src/sim/bracket.py, outputs/predictions/"
+                  "bracket_null.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("gate", "economics"),
+    ),
+    Decision(
+        id="survivor-population-is-weighted-not-selected",
+        topic="drafting",
+        claim="Rounds 2-4 face the selected survivor population, carried as a **weight per "
+              "field entry** rather than as a surviving subset.",
+        because="Scoring rounds independently against a fresh ADP field would overstate "
+                "continuation value, so the field is cut by the same pods and the same "
+                "ranking all the way through — that part is the plan's. What is not "
+                "forced is the representation, and selecting a subset does not work at "
+                "this contest's depth: `600k_shootaround` advances 1 in 720 across three "
+                "cuts, so a 3,000-entry stand-in leaves **four** entries at round 4 and an "
+                "entry's 48 opponents there are four entries repeated twelve times. Its "
+                "place collapses onto a handful of values, and against a 10,000x top prize "
+                "that is a large upward bias rather than noise — the symmetric-field null "
+                "read **+0.72** instead of -0.1497. A weight *is* the probability of "
+                "having survived, so the selection is preserved exactly while every atom "
+                "stays alive. Place is then `1 + #{pod-mates who outscored the entry}`, and "
+                "that count is **hypergeometric** in the survivor pool rather than "
+                "binomial, because a pod is dealt and not sampled with replacement — "
+                "invisible at round 1, where 11 pod-mates come from tens of thousands, and "
+                "decisive at the final round, where the pod *is* the whole surviving field "
+                "(49 finalists and 8). Drawing 7 of 8 without replacement is nearly "
+                "deterministic where `Binomial(7, u)` is not, and the spurious variance "
+                "runs through a payout curve convex in place, so it manufactures money: "
+                "**+0.08 of ROI** on `20k_spin_move`, visible only once the field was sized "
+                "at its true 432 entries. Wildcards are implemented on the same footing and "
+                "are dormant against all five captured structures, whose field-size chains "
+                "divide exactly.",
+        status="withdrawn",
+        replaced_by="**Tournament progression is dealt and ranked, not modelled.** The "
+                    "weighting existed only because the field had been sized by a knob; "
+                    "once it is the tournament's real `total_entries` the degeneracy it "
+                    "was written for cannot happen — 35,280 -> 5,880 -> 490 -> 49 are all "
+                    "real populations — so each round now shuffles the survivors, deals "
+                    "real pods, ranks them by the rules' cascade and carries the top "
+                    "`n_advance` forward. See "
+                    "`tournament-progression-is-dealt-not-modelled`.",
+        caught_by="Its own symmetric-field null, twice. The parametric place model cost a "
+                  "binomial pod-mate count where a pod is dealt *without* replacement "
+                  "(+0.08 of ROI on `20k_spin_move`) and an off-by-one on whether an entry "
+                  "joins the field or occupies one of its slots (last place reachable 0.016 "
+                  "of the time against 0.125 in a pod of 8). Both were patches to a model "
+                  "that should not have existed; the second failure is what prompted the "
+                  "question of why place was being modelled at all. The degeneracy the "
+                  "entry describes is real and stays on the record — a 3,000-entry "
+                  "stand-in leaves four survivors at round 4 against a 49-entry final "
+                  "table, and the null read +0.72 against an exact -0.1497. The wrong "
+                  "lesson is that the survivor population needs a model; the right one is "
+                  "that the field size is a structural number.",
+        reproduce="make bracket → src/sim/bracket.py, outputs/predictions/"
+                  "bracket_structure.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("contest-rules", "monte-carlo"),
+    ),
+    Decision(
+        id="tournament-progression-is-dealt-not-modelled",
+        topic="drafting",
+        claim="Rounds are **dealt and ranked**, not modelled: the whole contest is played "
+              "out at its real field size, and an entry's place is its place.",
+        because="Each round shuffles the survivors, deals them into real pods, ranks each "
+                "pod by the rules' own cascade and carries the top `n_advance` forward, "
+                "with our entries simply *in* the field at known rows — which is what DK "
+                "does with them. There is no distribution over pod-mates to get right, no "
+                "survivor-population approximation, and the tie-break is applied within the "
+                "contest actually being decided rather than over a global ordering. Two "
+                "quantities that were Monte Carlo estimates become **exact identities**: "
+                "every round's survivor count equals the published field size, and the "
+                "payouts sum to the prize pool — measured at **0.00e+00** error for all "
+                "five tournaments. All five are simulated rather than only the two being "
+                "entered, at the cost of one scoring pass, because four structures the "
+                "money is not going into are four more chances for a structural bug to "
+                "surface.",
+        status="built",
+        reproduce="make bracket → src/sim/bracket.py, outputs/predictions/"
+                  "bracket_structure.csv, outputs/predictions/bracket_null.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("contest-rules", "simplification"),
+    ),
+    Decision(
+        id="bracket-field-is-the-real-entry-count",
+        topic="drafting",
+        claim="The simulated field is each tournament's own **`total_entries`** — 35,280 "
+              "for `600k_shootaround`, 432 for `20k_spin_move` — and not a knob.",
+        because="It is a structural number and belongs with the others in "
+                "`dashboard/economics.py`, but it is also load-bearing rather than "
+                "cosmetic: the final round is one contest of everyone who reached it, so "
+                "the field size *is* the last pod (49 and 8), and the survivor population "
+                "at every earlier round is the real one instead of a stand-in for it. "
+                "Sizing it by hand was what let `600k_shootaround`'s round 4 be decided "
+                "against four entries. `--n-field` still subsamples for fast iteration, "
+                "and the artifact records `field_is_real` so a subsampled run cannot be "
+                "mistaken for a real one.",
+        status="built",
+        reproduce="make bracket → outputs/predictions/bracket_null.csv, "
+                  "data/raw/dk_best_ball_tournament_metadata.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("economics", "contest-rules"),
+    ),
+    Decision(
+        id="draft-pool-is-the-wrong-frame-for-the-split",
+        topic="drafting",
+        claim="The train/validation split must **not** be derived from "
+              "`draft_pool.parquet`. It carries the live 2026-27 board, so "
+              "`selection_split` returns 2023-24 and **2024-25** as validation — one "
+              "season forward, and 2024-25 is held out.",
+        because="`src/models/held_out.py` makes the test split a capability, but the guard "
+                "sits on the *frame* it is handed and cannot see that the frame is wrong. "
+                "`make bracket`'s first version derived its seasons from the draft pool "
+                "and ran a full backtest on 2024-25 without raising, because by that "
+                "frame's reckoning 2024-25 was validation. The pool is right to carry "
+                "2026-27 — that is the production board — so the fix is on the consumer: "
+                "the split comes from the component design `make simulate-season` builds "
+                "its tensors against, which is also the only frame that can be right, "
+                "since the bracket scores those tensors. Pinned by a test that re-locks "
+                "the guard first, since `conftest` unlocks the suite.",
+        status="built",
+        reproduce="make bracket → src/sim/bracket.py, src/models/held_out.py",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("split", "leakage"),
+    ),
 )

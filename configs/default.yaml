@@ -406,6 +406,42 @@ sim:
     # so they drive the map and the calendar comparison is printed as drift.
     round_weeks: [17, 2, 2, 2]
 
+  # The two tournaments that go live this year, and how many entries each takes.
+  # Near-equal stake — $200 against $208 — across two structures whose objectives differ
+  # in shape rather than scale, which is why comparing them is itself a result
+  # (`two-strategies-two-tiers`). The NAMES are keys into
+  # data/raw/dk_best_ball_tournament_metadata.csv, and every structural number behind
+  # them — round count, pod size, advance count, cash table — is derived by
+  # dashboard/economics.py rather than repeated here. Adding a third tournament is a
+  # line here plus a row there; nothing in src/sim/ knows a tournament by name.
+  tournaments:
+    600k_shootaround: {entries: 10}
+    20k_spin_move: {entries: 4}
+
+  # `make bracket`. There is NO field-size knob: each contest is played at its own
+  # `total_entries` from data/raw/dk_best_ball_tournament_metadata.csv — 35,280 down to
+  # 216 — like every other structural number, and all five are simulated rather than only
+  # the two being entered. They cost one scoring pass between them: the field is drafted
+  # once per season at the largest size and each contest takes the prefix it needs, which
+  # is valid because entries are exchangeable and every field size is a multiple of the
+  # 12-entry round-1 pod.
+  #
+  # The size is load-bearing, not just sample size. The final round is one contest of
+  # everyone who reached it, so the field size *is* the last pod (49 and 8 for the two
+  # targets), and 600k_shootaround advances 1 in 720 across three cuts: against a
+  # 3,000-entry stand-in its round 4 was decided by four surviving entries and the
+  # symmetric-field null read ROI +0.72 instead of the exact -0.1497. That is the convexity
+  # of a 10,000x top prize against a degenerate pool, not noise — and it is what made an
+  # earlier version reach for a parametric progression model, since withdrawn.
+  bracket:
+    # Simulated seasons. The field's per-period array is entries x 20 x n_sims float32, so
+    # this is the memory knob: 0.71 GB at 600k_shootaround's real field size.
+    n_sims: 250
+    # Exchangeable entries scored alongside, to reproduce the symmetric-field null
+    # empirically. Their P(advance) must come back at n_advance / pod_size and their ROI
+    # at -rake; both are known exactly, so they check the payout wiring end to end.
+    n_null: 250
+
 eda:
   # Qualification filter for the season matrix. MIN is per-game, so this reads
   # "at least 20 games at 10+ minutes a night" — below that, per-36 rates from a

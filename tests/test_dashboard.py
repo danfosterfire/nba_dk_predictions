@@ -915,14 +915,15 @@ def test_integrality_alone_does_not_pin_the_round_one_pod():
     """Worth pinning, because it is the trap in this derivation.
 
     Any divisor of 12 gives a whole-number chain — halving the pod just doubles the
-    next round's field. What actually identifies 12 is that four of the five
-    tournaments then have a final round paying *exactly* its own field.
+    next round's field. What actually identifies 12 is that all five tournaments
+    then have a final round paying *exactly* its own field.
     """
     six = economics.round_one_pod_evidence(round_one_pod=6)
     twelve = economics.round_one_pod_evidence(round_one_pod=12)
     assert six["integral"] is True                    # necessary, not sufficient
     assert six["final_field_equals_paid"] == 0
-    assert twelve["final_field_equals_paid"] == 4     # only 15k_and_one differs
+    assert twelve["final_field_equals_paid"] == 5     # 4 before the 2026-08-09 fix
+    assert twelve["final_field_equals_paid"] == twelve["n_tournaments"]
 
 
 def test_the_payout_curve_expands_the_banded_prize_rows():

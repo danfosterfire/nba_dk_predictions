@@ -1278,7 +1278,12 @@ make simulate-season ✅ src/sim/season.py           THE tensor: player x scorin
                                                       + outputs/predictions/sim_season_gate_a.csv
 
 make draft-sim       src/sim/draft.py              snake draft vs an ADP field
-make bracket         src/sim/bracket.py            4 rounds, advancement, ties, payouts
+make bracket ✅      src/sim/bracket.py            best 7 of 16 by slot per period, the
+                                                   4-round chain, the cascading tie-break,
+                                                   wildcards and payouts. Every structural
+                                                   number from dashboard/economics.py
+                                                   -> outputs/predictions/bracket_{structure,
+                                                      null,entries}.csv
 make strategy-sweep  src/sim/strategy.py           the sweep -> outputs/predictions/strategy_*.csv
 make draft-room      dashboard/draft_room.py       the live recommender
 ```
@@ -1494,7 +1499,7 @@ not.** Observed ADP *is* the field's realized aggregate behaviour, so simulating
 and measuring the resulting average draft position must reproduce the observed ADP curve. That
 is Gate B, and it is what "calibrated to reproduce ADP" means concretely.
 
-### `src/sim/bracket.py` — rounds, advancement, ties, payouts
+### `src/sim/bracket.py` — rounds, advancement, ties, payouts ✅ built 2026-08-09
 
 Reads the tournament spec from the two CSVs via `dashboard.economics` — round count, pod size,
 advance count and cash table — so pointing this at the real 2026-27 numbers is a data change.
@@ -1508,6 +1513,179 @@ It must get three things exactly right:
   are the population that already cleared a 2-of-12 cut. Simulating the whole bracket gets this
   for free; scoring rounds independently against a fresh ADP field would systematically
   overstate continuation value.
+
+#### The weekly lineup is an assignment problem, and first-fit is wrong by 2 points in 188
+
+The specification above did not name the lineup itself, and it is the part with a wrong
+answer sitting in easy reach. A week starts **2 G / 2 F / 1 C / 2 UTIL** out of 16, and a
+dual-eligible player seated in the first slot he fits can lock a better player out
+altogether. On the roster `tests/test_bracket.py` pins, a first-fit assigner scores **186**
+against the true **188**: it seats a G/F dual at guard, which fills both guard seats and
+both UTIL seats with guards and strands the fifth guard, so the lineup reaches down to a
+23-point centre instead. The error is **one-sided** — it can only understate — and silent.
+
+**No solver is needed, and that is a structural fact rather than an optimization.** A
+lineup's value depends on *which* seven players are picked and never on where they sit, so
+the question is which 7-subsets can be seated at all — and those are exactly the independent
+sets of a **transversal matroid**. Greedy is optimal on a matroid, so sorting the sixteen by
+score and keeping every player whose addition preserves seatability is provably the maximum,
+in sixteen vectorized steps with no dependency. Seatability is Hall's condition, which over
+three position types is **eight inequalities**: for every subset `A` of {G, F, C}, the
+players eligible only within `A` must not outnumber `capacity(A) + 2` UTIL seats. `A =
+{G,F,C}` is the roster-size constraint and `A = {}` refuses a player with no position, so
+the eight cover everything.
+
+DK ships single-position players (`dk-is-single-position-and-the-map-is-86-percent`), so
+this costs nothing today — and it is what keeps the rejected dual convention a column swap
+(`dual_g` / `dual_f` / `dual_c`) rather than a rewrite.
+
+#### The gate: the symmetric-field null, and the two defects it caught
+
+The bracket has no gate in the table below, so it was given one that is known in closed
+form. In a field where every entry is drawn from the same process, each one advances at
+`n_advance / pod_size` and is worth exactly **`-rake`**, because a field of identical
+entries must collect the whole prize pool and nothing more. That single identity exercises
+the pod sizes, the advance chain, the wildcard fill and every cash band simultaneously.
+
+All five captured tournaments reconcile to **1e-16**, and `make bracket` reproduces it by
+simulation on exchangeable entries as well as deriving it analytically. It found two real
+defects the day it was written, neither of which any marginal check would have shown:
+
+- **The per-player tie-break level was asymmetric.** Our entries carried their real
+  per-player contributions and the field carried a column of zeros, which is not a *missing*
+  tie-break but a *winning* one — lexicographically, `(-300, -250, …)` sorts ahead of
+  `(-0.0,)` every time. Because dk_pts are quarter-point multiples, exact ties are common
+  rather than exotic, so every one of them went to us: **+68%** on P(reach round 4), **+27%**
+  on round 3, and a null ROI of **+71%** where the truth is −11%. The level is now
+  all-or-nothing — used when both populations carry it, and otherwise falling through to the
+  weekly cascade and then to the random break, which is the right answer for two identical
+  rosters anyway.
+- **A transcription error in the prize CSV.** `15k_and_one` appeared to pay 24 of its 42
+  finalists for $13,200 against a stated $15,000 pool, while the other four reconciled to
+  the cent. **Pod sizes for rounds 2+ are inferred** — `economics.advance_table` takes each
+  round's pod to be the largest place it pays or advances, since the CSV records payouts and
+  not contest sizes — so the first question was whether the inference was wrong. A brute
+  force over every pod-size assignment consistent with the CSV found **none** that closed
+  the gap, which identified the rows rather than the pods. Corrected at source the same day
+  (42 paid places, $9,771). The inference now has three independent corroborations at 5 of 5
+  where it previously had two at 4 of 5: the chain stays integral, each final round's field
+  equals its paid places, and the payouts reconcile to the pool. `economics`'s own
+  `final_field_equals_paid` evidence moved from 4 to 5, and its test with it.
+
+#### Progression is dealt and ranked, and the model that used to sit here is withdrawn
+
+The whole contest is played out at its real field size. Each round shuffles the survivors,
+deals them into real pods, ranks each pod by the cascade above, and carries the top
+`n_advance` forward; our own entries are simply *in* the field at known rows, which is what
+DK does with them. An entry's place is its place.
+
+**That is a reversal, and the thing it reverses is instructive.** The first version sized
+the field by a config knob (3,000) and cut it by pods — and `600k_shootaround` advances 1 in
+720 across three cuts, so Round 4 was decided against **four** surviving entries standing in
+for a 49-entry final table. The null read ROI **+0.72** against an exact −0.1497. The fix
+taken at the time was to keep the small field and replace the survivor *subset* with a
+per-entry survival **weight**, drawing each entry's place parametrically from it. That
+removed the degeneracy and cost two further bugs, both caught by the same null:
+
+- a **binomial** pod-mate count where a pod is dealt *without* replacement. Invisible at
+  Round 1, where 11 pod-mates come from tens of thousands; decisive at the final round,
+  where the pod *is* the surviving field. Worth **+0.08 of ROI** on `20k_spin_move`;
+- an **off-by-one** on whether an entry joins the field or occupies one of its slots, which
+  left last place reachable **0.016** of the time against 0.125 in a pod of 8.
+
+Sizing the field correctly dissolves the original problem instead of managing it: 35,280 →
+5,880 → 490 → 49 and 432 → 72 → 24 → 8 are all real populations. So the weights, the place
+distribution and the renormalization step are gone. **The wrong lesson from the degeneracy
+was that the survivor population needs a model; the right one is that the field size is a
+structural number.**
+
+Two quantities that were Monte Carlo estimates are now **exact identities**, and both are
+reported per run: every round's survivor count equals the published field size, and the
+payouts sum to the prize pool — measured at **0.00e+00** for all five tournaments. The
+tie-break also moved to where the rules put it, *within the contest being decided* rather
+than over a global ordering of the field.
+
+**Wildcards** are DK's own mechanism and are dormant in production: every captured chain
+divides exactly, which `verify_chain` asserts for all 20 rounds, so the pods always deliver
+the target field. The path is tested directly, because the case DK documents it for —
+Round-1 contests that did not all fill — is one a production run could meet.
+
+#### The field is the tournament's real entry count, and all five are simulated
+
+**35,280 / 17,640 / 14,688 / 432 / 216**, read from the captured metadata rather than
+chosen. It is a structural number like the others, and it is load-bearing: the final round
+is one contest of everyone who reached it, so the field size *is* the last pod, and sizing
+it by hand is what produced every problem in the section above.
+
+All five tournaments are simulated, not only the two being entered. They cost **one scoring
+pass** between them — the field is drafted once per season at the largest tournament's size
+and each contest takes the prefix it needs, which is valid because entries are exchangeable
+and every field size is a multiple of the 12-entry Round-1 pod. Four structures the money is
+not going into are four more chances for a structural bug to surface, and they span the
+shapes: `88k_alley_oop` is 216 entries into a 4-man final table, `600k_shootaround` is
+35,280 into 49.
+
+#### The benchmark entry has to be held out of the field
+
+A "best available" entry — the board's top sixteen, undraftable in a real pod — is carried
+as a reference to show the bracket discriminates at all. **It cannot sit in the field while
+the null is measured**, and that is not fastidiousness: the prize pool is fixed, so a strong
+entry's winnings come out of everyone else's. In `88k_alley_oop`, 216 entries with a $20,000
+top prize on an $88,000 pool, one entry that always reaches the final table moved every
+other entry's ROI by more than **twenty points** — the null read −0.2954 against −0.0947
+until the benchmark was pulled out and substituted into a single seat for its own run.
+
+#### The null sample has to be drawn at random, and its interval resampled over entries
+
+Two defects in the *check* rather than in the bracket, both found by the same disagreement
+and both worth recording because they are the shape of mistake that makes a gate lie.
+
+**The sample was a prefix of the field.** `placeholder_field` lays rows out as
+`pod * 12 + seat`, so a prefix that does not end on a pod boundary over-weights early draft
+seats. A 250-row prefix of `20k_spin_move`'s 432 entries read ROI **−0.05** against the
+exact −0.11, while the whole field read the identity — the sample was biased, not the
+simulator.
+
+**And the interval could not have caught it**, because it resampled *sims*. Two entries
+differ by their rosters, which are fixed across sims, so a sim-resample sees none of the
+variability that actually separates entries and reports an interval far too narrow. Both are
+now correct: the sample is a uniform random subset and the bootstrap resamples entries.
+
+The general lesson is the one this layer keeps re-learning: **an identity is a stronger check
+than an estimate**. The survivor counts and the payout total are exact and caught real bugs;
+the per-entry ROI is an estimate and needed two fixes of its own before it could be believed.
+
+#### 🔴 `draft_pool.parquet` is the wrong frame to derive the split from
+
+The first version of `make bracket` took its seasons from the draft pool and ran a full
+backtest on **2024-25 — a test season — without raising.** The pool carries the live 2026-27
+production board, so its last two labels are 2025-26 and 2026-27 and `selection_split` hands
+back 2023-24 and 2024-25 as "validation", one season forward of the project's.
+
+**The guard did not object because the guard believes the frame it is handed.** That is a
+different failure from the one `src/models/held_out.py` was built for: the capability check
+is sound, and it was fed a frame whose last two seasons are not the last two target seasons.
+The pool is right to carry 2026-27 — that is the production board — so the fix is on the
+consumer, and the split now comes from the same component design `make simulate-season`
+builds its tensors against, which is the only frame that can be right here since the bracket
+scores those tensors. Pinned by a test that re-locks the guard first, since `conftest`
+unlocks the suite.
+
+#### What is a placeholder, and what is final
+
+`placeholder_field` builds the opponents with Gumbel-noised twelve-entry snake drafts over
+the board. **Its first version drew each entry independently and that was badly wrong** —
+mean board rank of a pick **9.4**, against the ~96 a twelve-man draft implies, so every
+entry held the same top ten and the rosters were largely identical. Drafting twelve entries
+against a shared board consumes 192 players and makes rosters disjoint within a pod, which
+is what a real pod looks like; legality is enforced during the draft (an entry whose
+remaining picks equal the positions it still owes is restricted to them) rather than
+repaired afterwards.
+
+Build item 6 (`src/sim/draft.py`) replaces the *ranking* it reads — DK's recalibrated ADP
+consensus rather than the simulator's own projection — plus DK's autodraft caps and the
+`rank_noise_sd` Gate B fits. The draft mechanism stays. Everything above it — lineups, ties,
+advancement, wildcards, payouts — is final.
 
 ### `src/sim/strategy.py` — the sweep
 
@@ -1823,13 +2001,20 @@ same-window control and an optional control is a control that gets switched off.
 Plain `assert` with synthetic builders, no fixtures or classes, mirroring
 `tests/test_preprocess.py`.
 
-- **lineup selection** — best 7 by slot from a hand-built 16 with known scores, including the
-  UTIL fallback and a dual-eligibility player who must be placed to maximize the total rather
-  than greedily.
-- **tie-breaks** — two entries with identical round totals and different weekly maxima, then
-  identical weekly maxima and different best-player scores, cascading.
-- **bracket arithmetic** — the advance chain must reproduce `economics.advance_table` field
-  sizes exactly for all five tournaments.
+- **lineup selection** ✅ `tests/test_bracket.py` — best 7 by slot from a hand-built 16 with
+  known scores, including the UTIL fallback and a dual-eligibility player who must be placed
+  to maximize the total rather than greedily. The dual case is written as a *comparison*: a
+  first-fit assigner is implemented in the test file so the margin (186 against 188) is
+  visible rather than asserted. A companion pins that a roster with one forward seats only
+  six, since that failure returns a plausible-looking score.
+- **tie-breaks** ✅ — two entries with identical round totals and different weekly maxima, then
+  identical weekly maxima and different best-player scores, cascading; plus that only the
+  *tied span* is re-ordered and the entries around it are untouched, and that the per-player
+  level is all-or-nothing across the two populations.
+- **bracket arithmetic** ✅ — the advance chain reproduces `economics.advance_table` field
+  sizes exactly for all five tournaments, and the symmetric-field null returns `-rake` for
+  all five. Wildcards are forced by asking for a bigger next round than the pods deliver,
+  since the captured chains all divide exactly.
 - **scoring-period bucketing** — a postponed game scores in the period it is played; the NBA Cup
   final scores nowhere; every game date lands in exactly one period.
 - **the split guard** — the strategy sweep raises if it reaches the test seasons, pinned the way
@@ -1900,7 +2085,33 @@ Plain `assert` with synthetic builders, no fixtures or classes, mirroring
   want of a component-head design row. They cannot be dropped (the allocation is zero-sum)
   and cannot be scored. Pricing them is the same open question as the 2026 draft class.
 - **Tournament structures may change** for the live 2026-27 contests. Re-verify the metadata
-  and prize CSVs before treating any backtest result as load-bearing.
+  and prize CSVs before treating any backtest result as load-bearing. `make bracket`'s
+  symmetric-field null is the check that will catch a bad transcription — it already caught
+  one — and it should be run against the 2026-27 structures the day they are captured.
+- **`600k_shootaround`'s ROI is not estimable at any affordable simulation budget**, and
+  `make bracket` now says so rather than printing a point estimate. It reaches round 4 on
+  0.139% of entries and pays 10,000x at the top of it, so the expected number of top prizes
+  in a run is order one and the ROI swings by tens of percent between runs — the same
+  observation `select-on-p-advance-report-roi` makes, arriving before the sweep it governs
+  exists. P(reach round r) *is* resolved at every round, which is what the null is read on;
+  the ROI carries a bootstrap interval and a `roi_covers_analytic` flag.
+- **Scoring a real-sized field is the layer's first genuinely slow step.** 35,280 entries x
+  20 periods x 250 sims is 176M lineup solves per season, and the field's per-period array
+  is 0.71 GB. It is already amortized across the five tournaments — one draft and one
+  scoring pass per season, each contest taking the prefix it needs — and the same trick is
+  what item 8 needs: the sweep cannot rebuild the field per strategy, so the field's period
+  scores want to be built once and reused across the whole table. `sim.bracket.n_sims` is
+  the memory knob rather than a precision one.
+- **`600k_shootaround`'s per-entry ROI still will not resolve, and that is structural.**
+  The dealt bracket removed every modelling bias, but not the Monte Carlo problem: an entry
+  reaches round 4 on 0.139% of tries and the top step is 10,000x, so a subsample's ROI
+  swings by tens of percent. The *aggregate* identities are exact, which is what makes the
+  wiring checkable at all; the per-entry number carries a bootstrap interval and
+  `roi_covers_analytic`. Read the null on P(reach round r), which is exact by construction.
+- **Ties are common rather than exotic, because dk_pts are quarter-point multiples.** A
+  17-week round total lands on a coarse grid, so a large field ties constantly and the
+  cascade is a hot path rather than a formality — which is why `rank_within_pod` re-orders
+  only the tied span and never the whole row.
 - **This doc is not yet in `make docs-audit`.** Add it once it carries measured figures rather
   than specification — see `docs/docs-audit.md`.
 
@@ -1912,7 +2123,7 @@ Ordered so the **live-draft path closes at item 7**. Items 2, 3 and 3b depend on
 run in any order alongside item 1. **Item 3c must follow 3b** — both were expected to edit
 `stan_composition`, though 3c in the event did not — and both must land before item 4, which
 imports whatever they settle. **Item 3d follows 3c** and does edit that head, so nothing else
-may be in flight on it. Items 1, 2, 3, 3b, 3c and 4 are done; **item 5 is next.**
+may be in flight on it. Items 1, 2, 3, 3b, 3c, 4 and 5 are done; **item 6 is next.**
 
 **Item 3d's capability landed 2026-08-09 and its full-window commitment did not** — the
 distinction is spelled out under item 3d itself. Item 4 is **not** blocked by that: it
@@ -2298,7 +2509,19 @@ ten times it.
 > season-total minutes spread against `minutes_unification.csv`'s 302.75. A miss here is a
 > wiring fault, not a modelling one.
 
-### 5. `make bracket` — lineups, ties, advancement, payouts
+### 5. `make bracket` — lineups, ties, advancement, payouts ✅ built 2026-08-09
+
+**The measured outcome is under "`src/sim/bracket.py`" above.** Five things are worth
+carrying into item 6. The weekly lineup is an **assignment problem** and first-fit
+understates it one-sidedly. The **symmetric-field null** is this layer's gate and it caught
+four separate defects — a tie-break asymmetry worth +68% on P(reach round 4), a
+transcription error in the prize CSV, and two bugs in a parametric progression model that
+was itself withdrawn. **Progression is dealt and ranked at the tournament's real field
+size**, which is what made the survivor count and the payout total exact identities rather
+than estimates. **`draft_pool.parquet` is the wrong frame to derive the split from** — it
+carries the 2026-27 production board and silently shifts validation onto a test season. And
+a strong reference entry has to be held **out** of the field it is measured against, because
+a fixed pool means its winnings come out of everyone else's.
 
 > Read `docs/simulations-plan.md` ("`src/sim/bracket.py`", "Tests") and
 > `docs/dk_best_ball_rules.md`. Build `src/sim/bracket.py`: best-7-of-16 by slot per scoring
