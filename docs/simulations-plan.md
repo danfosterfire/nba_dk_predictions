@@ -863,6 +863,199 @@ implements the arithmetic, and it is *already measured* to tie. The only work it
 re-estimating σ on the fitting half instead of reading it off validation. Drafts happen
 before October and a board that exists beats a board that is still sampling.
 
+### What was built — 2026-08-09
+
+The head-level **capability** is complete, tested and pinned; the **commitment** is a
+compute decision the measurements below are meant to inform. Both halves are reported here
+because separating them is the whole point of running a pilot.
+
+**`composition_glm.stan` carries the block, and `U_n = 0` nests exactly.** Gate P1 is an
+identity rather than an assertion about source text, and it holds: at `sigma_u = 0` the
+effect model's log density exceeds the `U_n = 0` model's by **exactly** `−½Σz²` and nothing
+else, so the likelihood, the offset, the priors on `alpha`/`beta` and the dispersion term
+are untouched and the disabled arm is literally the shipped head. Pinned by
+`tests/test_stan_composition.py::test_U_n_zero_nests_exactly_inside_the_player_season_model`,
+mirroring the year block's. Two source-text tests pin the zero-length declarations and the
+non-centred form beside it.
+
+`PlayerSeasonTerm` in `stan_composition.py` is the Python half, and it is `YearTerm` one
+index down: the fitted `u_z` are **never stored**, because they describe player-seasons that
+are over, and the predictive integrates over a fresh `z ~ N(0, 1)` per (unit, posterior
+draw), shared across that unit's games. `_eta_base` deliberately stays the *deterministic*
+predictor — two consumers depend on that, `posteriors._finish` (whose round-trip reference
+would otherwise be non-reproducible) and `player_season_effect_sweep` (which injects its own
+σ on top and would otherwise double-count a fitted one).
+
+**Three deliberate departures from the specification above, each with its reason.**
+
+- **It is `make composition-effects`, not `make stan-composition`.** The plan says item 3d
+  edits that head, and it does — the capability lives in `stan_composition.py`. But the
+  *run* writes `outputs/predictions/composition_effects_*.csv` rather than overwriting
+  `stan_composition_*.csv`, because that artifact is the incumbent's record and
+  `make docs-audit` re-derives eleven quoted figures from it. A three-arm partial run at a
+  pilot window would have failed the gate on bookkeeping rather than on a measurement.
+- **The ladder is four arms, not three: a same-window `base` control was added.** The plan
+  says not to refit the incumbent, and its full-window posterior is untouched — but a
+  *pilot-window* arm ordering is uninterpretable against a full-window baseline, which is
+  exactly what `stan_game_length`'s `season_trend_covered` control exists to prevent. `base`
+  is the shipped specification on this window and nothing more.
+- **The team block gets its own `team_missing` indicator rather than reusing
+  `design_missing`.** The instruction was to reuse it, and the reason not to is measured:
+  the two mark different rows. `design_missing` flags a composition row with no
+  availability-design row at all; the team block additionally misses **4.14%** of pilot
+  training rows that *do* have a design, because `team_context_tierA.parquet` is built off
+  the season matrix's qualified frame (it covers 93.55% of pilot train rows and 94.20% of
+  val). Folding them together would leave those rows imputed to the training mean with
+  nothing for `beta` to correct on. What the instruction was *about* is honoured exactly:
+  one indicator for the whole block, not five identical ones, which is the degenerate
+  subspace `design_missing` exists to avoid.
+
+**The four scratch correlations are re-derived into an artifact, and they hold.**
+`outputs/predictions/composition_effects_deviation.csv`, measured on **8,570** full-window
+training player-seasons with a real prior and ≥ 200 realized minutes (the plan's scratch
+figure was 9,793 on a looser qualification):
+
+| signal | re-derived | plan's scratch figure |
+|---|---|---|
+| the player's own lag-1 deviation | **−0.2519** | −0.201 |
+| departed teammates' prior share | **+0.0411** | +0.041 |
+| arriving players' prior share | **−0.0105** | −0.063 |
+| net minutes opened up | **+0.0672** | +0.088 |
+
+In-sample R² on the deviation runs **0.0634** from own history, **0.0699** adding roster
+churn, and **0.0750** adding the five-column team block — so **the block is worth +1.2
+points of R²**, which is what the plan predicted to the decimal, and the whole thing
+explains **7.5%** of a deviation whose sd is **0.5954**. The team block *alone* reads
+**0.0065**. Every sign matches, so the construction is sound; the magnitudes are the
+finding, and they are the same wall the rest of the project runs into.
+
+The measurement is taken on the **full window's** fitting half rather than the pilot's,
+deliberately: the deviation is a property of the data and not of whichever window the head
+is fitted on, and restricting it to four training seasons would cut it to ~1,500
+player-seasons and make the re-derivation incomparable to the prose it replaces.
+
+**`make posteriors` carries `sigma_u`, and only `sigma_u`.** `_finish` gained the capability
+rather than being routed around: the scale is thinned on the *same* draw index as
+`alpha`/`beta` (so a consumer cannot apply draw 700's spread to draw 3's coefficients), the
+term object is copied rather than shared, and both the artifact `extras` and the manifest
+carry it — a head whose predictive is quietly narrower than its fit is the one failure a
+round-trip on the mean cannot see. The year-effect refusal stays exactly as it was, and now
+names this as the worked example. The team block travels as a new `join` recipe step
+carrying its own block and train means, so a rebuilt `team_context_tierA.parquet` cannot
+silently change what a persisted posterior scores.
+
+**`player_season_effect_sweep` reads σ from the artifact when one is there**, marked
+`sigma_source = "fitted"` beside the injected grid, and the grid stays as the calibration
+check — an interior optimum is how you find out whether a fitted σ landed in the right
+place.
+
+### The fallback is no longer a paragraph — it is measured and runnable ✅ 2026-08-09
+
+The fallback above says: if the fit blows the budget, ship the injection with σ estimated on
+`train` instead of validation. **That has now been done**, because it is minutes of numpy
+rather than hours of sampler and because a board that exists beats a board that is still
+sampling.
+
+`minutes_unification.estimate_sigma_on_train` runs the identical grid — same arithmetic,
+same metric, same code path — over the last two **training** seasons (2020-21 and 2021-22,
+**1,145** player-seasons). It reads:
+
+| σ | train CRPS | train PIT KS | train predictive sd |
+|---|---|---|---|
+| 0.000 | 139.89 | 0.3401 | 54.06 |
+| 0.300 | 119.51 | 0.1832 | 144.75 |
+| 0.375 | 117.45 | 0.1443 | 174.22 |
+| **0.450** | **117.07** | **0.1112** | 203.38 |
+| 0.600 | 119.55 | 0.1103 | 258.61 |
+
+**σ_train = 0.450, against the validation grid's 0.375, and the optimum is interior on both
+sides.** The agreement is the whole point: it says the figure the injection was criticised
+for tuning on the evaluation split was not, in fact, moved by that split — the two grids
+disagree by one step, and 0.375 and 0.450 are separated by 0.4 CRPS minutes on train and 0.7
+on validation. So the injection can ship with a σ that owes the evaluation rows nothing.
+
+At **σ = 0.450** the validation reading is CRPS **142.87** against the marginal head's
+144.35 — a paired gap of **−1.49**, interval **[−6.14, +3.22]**, i.e. a **tie** — with PIT
+KS **0.0659** against the marginal head's 0.0735, so it is the better-calibrated of the two
+at the season unit, and the team constraint still holds exactly. That is the shippable
+configuration today, and `src/sim/season.py` can consume it without waiting for a refit.
+
+**It is a fallback and not the answer**, for the reason the plan gives: a fitted `sigma_u` is
+estimated jointly with `beta` and could land better or worse, and only the fit can shrink σ
+in response to features (Gate P4). But it removes the schedule risk from the item entirely.
+
+### Cost — Gate A, and why the arm ordering is what the pilot buys
+
+The random effect is expensive, and the probe says so plainly. Both arms on **one training
+season** of the pilot window — identical rows, identical iterations (200 + 200 × 4 chains):
+
+| arm | metric | wall clock | max R̂ | min ESS | divergences | treedepth-saturated | fitted σ_u |
+|---|---|---|---|---|---|---|---|
+| `base` | `dense_e` | **125 s** | 1.0172 | 400 | 0 | 0 | — |
+| `ps` (non-centred) | `diag_e` | **1,496 s** | 1.0948 | **35** | **0** | 17 | **0.4776** |
+| `ps_centered` | `diag_e` | 2,510 s | 1.1067 | 27 | **0** | **212** | 0.4809 |
+
+**12.0× on the same 26,039 rows and 605 units**, which is the cost risk the plan named as the
+largest in the item, arriving exactly where it was predicted: `dense_e` took that one-season
+probe from treedepth 8–9 to treedepth 4 when the head had ~25 parameters, and 12,307
+player-season units at the full window make a dense metric a 12,332-square mass matrix
+(~1.2 GB and a Cholesky per adaptation window). The treedepth win is given back in full.
+
+**And the `ps` fit did not converge at that budget** — R̂ 1.0948 against a 1.01 bar and a
+minimum ESS of 35 against 400 — so the honest reading is that 1,496 s is a *lower* bound on
+what a usable fit costs, not an estimate of one. The diagnosis is mixing rather than
+geometry: **zero divergences** with 17 treedepth-saturated draws and a step size of 0.0094 is
+a sampler taking very long trajectories through a poorly conditioned diagonal metric, not one
+falling into a funnel.
+
+### The centred parameterization is a measured null, and that closes a door
+
+The plan names a centred arm as "the first thing to try if [divergences] appear", so
+`ps_centered` was built and probed on the identical rows. **It is worse, and the evidence
+that carries is not the wall clock.** The 2,510 s ran alongside the ladder's own Gate A
+probe and is therefore contended, so the timing is not a clean comparison — but
+**treedepth saturation is a property of the geometry rather than of the machine, and it goes
+from 17 draws to 212, a 12.5× increase**. R̂ and ESS move the wrong way too. Both arms report
+**zero divergences**, in both parameterizations.
+
+That combination rules something out. A funnel produces divergences and is what the centred
+form is dangerous for; zero divergences in both, with saturation rising sharply under
+centring, says the posterior is not funnelling in either coordinate system — it is a long,
+poorly conditioned ridge that NUTS is walking slowly. **So the parameterization is not the
+lever**, and the plan's stated first response does not apply here. The premise it rested on
+also does not survive the pilot window: it justified non-centred by "p10 11, minimum 1", but
+at this window only **1.8%** of units carry a single row and the median is 49 — a
+well-informed set, which is the regime centred is supposed to prefer.
+
+**What is left to try is structural or mechanical, not a re-coordinatization.** The two
+candidates, neither tested: `rho` and `sigma_u` may be competing for the same within-unit
+overdispersion — the graded `rho` disperses the sequential binomial trials over four
+prior-share bins while `sigma_u` shifts the same rows, and a ridge between them is exactly
+what a collapsed step size with no divergences looks like. And `reduce_sum` threading is
+untried and costs nothing in the posterior: the likelihood is one vectorized call plus
+**1,487** scalar truncation calls at the pilot window, on a machine running 4 chains over 14
+cores.
+
+**A fourth estimate of σ_u came out of it, and this one is parameterization-independent.**
+0.4809 centred against 0.4776 non-centred, 0.450 from the train injection grid and 0.375 from
+the validation one. The first three shared arithmetic; these two share only the model, so the
+agreement is a stronger check than the earlier ones.
+
+Extrapolated by rows **and** units (a random-effect fit's cost is not linear in rows alone),
+with the 1.63× correction this head's own Gate A already measured: **~6.3 h per random-effect
+arm at the pilot window**, and **~15.7 h** for the four-arm ladder. At the full window a
+single such arm is **~38 h**. The consequence for the schedule is worth stating without
+hedging: **the full-window fit is not a same-day operation**, and the pilot exists precisely
+so the arm ordering can be settled without paying for it.
+
+**The one number that came back for free is the replication, and it is a good one.** The
+under-converged one-season fit puts `sigma_u` at **0.4776**, against **0.375** from the
+validation injection grid and **0.450** from the train injection grid — three estimates by
+three different routes (a Stan parameter, a validation-scored grid, a train-scored grid)
+inside a band of 0.10. Gate P5 asked for the fit to land near 0.375–0.45 and it does. Read it
+as corroboration of the effect *size* rather than as a fitted value to ship: the chains had
+not mixed, and a converged fit will move it.
+
 ### Where it lands downstream
 
 - **`make posteriors` has to carry `sigma_u`, and only `sigma_u`.** The fitted `u_z` are
@@ -1535,6 +1728,13 @@ Plain `assert` with synthetic builders, no fixtures or classes, mirroring
   consumer-side obligation remains and is not enforceable by the artifact: a backtest scored
   on 2022-23 / 2023-24 must *ask* for `train`, and the programmatic defaults are still
   `train_val`. `src/sim/season.py` is where that has to be gotten right.
+- **The fitted `sigma_u` is a compute booking, not a task.** Gate A measures ~6.3 h per
+  random-effect arm at the pilot window and ~38 h at the full one, and the short-chain probe
+  did not converge — so the real figure is higher. Item 3d's capability is built and its
+  fallback (σ = 0.450, estimated on `train`) is shippable, so nothing downstream is blocked;
+  what is blocked is *retiring the marginal minutes head*, which needs a converged
+  full-window fit. Whoever books the machine should run the pilot ladder first and read the
+  arm ordering, per "The ladder, and the pilot that keeps it affordable".
 - **Tournament structures may change** for the live 2026-27 contests. Re-verify the metadata
   and prize CSVs before treating any backtest result as load-bearing.
 - **This doc is not yet in `make docs-audit`.** Add it once it carries measured figures rather
@@ -1549,6 +1749,11 @@ run in any order alongside item 1. **Item 3c must follow 3b** — both were expe
 `stan_composition`, though 3c in the event did not — and both must land before item 4, which
 imports whatever they settle. **Item 3d follows 3c** and does edit that head, so nothing else
 may be in flight on it. Items 1, 2, 3, 3b and 3c are done; **item 3d is next.**
+
+**Item 3d's capability landed 2026-08-09 and its full-window commitment did not** — the
+distinction is spelled out under item 3d itself. Item 4 is **not** blocked by that: it
+consumes minutes from the composition plus a per-player-season effect, and the injection's
+σ = 0.450 (estimated on `train`) supplies one today without a refit.
 
 **Paste the framing prompt below first, then the item's own prompt.** The framing carries
 everything common — what to read, the conventions, the split rule, the deadline, and how to
@@ -1775,13 +1980,48 @@ that module at all — the gate lives in its own module and reads persisted post
 > 0.341 h across four arms against the composition's 9.92 h, so retiring the target saves
 > twenty minutes.
 
-### 3d. `make stan-composition` — fit the player-season effect ⛔ blocks 4
+### 3d. `make composition-effects` — fit the player-season effect ⚠️ capability built 2026-08-09, commitment open
 
-Added 2026-08-09, out of item 3c's follow-up. **Sequence it after 3c**, whose artifact is
-both the motivation and the gate. It edits `src/stan/composition_glm.stan` and
-`stan_composition.py`, so nothing else may be in flight on that head. Its full specification
-is "Fitting σ: the player-season effect as a Stan parameter" above — read that first; the
-prompt below does not repeat it.
+Added 2026-08-09, out of item 3c's follow-up. **The capability landed and the commitment did
+not**, and the two should not be conflated:
+
+- ✅ **Built and pinned.** The optional `sigma_u` block in `composition_glm.stan` with
+  `U_n = 0` nesting the shipped head *exactly* (Gate P1, checked as an identity),
+  `PlayerSeasonTerm`, the team-context block and its join, `make composition-effects`,
+  `make posteriors` carrying `sigma_u`, and `player_season_effect_sweep` reading it.
+- ✅ **Measured.** The four deviation correlations re-derived into an artifact; the team
+  block worth **+1.2 points of R²** on a deviation that is 7.5% predictable; Gate A's cost;
+  and `sigma_u` **0.4776** from a one-season fit, replicating the injection.
+- ✅ **The fallback shipped.** σ estimated on `train` is **0.450** and ties the marginal head
+  on validation, so the schedule risk is gone.
+- ⏳ **Not done.** The pilot ladder has not been run to completion and no full-window arm
+  exists, so Gates P2 and P3 are not yet answered by a *fitted* head. At ~6.3 h per
+  random-effect arm at the pilot window and ~38 h at the full one, that is a compute booking
+  rather than a session.
+- ⛔ **Gate P4 is not being run, and that is a decision rather than a shortfall.** `ps_team`
+  was cut from the ladder on 2026-08-09, leaving `base → ps → team` at ~7.5 h against ~15 h.
+  P4 asks whether the team block reduces fitted `sigma_u`; the question it is a proxy for
+  was already answered without a sampler, on 8,570 training player-seasons — the block is
+  worth **+1.2 points of R²** on a deviation that is **7.5%** predictable in total. A 6.3 h
+  fit cannot resolve that better than the regression did, so the arm buys a null that is
+  already priced. `team` stays, because it is ~30 min under `dense_e` and prices the same
+  block at the per-team-game unit, which the deviation regression does not reach.
+
+**How many full-window arms this justifies is its own decision, and the answer is not
+three.** `make posteriors` fits the composition once per fit window and the repo keeps three
+(`train`, `train_val`, `full`), so turning `player_season_effect: true` on and rebuilding all
+of them is ~114 h. The recommendation is **at most one, at `train`, and only if the pilot's
+`ps` arm clears P2 and P3** — the injection at σ = 0.450 already ships a tie, the one thing a
+fit adds that the injection cannot is shrinking `sigma_u` in response to features, and that
+lever is measured at ~nil. What a converged full-window fit *would* buy is retiring the
+marginal minutes head, which is worth real money on two strategy axes (see "Why the zero-sum
+dynamic is a requirement"); that is one fit, not three.
+
+It edits `src/stan/composition_glm.stan` and `stan_composition.py`, so nothing else may be in
+flight on that head. Its full specification is "Fitting σ: the player-season effect as a Stan
+parameter" above — read that first; the prompt below does not repeat it. Note that the target
+name in the prompt is stale: the ladder runs as **`make composition-effects`**, for the
+reasons under "What was built".
 
 > Fit a per-**(player, season)** random effect in the minutes composition head, and sweep a
 > team-context feature block alongside it in the same run.

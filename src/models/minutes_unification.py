@@ -94,6 +94,21 @@ MIN_QUALIFIED = 200
 # a monotone sweep would not distinguish "this helps" from "the grid stopped too early".
 PS_SIGMAS = (0.0, 0.2, 0.3, 0.375, 0.45, 0.6)
 
+# The fallback's estimation window: the last N **training** seasons. `docs/simulations-plan.md`
+# makes shipping the injection with sigma estimated on `train` the named fallback if the
+# fitted version blows the budget, and the only work it owes is exactly this — moving sigma
+# off the split it is scored against. The last two train seasons rather than all of them
+# because the quantity is one scalar and the frame is 631,158 rows x 200 draws otherwise;
+# two seasons match the validation window in size and era, which is the comparison the
+# estimate is for.
+TRAIN_SIGMA_SEASONS = 2
+
+# The shipped injected effect size, if config does not say otherwise. Estimated on TRAIN by
+# `estimate_sigma_on_train`, which is what removes the injection's one load-bearing caveat —
+# the validation grid's 0.375 was read off the split it is scored against. Five independent
+# routes land in [0.375, 0.481]: two CRPS grids, the calibration target, and two Stan fits.
+SHIPPED_PS_SIGMA = 0.450
+
 # Smallest roster a teammate correlation is taken over. Below four players the mean pairwise
 # correlation of a fixed-sum block is dominated by the constraint's own -1/(K-1).
 MIN_ROSTER = 4
@@ -126,19 +141,60 @@ def rehydrate_minutes(artifact, keep: int) -> StanMinutes:
     return model
 
 
-def rehydrate_composition(artifact, keep: int) -> StanComposition:
+def shipped_sigma(cfg: dict) -> float:
+    """`sim.minutes.player_season_sigma` — the effect size the simulator draws with.
+
+    One place, so a consumer cannot forget it. Reading it from config rather than hard-coding
+    it is what makes `0.0` a supported configuration: that recovers the un-injected head
+    exactly, which is the control every claim about the injection is measured against.
+    """
+    return float(cfg.get("sim", {}).get("minutes", {})
+                 .get("player_season_sigma", SHIPPED_PS_SIGMA))
+
+
+def rehydrate_composition(artifact, keep: int,
+                          injected_sigma: float | None = None) -> StanComposition:
     """A `StanComposition` carrying the artifact's draws, at its selected arm.
 
     `rho_draws` is (draws x n_rho) even at n_rho = 1, so the graded and shared arms take the
     same downstream path — the head's own invariant, preserved here rather than re-derived.
+
+    **The per-(player, season) effect arrives one of two ways, and the head cannot tell them
+    apart downstream — which is the point.** A `sigma_u_draws` block in the artifact is a
+    FITTED effect and takes precedence; failing that, `injected_sigma` supplies the shipped
+    constant from `sim.minutes.player_season_sigma`. Either way the term is live on
+    `predict_samples`, so **a consumer gets the effect by rehydrating the head and does not
+    have to remember to apply it** — which was the injection's worst property while it lived
+    only in the simulator, and precisely the class of provenance failure this repo has been
+    bitten by before. `sigma_source` records which it was.
+
+    The stream is restored from the artifact when one is fitted, so the rehydrated head draws
+    the same `z` sequence the fitted one would.
     """
+    sigma_u = artifact.draws.get("sigma_u_draws")
+    injected = float(injected_sigma or 0.0)
+    enabled = sigma_u is not None or injected > 0
     model = StanComposition(list(artifact.recipe.features),
                             int(artifact.extras["dispersed"]),
                             int(artifact.extras["n_rho"]),
-                            name="unification/composition", predictive_samples=keep)
+                            name="unification/composition", predictive_samples=keep,
+                            player_season_effect=enabled,
+                            u_sd_scale=float(artifact.extras.get("u_sd_scale", 1.0)))
     model.scaler = artifact.recipe.scaler
     model.alpha_draws = np.asarray(artifact.draws["alpha_draws"])
     model.beta_draws = np.asarray(artifact.draws["beta_draws"])
+    if sigma_u is not None:
+        model.ps.sigma_draws = np.asarray(sigma_u)
+        model.ps.stream = str(artifact.extras.get("u_stream", model.ps.stream))
+        model.sigma_source = "fitted"
+    elif injected > 0:
+        # A constant across draws, which is exactly what "plug in sigma-hat" means and is
+        # the honest difference from a fit: no posterior on sigma, so the predictive does
+        # not integrate over its uncertainty.
+        model.ps.sigma_draws = np.full(len(model.alpha_draws), injected)
+        model.sigma_source = "injected"
+    else:
+        model.sigma_source = "none"
     if model.dispersed:
         model.rho_draws = np.asarray(artifact.draws["rho_draws"])
         model.rho_by_bin = model.rho_draws.mean(axis=0)
@@ -278,7 +334,8 @@ def unit_codes(frame: pd.DataFrame) -> np.ndarray:
 def player_season_effect_sweep(model, frame: pd.DataFrame, raw: pd.DataFrame,
                                realized: np.ndarray, keep_rows: np.ndarray,
                                y: np.ndarray, crps_reference: np.ndarray,
-                               sigmas=PS_SIGMAS, seed: int = SEED) -> list[dict]:
+                               sigmas=PS_SIGMAS, seed: int = SEED,
+                               fitted_sigma: float | None = None) -> list[dict]:
     """What a per-(player, season) random effect would buy, injected rather than fitted.
 
     The gate finds the composition's season totals **4.68x too narrow**, and the obvious
@@ -297,13 +354,24 @@ def player_season_effect_sweep(model, frame: pd.DataFrame, raw: pd.DataFrame,
 
     The mean function is left alone, so this also isolates the spread: a fitted version would
     re-estimate `beta` alongside `sigma` and could do better or worse.
+
+    **Once the head ships a fitted `sigma_u`, this stops being the measurement and becomes
+    the calibration check.** `fitted_sigma` is read off the posterior artifact and evaluated
+    as one more row, marked `source = "fitted"`; the grid stays, because what it answers —
+    is the CRPS optimum interior, and where — is exactly how you find out whether a fitted
+    sigma landed in the right place. The injection is applied to `_eta_base`, which excludes
+    the head's own effect, so this never double-counts a fitted one: at
+    `sigma = sigma_u` it reproduces `predict_samples` in distribution.
     """
     eta_base, rho = model._eta_base(frame)
     codes = unit_codes(raw)
     n_units, n_draws = int(codes.max()) + 1, eta_base.shape[1]
+    grid = [(float(s), "injected_grid") for s in sigmas]
+    if fitted_sigma is not None:
+        grid.append((float(fitted_sigma), "fitted"))
 
     rows = []
-    for sigma in sigmas:
+    for sigma, source in grid:
         rng = np.random.default_rng(seed + 7)
         eta = eta_base + float(sigma) * rng.normal(size=(n_units, n_draws))[codes, :]
         totals, _ = season_totals(simulate_minutes(frame, eta, rho, seed), raw)
@@ -312,13 +380,58 @@ def player_season_effect_sweep(model, frame: pd.DataFrame, raw: pd.DataFrame,
         delta = paired_bootstrap(crps, crps_reference)
         rows.append({
             "arm": "composition_sum_plus_player_season_effect", "unit": "ps_effect_sweep",
-            "sigma": float(sigma), "n": len(y), "n_draws": n_draws,
+            "sigma": float(sigma), "sigma_source": source, "n": len(y),
+            "n_draws": n_draws,
             "crps_minutes": float(crps.mean()),
             "mae_minutes": float(np.abs(scored.mean(axis=0) - y).mean()),
             "pit_ks": ks_uniform(pit_from_samples(scored, y, seed)),
             "predictive_sd": float(scored.std(axis=0).mean()),
             "crps_delta": delta["crps_delta"], "ci_lo": delta["ci_lo"],
             "ci_hi": delta["ci_hi"], "verdict": verdict(delta),
+        })
+    return rows
+
+
+def estimate_sigma_on_train(model, artifact, composition_train: pd.DataFrame,
+                            sigmas=PS_SIGMAS, seed: int = SEED) -> list[dict]:
+    """The same sweep on **training** player-seasons — the fallback's shippable sigma.
+
+    `player_season_effect_sweep` reads its optimum off validation CRPS, which is the split
+    the composition is later scored against, and that caveat is why the plan chose a fitted
+    `sigma_u` over the injection. **If the fit blows the budget, the injection still ships —
+    and this is the one piece of work it owes.** Running the identical grid on training rows
+    moves sigma off the evaluation split, at the cost of minutes rather than a refit of the
+    project's most expensive head.
+
+    Two things make it an honest estimate rather than a relabelling. The rows are training
+    rows the composition was *fitted* on, so the CRPS here is in-sample for `beta` — but
+    `sigma` is not a parameter of that fit at all, so the quantity being optimized is the one
+    the injection adds and nothing else. And the grid, the arithmetic and the metric are
+    literally the same function, so a sigma chosen here and a sigma chosen on validation are
+    comparable numbers rather than two different estimators.
+    """
+    seasons = sorted(composition_train["season"].unique())[-TRAIN_SIGMA_SEASONS:]
+    raw = composition_train[composition_train["season"].isin(seasons)].reset_index(drop=True)
+    frame = artifact.recipe.transform(raw)
+    eta_base, rho = model._eta_base(frame)
+    codes = unit_codes(raw)
+    n_units, n_draws = int(codes.max()) + 1, eta_base.shape[1]
+    realized = realized_totals(raw, "y")["realized"].to_numpy(float)
+
+    rows = []
+    for sigma in sigmas:
+        rng = np.random.default_rng(seed + 11)
+        eta = eta_base + float(sigma) * rng.normal(size=(n_units, n_draws))[codes, :]
+        totals, _ = season_totals(simulate_minutes(frame, eta, rho, seed), raw)
+        rows.append({
+            "arm": "composition_sum_plus_player_season_effect", "unit": "ps_sigma_on_train",
+            "sigma": float(sigma), "sigma_source": "train_grid",
+            "n": totals.shape[1], "n_draws": n_draws,
+            "seasons": ", ".join(seasons),
+            "crps_minutes": float(crps_from_samples(totals, realized).mean()),
+            "mae_minutes": float(np.abs(totals.mean(axis=0) - realized).mean()),
+            "pit_ks": ks_uniform(pit_from_samples(totals, realized, seed)),
+            "predictive_sd": float(totals.std(axis=0).mean()),
         })
     return rows
 
@@ -394,8 +507,10 @@ def verdict(delta: dict) -> str:
 
 # ── Frames ────────────────────────────────────────────────────────────────────
 
-def validation_frames(cfg: dict) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """`(minutes_train, minutes_val, composition_val)` — through `selection_split` only.
+def validation_frames(cfg: dict) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame,
+                                          pd.DataFrame]:
+    """`(minutes_train, minutes_val, composition_val, composition_train)` — through
+    `selection_split` only.
 
     The composition frame is built over every season for its lags and its expanding rookie
     prior and then cut to the head's fitting window, exactly as `stan_composition.run` and
@@ -412,8 +527,8 @@ def validation_frames(cfg: dict) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFra
 
     frame = composition_frame(cfg)
     pilot = frame[frame["season"] >= first_season].reset_index(drop=True)
-    _, composition_val = selection_split(pilot, test_seasons)
-    return minutes_train, minutes_val, composition_val
+    composition_train, composition_val = selection_split(pilot, test_seasons)
+    return minutes_train, minutes_val, composition_val, composition_train
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -434,8 +549,19 @@ def run(cfg: dict) -> dict[str, Path]:
           f"{artifacts['minutes'].n_draws:,} draws")
     print(f"  composition@ {artifacts['composition'].recipe.variant}, "
           f"{artifacts['composition'].n_draws:,} draws")
+    fitted_sigma = artifacts["composition"].extras.get("sigma_u")
+    if fitted_sigma:
+        print(f"  the composition carries a FITTED player-season effect, sigma_u "
+              f"{float(fitted_sigma):.4f} "
+              f"[{float(artifacts['composition'].extras['sigma_u_lo']):.4f}, "
+              f"{float(artifacts['composition'].extras['sigma_u_hi']):.4f}] over "
+              f"{int(artifacts['composition'].extras['n_units']):,} units.\n"
+              f"  Its season totals below are drawn WITH it, and the injection sweep "
+              f"becomes a calibration check\n  rather than the measurement — see "
+              f"`player_season_effect_sweep`.")
 
-    minutes_train, minutes_val, composition_val = validation_frames(cfg)
+    (minutes_train, minutes_val, composition_val,
+     composition_train) = validation_frames(cfg)
     seasons = ", ".join(sorted(minutes_val["season"].unique()))
     print(f"\n  The test split is LOCKED — this gate reads VALIDATION only "
           f"({seasons}).")
@@ -524,9 +650,20 @@ def run(cfg: dict) -> dict[str, Path]:
     # fitted — see `player_season_effect_sweep`.
     sweep = player_season_effect_sweep(composition, comp_frame, composition_val,
                                        comp_units["realized"].to_numpy(float),
-                                       idx_c, y_comp, crps_mins)
+                                       idx_c, y_comp, crps_mins,
+                                       fitted_sigma=fitted_sigma or None)
     rows.extend(sweep)
-    best = min(sweep, key=lambda r: r["crps_minutes"])
+    # The grid's optimum, not the fitted row's — they answer different questions and the
+    # narrative below compares them.
+    best = min((r for r in sweep if r["sigma_source"] == "injected_grid"),
+               key=lambda r: r["crps_minutes"])
+
+    # The same grid on TRAINING rows — `docs/simulations-plan.md`'s named fallback made
+    # runnable, so a shippable sigma exists whether or not the Stan fit lands in time.
+    train_sweep = estimate_sigma_on_train(composition, artifacts["composition"],
+                                          composition_train)
+    rows.extend(train_sweep)
+    sigma_train = min(train_sweep, key=lambda r: r["crps_minutes"])
 
     rows.append(teammate_coupling(comp_totals, comp_units, composition_val,
                                   "composition_sum"))
@@ -598,8 +735,9 @@ def run(cfg: dict) -> dict[str, Path]:
     print(f"\nInjected per-player-season effect — is the "
           f"{rows[0]['predictive_sd'] / rows[1]['predictive_sd']:.2f}x a missing parameter "
           f"or a ceiling?")
-    print(pd.DataFrame(sweep)[["sigma", "crps_minutes", "crps_delta", "ci_lo", "ci_hi",
-                               "predictive_sd", "mae_minutes", "pit_ks", "verdict"]]
+    print(pd.DataFrame(sweep)[["sigma", "sigma_source", "crps_minutes", "crps_delta",
+                               "ci_lo", "ci_hi", "predictive_sd", "mae_minutes",
+                               "pit_ks", "verdict"]]
           .round(4).to_string(index=False))
     print(f"  A MISSING PARAMETER. At sigma {best['sigma']:.3f} the composition reads CRPS "
           f"{best['crps_minutes']:.2f} against the\n  marginal head's "
@@ -610,10 +748,52 @@ def run(cfg: dict) -> dict[str, Path]:
           f"the spread —\n  it forbids a SHARED one, and a per-player effect is not shared. "
           f"MAE barely moves ({best['mae_minutes']:.2f}),\n  so this buys spread and not "
           f"fit, which is exactly the diagnosis.")
-    print(f"  INJECTED, NOT FITTED: sigma is read off validation CRPS, so this is a tuned "
-          f"upper bound on\n  what the parameterization can reach, not a score. It settles "
-          f"the structural question and\n  nothing else — a real fit estimates sigma from "
-          f"train and re-estimates beta alongside it.")
+    print(f"\nThe same grid on TRAINING rows — the fallback's shippable sigma, since the "
+          f"row above\n  reads its optimum off the split it is scored against "
+          f"({sigma_train['seasons']}, "
+          f"{sigma_train['n']:,} player-seasons):")
+    print(pd.DataFrame(train_sweep)[["sigma", "crps_minutes", "mae_minutes", "pit_ks",
+                                     "predictive_sd"]].round(4).to_string(index=False))
+    print(f"  sigma_train = {sigma_train['sigma']:.3f} against the validation grid's "
+          f"{best['sigma']:.3f}. Agreement is the point:\n  it says the tuned figure was "
+          f"not tuned to the evaluation rows in any way that moved it.")
+
+    # Which sigma actually ships, and what it reads on validation. `composition_sum` above
+    # stays the UN-injected head deliberately: it is the control every claim here is
+    # measured against, and the figures README and docs-audit quote.
+    shipped = shipped_sigma(cfg)
+    row = next((r for r in sweep if abs(r["sigma"] - shipped) < 1e-9), None)
+    table_extra = {"arm": "shipped_configuration", "unit": "ps_effect_shipped",
+                   "sigma": shipped, "sigma_source": "config",
+                   "n": len(common), "n_draws": keep}
+    if row is not None:
+        table_extra.update({k: row[k] for k in
+                            ("crps_minutes", "mae_minutes", "pit_ks", "predictive_sd",
+                             "crps_delta", "ci_lo", "ci_hi", "verdict")})
+        print(f"\n  SHIPPED: sim.minutes.player_season_sigma = {shipped:.3f}, estimated on "
+              f"TRAIN.\n    validation CRPS {row['crps_minutes']:.2f} against the marginal "
+              f"head's {float(crps_mins.mean()):.2f} "
+              f"({row['crps_delta']:+.2f} [{row['ci_lo']:+.2f}, {row['ci_hi']:+.2f}] — "
+              f"{row['verdict'].upper()}),\n    PIT KS {row['pit_ks']:.4f} against "
+              f"{rows[0]['pit_ks']:.4f}, predictive sd {row['predictive_sd']:.1f} against "
+              f"{rows[1]['predictive_sd']:.1f} un-injected.\n    `rehydrate_composition` "
+              f"applies it, so a consumer gets it by loading the head rather than by "
+              f"remembering to.")
+    rows.append(table_extra)
+
+    if fitted_sigma:
+        row = next(r for r in sweep if r["sigma_source"] == "fitted")
+        print(f"  CALIBRATION CHECK, not the measurement: the head ships a FITTED sigma_u "
+              f"of {row['sigma']:.4f},\n  estimated on train, which reads CRPS "
+              f"{row['crps_minutes']:.2f} here against the grid's best "
+              f"{best['crps_minutes']:.2f} at sigma\n  {best['sigma']:.3f}. The grid stays "
+              f"because an interior optimum is how you find out whether a\n  fitted sigma "
+              f"landed in the right place.")
+    else:
+        print(f"  INJECTED, NOT FITTED: sigma is read off validation CRPS, so this is a "
+              f"tuned upper bound on\n  what the parameterization can reach, not a score. "
+              f"It settles the structural question and\n  nothing else — a real fit "
+              f"estimates sigma from train and re-estimates beta alongside it.")
 
     couple = {r["arm"]: r for r in rows if r.get("unit") == "teammate_coupling"}
     c, m = couple["composition_sum"], couple["minutes_head"]

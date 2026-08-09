@@ -314,10 +314,37 @@ games, re-run through the head's own allocation — moves the season-total predi
 64.65 to **239.45** at σ = **0.375** and the CRPS to **142.17**, which *ties* the marginal
 head (**−2.18**, interval **[−6.96, +2.85]**) while keeping the team constraint exact — and
 at σ = 0.45 the season-unit calibration passes it outright, PIT KS **0.0659** against 0.0735.
-MAE barely moves, so it buys spread and not fit. σ is read off validation there, so that is a
-tuned upper bound on the parameterization rather than a shipped score — but it settles the
-structural question, and it means retiring the marginal head is a live prospect rather than a
-closed one.
+MAE barely moves, so it buys spread and not fit.
+
+**The caveat that made that a bound rather than a score is now closed.** σ was read off
+validation, which is the split it is scored against — so the same grid was re-run on the last
+two *training* seasons (1,145 player-seasons) and its optimum is interior at **σ = 0.450**
+(CRPS **117.07** on those rows), one grid step from validation's 0.375 and worth 0.4 CRPS
+minutes between them. Two grids on disjoint rows agreeing to a step is the evidence that the
+figure was never moved by the evaluation data. At σ = 0.450 the validation reading is CRPS **142.87** against 144.35 — gap
+**−1.49**, interval **[−6.14, +3.22]**, a tie — with the better PIT KS of the two and the team
+constraint still exact. So the injection is shippable today with a σ that owes the evaluation
+rows nothing, and retiring the marginal head is a live prospect rather than a closed one.
+
+**So the injection ships**, as `sim.minutes.player_season_sigma = 0.450`, applied by
+`minutes_unification.rehydrate_composition` — a consumer gets the effect by loading the head
+rather than by remembering to apply it, and 0.0 recovers the un-injected head exactly.
+
+`composition_glm.stan` also carries the effect as an **optional fitted parameter** (`sigma_u`,
+with `U_n = 0` nesting the shipped head exactly), and `make posteriors` persists its scale and
+takes precedence over the constant. It is built but **not fitted**: at 12.0× the shipped arm's
+cost it did not converge inside the budget, and four sampler-side remedies — centring, sharing
+`rho`, dropping `rho`, and a dense metric — all made it worse rather than better, so the cost
+is intrinsic to a 2,204-parameter hierarchical posterior rather than a configuration mistake.
+`make composition-effects` is the ladder and `docs/potential-to-dos.md` is the write-up. What
+a fit would still buy is a σ estimated jointly with the coefficients and a predictive that
+integrates over σ's posterior instead of plugging one in.
+
+**Five independent routes agree on the effect size**, which is why a plugged-in σ is
+defensible in the meantime: 0.375 (validation CRPS grid), ≈0.41 (calibration — the ratio of
+the head's residual sd to its predictive sd), **0.450** (train CRPS grid, the shipped value),
+0.4776 and 0.4809 (fitted in Stan, non-centred and centred). Two of those share no arithmetic
+with the others.
 
 **And the constraint is not just a cost — it is a dynamic the contest is sensitive to.** A
 team's season minutes are a fixed pot, so teammates' season totals are negatively correlated:
@@ -522,7 +549,7 @@ with the MLE inside the 95% credible interval for 21 of 21 terms. Cost is concen
 entirely in the spline variants. Dropping the test side halved the component fit count from
 74 and cut sampler time from 305.0 to **137.4** minutes *while* raising every selection fit
 to full-length chains — which incidentally fixed the one fit that used to miss its R̂ bar.
-877 tests pass (`.venv/bin/pytest tests/`).
+969 tests pass (`.venv/bin/python -m pytest tests/`).
 
 ---
 

@@ -53,6 +53,10 @@ to the relevant docs for the task at hand. The docs are:
   - old_readme.md: Archival project context. Superceded by @README.md.
   - pipeline.md: Lists and describes the make files used to implement the 
   project pipeline. 
+  - potential-to-dos.md: Parking lot for measurable ideas that are not yet 
+  scheduled — what to compare, what evidence points at it, and what would 
+  settle it. Not commitments and not results; deliberately outside 
+  `make docs-audit`.
   - predictions-plan.md: Plan and notes for the models for the various box-score 
   statistics that feed into the *dk_pts* figure. Work completed and mostly 
   archival.

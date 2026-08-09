@@ -37,6 +37,37 @@
 // likelihood is one vectorized beta_binomial over the non-deterministic rows, the
 // same shape as betabinomial_glm.stan. At simulation time they are recomputed
 // sequentially from each draw; see src/models/stan_composition.py.
+//
+// ── The optional per-(player, season) random effect ───────────────────────────
+//
+// Added 2026-08-09. `make minutes-unification` scored this head's summed draws at the
+// SEASON unit and found them 4.68x too narrow (predictive sd 64.65 against the marginal
+// head's 302.75), and traced that to a missing parameter rather than to the team
+// constraint: a SHARED shift is definitionally a re-allocation here and has 0.000000% of
+// the residual variance to reach, but a per-(player, season) shift is not shared — one
+// player's breakout takes minutes from a teammate, which is exactly what the constraint
+// permits. Injecting `sigma * z` per unit per posterior draw into the fitted posterior
+// moved the season-total sd to 239.45 and tied the marginal head on CRPS. This block
+// fits it instead of injecting it.
+//
+// The index is (player, season) and NOT player: a minutes role is a property of the
+// season a player is in, and a career-long effect would be absorbed by `logit_share_lag1`
+// and the offset.
+//
+// **U_n = 0 disables it EXACTLY.** `u_z` and `sigma_u` are then zero-length, so the
+// parameter space, the priors and the likelihood are identical to the model without this
+// block. That is the same `S = 0` device `betabinomial_glm.stan` uses for its year effect
+// and the same one `n_rho_par` already uses here for the binomial arm — a house pattern
+// rather than an import. A test pins the nesting, because it is the only thing separating
+// "a parameter was added" from "the shipped head was silently changed".
+//
+// `u_centered` picks the parameterization, and the reason it is a knob rather than a
+// constant is that neither choice is right for this frame. Rows per unit run median 57,
+// p10 11, minimum 1: the well-informed units would prefer the centered form and the
+// one-game units are a funnel under it. Non-centered is the default because the funnel is
+// the failure that produces wrong answers rather than slow ones — but a tiny step size with
+// treedepth saturation is the *other* symptom, and the centered arm is the response to it.
+// Both are the same model; only the geometry NUTS walks differs.
 functions {
   // log P(Y >= lo), summed UPWARD from lo in log space via the pmf ratio
   // recurrence. Two numerical facts force this exact shape, both paid for in runs:
@@ -92,11 +123,16 @@ data {
   array[P] int<lower=1, upper=n_rho> rho_bin;   // bin edges from TRAIN quantiles only
   real<lower=0> beta_scale;             // 1/sqrt(2*l2) reproduces an L2 penalty of l2
   real<lower=0> intercept_scale;
+  int<lower=0> U_n;                     // (player, season) units; 0 disables the effect
+  array[P] int<lower=0> unit_idx;       // 1..U_n, ignored (and all zero) when U_n == 0
+  real<lower=0> u_sd_scale;             // half-normal scale on sigma_u
+  int<lower=0, upper=1> u_centered;     // 0 = non-centred (default), 1 = centred
 }
 transformed data {
   // One deterministic last row per team-game, so P - G rows carry likelihood.
   int n_lik = P - G;
   int n_rho_par = dispersed ? n_rho : 0;   // no dispersion parameter on the binomial arm
+  int H_u = U_n > 0 ? 1 : 0;               // no sigma_u when the effect is disabled
   int n_bound = 0;
   for (r in 1:P) {
     if (!is_last[r] && lo[r] > 0) n_bound += 1;
@@ -143,12 +179,27 @@ parameters {
   vector<lower=1e-6, upper=0.95>[n_rho_par] rho;
   real alpha;
   vector[K] beta;
+  vector[U_n] u_z;                      // zero-length when U_n == 0
+  vector<lower=0>[H_u] sigma_u;         // zero-length when U_n == 0
 }
 model {
   vector[P] eta = logit_prior + alpha + X * beta;
 
   alpha ~ normal(0, intercept_scale);
   beta ~ normal(0, beta_scale);
+  if (U_n > 0) {
+    sigma_u ~ normal(0, u_sd_scale);
+    if (u_centered) {
+      // The SAME model, walked in the other coordinates: u ~ normal(0, sigma_u) entering
+      // eta directly. Preferred when every unit is well informed, which the median 57 rows
+      // per unit says most of them are.
+      u_z ~ normal(0, sigma_u[1]);
+      eta += u_z[unit_idx];
+    } else {
+      u_z ~ std_normal();
+      eta += sigma_u[1] * u_z[unit_idx];
+    }
+  }
 
   if (dispersed) {
     // Per-row dispersion by bin, still one vectorized beta_binomial call: multiple

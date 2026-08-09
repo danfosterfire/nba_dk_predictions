@@ -3269,11 +3269,251 @@ REGISTRY: tuple[Decision, ...] = (
                 "R2. Cost risk is named: `dense_e` is not viable at 12,307 units and the "
                 "arms must drop to `diag_e`.",
         status="open",
-        unblocks="build item 3d — make stan-composition with the +ps / +team / +ps_team arms",
+        unblocks="the full-window fit of the +ps arm — the CAPABILITY landed 2026-08-09 "
+                 "(see [[composition-carries-an-optional-player-season-effect]]); what is "
+                 "still open is which window it is committed at",
         source="docs/simulations-plan.md",
         reviewed="2026-08-09",
         date="2026-08-09",
         tags=("next", "architecture"),
+    ),
+    Decision(
+        id="composition-carries-an-optional-player-season-effect",
+        topic="minutes",
+        claim="`composition_glm.stan` carries an **optional** per-(player, season) random "
+              "effect, and **`U_n = 0` nests the shipped head exactly** — not approximately. "
+              "`make posteriors` persists `sigma_u` and only `sigma_u`; the fitted `u_z` are "
+              "never stored.",
+        because="The build half of [[player-season-effect-is-fitted-not-injected]]. The "
+                "nesting is checked as an IDENTITY rather than as source text: at "
+                "`sigma_u = 0` the effect model's log density exceeds the `U_n = 0` model's "
+                "by exactly `-0.5 * sum(z^2)` and nothing else, so the likelihood, the "
+                "stick-breaking offset, the priors on alpha/beta and the dispersion term are "
+                "untouched. That is the only thing separating 'a parameter was added' from "
+                "'the shipped head was silently changed', and every figure the incumbent's "
+                "artifact carries depends on it. The `S = 0` device is copied from "
+                "`betabinomial_glm.stan`, which is a house pattern rather than an import — "
+                "`n_rho_par` already uses it here for the binomial arm. `u_z` is discarded "
+                "for the same reason `year_z` is: a fitted per-level value describes a level "
+                "that is over, and carrying one forward would be a player-season FIXED "
+                "effect smuggled into a prediction-time model. The predictive integrates "
+                "over a fresh `z ~ N(0,1)` per (unit, posterior draw), shared across that "
+                "unit's games — the sharing is the whole mechanism, since per-game noise "
+                "averages down by ~1/sqrt(G) when summed to a season while a season-level "
+                "shift passes through in full. `posteriors._finish` gained the capability "
+                "rather than being routed around it, thinning `sigma_u` on the SAME draw "
+                "index as alpha/beta; the year-effect refusal stays and now names this as "
+                "the worked example, because an artifact that silently drops a fitted random "
+                "effect has a narrower predictive than the head it claims to persist, which "
+                "is the one failure a round-trip on the mean cannot see.",
+        status="built",
+        reproduce="make test → tests/test_stan_composition.py, tests/test_posteriors.py",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("architecture",),
+    ),
+    Decision(
+        id="the-player-season-effect-costs-12x",
+        topic="minutes",
+        claim="**Fitting the player-season effect costs 12.0x the shipped arm on identical "
+              "rows, and does not converge at short chains** — so the full-window commitment "
+              "is a schedule decision, not a technical one. The fitted `sigma_u` "
+              "nonetheless REPLICATES the injection at **0.4776**.",
+        because="Gate A, probing the arm that carries the cost risk rather than a plain one. "
+                "On one training season of the pilot window (26,039 rows, 605 units, "
+                "200 + 200 x 4 chains) the shipped specification fits in **125 s** under "
+                "`dense_e` with max R-hat 1.0172, min ESS 400, 0 divergences and no "
+                "treedepth saturation; the `ps` arm on the SAME rows under `diag_e` takes "
+                "**1,496 s** and misses both convergence bars — R-hat **1.0948** against "
+                "1.01 and min ESS **35** against 400. **The diagnosis is mixing, not "
+                "geometry**: 0 divergences with 17 treedepth-saturated draws and a step size "
+                "of 0.00942 is a sampler taking very long trajectories through a poorly "
+                "conditioned diagonal metric, not one falling into a funnel — so 1,496 s is "
+                "a LOWER bound on a usable fit. `dense_e` is not an option at 12,307 units "
+                "(a 12,332-square mass matrix, ~1.2 GB and a Cholesky per adaptation "
+                "window), so the treedepth win that metric bought is given back in full, "
+                "exactly as [[player-season-effect-is-fitted-not-injected]] predicted. "
+                "**The centred parameterization — the plan's own named first response — is "
+                "a measured null**: on identical rows `ps_centered` reads 2,510 s, R-hat "
+                "1.1067, min ESS 27, 0 divergences and **212** treedepth-saturated draws "
+                "against the non-centred arm's 17. The wall clock is contended and not a "
+                "clean comparison; the saturation count is, because it is a property of the "
+                "geometry rather than of the machine, and it rises 12.5x. Zero divergences "
+                "in BOTH coordinate systems rules out a funnel either way, so the "
+                "parameterization is not the lever — and the premise behind the default "
+                "does not survive this window, since the plan argued from 'p10 11, minimum "
+                "1' where the pilot's units run median 49 with only 1.8% carrying a single "
+                "row. **Five configurations were tested and the SHIPPED one is the best of "
+                "them**, on identical rows and iterations: `ps` (graded rho, non-centred) "
+                "R-hat **1.0948** / ESS 35 / 17 saturated; `ps_centered` 1.1067 / 27 / 212; "
+                "`ps_shared_rho` 1.1390 / 20 / 0; `ps_no_rho` **1.3289** / 11 / **791 of "
+                "800**. Removing `rho` makes it dramatically WORSE, so it is helping rather "
+                "than competing — strip the dispersion and the binomial likelihood "
+                "sharpens, each unit's `u_z` is pinned by its own rows, and the geometry "
+                "degrades; grading `rho` also beats sharing it. **So the cost is intrinsic "
+                "to adding 605+ unit parameters to this likelihood, not a configuration "
+                "mistake**, and three attempts to tune it away all failed. `sigma_u` moves "
+                "exactly as the mechanism predicts across the ablation — 0.4776 graded, "
+                "0.4986 shared, 0.5414 none — which checks it. The remaining untried lever "
+                "is mechanical (`reduce_sum` against 1,487 scalar truncation calls per "
+                "gradient); the cheaper one is not in the sampler at all, see "
+                "[[fit-window-may-not-need-1996]]. "
+                "Extrapolated by rows AND units with this head's own measured 1.63x Gate A "
+                "correction: **~6.3 h per random-effect arm at the pilot window**, ~15.7 h "
+                "for the four-arm ladder, and **~38 h** for one arm at the full window. "
+                "**The free result is the replication.** The under-converged fit puts "
+                "`sigma_u` at **0.4776**, and the centred arm at **0.4809**, against 0.375 "
+                "from the injection grid scored on validation and 0.450 from the same grid "
+                "scored on train — four routes to the effect size inside a band of 0.11, "
+                "which is Gate P5 passing. The last pair is the strongest of them: the "
+                "injections share arithmetic, while the two parameterizations share only "
+                "the model. Read it as corroboration of the SIZE, not as a value to ship: "
+                "the chains had not mixed.",
+        status="measured",
+        reproduce="make composition-effects → "
+                  "outputs/predictions/composition_effects_diagnostics.csv, "
+                  "outputs/predictions/composition_effects_metrics.csv, "
+                  "outputs/predictions/composition_effects_season.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("architecture", "cost"),
+    ),
+    Decision(
+        id="fit-window-may-not-need-1996",
+        topic="minutes",
+        claim="**The 22 training seasons before 2018-19 may be buying nothing**, and the "
+              "fitting window is a **6.0x** cost lever on the fitted `sigma_u` work — "
+              "37.6 h at the full window against 6.3 h at 2018-19 onward, per "
+              "random-effect arm.",
+        because="Scored on the SAME 742 validation player-seasons, the shipped composition "
+                "specification fitted on 4 training seasons beats the full-window incumbent "
+                "on five of seven metrics — per-team-game CRPS **4.4561** against 4.4945, "
+                "R2 0.4758 against 0.4741, PIT KS 0.0311 against 0.0428 — and loses "
+                "narrowly at the season unit (CRPS 171.57 against 170.06, predictive sd "
+                "58.81 against 64.65). **This is a prompt, not a finding**: one arm, no "
+                "bootstrap on a 0.04 CRPS gap, and the two fits ran at different iteration "
+                "counts. Two independent arguments point the same way. The target season is "
+                "2026-27 and the early seasons are a different sport — league three-point "
+                "share drifted +0.057 over the fourteen seasons to 2011-12 and then rose "
+                "**+0.171** over the fourteen after, making **2012-13** the measured "
+                "breakpoint; and **1996-97 is a different rule regime entirely**, the last "
+                "season of the NBA's shortened three-point line, whose restoration in "
+                "1997-98 is the largest single-season move in the whole series at "
+                "**-0.0524**. Shortening the window also drops the dense mass matrix from "
+                "1.2 GB to 38 MB, which returns `dense_e` to the table — see "
+                "[[the-player-season-effect-costs-12x]]. One wrinkle blocks acting on it: "
+                "`stan.composition.first_season` is read by both the incumbent's sweep and "
+                "`posteriors.composition_artifact`, so re-scoping production silently "
+                "re-scopes the audited artifact. The ladder that would settle it is in "
+                "docs/potential-to-dos.md.",
+        status="open",
+        unblocks="a window ladder on stan-availability and stan-components at matched "
+                 "iteration counts with a paired bootstrap — minutes rather than hours, and "
+                 "it gates whether the expensive head is worth re-scoping",
+        source="docs/potential-to-dos.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("next", "architecture", "cost"),
+    ),
+    Decision(
+        id="composition-effects-is-its-own-target",
+        topic="minutes",
+        claim="The player-season / team-context ladder runs as **`make composition-effects`**, "
+              "writing its own artifacts, rather than as extra arms inside "
+              "`make stan-composition`.",
+        because="Three reasons, and the first is a build gate. (1) "
+                "`outputs/predictions/stan_composition_metrics.csv` is the incumbent's "
+                "record and `make docs-audit` re-derives eleven quoted figures from it, so a "
+                "partial run — three new arms, no `binomial`, no `betabinom`, at a pilot "
+                "window — would have failed the gate on bookkeeping rather than on a "
+                "measurement. (2) `docs/simulations-plan.md` says explicitly not to refit the "
+                "incumbent: its posterior is on disk and is the comparison baseline. (3) The "
+                "arm ORDERING and the full-window COMMITMENT are separate decisions, and "
+                "this head already took exactly that path once from Gate A to Gate E. The "
+                "ladder is four arms rather than three because a pilot-window ordering is "
+                "uninterpretable against a full-window baseline, so `base` — the shipped "
+                "specification on THIS window — is a same-window control, the same role "
+                "`season_trend_covered` plays in [[game-length-is-drawn-not-looked-up]].",
+        status="settled",
+        reproduce="make composition-effects → "
+                  "outputs/predictions/composition_effects_deviation.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("architecture", "provenance"),
+    ),
+    Decision(
+        id="the-minutes-deviation-is-barely-predictable",
+        topic="minutes",
+        claim="**The deviation a player-season effect is a parameter for is ~7.5% "
+              "predictable from pre-season information, and the team-context block is worth "
+              "+1.2 points of R2 of that.** Recorded as a null on the feature side and as "
+              "the argument for a random effect on the parameter side.",
+        because="`logit(realized minutes share) - logit(prior share)` over **8,570** "
+                "full-window training player-seasons has sd **0.5954**. Against it: the "
+                "player's own lag-1 deviation correlates **-0.2519** — mean reversion, not "
+                "persistence — departed teammates' prior share **+0.0411**, arrivals "
+                "**-0.0105**, net minutes opened **+0.0672**. In-sample R2 runs **0.0634** "
+                "from own history, **0.0699** adding roster churn, **0.0750** adding the "
+                "five-column team block; the block ALONE reads 0.0065. Every sign is right, "
+                "so the construction is sound and the magnitudes are the finding. This "
+                "promotes the scratch figures `docs/simulations-plan.md` had been quoting as "
+                "prose (-0.201 / +0.041 / -0.063 / +0.088, R2 0.040 -> 0.052) into an "
+                "artifact; the +1.2 points reproduces exactly and the individual "
+                "correlations reproduce in sign and rough magnitude on a differently "
+                "qualified population. **The implication is the item's whole design**: if "
+                "the deviation were forecastable you would add features, and it is not, so "
+                "you add a random effect and let the spread be honest. It is the same wall "
+                "the rest of the project hits, where availability persists at r = 0.317 and "
+                "five games of the real season settle 86% of the season total.",
+        status="measured",
+        reproduce="make composition-effects → "
+                  "outputs/predictions/composition_effects_deviation.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("architecture",),
+    ),
+    Decision(
+        id="injected-sigma-estimated-on-train-is-0.45",
+        topic="minutes",
+        claim="**The injection's sigma, re-estimated on TRAIN, is 0.450** — one grid step "
+              "from the 0.375 read off validation. The fallback in "
+              "[[player-season-effect-is-fitted-not-injected]] is therefore shippable today, "
+              "and ties the marginal head at the season unit.",
+        because="The injection's load-bearing caveat was that sigma is tuned on the split it "
+                "is scored against. `minutes_unification.estimate_sigma_on_train` runs the "
+                "identical grid — same arithmetic, same metric, same code path — over the "
+                "last two TRAINING seasons (2020-21, 2021-22; 1,145 player-seasons) and the "
+                "CRPS optimum is interior at **0.450** (117.07, against 117.45 at 0.375 and "
+                "119.55 at 0.600). **The agreement is the result**: two grids on disjoint "
+                "rows disagree by one step, and the two candidates are 0.4 CRPS minutes "
+                "apart on train and 0.7 on validation, so the figure was never moved by the "
+                "evaluation rows. At sigma 0.450 the validation reading is CRPS **142.87** "
+                "against the marginal head's 144.35 — gap **-1.49**, interval "
+                "[-6.14, +3.22], a TIE — with PIT KS **0.0659** against 0.0735, so it is the "
+                "better calibrated of the two at the season unit while the team constraint "
+                "still holds exactly. This does not retire the fitted version: only a fit "
+                "estimates sigma jointly with beta, and only a fit can shrink sigma in "
+                "response to features, which is Gate P4. What it does is take the schedule "
+                "risk out of the item — drafts happen before October and this needs no "
+                "refit. **SHIPPED 2026-08-09** as `sim.minutes.player_season_sigma`, and "
+                "applied by `minutes_unification.rehydrate_composition` rather than by the "
+                "simulator, so a consumer gets the effect by loading the head instead of by "
+                "remembering to apply it — which was the injection's worst property and "
+                "exactly the provenance failure this repo has been bitten by before. A "
+                "fitted `sigma_u` takes precedence automatically if one is ever persisted, "
+                "and 0.0 recovers the un-injected head exactly, which is the control every "
+                "claim here is measured against. The fitted version did not converge in the "
+                "budget available; see docs/potential-to-dos.md.",
+        status="settled",
+        reproduce="make minutes-unification → outputs/predictions/minutes_unification.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("architecture",),
     ),
     Decision(
         id="simulator-minutes-draw-is-both-heads",

@@ -12,8 +12,8 @@ PIP    := .venv/bin/pip
         variance-budget residual-correlation season-effects \
         stan stan-availability stan-minutes stan-components stan-composition \
         stan-substitution season-terms games-played stan-games-played \
-        stan-game-length posteriors minutes-unification scoring-periods draft-pool \
-        final-evaluation
+        stan-game-length posteriors minutes-unification composition-effects \
+        scoring-periods draft-pool final-evaluation
 
 venv:
 	/opt/homebrew/bin/python3.14 -m venv .venv
@@ -273,6 +273,22 @@ posteriors:
 # against. No CmdStan.
 minutes-unification:
 	$(PYTHON) -m src.models.minutes_unification
+
+# Item 3d: fit the per-(player, season) random effect `make minutes-unification` measured
+# the need for, and sweep a team-context block alongside it. Four arms — a same-window
+# `base` control plus `ps`, `team`, `ps_team` — at the PILOT window by default, because the
+# ordering is what the pilot buys and the full-window commitment is a separate decision.
+#
+# NEEDS CmdStan, and it is expensive: `dense_e` is forced off on the random-effect arms
+# (12,307 units at the full window would be a 12,332-square mass matrix), so part of the
+# treedepth win the dense metric bought is given back. Gate A probes the `ps` arm rather
+# than a plain one and aborts before a run that will not fit the budget.
+#
+# Deliberately NOT part of `make stan`, and deliberately not writing
+# outputs/predictions/stan_composition_*.csv: that artifact is the incumbent's record and
+# `make docs-audit` re-derives eleven quoted figures from it.
+composition-effects:
+	$(PYTHON) -m src.models.composition_effects
 
 # One row per (season, game_id): its scoring period and its DK tournament round. A
 # best-ball lineup is scored weekly, so every weekly max, round total and advancement

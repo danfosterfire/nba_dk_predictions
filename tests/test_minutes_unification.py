@@ -390,3 +390,88 @@ def test_a_teams_season_minutes_are_fixed_across_draws():
     assert totals.std(axis=0).max() > 0
     assert samples.sum(axis=1).std() == 0.0
     assert samples.sum(axis=1)[0] == frame.groupby("game_id")["N"].first().sum()
+
+
+# ── Reading a fitted sigma_u off the artifact ─────────────────────────────────
+
+def test_a_composition_artifact_without_sigma_u_rehydrates_with_the_effect_off():
+    """Every artifact written before item 3d carries no `sigma_u_draws`, and must
+    rehydrate as the head that shipped rather than as one with a silent zero effect."""
+    model = MU.rehydrate_composition(_composition_artifact(), keep=8)
+    assert not model.ps.enabled
+    assert model.ps.sigma_draws.size == 0
+
+
+def test_a_fitted_sigma_u_is_picked_up_and_widens_the_predictive():
+    """The gate is re-takable rather than re-arguable only if the rehydrated head carries
+    the effect the fit found. The stream comes off the artifact too, so the rehydrated
+    head draws the same `z` sequence the fitted one would."""
+    artifact = _composition_artifact()
+    artifact.draws["sigma_u_draws"] = np.full(16, 0.4)
+    artifact.extras.update({"player_season_effect": True, "u_sd_scale": 1.0,
+                            "u_stream": "effects/ps", "sigma_u": 0.4})
+
+    model = MU.rehydrate_composition(artifact, keep=8)
+    assert model.ps.enabled and model.ps.stream == "effects/ps"
+    np.testing.assert_allclose(model.ps.sigma_draws, 0.4)
+
+    frame = pd.DataFrame({"player_id": [1, 1, 2, 2], "season": "2022-23"})
+    shift = model.ps.shift(frame, np.arange(8))
+    assert shift.shape == (4, 8)
+    assert np.allclose(shift[0], shift[1]) and not np.allclose(shift[0], shift[2])
+
+
+def test_the_sweep_marks_the_fitted_sigma_apart_from_the_injected_grid():
+    """Once a sigma is fitted the sweep stops being the measurement and becomes the
+    calibration check, so the two kinds of row must be distinguishable in the artifact —
+    a fitted row silently indistinguishable from a tuned one is exactly the confusion the
+    injection's caveat exists to prevent."""
+    import inspect
+
+    source = inspect.getsource(MU.player_season_effect_sweep)
+    assert '"sigma_source": source' in source
+    assert '"fitted"' in source and '"injected_grid"' in source
+
+
+# ── The shipped injected sigma ────────────────────────────────────────────────
+
+def test_the_shipped_sigma_comes_from_config_with_a_documented_default():
+    """One place, so a consumer cannot forget it — and 0.0 has to be supported, because
+    the un-injected head is the control every claim about the injection is measured
+    against."""
+    assert MU.shipped_sigma({}) == MU.SHIPPED_PS_SIGMA
+    assert MU.shipped_sigma({"sim": {"minutes": {"player_season_sigma": 0.3}}}) == 0.3
+    assert MU.shipped_sigma({"sim": {"minutes": {"player_season_sigma": 0.0}}}) == 0.0
+
+
+def test_an_injected_sigma_makes_the_effect_live_on_the_rehydrated_head():
+    """The whole point of shipping it here rather than in `src/sim/season.py`: the effect
+    arrives by loading the head, not by remembering to apply it afterwards."""
+    model = MU.rehydrate_composition(_composition_artifact(), keep=8, injected_sigma=0.45)
+    assert model.ps.enabled and model.sigma_source == "injected"
+    np.testing.assert_allclose(model.ps.sigma_draws, 0.45)
+
+    frame = pd.DataFrame({"player_id": [1, 1, 2, 2], "season": "2022-23"})
+    shift = model.ps.shift(frame, np.arange(8))
+    assert np.allclose(shift[0], shift[1]) and not np.allclose(shift[0], shift[2])
+
+
+def test_a_fitted_sigma_takes_precedence_over_the_injected_constant():
+    """If the head ever ships a fitted `sigma_u`, the config constant must not override
+    it — the artifact is the better estimate and carries a posterior."""
+    artifact = _composition_artifact()
+    artifact.draws["sigma_u_draws"] = np.linspace(0.40, 0.50, 16)
+    artifact.extras.update({"player_season_effect": True, "sigma_u": 0.45})
+
+    model = MU.rehydrate_composition(artifact, keep=16, injected_sigma=0.30)
+    assert model.sigma_source == "fitted"
+    np.testing.assert_allclose(model.ps.sigma_draws, np.linspace(0.40, 0.50, 16))
+
+
+def test_zero_recovers_the_uninjected_head_exactly():
+    """`composition_sum` in the artifact is the un-injected control and README quotes it,
+    so turning the knob off has to reproduce it rather than merely approximate it."""
+    model = MU.rehydrate_composition(_composition_artifact(), keep=8, injected_sigma=0.0)
+    assert not model.ps.enabled and model.sigma_source == "none"
+    frame = pd.DataFrame({"player_id": [1, 1, 2, 2], "season": "2022-23"})
+    assert np.allclose(model.ps.shift(frame, np.arange(8)), 0.0)

@@ -163,6 +163,24 @@ make minutes-unification
                        #   rehydrates each head around its persisted `make posteriors`
                        #   draws and calls the head's own predict path, so it costs
                        #   seconds against the composition's 9.92 h and needs no CmdStan.
+                       #   It also runs the same injection grid on TRAINING rows, which is
+                       #   what makes the injection shippable: sigma_train = 0.450 against
+                       #   the validation grid's 0.375.
+
+make composition-effects
+                       # item 3d — the per-(player, season) random effect fitted as
+                       #   `sigma_u` in composition_glm.stan, and a team-context block
+                       #   swept alongside it. Four arms (`base` `ps` `ps_team` `team`)
+                       #   at the PILOT window
+                       #   → outputs/predictions/composition_effects_{metrics,season,
+                       #   deviation,diagnostics}.csv. NEEDS CmdStan and is EXPENSIVE:
+                       #   `dense_e` is not viable at 12,307 player-season units so the
+                       #   random-effect arms drop to `diag_e`, and Gate A probes the `ps`
+                       #   arm rather than a plain one for exactly that reason. Writes its
+                       #   own artifacts rather than stan_composition_*.csv, which is the
+                       #   incumbent's record and is quoted by `make docs-audit`. The
+                       #   deviation table lands BEFORE any sampling, so an aborted run
+                       #   still leaves it.
 ```
 
 **After `make posteriors`, nothing else in the simulation layer needs CmdStan.** That is the

@@ -555,3 +555,318 @@ def test_composition_head_samples_cleanly_when_the_feasibility_bound_binds():
                             predictive_samples=20).fit(observed)
     assert model.diagnostics["divergences"] == 0
     assert np.isfinite(model.diagnostics["max_rhat"])
+
+
+# ── The per-(player, season) random effect ────────────────────────────────────
+
+def test_the_player_season_parameters_are_zero_length_when_U_n_is_zero():
+    """`U_n = 0` must disable the effect EXACTLY, not approximately.
+
+    Same bar as `betabinomial_glm`'s year block and the same reason: if the disabled
+    parameter space is not literally identical, `base` is not the shipped head and every
+    figure the incumbent's artifact carries is describing a different model.
+    """
+    code = _stan_code()
+    assert "int H_u = U_n > 0 ? 1 : 0;" in code
+    assert "vector[U_n] u_z;" in code
+    assert "vector<lower=0>[H_u] sigma_u;" in code
+
+
+def test_the_player_season_effect_is_non_centred():
+    """Rows per unit run median 57 but p10 11 and minimum 1 — the sparse tail funnels
+    under a centred parameterization, so non-centred is the default and divergences are
+    the diagnostic that would send it back."""
+    code = _stan_code()
+    assert "u_z ~ std_normal();" in code
+    assert "sigma_u[1] * u_z[unit_idx]" in code
+
+
+def test_the_disabled_term_passes_a_block_stan_never_reads():
+    """Stan has no optional data, so the disabled arm still ships the three keys — with
+    `U_n = 0` and every index 0, which the model never dereferences."""
+    from src.models.stan_composition import PlayerSeasonTerm
+
+    frame = _team_rows([30, 25, 20, 15, 10, 5])
+    block = PlayerSeasonTerm(False).data(frame)
+    assert block["U_n"] == 0
+    assert block["unit_idx"] == [0] * len(frame)
+
+
+def test_the_enabled_term_indexes_player_season_and_not_player():
+    """A career-long effect would be absorbed by `logit_share_lag1` and the offset, so
+    the same player in two seasons must be two units."""
+    from src.models.stan_composition import PlayerSeasonTerm
+
+    frame = pd.DataFrame({"player_id": [1, 1, 2, 2], "season": ["2019-20", "2020-21"] * 2})
+    block = PlayerSeasonTerm(True).data(frame)
+    assert block["U_n"] == 4
+    assert sorted(block["unit_idx"]) == [1, 2, 3, 4]
+
+
+def test_the_shift_is_shared_within_a_unit_and_free_across_draws():
+    """The whole mechanism. Per-game noise averages down by ~1/sqrt(G) when summed to a
+    season; a shift shared across a player's games passes through in full, which is the
+    4.68x `make minutes-unification` measured. A `z` drawn per ROW would reproduce the
+    per-game marginal and buy none of the season-level spread."""
+    from src.models.stan_composition import PlayerSeasonTerm
+
+    term = PlayerSeasonTerm(True, stream="test")
+    term.sigma_draws = np.full(4, 0.5)
+    frame = pd.DataFrame({"player_id": [1, 1, 1, 2, 2], "season": "2020-21"})
+    shift = term.shift(frame, np.arange(4))
+
+    assert shift.shape == (5, 4)
+    assert np.allclose(shift[0], shift[1]) and np.allclose(shift[1], shift[2])
+    assert not np.allclose(shift[0], shift[3])
+    assert not np.allclose(shift[:, 0], shift[:, 1])
+
+
+def test_a_disabled_term_shifts_nothing_so_predict_samples_is_unchanged():
+    """The nesting, on the Python side of the boundary: a head built without the effect
+    must draw exactly what it drew before the parameter existed."""
+    from src.models.stan_composition import StanComposition
+
+    frame = _sequenced([_team_rows([30, 25, 20, 15, 10, 5], game_id=g)
+                        for g in (1, 2, 3)])
+    model = StanComposition(["w_share"], dispersed=1, n_rho=1, predictive_samples=8)
+    model.scaler = _identity_scaler()
+    model.alpha_draws = np.zeros(8)
+    model.beta_draws = np.zeros((8, 1))
+    model.rho_draws = np.full((8, 1), 0.1)
+    model.rho_by_bin, model.rho = np.full(1, 0.1), 0.1
+
+    assert not model.ps.enabled
+    assert np.allclose(model.ps.shift(frame, np.arange(8)), 0.0)
+    eta, _ = model._eta_base(frame)
+    assert np.allclose(eta, 0.0)
+
+
+def _identity_scaler():
+    from sklearn.preprocessing import StandardScaler
+
+    scaler = StandardScaler()
+    scaler.fit(np.zeros((2, 1)))
+    scaler.scale_ = np.ones(1)
+    scaler.mean_ = np.zeros(1)
+    return scaler
+
+
+def test_eta_base_excludes_the_fitted_effect_so_the_sweep_cannot_double_count_it():
+    """`_eta_base` is the DETERMINISTIC predictor, and two consumers depend on that:
+    `posteriors._finish` stores it as the round-trip reference (a fresh `z` per call
+    would make the gate non-reproducible) and `player_season_effect_sweep` injects its
+    own sigma on top."""
+    from src.models.stan_composition import StanComposition
+
+    frame = _sequenced([_team_rows([30, 25, 20, 15, 10, 5], game_id=g) for g in (1, 2)])
+    model = StanComposition(["w_share"], dispersed=1, n_rho=1, predictive_samples=6,
+                            player_season_effect=True)
+    model.scaler = _identity_scaler()
+    model.alpha_draws = np.zeros(6)
+    model.beta_draws = np.zeros((6, 1))
+    model.rho_draws = np.full((6, 1), 0.1)
+    model.rho_by_bin, model.rho = np.full(1, 0.1), 0.1
+    model.ps.sigma_draws = np.full(6, 0.4)
+
+    eta, _ = model._eta_base(frame)
+    assert np.allclose(eta, 0.0)
+    assert np.abs(model.ps.shift(frame, model._draw_index())).max() > 0
+
+
+# ── The team-context block ────────────────────────────────────────────────────
+
+def _team_block(pairs, value=0.5):
+    from src.models.stan_composition import TEAM_COLS
+
+    block = pd.DataFrame(pairs, columns=["player_id", "season"])
+    for i, col in enumerate(TEAM_COLS):
+        block[col] = value + i
+    return block
+
+
+def test_the_team_block_gets_ONE_indicator_not_one_per_column():
+    """Five per-column flags would be five exact copies of each other — the degenerate
+    subspace `design_missing` already exists to avoid, one block over."""
+    from src.models.stan_composition import TEAM_COLS, attach_team_context
+
+    train = _sequenced([_team_rows([30, 25, 20, 15, 10, 5], game_id=1)])
+    train["design_missing"] = 0.0
+    val = train.copy()
+    block = _team_block([(pid, "2020-21") for pid in train["player_id"].iloc[:4]])
+
+    tr, te, feats, coverage = attach_team_context(train, val, block)
+    assert feats == list(TEAM_COLS) + ["team_missing"]
+    assert not [c for c in tr.columns if c.endswith("__miss")]
+    assert tr["team_missing"].sum() == 2
+    assert coverage["team_share_train"] == pytest.approx(4 / 6)
+
+
+def test_the_team_block_imputes_from_train_means_only():
+    """The scaler rule, applied to the join: reading the validation mean to fill a
+    validation hole would leak the held-out distribution into the design invisibly."""
+    from src.models.stan_composition import TEAM_COLS, attach_team_context
+
+    train = _sequenced([_team_rows([30, 25, 20, 15, 10, 5], game_id=1)])
+    train["design_missing"] = 0.0
+    val = _sequenced([_team_rows([30, 25, 20, 15, 10, 5], game_id=2, season="2022-23")])
+    val["design_missing"] = 0.0
+
+    block = pd.concat([
+        _team_block([(pid, "2020-21") for pid in train["player_id"]], value=1.0),
+        _team_block([(pid, "2022-23") for pid in val["player_id"].iloc[:1]], value=99.0),
+    ], ignore_index=True)
+    # Drop the val rows' block for everyone but one, so the rest are imputed.
+    tr, te, _, _ = attach_team_context(train, val, block)
+    filled = te.loc[te["team_missing"] == 1, TEAM_COLS[0]].to_numpy(float)
+    assert len(filled) and np.allclose(filled, 1.0)
+
+
+def test_effect_variants_build_four_arms_over_the_shipped_specification():
+    """`base` is the shipped arm on this window, not a refit of the incumbent; `ps` and
+    `base` must differ in the EFFECT alone and `team` and `base` in the FEATURES alone,
+    or neither contrast isolates what it claims to."""
+    from src.models.stan_composition import TEAM_COLS, effect_variants
+
+    frames = [_team_rows([30, 25, 20, 15, 10, 5], game_id=g,
+                         season="2020-21" if g < 3 else "2022-23") for g in (1, 2, 3)]
+    frame = _sequenced(frames)
+    from src.models.availability import FEATURE_COLS
+    for col in list(FEATURE_COLS) + ["logit_share_lag1"]:
+        frame[col] = 0.5
+    train = frame[frame["season"] == "2020-21"].reset_index(drop=True)
+    val = frame[frame["season"] == "2022-23"].reset_index(drop=True)
+    block = _team_block([(pid, "2020-21") for pid in train["player_id"]])
+
+    from src.models import stan_composition as C
+    built, _ = effect_variants(train, val, block)
+    assert set(built) == {"base", "ps", "team", "ps_team", "ps_centered"}
+    assert built["base"][2] == built["ps"][2]
+    assert built["base"][5] is False and built["ps"][5] is True
+    assert built["team"][2] == built["base"][2] + list(TEAM_COLS) + [C.TEAM_MISSING]
+    assert built["team"][5] is False and built["ps_team"][5] is True
+    # `ps_centered` is the SAME model in different coordinates — a sampler arm, not a
+    # modelling one — so it must differ from `ps` in the parameterization flag alone.
+    assert built["ps_centered"][:6] == built["ps"][:6]
+    assert built["ps"][6] is False and built["ps_centered"][6] is True
+    for arm, (_, _, feats, _, _, _, _) in built.items():
+        assert len(feats) == len(set(feats)), f"{arm} carries a duplicate feature"
+
+
+@needs_cmdstan
+def test_U_n_zero_nests_exactly_inside_the_player_season_model():
+    """Gate P1, as an identity rather than an assertion about source text.
+
+    At `sigma_u = 0` the effect model's log density must exceed the `U_n = 0` model's by
+    *exactly* the std_normal prior on `z` and nothing else — meaning the likelihood, the
+    offset, the priors on alpha/beta and the dispersion term are untouched. Stan's `~`
+    drops constants, so the check is on the difference, which is constant-free.
+
+    This is the only thing separating "a parameter was added" from "the shipped head was
+    silently changed", and the incumbent's whole artifact depends on it.
+    """
+    rng = np.random.default_rng(0)
+    G, K, U, N = 6, 2, 48, 240
+    lens = np.full(G, 6)
+    P = int(lens.sum())
+    y, m, lo, is_last, start = [], [], [], [], []
+    row = 1
+    for _ in range(G):
+        remaining = N
+        for j in range(6):
+            trials = min(U, remaining)
+            last, after = j == 5, 5 - j
+            bound = max(0, remaining - after * U)
+            value = remaining if last else int(
+                min(trials, max(bound, rng.integers(20, 50))))
+            y.append(value)
+            m.append(trials)
+            lo.append(bound)
+            is_last.append(int(last))
+            remaining -= value
+        start.append(row)
+        row += 6
+
+    data = {"G": G, "P": P, "K": K, "start": start, "len": lens.tolist(), "y": y,
+            "m": m, "lo": lo, "is_last": is_last, "N_total": [N] * G, "U": [U] * G,
+            "logit_prior": np.zeros(P).tolist(), "X": rng.normal(size=(P, K)),
+            "dispersed": 1, "n_rho": 1, "rho_bin": [1] * P, "beta_scale": 1.0,
+            "intercept_scale": 5.0}
+    pars = {"alpha": 0.1, "beta": [0.3, -0.2], "rho": [0.08]}
+    z = [0.7, -0.3, 1.1, 0.2, -0.9]
+
+    model = stan_utils.compile_model("composition_glm")
+    # The non-centred branch, which is the one the nesting claim is about: the centred
+    # form's prior at `sigma_u = 0` is `normal(0, 0)` and has no density to compare.
+    off = {**data, "U_n": 0, "unit_idx": [0] * P, "u_sd_scale": 1.0, "u_centered": 0}
+    on = {**data, "U_n": 5, "unit_idx": ((np.arange(P) % 5) + 1).tolist(),
+          "u_sd_scale": 1.0, "u_centered": 0}
+
+    def lp(params, payload):
+        return float(model.log_prob(params, data=payload, jacobian=False).iloc[0, 0])
+
+    gap = lp({**pars, "u_z": z, "sigma_u": [0.0]}, on) - lp(pars, off)
+    assert gap == pytest.approx(-0.5 * float(np.sum(np.square(z))), abs=1e-4)
+
+
+def test_the_centred_arm_is_the_same_model_in_different_coordinates():
+    """`ps_centered` must be a SAMPLER arm and nothing else.
+
+    Two things follow and both are pinned. The Stan source has to carry both branches with
+    the same `sigma_u` prior, and the Python term has to shift IDENTICALLY either way — the
+    predictive of a player-season that has not happened is `sigma_u * z` under both
+    parameterizations, so a `centered` flag leaking into `shift` would make the two arms
+    genuinely different models and their CRPS comparison meaningless.
+    """
+    from src.models.stan_composition import PlayerSeasonTerm
+
+    code = _stan_code()
+    assert "int<lower=0, upper=1> u_centered;" in code
+    assert "u_z ~ normal(0, sigma_u[1]);" in code
+    assert "u_z ~ std_normal();" in code
+
+    frame = pd.DataFrame({"player_id": [1, 1, 2], "season": "2020-21"})
+    shifts = []
+    for centered in (False, True):
+        term = PlayerSeasonTerm(True, stream="same", centered=centered)
+        term.sigma_draws = np.full(3, 0.4)
+        shifts.append(term.shift(frame, np.arange(3)))
+        assert term.data(frame)["u_centered"] == int(centered)
+    np.testing.assert_allclose(shifts[0], shifts[1])
+
+
+def test_the_dense_metric_needs_the_matrix_to_be_ESTIMABLE_not_merely_to_fit():
+    """Two constraints, and the binding one is not memory.
+
+    A dense metric estimates a P x P covariance from the WARMUP draws, so it needs draws on
+    the order of the parameter count. At 605 units and 1,000 warmup that is 1.57 draws per
+    parameter — rank-deficient, shrunk back toward diagonal by CmdStan, and measured to run
+    past an hour on rows `diag_e` finished in 25 minutes. Memory alone would have waved all
+    but the full window through, which is exactly the mistake this pins.
+    """
+    from src.models.stan_composition import (DENSE_DRAWS_PER_PARAM,
+                                             DENSE_METRIC_MAX_MB, choose_metric)
+
+    # The effect-free head is the regime `dense_e` was measured to help in.
+    assert choose_metric(26, warmup=1000) == "dense_e"
+    # Every random-effect arm fails the estimability test, at every window.
+    for units in (605, 2204, 12307):
+        assert choose_metric(units + 30, warmup=1000) == "diag_e"
+    # And more warmup does not rescue it at any realistic budget.
+    assert choose_metric(635, warmup=5000) == "diag_e"
+
+    # The estimability boundary is the one that moves first.
+    edge = int(1000 / DENSE_DRAWS_PER_PARAM)
+    assert choose_metric(edge, warmup=1000) == "dense_e"
+    assert choose_metric(edge + 1, warmup=1000) == "diag_e"
+    # Memory still vetoes independently, however many draws are available.
+    huge = int((DENSE_METRIC_MAX_MB * 1024 ** 2 / 8) ** 0.5) + 1
+    assert choose_metric(huge, warmup=10 ** 9) == "diag_e"
+
+
+def test_an_explicit_metric_overrides_the_sizing():
+    """A probe comparing the two metrics on identical data needs to force one; the
+    default stays `None` so ordinary callers get the sized choice."""
+    from src.models.stan_composition import StanComposition
+
+    assert StanComposition(["x"], dispersed=1).metric is None
+    assert StanComposition(["x"], dispersed=1, metric="dense_e").metric == "dense_e"

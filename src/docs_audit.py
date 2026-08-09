@@ -1507,14 +1507,21 @@ def _minutes_unification_claims(doc: str) -> list[Claim]:
     # or a missing parameter. Claimed at the sweep's best sigma, plus the sigma itself,
     # because "it ties at 0.375" goes stale if either half moves.
     PS = "composition_sum_plus_player_season_effect"
+    # **The unit is part of the lookup, not decoration.** Since 2026-08-09 the same arm name
+    # also carries the fallback's `ps_sigma_on_train` rows — the identical grid scored on
+    # TRAINING player-seasons, so every sigma value appears twice. Without the unit filter
+    # `ps()` would be ambiguous and `best_sigma` would silently return the train grid's
+    # optimum, whose CRPS is lower for the ordinary reason that it is in-sample. This is the
+    # same silent-ambiguity failure the composition PPC lookups were fixed for.
+    UNIT = "ps_effect_sweep"
 
     def ps(column: str, sigma: float = 0.375) -> float:
-        return cell(MIN_UNIF, column, arm=PS, sigma=sigma)
+        return cell(MIN_UNIF, column, arm=PS, sigma=sigma, unit=UNIT)
 
     def best_sigma() -> float:
         """The sweep's own CRPS-minimising sigma, so `0.375` cannot rot into a stale label."""
         frame = table(MIN_UNIF)
-        arm = frame[frame["arm"] == PS]
+        arm = frame[(frame["arm"] == PS) & (frame["unit"] == UNIT)]
         return float(arm.loc[arm["crps_minutes"].idxmin(), "sigma"])
 
     C += [
@@ -1531,6 +1538,37 @@ def _minutes_unification_claims(doc: str) -> list[Claim]:
         _c("+2.85", MIN_UNIF, lambda: ps("ci_hi"), "injected arm interval, upper", doc=doc),
         _c("0.0659", MIN_UNIF, lambda: ps("pit_ks", 0.45),
            "best PIT KS in the sweep — better calibrated than the marginal head", doc=doc),
+    ]
+
+    # The fallback made shippable: the SAME grid on training rows, which is what removes the
+    # injection's one load-bearing caveat. Claimed from both grids, because "they agree to a
+    # step" is the claim and it goes stale if either side moves.
+    TRAIN_UNIT = "ps_sigma_on_train"
+
+    def on_train(column: str, sigma: float = 0.45) -> float:
+        return cell(MIN_UNIF, column, arm=PS, sigma=sigma, unit=TRAIN_UNIT)
+
+    def best_train_sigma() -> float:
+        frame = table(MIN_UNIF)
+        arm = frame[(frame["arm"] == PS) & (frame["unit"] == TRAIN_UNIT)]
+        return float(arm.loc[arm["crps_minutes"].idxmin(), "sigma"])
+
+    C += [
+        _c("0.450", MIN_UNIF, best_train_sigma,
+           "the injection's sigma re-estimated on TRAIN — the fallback's shippable figure",
+           doc=doc),
+        _c("117.07", MIN_UNIF, lambda: on_train("crps_minutes"),
+           "train-grid CRPS at its own optimum", doc=doc),
+        _c("1,145", MIN_UNIF, lambda: on_train("n"),
+           "training player-seasons the fallback's sigma is estimated over", doc=doc),
+        _c("142.87", MIN_UNIF, lambda: ps("crps_minutes", 0.45),
+           "validation CRPS at the train-estimated sigma", doc=doc),
+        _c("−1.49", MIN_UNIF, lambda: ps("crps_delta", 0.45),
+           "the train-estimated sigma against the marginal head", doc=doc),
+        _c("−6.14", MIN_UNIF, lambda: ps("ci_lo", 0.45),
+           "that arm's interval, lower", doc=doc),
+        _c("+3.22", MIN_UNIF, lambda: ps("ci_hi", 0.45),
+           "that arm's interval, upper", doc=doc),
     ]
 
     # The zero-sum dynamic: the composition sits on the identity a fixed team total forces

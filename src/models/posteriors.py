@@ -196,6 +196,22 @@ def _apply_step(step: dict, frame: pd.DataFrame) -> pd.DataFrame:
         values = frame[step["column"]].to_numpy(dtype=float)
         out[step["name"]] = np.searchsorted(np.asarray(step["edges"], dtype=float),
                                             values, side="right") + 1
+    elif kind == "join":
+        # A per-unit feature block joined on keys, with ONE missingness indicator for the
+        # whole block and train means for the holes — `stan_composition.attach_team_context`
+        # expressed as a recipe step. The block travels INSIDE the artifact rather than
+        # being re-read from parquet, so a rebuilt `team_context_tierA.parquet` cannot
+        # silently change what a persisted posterior scores; the flip side is that a season
+        # the block does not cover scores as missing, which is what `flag` is for and why a
+        # production board rebuilds the artifact rather than reusing one.
+        out = frame.merge(step["block"], on=list(step["keys"]), how="left")
+        if len(out) != len(frame):
+            raise ValueError(f"the {step['name']!r} join duplicated rows; the block must "
+                             f"be unique on {list(step['keys'])}")
+        cols = list(step["means"])
+        out[step["flag"]] = out[cols[0]].isna().astype(float)
+        for col, mean in step["means"].items():
+            out[col] = out[col].fillna(mean)
     else:
         raise KeyError(f"unknown design step {kind!r} — the recipe was written by a "
                        f"newer version of src/models/posteriors.py than the one loading it")
@@ -540,6 +556,16 @@ def _thinned(model, keep: int) -> tuple[object, dict, int]:
         values = np.asarray(values)
         draws[name] = values[idx]
         setattr(out, name, draws[name])
+    # The composition's per-(player, season) random effect. Only its SCALE is kept: the
+    # fitted `u_z` describe player-seasons that are over, and the predictive integrates over
+    # a fresh `z` per posterior draw — the same treatment `YearTerm` gets, one index down.
+    # The term object is copied rather than shared, or thinning the artifact's draws would
+    # mutate the live head's.
+    ps = getattr(model, "ps", None)
+    if ps is not None and getattr(ps, "enabled", False):
+        out.ps = _copy.copy(ps)
+        draws["sigma_u_draws"] = np.asarray(ps.sigma_draws)[idx]
+        out.ps.sigma_draws = draws["sigma_u_draws"]
     for attr in ("predictive_samples", "predictive_draws"):
         if hasattr(out, attr):
             setattr(out, attr, len(idx))
@@ -557,7 +583,17 @@ def _finish(head: str, head_label: str, family: str, response: str, variant: str
             probe_transformed: pd.DataFrame, probe_raw: pd.DataFrame,
             steps: list[dict], builder: str, extras: dict, window: str,
             cfg_stan: dict, draws_kept: int, seconds: float) -> PosteriorArtifact:
-    """Thin, capture the reference from the live head, assemble, and verify."""
+    """Thin, capture the reference from the live head, assemble, and verify.
+
+    **A fitted random effect is persisted as its SCALE or refused outright, never dropped.**
+    Both kinds this project has are the same object: the fitted per-level values describe
+    levels that are over, and the predictive integrates over a fresh `z` per posterior draw,
+    so an artifact that carried only `alpha`/`beta` would be *quietly narrower* than the
+    head it claims to persist — the one failure mode a round-trip on the mean cannot see.
+    The composition's `sigma_u` is wired through (`extras["player_season_effect"]`,
+    `draws["sigma_u_draws"]`, consumed by `StanComposition.predict_samples` via its
+    rehydrated `PlayerSeasonTerm`); the year effect is not, and still raises.
+    """
     year = getattr(model, "year", None)
     if year is not None and getattr(year, "enabled", False):
         raise NotImplementedError(
@@ -565,7 +601,12 @@ def _finish(head: str, head_label: str, family: str, response: str, variant: str
             f"carry: `YearTerm.shift` is a fresh N(0, 1) draw per posterior draw shared "
             f"across rows, so persisting it means persisting `sigma_year` and drawing "
             f"`z` in the simulator. No head in `make stan` enables it today; wire that "
-            f"through before shipping one that does.")
+            f"through before shipping one that does — `sigma_u` below is the worked "
+            f"example.")
+    ps = getattr(model, "ps", None)
+    if ps is not None and getattr(ps, "enabled", False):
+        extras = {**extras, "player_season_effect": True, "dispersion_u": "sigma_u_draws",
+                  "u_sd_scale": float(ps.scale), "u_stream": ps.stream, **ps.summary()}
     thinned, draws, n_full = _thinned(model, draws_kept)
     recipe = DesignRecipe(variant=variant, features=list(features),
                           scaler=model.scaler, steps=tuple(steps), builder=builder)
@@ -836,15 +877,24 @@ def _conversion_steps(train: pd.DataFrame, tr: pd.DataFrame, variant: str,
 
 
 def composition_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorArtifact:
-    """The team-game minutes allocation. One fit, and it is the expensive one."""
+    """The team-game minutes allocation. One fit, and it is the expensive one.
+
+    `stan.composition.player_season_effect` turns on the per-(player, season) random effect
+    added for item 3d. It is read here rather than baked in because it changes what the
+    artifact carries — `sigma_u_draws`, and the predictive that consumes it — and because
+    the arm that ships is decided by `make composition-effects`, not by this module.
+    """
     from src.models.stan_composition import (OWN, PILOT_FIRST_SEASON, RHO_BIN_COL,
-                                             RHO_BINS, StanComposition,
-                                             composition_frame, variants)
+                                             RHO_BINS, TEAM_COLS, StanComposition,
+                                             composition_frame, effect_variants,
+                                             team_context, variants)
 
     cfg_stan = cfg.get("stan", {})
     comp_cfg = cfg_stan.get("composition", {})
     first_season = str(comp_cfg.get("first_season", PILOT_FIRST_SEASON))
     keep = int(comp_cfg.get("predictive_samples", 200))
+    ps_effect = bool(comp_cfg.get("player_season_effect", False))
+    team_block = bool(comp_cfg.get("team_context", False))
     test_seasons = int(cfg.get("features", {}).get("availability", {})
                        .get("test_seasons", 2))
     variant = selected_variant(cfg, "stan_composition_metrics.csv",
@@ -857,9 +907,20 @@ def composition_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorAr
     # simulator is per block — a probe cut mid-block would be unusable downstream.
     probe_raw = _team_game_probe(val)
 
-    tr, probe, features, dispersed, n_rho = variants(fit_frame, probe_raw,
-                                                     RHO_BINS)[variant]
-    steps = _composition_steps(fit_frame, tr, features, OWN, RHO_BIN_COL, RHO_BINS)
+    block = None
+    if team_block:
+        block = team_context(Path(cfg["data"]["features_dir"]))
+        arm = "ps_team" if ps_effect else "team"
+        tr, probe, features, dispersed, n_rho, _, _ = effect_variants(
+            fit_frame, probe_raw, block, variant, RHO_BINS)[0][arm]
+        variant = f"{variant}+{arm}"
+    else:
+        tr, probe, features, dispersed, n_rho = variants(fit_frame, probe_raw,
+                                                         RHO_BINS)[variant]
+        if ps_effect:
+            variant = f"{variant}+ps"
+    steps = _composition_steps(fit_frame, tr, features, OWN, RHO_BIN_COL, RHO_BINS,
+                               team_block=block)
 
     started = time.perf_counter()
     model = StanComposition(features, dispersed, n_rho,
@@ -868,7 +929,11 @@ def composition_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorAr
                             warmup=int(cfg_stan.get("warmup", 1000)),
                             samples=int(cfg_stan.get("samples", 1000)),
                             seed=int(cfg_stan.get("seed", 42)),
-                            predictive_samples=keep).fit(tr)
+                            predictive_samples=keep,
+                            player_season_effect=ps_effect,
+                            u_sd_scale=float(comp_cfg.get("effects", {})
+                                             .get("u_sd_scale", 1.0)),
+                            u_centered=bool(comp_cfg.get("u_centered", False))).fit(tr)
     seconds = time.perf_counter() - started
 
     return _finish(
@@ -879,6 +944,7 @@ def composition_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorAr
         extras={"dispersed": int(dispersed), "n_rho": int(n_rho),
                 "rho_bin_column": RHO_BIN_COL, "dispersion": "rho_draws",
                 "first_season": first_season, "group_keys": ["game_id", "team_id"],
+                "team_context": team_block, "team_cols": list(TEAM_COLS),
                 "predictive_samples": keep},
         window=window, cfg_stan=cfg_stan, draws_kept=draws_kept, seconds=seconds)
 
@@ -901,14 +967,16 @@ def _team_game_probe(val: pd.DataFrame, n: int = PROBE_ROWS) -> pd.DataFrame:
 
 
 def _composition_steps(train: pd.DataFrame, tr: pd.DataFrame, features: list[str],
-                       own: str, bin_col: str, n_bins: int) -> list[dict]:
+                       own: str, bin_col: str, n_bins: int,
+                       team_block: pd.DataFrame | None = None) -> list[dict]:
     """`stan_composition.variants`' fitted state, in the order that function applies it.
 
     `design_missing` is set **before** the imputation, because it flags the rookie who lost
     every design column at once and the imputation is what erases the evidence.
     """
     from src.models.availability import FEATURE_COLS
-    from src.models.stan_composition import rho_bin_edges
+    from src.models.stan_composition import (TEAM_COLS, TEAM_MISSING, UNIT_KEYS,
+                                             rho_bin_edges)
 
     base = [c for c in FEATURE_COLS if c != "minutes_per_game_lag1"] + [own]
     steps: list[dict] = [
@@ -918,6 +986,20 @@ def _composition_steps(train: pd.DataFrame, tr: pd.DataFrame, features: list[str
     if "ot_x_own" in features:
         steps.append({"kind": "product", "left": "n_overtimes", "right": own,
                       "name": "ot_x_own"})
+    if team_block is not None:
+        # `attach_team_context` joins AFTER `variants` has built `design_missing` and
+        # imputed, so the step goes here. **The block is the RAW one, not `tr`'s columns**:
+        # `tr` has already had its holes filled from train means, so rebuilding the block
+        # from it would persist imputed values as if they were observed and leave
+        # `team_missing` identically zero on every rebuilt frame — every column present,
+        # every shape right, and only the numbers wrong, which is the failure the round-trip
+        # exists for. The means still come from `tr`'s covered rows, which are unimputed.
+        covered = tr[tr[TEAM_MISSING] == 0]
+        steps.append({"kind": "join", "name": "team_context", "keys": list(UNIT_KEYS),
+                      "flag": TEAM_MISSING,
+                      "block": team_block.drop_duplicates(UNIT_KEYS)
+                                         .reset_index(drop=True),
+                      "means": {c: float(covered[c].mean()) for c in TEAM_COLS}})
     # Not a design column — the graded arm's dispersion is indexed by it, so the
     # simulator needs the same edges the fit used.
     steps.append({"kind": "bins", "column": bin_col,
@@ -1112,6 +1194,11 @@ def manifest_row(artifact: PosteriorArtifact, check: dict, dest: Path) -> dict:
         "divergences": p["divergences"],
         "converged": p["converged"],
         "fit_seconds": p["fit_seconds"],
+        # A head with a random effect whose scale is not on the manifest is a head whose
+        # predictive is quietly narrower than its fit, so the scale is a manifest column
+        # rather than something a consumer has to unpickle to discover.
+        "player_season_effect": bool(artifact.extras.get("player_season_effect", False)),
+        "sigma_u": float(artifact.extras.get("sigma_u", 0.0)),
         "max_design_error": check["max_design_error"],
         "max_prediction_error": check["max_prediction_error"],
         "roundtrip_passes": check["passes"],
