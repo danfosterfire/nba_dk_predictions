@@ -149,6 +149,20 @@ make draft-pool        # the board: one row per (season, player) with team, DK p
                        #   → outputs/eda/draft_pool_position_audit.csv. Membership is
                        #   season-start rosters from the game logs, never the roster CSV,
                        #   which is a current-status snapshot carrying February signings.
+
+make minutes-unification
+                       # the two minutes heads scored against each other at the SEASON
+                       #   unit, on the 742 validation player-seasons both cover
+                       #   → outputs/predictions/minutes_unification.csv. Settles whether
+                       #   the composition supersedes the marginal head; it does NOT, so
+                       #   both ship. The mean is a tie (MAE 200.28 against 200.12) and
+                       #   the SPREAD is not: summed composition draws are 4.68x too
+                       #   narrow at the season unit, and the team constraint forbids
+                       #   fixing it inside the head — a team's season minutes have a
+                       #   predictive sd of 0.00 across draws. REFITS NOTHING: it
+                       #   rehydrates each head around its persisted `make posteriors`
+                       #   draws and calls the head's own predict path, so it costs
+                       #   seconds against the composition's 9.92 h and needs no CmdStan.
 ```
 
 **After `make posteriors`, nothing else in the simulation layer needs CmdStan.** That is the

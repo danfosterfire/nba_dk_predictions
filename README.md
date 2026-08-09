@@ -274,9 +274,8 @@ toward a league/age baseline and emits a distribution.
 
 **Minutes** in the shipped chain is [stan_minutes.py](src/models/stan_minutes.py): the
 marginal `min | available`, fitted season-collapsed as successes out of real game length,
-selecting `logit(own) + spline`. It supplies two of the three numbers the simulator needs —
-the season-level mean, and separately the **game-level** dispersion, which a season total
-cannot identify on its own.
+selecting `logit(own) + spline`. What it supplies the simulator is the season-level
+**spread** — the one thing the composition head below is structurally unable to produce.
 
 **Minutes as a team-game composition**
 ([stan_composition.py](src/models/stan_composition.py)) is the second minutes head, and it
@@ -285,9 +284,57 @@ minutes among the players who played, by decomposing the multinomial into sequen
 binomial trials ordered by prior-season minutes share, with the per-player cap enforced
 through the trials (`m_k = min(U, R_k)`) rather than checked afterwards. That gets **both**
 per-game constraints — the exact team total and the individual cap — where the marginal head
-gets only the cap, and it makes teammate-absence redistribution a *fitted* quantity. The two
-heads compose rather than compete: `stan_minutes` still owns the season-level mean and the
-game-level dispersion, neither of which the composition produces.
+gets only the cap, and it makes teammate-absence redistribution a *fitted* quantity.
+
+**Both minutes heads ship, and `make minutes-unification` settled which half each one owns.**
+This file used to say they "compose rather than compete", with the marginal head owning the
+season-level mean and the game-level dispersion. Two of those three claims were wrong. The
+game-level dispersion is a *data measurement* that happens to live in `stan_minutes` — the
+fitted object never appears in it — and the composition fits its own, role-graded from
+**0.1768** for fringe players to **0.0855** for stars. And the composition matches the
+marginal head on the season-level **mean**: scored at the season unit on the 742 validation
+player-seasons both cover, MAE **200.28** against **200.12** and R² **0.8848** against
+**0.8829**, with a bias of **+2.41** against **−14.09**, so it is the less biased of the two.
+
+What survives is the season-level **spread**. Summed composition draws give a season-total
+predictive sd of **64.65** minutes against the marginal head's **302.75** — **4.68×** too
+narrow, CRPS **170.06** against **144.35** with a paired-bootstrap interval of
+**[+18.96, +33.25]** — because draws that are iid across games cannot manufacture
+season-level heterogeneity. The sharpest form of it is that at the season unit the
+composition does not clear the no-fit carry-forward floor (170.06 against **161.29**) on the
+same draws that clear its own per-team-game floor decisively (**4.4945** against 4.6776).
+Same head, same posterior, opposite verdicts at two units.
+
+**That gap is a missing parameter, not a ceiling — measured, and it matters for what gets
+built next.** A *shared* effect cannot fix it: a season term is a league-wide shift, and
+against a head that allocates every minute in the league it has **0.000000%** of the residual
+variance to reach. But a **per-(player, season)** effect is not shared, and injecting one
+into the existing posterior — `σ·z` per player-season per draw, shared across that player's
+games, re-run through the head's own allocation — moves the season-total predictive sd from
+64.65 to **239.45** at σ = **0.375** and the CRPS to **142.17**, which *ties* the marginal
+head (**−2.18**, interval **[−6.96, +2.85]**) while keeping the team constraint exact — and
+at σ = 0.45 the season-unit calibration passes it outright, PIT KS **0.0659** against 0.0735.
+MAE barely moves, so it buys spread and not fit. σ is read off validation there, so that is a
+tuned upper bound on the parameterization rather than a shipped score — but it settles the
+structural question, and it means retiring the marginal head is a live prospect rather than a
+closed one.
+
+**And the constraint is not just a cost — it is a dynamic the contest is sensitive to.** A
+team's season minutes are a fixed pot, so teammates' season totals are negatively correlated:
+a fixed sum over K players forces mean pairwise **r = −1/(K−1)**, which at the measured
+**16.05**-player roster size is **−0.0664**. Over **963** single-team validation
+player-seasons the composition sits on it at **−0.0509**. The marginal head reads
+**−0.0001** and puts a **1,022.9**-minute predictive sd on a team season total that is
+physically fixed. That is invisible in every marginal metric and lands on two strategy axes
+directly: a same-team stack's minutes are *anti*-correlated rather than independent, and
+handcuffing a starter with his backup is a hedge that exists only if the model carries the
+sign.
+
+The composition also covers **1,111** validation player-seasons against the marginal head's
+742 — the **369** rookies and low-minute players the `≥ 200 prior minutes` filter drops, who
+are draftable. So `stan_minutes` ships today because it is the only head with the right
+season-level spread today, and the simulator's minutes draw is the open design question
+rather than a settled blend.
 
 **Components** ([stan_components.py](src/models/stan_components.py)) fits the seven negative
 binomial counts and four beta-binomial conversions, each against a mandatory no-fit floor.
@@ -320,11 +367,12 @@ by measurements rather than guesses:
 - **Draw, never plug in.** `E[min]` and `E[gp]` are wrong inputs to a threshold bonus. That
   now includes the length of the game itself: `stan_game_length` draws it, once per game and
   shared by both teams.
-- **Three minutes numbers, which compose rather than substitute**: the season-level mean
-  from the minutes head, the **game-level** dispersion (4.65× binomial, measured separately
-  because a season total cannot separate per-game from per-season noise), and the **2.43×**
+- **Minutes come from both heads, and that is measured rather than assumed**
+  (`make minutes-unification`): the per-game allocation and its role-graded dispersion from
+  the composition, the season-level **spread** from the marginal head, and the **2.43×**
   ten-game block variance inflation from `make serial-correlation` for serial dependence
-  between games.
+  between games. The **4.65×** game-level figure is a *diagnostic* to check the composition's
+  draws against, not an input to them.
 - **Sequential structure goes on minutes and nowhere else.** There is no shooting hot hand:
   both field-goal conversion heads are measured nulls, so those eleven heads stay collapsed.
 - **Bonus overdispersion is unit-specific** — 0.10 at the season unit, **0.025** at the
@@ -423,6 +471,22 @@ fringe players against **0.085** for stars, a **2.07×** spread that cuts calibr
 **35%**. The comparator row is the control: it never trains on the composition window and
 reproduced to six decimals when the head moved off the held-out split on 2026-08-08, as did
 the selected arm's rank — nothing about the verdict reversed.
+
+**And the same head loses to the same comparator at the season unit, which is why both
+minutes heads ship.** `make minutes-unification`. Summed to season totals on the 742
+validation player-seasons both heads cover, the composition reads CRPS **170.06** against the
+marginal head's **144.35** — a paired-bootstrap gap of **+25.70** minutes, interval
+**[+18.96, +33.25]** — and does not clear the no-fit carry-forward floor's **161.29** at that
+unit. The mean is not what fails: MAE **200.28** against **200.12**, R² **0.8848** against
+**0.8829**, bias **+2.41** against **−14.09**. The predictive **spread** is, at **4.68×** too
+narrow (sd **64.65** against **302.75**, PIT KS **0.3341** against **0.0735**), because
+iid-across-games draws cannot make season-level heterogeneity. **A head is only a model at
+the unit it was scored at**, and this is the cleanest demonstration of that in the repo: one
+posterior, two units, opposite verdicts against the same two floors. The follow-up measured
+in the same target — an injected per-player-season effect closes the gap to a **tie** at
+σ = 0.375, while a league-wide season term has **0.000000%** of the residual variance to
+reach — is in §2's minutes section, because it changes what gets built rather than what
+shipped.
 
 **The 3PA/2PA substitution is best handled by reparameterization — re-measured
 un-handicapped, and now shipped.** `make stan-substitution` for the measurement;

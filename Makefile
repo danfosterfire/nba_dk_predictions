@@ -12,7 +12,8 @@ PIP    := .venv/bin/pip
         variance-budget residual-correlation season-effects \
         stan stan-availability stan-minutes stan-components stan-composition \
         stan-substitution season-terms games-played stan-games-played \
-        stan-game-length posteriors scoring-periods draft-pool final-evaluation
+        stan-game-length posteriors minutes-unification scoring-periods draft-pool \
+        final-evaluation
 
 venv:
 	/opt/homebrew/bin/python3.14 -m venv .venv
@@ -259,6 +260,19 @@ WINDOW ?= train
 
 posteriors:
 	$(PYTHON) -m src.models.posteriors --window $(WINDOW)
+
+# Does the composition supersede the marginal minutes head? README.md claimed the two
+# "compose rather than compete", with the marginal head still owning the season-level mean
+# and the game-level dispersion. This scores both at the SEASON unit on the same validation
+# player-seasons — the comparison neither head's own metrics table could make, because they
+# publish at different units.
+#
+# Needs `make posteriors` and nothing else: it rehydrates both heads around their persisted
+# draws and calls their own `predict_samples`, so it costs seconds rather than the
+# composition's 9.92 h, and no arm is a differently-fitted model from the one it is compared
+# against. No CmdStan.
+minutes-unification:
+	$(PYTHON) -m src.models.minutes_unification
 
 # One row per (season, game_id): its scoring period and its DK tournament round. A
 # best-ball lineup is scored weekly, so every weekly max, round total and advancement

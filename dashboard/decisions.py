@@ -3136,45 +3136,182 @@ REGISTRY: tuple[Decision, ...] = (
                 "star). The two sit on different parameterizations, so they are not the same "
                 "number, but they are the same kind of quantity and only one can govern a "
                 "draw. If the simulator draws minutes from the composition, 4.65x is a "
-                "diagnostic to check those draws against rather than an input to them.",
+                "diagnostic to check those draws against rather than an input to them. "
+                "**Confirmed 2026-08-09**: the simulator does draw its per-game allocation "
+                "from the composition, so the composition's rho governs and 4.65x is now a "
+                "diagnostic. The coincidence is worth naming so nobody merges the two — "
+                "`make minutes-unification` also reports the marginal head's season-total "
+                "predictive sd as 4.68x the composition's, and that is a different "
+                "quantity at a different unit that happens to land on a similar number.",
         status="measured",
         reproduce="make stan-minutes → outputs/predictions/stan_minutes_dispersion.csv, "
-                  "outputs/predictions/stan_composition_dispersion.csv",
+                  "outputs/predictions/stan_composition_dispersion.csv, "
+                  "outputs/predictions/minutes_unification.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-09",
         date="2026-08-08",
         tags=("architecture",),
     ),
     Decision(
         id="minutes-head-supersession-is-open",
         topic="minutes",
-        claim="Whether `stan_composition` **supersedes** `stan_minutes` in the production "
-              "chain is open, and one gate settles it: the composition's season-total sums "
-              "against the marginal head's season-total predictions, on validation.",
-        because="`README.md` says the two heads 'compose rather than compete', with the "
-                "marginal head still owning the season-level mean and the game-level "
-                "dispersion. Audited 2026-08-08, that sentence asserts three things and only "
-                "one holds. The dispersion claim is false as stated (see "
-                "[[game-level-dispersion-is-not-a-fit]]). The season-mean claim is simply "
-                "**untested** — the two heads score at different units (minutes at "
-                "season-total, CRPS 143.9 / MAE 199.6 / R2 0.883; composition per-team-game, "
-                "CRPS 4.494 / MAE 6.33 / R2 0.474) and the composition's per-game predictions "
-                "sum to a season total by construction, so it can produce the season mean and "
-                "nobody has measured whether it is better. What IS load-bearing is the year "
-                "effect: `season_terms` selected the `year` arm for `min` (val MAE 199.03 "
-                "against base 199.72, sigma_year 0.0231), it is the only head in the project "
-                "shipping a season term, and it is worth +10.4% on a 15-man roster's "
-                "season-total sd — the spread a 2-of-12 knockout is decided on. "
-                "`composition_glm.stan` carries no year block, so retiring the marginal head "
-                "today would drop the project's only era correction. Coverage cuts the other "
-                "way (the composition cannot drop rookies, since the team sum must be "
-                "complete), and cost is a non-argument: 0.341 h against the composition's "
-                "9.92 h.",
-        status="open",
-        unblocks="make minutes-unification → outputs/predictions/minutes_unification.csv",
+        claim="**The composition does not supersede the marginal minutes head — both ship.** "
+              "Measured 2026-08-09 at the season unit on validation, the composition's "
+              "summed season totals score CRPS **170.06** against the marginal head's "
+              "**144.35**, a paired-bootstrap gap of **+25.70** minutes with a 95% interval "
+              "of **[+18.96, +33.25]**.",
+        because="`README.md` said the two heads 'compose rather than compete', with the "
+                "marginal head owning the season-level mean and the game-level dispersion. "
+                "That sentence asserted three things; the audit killed one and the gate "
+                "killed a second. The dispersion claim is false as stated (see "
+                "[[game-level-dispersion-is-not-a-fit]]). **The season-level MEAN claim is "
+                "also false** — the composition matches it, with MAE 200.28 against 200.12, "
+                "R2 0.8848 against 0.8829, and a bias of +2.41 against -14.09, so it is the "
+                "less biased of the two. What survives is the season-level **spread**: the "
+                "composition's season-total predictive sd is 64.7 minutes against 302.7, "
+                "**4.68x too narrow**, and its PIT KS is 0.3341 against 0.0735. Summing "
+                "iid-across-games draws cannot manufacture season-level heterogeneity — "
+                "per-game noise averages down by ~1/sqrt(G) while a season-level multiplier "
+                "passes through in full — and the team constraint forbids any *shared* fix, "
+                "since a team's season minutes are fixed at 5 x sum(game_length) and "
+                "measure a predictive sd of exactly 0.00 across draws. **That rules out a "
+                "shared effect, not every effect**, and the qualifier is load-bearing: see "
+                "[[a-season-term-cannot-widen-the-composition]], where an injected "
+                "per-(player, season) effect closes the gap to a tie. So this entry records "
+                "which head ships **today**, not a ceiling. The composition is "
+                "therefore beaten at the season unit by the carry-forward no-fit floor "
+                "(170.06 against **161.29**, `stan_minutes.FloorMinutes` — prior share x "
+                "realized length, no fitting) on the same rows where it beats its own "
+                "per-team-game floor decisively (4.4945 against 4.6776). Same head, same "
+                "draws, opposite verdicts at two units: the unit is the claim. "
+                "The year effect stands untouched and never had to be ported: "
+                "`season_terms` keeps the `year` arm for `min` on the head that still ships "
+                "it. Cost was never an argument — 0.341 h against 9.92 h.",
+        status="settled",
+        reproduce="make minutes-unification → outputs/predictions/minutes_unification.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
-        date="2026-08-08",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("architecture",),
+    ),
+    Decision(
+        id="a-season-term-cannot-widen-the-composition",
+        topic="minutes",
+        claim="**A season term — trend or year random effect — cannot close the "
+              "composition's season-total variance gap.** The variance a league-wide term "
+              "could reach is **0.000000%** of the composition's residual variance. The "
+              "effect that would fit is indexed by **(player, season)**, not by season.",
+        because="The natural follow-up to [[minutes-head-supersession-is-open]], since the "
+                "marginal minutes head is the one place in this project shipping a season "
+                "term. Three independent reasons it is the wrong instrument. (1) A year "
+                "term is a league-wide shift shared by every row in a posterior draw "
+                "(`stan_utils.YearTerm`), so the only variance it can explain is that of "
+                "the league-wide mean residual across seasons — 0.000 minutes against a "
+                "residual sd of 243.50, because a head that allocates every minute has "
+                "residuals summing to zero within each season. Zero by construction, not by "
+                "accident. (2) The team constraint makes any shared shift a pure "
+                "re-allocation: adding the same delta to every player's eta re-tilts the "
+                "stick-breaking toward the top of the rotation and leaves the team total at "
+                "5 x sum(game_length). (3) Size — the per-player-season log deviation of "
+                "realized from predicted season minutes has sd **0.2836** over the 867 "
+                "validation rows clearing 200 realized minutes, against a fitted "
+                "`sigma_year` of 0.0231, roughly 12x apart. **And the (player, season) "
+                "version is not merely the right shape — measured, it closes the gap.** "
+                "Injecting `sigma * z` per player-season per posterior draw into the "
+                "existing posterior and re-running the head's own allocation moves the "
+                "season-total predictive sd from 64.65 to **239.45** at sigma **0.375** and "
+                "the CRPS to **142.17**, which **ties** the marginal head (-2.18, interval "
+                "[-6.96, +2.85]) with the team constraint still exact; at sigma 0.45 the PIT "
+                "KS of 0.0659 is better than the marginal head's 0.0735. MAE moves under a "
+                "minute across the sweep, so it buys spread and not fit. **So the 4.68x is "
+                "a missing parameter, not a ceiling.** The caveat is load-bearing: sigma is "
+                "read off validation, so that is a tuned upper bound on the "
+                "parameterization rather than a score, and a real fit estimates it on train "
+                "and re-estimates beta alongside. Costs still to size: ~10,000 parameters "
+                "on a 683k-row head that already costs 9.92 h and adapts a dense_e metric "
+                "over ~25, and the effect competes with the per-player cap to explain "
+                "exactly the star rows that matter most.",
+        status="measured",
+        reproduce="make minutes-unification → outputs/predictions/minutes_unification.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("architecture",),
+    ),
+    Decision(
+        id="player-season-effect-is-fitted-not-injected",
+        topic="minutes",
+        claim="The composition's missing season-level spread is closed by a fitted "
+              "per-**(player, season)** random effect, **not** by a season term and **not** "
+              "by a fixed-effect block. Build item 3d fits `sigma_u` in "
+              "`composition_glm.stan` and sweeps team context alongside it.",
+        because="Three measurements settle the shape. A season term reaches **0.000000%** of "
+                "the residual variance, because a league-wide shift on a head that allocates "
+                "every minute has no level to move ([[a-season-term-cannot-widen-the-"
+                "composition]]). An **injected** per-player-season effect does close it — sd "
+                "64.65 to 239.45, CRPS 170.06 to 142.17, a tie with the marginal head at "
+                "sigma 0.375 — but its sigma is tuned on the split it is scored against, "
+                "which is why it is fitted here rather than shipped. And **fixed effects "
+                "cannot replace it**: measured on 9,793 train player-seasons, the deviation "
+                "`logit(realized share) - logit(prior share)` has sd 0.674 and is only 5.2% "
+                "predictable in sample — own lag-1 deviation r = **-0.201** (mean reversion, "
+                "not persistence), departed teammates' share +0.041, arrivals -0.063, net "
+                "opened +0.088, joint R2 0.040 -> **0.052**. The signs are all correct, so "
+                "the construction is sound and the magnitudes are the finding: this is the "
+                "same wall the rest of the project hits, where availability persists at "
+                "r = 0.317 and five games of the real season settle 86% of the season total. "
+                "The team block still ships **in the same fit** — three extra columns cost "
+                "nothing beside a 12,307-unit random effect, `team_context_tierA.parquet` is "
+                "already built leave-one-out and point-in-time safe, and features that do "
+                "predict part of the deviation shrink `sigma_u`, which improves the draft "
+                "ranking rather than only the spread. Running them as two sessions would buy "
+                "a second refit of the project's most expensive head for about one point of "
+                "R2. Cost risk is named: `dense_e` is not viable at 12,307 units and the "
+                "arms must drop to `diag_e`.",
+        status="open",
+        unblocks="build item 3d — make stan-composition with the +ps / +team / +ps_team arms",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("next", "architecture"),
+    ),
+    Decision(
+        id="simulator-minutes-draw-is-both-heads",
+        topic="simulations",
+        claim="**The simulator's minutes draw is an OPEN design question, and blending the "
+              "two heads is the worst of the three options.** Recommended: inject a "
+              "per-(player, season) effect into the composition's draw, which needs no "
+              "refit, keeps the team constraint, and ties the marginal head.",
+        because="This entry originally read 'take the allocation from the composition and "
+                "the season-level spread from the marginal head'. That is not the clean "
+                "composition it sounds like, and the sigma sweep in "
+                "[[a-season-term-cannot-widen-the-composition]] is what exposed it: "
+                "**independent per-player season multipliers are renormalized away by the "
+                "allocation step**, because the composition distributes a fixed pot, so the "
+                "spread does not survive the blend — and scaling after allocation breaks the "
+                "constraint instead. Worse, the marginal head's independence is not a "
+                "neutral simplification. On 963 single-team validation player-seasons its "
+                "mean pairwise teammate correlation is **-0.0001** against the **-0.0664** a "
+                "fixed team total forces at the measured 16.05-player roster size, and it "
+                "puts a **1,022.9**-minute predictive sd on a team season total that is "
+                "physically fixed near 19,810. The composition sits on the constraint at "
+                "-0.0509. Two strategy axes depend on that sign directly and are both in "
+                "the sweep's config: a same-team **stack**'s minutes are anti-correlated "
+                "rather than independent, and **handcuffing** a starter with his backup is "
+                "a hedge that exists only if the model carries the correlation — a head "
+                "without it cannot discover the strategy at all. So the order is: inject "
+                "the effect (no refit, sigma must be re-estimated on train first); or fit "
+                "sigma in Stan, which reopens supersession at the cost of a refit of the "
+                "project's most expensive head; and blend only as a last resort. "
+                "**Option 2 was chosen on 2026-08-09** — see "
+                "[[player-season-effect-is-fitted-not-injected]]; option 1 survives as that "
+                "item's named fallback if the fit blows the budget.",
+        status="open",
+        unblocks="build item 3d, then item 4 consumes whatever it settles",
+        reproduce="make minutes-unification → outputs/predictions/minutes_unification.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
         tags=("next", "architecture"),
     ),
     Decision(

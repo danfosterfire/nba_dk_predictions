@@ -158,6 +158,10 @@ COMP_J = "outputs/predictions/stan_composition_joint_nll.csv"
 # composition's own record of them is; only the artifact behind them moved.
 GL_M = "outputs/predictions/stan_game_length_metrics.csv"
 GL_PPC = "outputs/predictions/stan_game_length_ppc.csv"
+# The two minutes heads scored at the SEASON unit against each other — `make
+# minutes-unification`. One row per arm plus one paired-bootstrap row, which is why the
+# delta columns are blank on the arm rows and vice versa.
+MIN_UNIF = "outputs/predictions/minutes_unification.csv"
 GL_DEPTH = "outputs/predictions/stan_game_length_depth.csv"
 GL_D = "outputs/predictions/stan_game_length_diagnostics.csv"
 COMP_RHO = "outputs/predictions/stan_composition_dispersion.csv"
@@ -1436,6 +1440,118 @@ def _carry_bias_claims(doc: str,
             add(_c(quoted, SEASON_BIAS, lambda: float("nan"),
                    f"retired held-out carry-forward bias: {label}", doc=doc,
                    historical=True))
+    return C
+
+
+def _minutes_unification_claims(doc: str) -> list[Claim]:
+    """The season-unit head-to-head between the two minutes heads, claimable from any doc.
+
+    A shared builder for the same reason `_regime_claims` and `_season_term_claims` are: the
+    block is quoted in `README.md` and in `docs/simulations-plan.md`, and "current in one and
+    stale in the other" is the failure that has already happened twice here. The plan doc is
+    not in the audit yet — build item 11 adds it — so today this has one caller and the
+    second is why it is a function.
+
+    The verdict-bearing pair is claimed from **both** sides of each comparison rather than
+    only from the gap, because a headline that quotes 170.06 against 144.35 and a gap of
+    +25.70 can go stale in three independent places.
+    """
+    C: list[Claim] = []
+
+    def add(quoted, column, arm, label, **kw):
+        C.append(_c(quoted, MIN_UNIF, lambda: cell(MIN_UNIF, column, arm=arm), label,
+                    doc=doc, **kw))
+
+    COMP, MINS = "composition_sum", "minutes_head"
+    FLOOR, ALL = "carry_forward", "composition_sum_all_rows"
+    DELTA = "composition_minus_minutes"
+
+    # The verdict: CRPS at the season unit, both arms and the floor they are read against.
+    add("170.06", "crps_minutes", COMP, "composition summed to season totals, CRPS")
+    add("144.35", "crps_minutes", MINS, "marginal minutes head, season-total CRPS")
+    add("161.29", "crps_minutes", FLOOR,
+        "the season-unit no-fit carry-forward floor the composition fails to clear")
+
+    # The mean is a tie — three figures on each side, because "a tie" is the claim.
+    add("200.28", "mae_minutes", COMP, "composition season-total MAE")
+    add("200.12", "mae_minutes", MINS, "marginal head season-total MAE")
+    add("0.8848", "r2_minutes", COMP, "composition season-total R2")
+    add("0.8829", "r2_minutes", MINS, "marginal head season-total R2")
+    add("+2.41", "bias_minutes", COMP, "composition season-total bias")
+    add("−14.09", "bias_minutes", MINS, "marginal head season-total bias")
+
+    # The spread is not, and this is what keeps both heads in the chain.
+    add("64.65", "predictive_sd", COMP, "composition season-total predictive sd")
+    add("302.75", "predictive_sd", MINS, "marginal head season-total predictive sd")
+    add("0.3341", "pit_ks", COMP, "composition season-total PIT KS")
+    add("0.0735", "pit_ks", MINS, "marginal head season-total PIT KS")
+    add("0.00", "team_season_sd", ALL,
+        "a team's season minutes are fixed across draws — the structural half")
+
+    # The paired bootstrap, which is what makes the gap a verdict rather than a margin.
+    add("+25.70", "crps_delta", DELTA, "paired-bootstrap CRPS gap, composition − minutes")
+    add("+18.96", "ci_lo", DELTA, "bootstrap interval, lower")
+    add("+33.25", "ci_hi", DELTA, "bootstrap interval, upper")
+    add("4.68", "sd_ratio_minutes_over_composition", DELTA,
+        "how much narrower the composition's season total is")
+
+    # Coverage: the composition's genuine advantage, reported as its own row.
+    add("742", "n", MINS, "player-seasons both heads cover")
+    add("1,111", "n", ALL, "player-seasons the composition covers")
+    C.append(_c("369", MIN_UNIF,
+                lambda: cell(MIN_UNIF, "n", arm=ALL) - cell(MIN_UNIF, "n", arm=MINS),
+                "rows only the composition reaches — the `>= 200 prior minutes` drop",
+                doc=doc))
+
+    # The injected per-player-season effect: whether the narrow season total is a ceiling
+    # or a missing parameter. Claimed at the sweep's best sigma, plus the sigma itself,
+    # because "it ties at 0.375" goes stale if either half moves.
+    PS = "composition_sum_plus_player_season_effect"
+
+    def ps(column: str, sigma: float = 0.375) -> float:
+        return cell(MIN_UNIF, column, arm=PS, sigma=sigma)
+
+    def best_sigma() -> float:
+        """The sweep's own CRPS-minimising sigma, so `0.375` cannot rot into a stale label."""
+        frame = table(MIN_UNIF)
+        arm = frame[frame["arm"] == PS]
+        return float(arm.loc[arm["crps_minutes"].idxmin(), "sigma"])
+
+    C += [
+        _c("0.375", MIN_UNIF, best_sigma,
+           "the sweep's CRPS-optimal injected effect size", doc=doc),
+        _c("142.17", MIN_UNIF, lambda: ps("crps_minutes"),
+           "composition + injected player-season effect, CRPS at the sweep optimum",
+           doc=doc),
+        _c("239.45", MIN_UNIF, lambda: ps("predictive_sd"),
+           "the season-total spread the injection recovers", doc=doc),
+        _c("−2.18", MIN_UNIF, lambda: ps("crps_delta"),
+           "injected arm against the marginal head", doc=doc),
+        _c("−6.96", MIN_UNIF, lambda: ps("ci_lo"), "injected arm interval, lower", doc=doc),
+        _c("+2.85", MIN_UNIF, lambda: ps("ci_hi"), "injected arm interval, upper", doc=doc),
+        _c("0.0659", MIN_UNIF, lambda: ps("pit_ks", 0.45),
+           "best PIT KS in the sweep — better calibrated than the marginal head", doc=doc),
+    ]
+
+    # The zero-sum dynamic: the composition sits on the identity a fixed team total forces
+    # and the marginal head does not, which is invisible in every marginal metric.
+    def couple(column: str, arm: str) -> float:
+        return cell(MIN_UNIF, column, arm=arm, unit="teammate_coupling")
+
+    C += [
+        _c("−0.0509", MIN_UNIF, lambda: couple("r_teammates", COMP),
+           "composition teammate correlation", doc=doc),
+        _c("−0.0001", MIN_UNIF, lambda: couple("r_teammates", MINS),
+           "marginal head teammate correlation — the failure", doc=doc),
+        _c("−0.0664", MIN_UNIF, lambda: couple("r_implied_by_fixed_sum", COMP),
+           "what a fixed team total forces at the measured roster size", doc=doc),
+        _c("1,022.9", MIN_UNIF, lambda: couple("team_season_sum_sd", MINS),
+           "the marginal head's spread on a physically fixed team total", doc=doc),
+        _c("16.05", MIN_UNIF, lambda: couple("roster_size", COMP),
+           "mean single-team roster size the coupling is measured over", doc=doc),
+        _c("963", MIN_UNIF, lambda: couple("n", COMP),
+           "single-team player-seasons the coupling is measured on", doc=doc),
+    ]
     return C
 
 
@@ -4093,6 +4209,21 @@ def _readme() -> list[Claim]:
                  / mean_abs_dev(COMP_P, "ratio", 1.0, variant="betabinom_ot",
                                 analysis="variance_ratio")),
         "calibration error cut by grading")
+    # The graded dispersion at 4dp as well as 3dp: the minutes section quotes it to four
+    # places to distinguish it from the 4.65x game-level figure it is NOT, so the precision
+    # is doing work and the claim has to match it.
+    add("0.1768", COMP_RHO, lambda: cell(COMP_RHO, "rho", variant=SEL, bin=1),
+        "fringe-tier dispersion, 4dp")
+    add("0.0855", COMP_RHO, lambda: cell(COMP_RHO, "rho", variant=SEL, bin=4),
+        "star-tier dispersion, 4dp")
+    # The per-team-game floor, which the composition clears on the same draws that fail the
+    # season-unit one. The pair is the whole "a head is only a model at the unit it was
+    # scored at" claim, so both halves are claimed rather than the contrast asserted.
+    add("4.6776", COMP_M, lambda: comp_m("carry_forward", "val_crps"),
+        "the composition's per-team-game no-fit floor, which it does clear")
+
+    # ── results: the two minutes heads at the season unit ─────────────────────
+    C.extend(_minutes_unification_claims(README))
 
     # ── results: substitution and season terms ────────────────────────────────
     # The README's claim used to be that the gain *replicates across splits*. Gate 0 is

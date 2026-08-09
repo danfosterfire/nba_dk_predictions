@@ -436,9 +436,15 @@ in seconds.
 
 ---
 
-## The third prerequisite: is the marginal minutes head still needed?
+## The third prerequisite: is the marginal minutes head still needed? ✅ settled 2026-08-09
 
-Raised 2026-08-08. `README.md` says the two minutes heads "compose rather than compete" —
+**Yes. `make minutes-unification` ran the gate and the composition lost at the season unit,
+so both heads ship — but not for the reason the sentence being tested gave.** The audit
+killed one of its three claims and the gate killed a second; what survives is the third,
+and it is not the one anybody would have bet on. The measured verdict is under "What the
+gate found" below, and everything above it is the reasoning as it stood on 2026-08-08.
+
+Raised 2026-08-08. `README.md` said the two minutes heads "compose rather than compete" —
 `stan_composition` owning the per-game allocation and `stan_minutes` still owning "the
 season-level mean and the game-level dispersion, neither of which the composition produces."
 **Checked against the code, that sentence asserts three things and only one of them holds.**
@@ -475,6 +481,11 @@ minutes at season-total (CRPS 143.9, MAE 199.6, R² 0.883), composition per-team
 construction**, so it can produce the season mean. Whether it is better or worse at that unit
 has never been measured.
 
+> Measured 2026-08-09, and **this claim is false too**: the composition matches the marginal
+> head on the season-level mean and is the *less biased* of the two. What it cannot produce
+> is the season-level **spread** — which is a different quantity, was never what the sentence
+> said, and is the only reason the marginal head survives. See "What the gate found".
+
 ### Claim 3 — the year effect. **Genuinely load-bearing, and the reason not to retire it yet.**
 
 `season_terms` selected the `year` arm for `min`: val MAE **199.03** against the base arm's
@@ -484,6 +495,12 @@ here more than anywhere else, because roster-level spread is what decides a 2-of
 **The composition cannot carry one today**: `composition_glm.stan` has no `S` / `year_z` /
 `sigma_year` block, unlike `betabinomial_glm.stan` where `S = 0` disables it exactly. Retiring
 `stan_minutes` right now would drop the project's only era correction.
+
+> **Never became load-bearing, because the gate settled it first.** The year block was to be
+> ported into `composition_glm.stan` only if the composition won; it did not, `stan_minutes`
+> ships, and its `year` arm ships with it unchanged. `composition_glm.stan` still carries no
+> `S` / `year_z` / `sigma_year` block and does not need one — which also saves the
+> season-terms ablation re-run, a refit of the project's most expensive head.
 
 ### Two things that cut toward the composition, and one that is a non-argument
 
@@ -512,6 +529,357 @@ on the same validation rows, same metric.
 simulator draws minutes from the composition, and the 4.65× moves from *simulator input* to
 *diagnostic* — a number the composition's draws are checked against rather than one they are
 built from.
+
+### What the gate found ✅ `make minutes-unification`, 2026-08-09
+
+**The composition loses, so both heads ship — and every part of the reasoning above about
+*why* was wrong.** Scored at the season unit on the **742** validation player-seasons both
+heads cover, at the `train` fit window, 1,000 posterior draws each:
+
+| arm | CRPS | MAE | R² | bias | PIT KS | predictive sd |
+|---|---|---|---|---|---|---|
+| `minutes_head` | **144.35** | 200.12 | 0.8829 | −14.09 | 0.0735 | **302.75** |
+| `composition_sum` | 170.06 | 200.28 | 0.8848 | +2.41 | 0.3341 | **64.65** |
+| `carry_forward` (no-fit floor) | 161.29 | 213.65 | 0.8532 | +24.14 | 0.1242 | 330.84 |
+| `composition_sum_all_rows` | 149.72 | 175.97 | 0.9156 | −0.00 | 0.3575 | 55.86 |
+
+Paired bootstrap over the 742 rows, composition − minutes: **+25.70** CRPS minutes, 95%
+interval **[+18.96, +33.25]**, P(Δ<0) = **0.0%**. Not a margin this repo cannot resolve —
+the four sub-1% reversals already logged here are the reason that sentence needs saying.
+
+**The mean was never the problem. The spread is.** MAE 200.28 against 200.12 and R² 0.8848
+against 0.8829 are a tie, and the composition is the *less biased* of the two (+2.41 against
+−14.09). Its season-total predictive sd is **64.65** minutes against **302.75** — **4.68×**
+too narrow — and its PIT KS is **0.3341** against **0.0735**. Summing draws that are iid
+across games cannot manufacture season-level heterogeneity: per-game noise averages down by
+~1/√G while a season-level multiplier passes through in full. That is the same identity
+`stan_minutes`' docstring already states from the other direction, arriving here as a
+capability gap rather than as a caveat.
+
+**A *shared* dispersion knob cannot fix it, because the constraint forbids what it would
+buy.** A team's season minutes are fixed at `5 × Σ game_length`, so summing a team's players
+over a season is a *constant* across draws — measured as a predictive sd of **0.00** minutes.
+The head cannot give every player on a roster a correlated "he played more than expected this
+year" season, because the minutes have to come from a teammate. Its aggregate bias of
+−0.00 over the complete 1,111-row player set is the same fact wearing a different hat: the
+league's minutes are fully allocated, so summing every unit recovers the total exactly, by
+construction and not by skill.
+
+> **Read that precisely: it rules out a *shared* effect, not every effect.** An earlier draft
+> of this section said the constraint "forbids the fix" without the qualifier, which is wrong
+> and was corrected the same day. A per-**(player, season)** effect is not shared, and
+> "Could a season term fix the composition instead?" below measures what it buys: the
+> composition ties the marginal head. The distinction is the whole result.
+
+**The sharpest form of the result is the floor comparison.** At the season unit the
+composition does not clear the no-fit carry-forward floor — 170.06 against **161.29** — on
+the same draws that clear its own per-team-game floor decisively (4.4945 against 4.6776).
+Same head, same posterior, opposite verdicts at two units. Per `CLAUDE.md` a head that does
+not clear its floor is not a model; the honest reading is narrower and more useful: **the
+unit is part of the claim**, and a head is only a model at the unit it was fitted and scored
+at.
+
+Two things that cut the composition's way and do not change the verdict. It covers **1,111**
+validation player-seasons against the marginal head's 742 — the **369** rookies and
+low-minute players the `≥ 200 prior minutes & ≥ 10 games` filter drops, who are draftable —
+and it scores better on that wider set than either head does on the narrow one (CRPS 149.72,
+R² 0.9156), because the extra rows are low-minute players who are easier to predict. That is
+a coverage advantage, not a win, and it is reported as its own row rather than folded into
+the comparison.
+
+Two guards on the measurement itself, both reported in the artifact. The two frames disagree
+about realized season minutes by a mean of **1.78** and a max of **8** minutes, because the
+marginal head builds from `component_targets.parquet` and the composition from
+`availability_panel.parquet`; scoring both arms against a single shared target moves the gap
+from +25.70 to **+25.72**, so that is not what carries it. And nothing here was refitted —
+both heads are rehydrated around their persisted `make posteriors` draws and score through
+their **own** `predict_samples`, so the gate costs seconds rather than the composition's
+9.92 h and neither arm is a differently-fitted model from the one it is compared against.
+
+### Could a season term fix the composition instead? **No — measured, and it is not close.**
+
+The obvious follow-up, since the minutes head is the one place in this project that ships a
+season term and the composition carries none. `make minutes-unification` answers it from the
+head's own residuals without fitting anything, and the answer is no on three independent
+counts.
+
+**A year term has no variance to reach.** A trend or a year random effect is a *league-wide
+shift shared by every row in a posterior draw* (`stan_utils.YearTerm`), so the only variance
+it can explain is that of the league-wide mean residual across seasons. For a head that
+allocates every minute in the league that quantity is **0.000** minutes against a residual sd
+of **243.50** — **0.000000%** of the variance to be explained. That is zero by construction
+rather than by accident: the residuals sum to zero within each season because the minutes are
+fully allocated, so there is no league-wide level for a league-wide term to move.
+
+**The constraint blocks it a second way.** Even granting a shift, adding the same `delta` to
+every player's η in a team-game re-tilts the stick-breaking allocation toward the top of the
+rotation and leaves the team total at exactly `5 × Σ game_length`. A shared shift is
+*definitionally* a re-allocation here, and re-allocation is not spread.
+
+**And it is the wrong size by an order of magnitude.** The deviation that needs modelling —
+realized against predicted season minutes, per player-season, on the log scale — has an sd of
+**0.2836** over the 867 validation rows clearing 200 realized minutes. The minutes head's
+fitted `sigma_year` is **0.0231**. Even if a league-wide term could apply, it is roughly
+**12×** too small to be the object in question.
+
+### The effect that *does* work is indexed by (player, season) — and it ties
+
+Measured in the same target, and it is not a small effect. Inject `σ·z[unit, draw]` into the
+linear predictor — one standard normal per player-season per posterior draw, shared across
+that player's games — and re-run the head's **own** sequential allocation. That is exactly
+the predictive a fitted random effect produces once integrated over, the way `YearTerm`
+already treats an unobserved future level. Scored on the same 742 gate rows:
+
+| σ | CRPS | Δ vs marginal | 95% interval | predictive sd | MAE | PIT KS | verdict |
+|---|---|---|---|---|---|---|---|
+| 0.000 | 170.06 | +25.70 | [+18.96, +33.25] | 64.65 | 200.28 | 0.3341 | loses |
+| 0.200 | 149.79 | +5.44 | [−0.17, +11.79] | 141.67 | 199.99 | 0.1872 | ties |
+| 0.300 | 143.46 | −0.89 | [−5.97, +4.68] | 197.65 | 199.98 | 0.1237 | ties |
+| **0.375** | **142.17** | **−2.18** | **[−6.96, +2.85]** | **239.45** | 200.38 | 0.0808 | **ties** |
+| 0.450 | 142.87 | −1.49 | [−6.14, +3.22] | 280.87 | 200.51 | **0.0659** | ties |
+| 0.600 | 148.92 | +4.57 | [+0.15, +9.18] | 359.57 | 201.35 | 0.1251 | loses |
+
+**So the 4.68× is a missing parameter, not a ceiling.** The optimum is interior, it sits at a
+σ that brackets both data-implied figures above (log-ratio 0.2836, logit-share 0.4934), the
+predictive sd lands on the 243.50 residual sd rather than overshooting, and MAE moves by less
+than a minute across the whole sweep — it buys spread and not fit, which is precisely the
+diagnosis. At σ = 0.45 the PIT KS of **0.0659** is *better calibrated at the season unit than
+the marginal head's 0.0735*, while the team constraint still holds exactly.
+
+**The caveat is load-bearing and the result should not be quoted without it.** σ is read off
+validation CRPS, so this is a **tuned upper bound on what the parameterization can reach, not
+a score.** A real fit estimates σ on train and re-estimates `beta` alongside it, and could
+land better or worse. What the sweep legitimately settles is the structural question — the
+constraint permits the spread — and that was the thing in doubt.
+
+Two costs still to size. It is ~10,000 parameters on a 683k-row head that already costs
+9.92 h and adapts a `dense_e` metric over ~25, so the sampler profile changes completely and
+a non-centered parameterization is mandatory rather than optional. And the effect is only
+partly identified for the players who matter most: a star's season share is pinned by the cap
+on many nights, so the frailty and the cap compete to explain the same rows — visible in the
+sweep as the redraw-clamp count rising from 5 to 71 across it.
+
+### Why the zero-sum dynamic is a requirement, not a nicety
+
+The constraint is not only a cost the composition pays; it is a **mechanism the contest is
+sensitive to**, and no marginal metric can see whether a head has it. On 963 single-team
+validation player-seasons:
+
+| head | mean pairwise r between teammates | predictive sd of the team's season total |
+|---|---|---|
+| composition | **−0.0509** | 79.0 min |
+| marginal head | **−0.0001** | **1,022.9** min |
+
+A fixed team total over K players forces mean pairwise `r = −1/(K−1)`, which at the measured
+roster size of 16.05 is **−0.0664**. The composition sits on it. The marginal head reads
+essentially zero, and puts a **1,022.9-minute** predictive sd on a team season total that is
+*physically fixed at ~19,810* — it assigns real probability to outcomes that cannot happen.
+(Neither figure is 0.00 because dropping traded players leaves a subset of each roster and a
+subset of a fixed-sum set has no fixed sum; the exact figure is the 0.00 on the complete
+team-game blocks. The **ratio** is what carries.)
+
+Two strategy axes depend on the sign directly, and both are in the sweep's config:
+
+- **stacking.** A same-team pair's minutes are *anti*-correlated. Under independent draws
+  they read as unrelated, so a minutes-driven stack is mispriced — plausibly with the wrong
+  sign on its minutes component, on an axis `src/sim/strategy.py` explicitly sweeps.
+- **handcuffing.** Drafting a starter's backup is a hedge that *only exists* if the model
+  carries the negative correlation. A head without it cannot discover the strategy, so the
+  sweep would silently never propose it.
+
+This is also why "take the spread from the marginal head and the allocation from the
+composition" is not the clean composition it sounds like — see below.
+
+### What ships, and what the simulator has to do about it
+
+- **Both heads stay.** `stan_minutes` is not retired, `make stan-minutes` stays in the
+  chain, and it stays in `make posteriors`' head list.
+- **No year block is ported into `composition_glm.stan`**, and the season-terms ablation is
+  not re-run for it — that work was conditional on the composition winning. The `year` arm
+  ships where it already did.
+- **`README.md`'s "the two heads compose rather than compete" is replaced by the measured
+  split**, which is what that sentence was reaching for and got wrong in two of three parts:
+  the composition owns the per-game **allocation** and the coverage, and the marginal head
+  owns the season-level **spread**. Neither owns "the season-level mean" — they tie on it.
+- **`src/sim/season.py`'s minutes draw is the one thing this gate did NOT settle**, and the
+  σ sweep is why. Three options, in the order they should be tried:
+
+  1. **Inject the per-player-season effect into the composition's draw** (recommended). It
+     needs no refit — the injection runs on the existing posterior and is ~10 lines in
+     `src/sim/season.py` — it keeps the team constraint and the zero-sum dynamic exactly, and
+     it ties the marginal head at the season unit. **The one honest piece of work it owes is
+     σ**: 0.375 was read off validation and must be re-estimated on `train` before it can be
+     used, or the sweep is tuned on the split it is later scored against.
+  2. **Fit σ as a Stan parameter** and re-run the gate. Strictly better if it works, and it
+     would reopen supersession — a composition carrying both the right season-level spread
+     and the exact constraint is strictly more than the marginal head has. It costs a refit
+     of the project's most expensive head, so it is a schedule decision against October, not
+     a technical one.
+  3. **Blend the two heads.** Listed last because it is *not* the clean composition it
+     sounds like. Independent per-player season multipliers drawn from the marginal head are
+     renormalized away by the allocation step, since the composition distributes a fixed pot
+     — so the spread does not survive the blend, and scaling after allocation breaks the
+     constraint instead. Anyone reaching for this should read the teammate-coupling table
+     first: the marginal head's independence is not a neutral simplification, it is the
+     thing that erases stacking and handcuffing.
+
+  **Option 2 was chosen on 2026-08-09** and is specified below and built as item 3d.
+
+---
+
+## Fitting σ: the player-season effect as a Stan parameter
+
+Chosen 2026-08-09 over the injection, because the injection's σ is tuned on the split it is
+scored against and a fitted σ is not. The whole specification is below; build item 3d carries
+the session prompt.
+
+### What goes in `composition_glm.stan`, and the device that makes it safe
+
+One optional block, added the way `betabinomial_glm.stan` adds its year effect:
+
+```
+eta = logit_prior + alpha + X * beta + sigma_u * u_z[unit_idx]
+```
+
+with `u_z` and `sigma_u` **zero-length when `U_n = 0`**, so the disabled model is not "the
+same model with a small coefficient" but literally the current parameter space, priors and
+likelihood. That is the `S = 0` device, and the file already uses the same trick internally
+for `n_rho_par` on the binomial arm, so it is a house pattern rather than an import. **A test
+pins the nesting**, exactly as the year block's does — it is the only thing standing between
+"we added a parameter" and "we silently changed the shipped head."
+
+`unit_idx` is per row and indexes **(player, season)**, not player: a player's minutes role is
+a property of the season he is in, and a career-long effect would be absorbed by
+`logit_share_lag1` and the offset.
+
+### Two technical constraints that are not obvious, and one measured
+
+**`dense_e` has to go on these arms.** The head's docstring records that the dense metric was
+chosen because "at ~25 parameters the dense adaptation is free" — it took a one-season probe
+from treedepth 8–9 and 645 s under `diag_e` to treedepth 4 and 65 s. That argument does not
+survive the random effect. The full training window carries **12,307** player-season units
+against 631,158 rows, so a dense metric is a 12,332² mass matrix — ~1.2 GB and a Cholesky of
+it per adaptation window. **Use `diag_e` for any arm with the effect**, and expect the
+treedepth win to be partly given back. This is the single largest cost risk in the item.
+
+**Non-centered, and the reason is the sparse tail rather than convention.** Rows per unit run
+median **57**, p10 **11**, minimum **1**. Well-informed units prefer a centered
+parameterization and the one-game units are a funnel under it, so the mix argues for
+non-centered as the default. It is not free — at 57 observations non-centered is the worse
+choice — so **divergences are the diagnostic, not an assumption**, and a centered arm is the
+first thing to try if they appear.
+
+**The cap and the effect compete for the same rows.** A star's allocation is pinned by
+`m_k = min(U, R_k)` on many nights, so `u` and the cap explain overlapping variation — the
+`offset_clipped` indicator already marks exactly those rows. The injection sweep showed the
+symptom: redraw clamps rose from 5 to 71 across it. If `sigma_u` comes back implausibly small
+for stars, grading it by `w_share` bin the way `rho` already is (`n_rho = 4`) is the natural
+second arm, not a new idea.
+
+### The feature block — what is missing, what is on disk, and what it is worth
+
+**The composition's 25 features are all properties of the player alone.** Prior availability,
+prior minutes, workload, durability, age, playoff workload, his own prior share, four data
+indicators, and two overtime terms. A head whose entire job is dividing a fixed team pot
+among teammates carries **nothing about the teammates**. Team information enters only through
+the offset, which is *last season's* composition.
+
+`data/features/team_context_tierA.parquet` already holds the block, built leave-one-out and
+point-in-time safe: `role_crowding` (minutes-weighted archetype similarity between a player
+and his teammates — deliberately nonlinear, so it does not centroid-collapse the way a mean
+of PC scores would), `teammate_usage_max/sum/load`, `teammate_assist_supply`,
+`teammate_spacing`, `team_pace`, `n_teammates`, plus `reliability` and `roster_coverage` for
+the rows it describes badly. It covers 11,928 player-seasons against the composition's wider
+frame, so it will leave holes on exactly the rookies the composition refuses to drop — the
+`design_missing` indicator already handles that shape and should be reused rather than
+duplicated.
+
+**Size the expectation honestly before building it.** Measured in a scratch session on 9,793
+train player-seasons, with the deviation defined as `logit(realized share) − logit(prior
+share)`, sd **0.674**:
+
+| signal | correlation with the deviation |
+|---|---|
+| the player's own lag-1 deviation | **−0.201** — mean reversion, not persistence |
+| departed teammates' prior share | +0.041 |
+| arriving players' prior share | −0.063 |
+| net minutes opened up | +0.088 |
+
+In-sample R² on the deviation is **0.040** from own history alone and **0.052** adding the
+team columns, so a crude team block is worth about **+1.2 points of R²** and everything
+together explains **5.2%**. The signs are all right, which says the construction is sound;
+the magnitudes say the deviation is overwhelmingly unforecastable from pre-season information
+— the same wall the whole project runs into, where availability persists at r = 0.317 and
+five games of the real season settle 86% of the season total.
+
+Two caveats point in opposite directions and are the reason to test rather than assume. The
+baseline is the **carry-forward floor, not the fitted model**, and the shipped β already
+carries `minutes_per_game_lag2/3`, age and durability, which overlap with the mean-reversion
+signal — so the incremental value over what ships is probably *below* 4%. But the team
+columns above are a sum of shares, and `role_crowding` is the archetype-weighted version: a
+departing star should matter far more to his positional replacement than to the roster
+average, and a sum cannot see that. **These four correlations are a scratch measurement and
+item 3d must re-derive them into its artifact**, so they stop being prose.
+
+**ADP is off limits**, and that is a settled decision rather than an oversight
+(`docs/adp-plan.md`; registry `adp-in-strategy-layer`). It would be the best available predictor of
+a minutes-share change, and spending it here would leave the strategy layer's blend weight
+sweeping an axis the model had already absorbed.
+
+### The ladder, and the pilot that keeps it affordable
+
+Four arms, and the incumbent is **not refitted** — its posterior is on disk:
+
+| arm | mean function | effect | asks |
+|---|---|---|---|
+| `betabinom_ot_graded` | shipped | — | the incumbent, read from `posteriors/<window>/composition.pkl` |
+| `+ps` | shipped | `sigma_u` | does the effect close the season-unit gap? |
+| `+team` | shipped + team context | — | do features predict the deviation on their own? |
+| `+ps_team` | shipped + team context | `sigma_u` | do features *reduce* `sigma_u`? |
+
+**Run the pilot window first.** `stan.composition.first_season` is the knob and `probe_timing`
+is the Gate A that already exists. At `2018-19` the training frame is **97,587** rows and
+**2,204** units against the full window's 631,158 and 12,307 — 6.5× and 5.6× smaller. Get the
+arm *ordering* there, then commit the selected arm to the full window. That is exactly the
+path this head already took once, from pilot to Gate E.
+
+### Gates
+
+| gate | pass condition | why this bar |
+|---|---|---|
+| **P1** | `U_n = 0` reproduces the current posterior **exactly** — same parameter space, same draws at the same seed | The only thing separating "added a parameter" from "silently changed the shipped head". Test-pinned, mirroring the year block's |
+| **P2** | re-running `make minutes-unification`, the composition **ties or beats** the marginal head at the season unit — paired-bootstrap interval straddling or below zero — with team-sum error still exactly 0 | The gate this whole line of work exists to move. The injection already showed a tie is reachable at σ ≈ 0.375 |
+| **P3** | per-team-game CRPS does not regress past the incumbent's **4.4945** | The head's existing win is not to be traded for the new one. Both units, or it is not an improvement |
+| **P4** | for `+ps_team` against `+ps`: the team block must **reduce fitted `sigma_u`** | The mechanism check. A feature block that improves CRPS *without* shrinking `sigma_u` is explaining something other than the player-season deviation, and the claim would not be supported |
+| **P5** | `sigma_u` lands near the injection's **0.375–0.45** | A free replication. A fit that comes back at 0.05 or 1.5 disagrees with a measurement taken on the same rows, and that disagreement is a bug until explained |
+
+Selection reads validation only, as everywhere.
+
+### The fallback, and why it must be written down before starting
+
+**If the fit blows the budget or will not converge, ship the injection with σ estimated on
+`train`.** That is option 1, it needs no refit, `player_season_effect_sweep` already
+implements the arithmetic, and it is *already measured* to tie. The only work it owes is
+re-estimating σ on the fitting half instead of reading it off validation. Drafts happen
+before October and a board that exists beats a board that is still sampling.
+
+### Where it lands downstream
+
+- **`make posteriors` has to carry `sigma_u`, and only `sigma_u`.** The fitted `u_z` are
+  useless for a season that has not happened — the predictive integrates over a **fresh** `z`
+  per posterior draw, exactly as `YearTerm.shift` does. `posteriors._finish` already
+  **raises** on a head fitted with a year random effect for precisely this reason; this item
+  turns that refusal into a supported capability for the composition rather than routing
+  around it.
+- **`minutes_unification.player_season_effect_sweep` becomes the consumer.** It already does
+  the right arithmetic; after the fit it reads σ from the artifact instead of sweeping a grid,
+  and the sweep stays as the calibration check.
+- **Supersession gets re-taken, not re-argued.** If P2 passes, the composition carries both
+  the season-level spread and the exact team constraint, which is strictly more than the
+  marginal head has. Re-run `make minutes-unification` and let it decide, the way
+  `src/final_evaluation.py` reads which arm shipped rather than re-deciding.
+- `docs/minutes-composition-plan.md` gets the head-level record when it lands; this section is
+  the driver and the gate.
 
 ---
 
@@ -703,6 +1071,13 @@ make draft-pool ✅   src/features/draft_pool.py    the board: player x season, 
                                                    -> data/features/draft_pool.parquet
                                                       + draft_pool_position_audit.csv
 
+make minutes-unification ✅ src/models/minutes_unification.py
+                                                   both minutes heads at the SEASON unit, on
+                                                   the rows both cover. Refits nothing —
+                                                   rehydrates each head around its persisted
+                                                   draws, so it needs no CmdStan
+                                                   -> outputs/predictions/minutes_unification.csv
+
 make simulate-season src/sim/season.py             THE tensor
                                                    -> data/features/sim_tensor_<season>.npz
 
@@ -727,12 +1102,13 @@ Assembly, not invention. Every piece already exists and is measured:
 | which games he plays | `stan_games_played.sequences` | entry × exit × within-tenure chain, all gates pass |
 | minutes, team-constrained | `stan_composition.simulate_minutes` | CRPS 4.4945 vs 4.7842 independent |
 | minutes, game-level noise | the composition's **own** role-graded rho | 0.1768 fringe → 0.0855 star. `stan_minutes_dispersion.csv`'s **4.65×** is a *diagnostic* to check draws against, **not** an input — see "The third prerequisite" |
+| **minutes, season-level spread** | **`stan_minutes`, and it cannot come from the composition** | summed composition draws are **4.68×** too narrow at the season unit (sd 64.65 against 302.75, PIT KS 0.3341 against 0.0735); the team constraint pins a team's season minutes to a constant, so no dispersion parameter buys it back. `make minutes-unification` |
 | minutes, serial dependence | `serial_correlation.csv` | **2.43×** ten-game block inflation |
 | the eleven component heads | `season_terms._draw_components` | already materializes `fga → fg3a\|fga → fg2a → makes` |
 | cross-component dependence | `residual_correlation.csv` | Gaussian copula, mean +0.013, max 0.157 |
 | the bonus | `targets.expected_bonus` / `compute_dk_pts` | overdispersion **0.025** at the player-game unit |
 
-Five rules the assembly must not violate, all of them already argued elsewhere and repeated
+Six rules the assembly must not violate, all of them already argued elsewhere and repeated
 here because this is the module that could quietly break them:
 
 1. **Draw, never plug in.** `E[min]` and `E[gp]` are wrong inputs to a threshold bonus.
@@ -748,6 +1124,13 @@ here because this is the module that could quietly break them:
    Drawing it per team-game would silently destroy that, and it is a real source of the
    correlated upside the tournament objective rewards — a same-team stack, which the strategy
    layer explicitly considers, shares its overtimes.
+6. **Minutes come from BOTH heads, and taking them from the composition alone is the failure
+   this layer is most likely to ship.** The composition owns the per-game allocation and the
+   coverage; `stan_minutes` owns the season-level spread, which the composition is
+   structurally unable to produce. A board built from the composition alone is calibrated
+   per game and **4.68× too confident per season** — and the season-total spread is exactly
+   what a 2-of-12 cut is decided on, so the error lands squarely on the objective. Measured
+   by `make minutes-unification`; see "The third prerequisite".
 
 Consumers default to the `train_val` fit window, matching the four numbers already calibrated
 that way.
@@ -1162,8 +1545,10 @@ Plain `assert` with synthetic builders, no fixtures or classes, mirroring
 ## The build order — one session per item, with its opening prompt
 
 Ordered so the **live-draft path closes at item 7**. Items 2, 3 and 3b depend on nothing and can
-run in any order alongside item 1. **Item 3c must follow 3b** — both edit `stan_composition`
-— and both must land before item 4, which imports whatever they settle.
+run in any order alongside item 1. **Item 3c must follow 3b** — both were expected to edit
+`stan_composition`, though 3c in the event did not — and both must land before item 4, which
+imports whatever they settle. **Item 3d follows 3c** and does edit that head, so nothing else
+may be in flight on it. Items 1, 2, 3, 3b and 3c are done; **item 3d is next.**
 
 **Paste the framing prompt below first, then the item's own prompt.** The framing carries
 everything common — what to read, the conventions, the split rule, the deadline, and how to
@@ -1323,12 +1708,17 @@ is worth as much as the record of what it found.
 > game, shared by both teams** — overtime is a property of the game, and drawing it per
 > team-game would destroy a correlation a same-team stack depends on.
 
-### 3c. `make minutes-unification` — does the composition retire the marginal head? ⛔ blocks 4
+### 3c. `make minutes-unification` — does the composition retire the marginal head? ✅ built 2026-08-09
 
-Added 2026-08-08 — see "The third prerequisite" above. **Sequence it after 3b**, which is
-already in flight and edits the same module (`stan_composition` gives up `fit_ot_tail` there
-and may give up the comparator here). Must land before item 4, because it settles what the
-simulator's minutes draw imports.
+Added 2026-08-08 — see "The third prerequisite" above, which now carries the measured
+verdict. **The composition lost at the season unit, so both heads ship**, no year block was
+ported into `composition_glm.stan`, and the season-terms ablation was not re-run for it. The
+one thing item 4 must carry forward is that the simulator's minutes draw takes the
+allocation from the composition and the season-level spread from `stan_minutes`.
+
+The sequencing note was right and the collision it predicted did not happen: 3b landed
+first, `stan_composition` gave up `fit_ot_tail` there, and this item turned out not to touch
+that module at all — the gate lives in its own module and reads persisted posteriors.
 
 > Settle whether `stan_minutes` is still needed in the production chain, or whether
 > `stan_composition` supersedes it.
@@ -1385,23 +1775,113 @@ simulator's minutes draw imports.
 > 0.341 h across four arms against the composition's 9.92 h, so retiring the target saves
 > twenty minutes.
 
+### 3d. `make stan-composition` — fit the player-season effect ⛔ blocks 4
+
+Added 2026-08-09, out of item 3c's follow-up. **Sequence it after 3c**, whose artifact is
+both the motivation and the gate. It edits `src/stan/composition_glm.stan` and
+`stan_composition.py`, so nothing else may be in flight on that head. Its full specification
+is "Fitting σ: the player-season effect as a Stan parameter" above — read that first; the
+prompt below does not repeat it.
+
+> Fit a per-**(player, season)** random effect in the minutes composition head, and sweep a
+> team-context feature block alongside it in the same run.
+>
+> Read "Fitting σ: the player-season effect as a Stan parameter" in
+> `docs/simulations-plan.md` first. It carries the design, the two non-obvious technical
+> constraints, the arm ladder, all five gates and the fallback, and none of it is repeated
+> here. Then read "The third prerequisite" above it for why this exists at all.
+>
+> **The one-line why.** `make minutes-unification` found the composition's season totals
+> **4.68x too narrow** (predictive sd 64.65 against the marginal head's 302.75) and traced it
+> to a missing parameter rather than a ceiling: injecting `sigma * z` per player-season per
+> posterior draw into the *existing* posterior moves the sd to 239.45 and the CRPS to 142.17,
+> which ties the marginal head. That injection tuned sigma on validation, which is the split
+> it is scored against. This item fits it instead.
+>
+> **Do not refit the incumbent.** `betabinom_ot_graded`'s posterior is on disk at
+> `data/features/posteriors/<window>/composition.pkl` and is the comparison baseline. Three
+> new arms only: `+ps`, `+team`, `+ps_team`.
+>
+> **Run the pilot window before the full one.** `stan.composition.first_season = "2018-19"`
+> cuts the training frame from 631,158 rows and 12,307 units to 97,587 and 2,204. Get the arm
+> ordering there, commit the selected arm to the full window, and use the existing
+> `probe_timing` Gate A to abort before a run you cannot afford. This head took exactly that
+> path once already.
+>
+> Four things that are easy to get wrong, all of them measured rather than guessed:
+>
+> 1. **`U_n = 0` must reproduce the current posterior EXACTLY** — zero-length `u_z` and
+>    `sigma_u`, the `S = 0` device copied verbatim from `betabinomial_glm.stan`. Pin it with
+>    a test, the way the year block's nesting is pinned. This is Gate P1 and it is the only
+>    thing separating a new parameter from a silently changed shipped head.
+> 2. **Drop `dense_e` on the random-effect arms.** `StanComposition.fit` hard-codes
+>    `metric="dense_e"`, chosen when the head had ~25 parameters. At 12,307 units that is a
+>    12,332-square mass matrix — ~1.2 GB and a Cholesky per adaptation window. Use `diag_e`
+>    and expect to give back part of the treedepth win the dense metric bought.
+> 3. **Non-centered by default, but treat it as testable.** Rows per unit run median 57,
+>    p10 11, minimum 1: the dense units would prefer centered and the sparse tail funnels
+>    under it. Divergences are the diagnostic, and a centered arm is the first response.
+> 4. **ADP is off limits here** — `docs/adp-plan.md` settles that it belongs to the strategy
+>    layer, and spending it in the prediction layer would leave the blend weight sweeping an
+>    axis the model had already absorbed.
+>
+> The team block is already built and point-in-time safe:
+> `data/features/team_context_tierA.parquet`, headed by `role_crowding` (minutes-weighted
+> archetype similarity, leave-one-out) plus `teammate_usage_max/sum/load` and `n_teammates`.
+> It covers 11,928 player-seasons against a wider composition frame, so it will leave holes
+> on exactly the rookies this head refuses to drop — reuse the `design_missing` indicator
+> rather than minting a second one. **Also re-derive the four scratch correlations the plan
+> doc quotes** (own lag-1 deviation −0.201, departed +0.041, arrived −0.063, net opened
+> +0.088; joint in-sample R² 0.040 → 0.052) into the run's artifact, so they stop being prose.
+> Expect the block to be worth about a point of R² on the deviation and record it as a null
+> if it is not — the deviation is only ~5% predictable from pre-season information at all,
+> and that is the finding, not a disappointment.
+>
+> **Gates P1–P5 are in the plan doc.** The two that decide the item: re-running `make
+> minutes-unification` with the new posterior, the composition must **tie or beat** the
+> marginal head at the season unit with team-sum error still exactly 0 (**P2**), while not
+> regressing past the incumbent's per-team-game CRPS of **4.4945** (**P3**). `sigma_u` landing
+> near the injection's 0.375–0.45 (**P5**) is a free replication; a wildly different value is
+> a bug until explained. For `+ps_team`, the team block must **reduce** fitted `sigma_u`
+> (**P4**) — a block that improves CRPS without shrinking it is explaining something else.
+>
+> **The fallback is not optional and belongs in the run's notes.** If the fit blows the budget
+> or will not converge, ship the injection with sigma estimated on `train` instead of
+> validation. `minutes_unification.player_season_effect_sweep` already implements the
+> arithmetic and it is already measured to tie. Drafts happen before October.
+>
+> Then: teach `make posteriors` to carry `sigma_u` (and **only** `sigma_u` — the fitted `u_z`
+> are useless for a season that has not happened, and the predictive draws a fresh `z` per
+> posterior draw the way `YearTerm.shift` does; `posteriors._finish` currently raises on
+> exactly this case and should gain the capability rather than be routed around), repoint
+> `player_season_effect_sweep` to read sigma from the artifact, and **re-run `make
+> minutes-unification` to re-take the supersession decision rather than re-arguing it**.
+
 ### 4. `make simulate-season` — the tensor, and Gate A
 
 > Read `docs/simulations-plan.md` ("The output contract", "`src/sim/season.py`") and
 > `docs/predictions-plan.md`. Create the `src/sim/` package and build `src/sim/season.py` +
 > `make simulate-season`, writing `data/features/sim_tensor_<season>.npz`: a
 > `player x scoring_period x sim` float32 tensor of dk_pts plus a `uint8` games-played twin.
-> Assemble, do not invent — `stan_games_played.sequences` for which games, `stan_composition
-> .simulate_minutes` plus the 4.65x game-level dispersion and 2.43x block inflation for minutes,
+> Assemble, do not invent — `stan_game_length.sample_game_length` once per game shared by both
+> teams, `stan_games_played.sequences` for which games, `stan_composition.simulate_minutes`
+> with the composition's **own** role-graded rho plus the 2.43x block inflation for minutes,
 > `season_terms._draw_components` for the eleven heads in the order `fga → fg3a|fga → fg2a →
 > makes`, the conditioned matrix from `residual_correlation.csv` as the copula, and
-> `compute_dk_pts` for scoring. Four rules that must not be violated: draw never plug in; one
-> shared `min` draw per player-game feeds all eleven heads; sequential structure goes on minutes
-> only; **the posterior draw is the outer loop**, shared across all players, because that shared
-> `β` is the cross-player correlation this layer exists for. **Gate A**: the simulator must
-> reproduce the marginals it was handed — season-total dk_pts against `season_total_metrics.csv`,
-> the GP pmf against `stan_games_played_gp_pmf.csv`, per-game bonus rate against
-> `bonus_calibration.csv`. A miss here is a wiring fault, not a modelling one.
+> `compute_dk_pts` for scoring. **Minutes come from BOTH heads** — `make minutes-unification`
+> measured that summed composition draws are 4.68x too narrow at the season unit and that the
+> team constraint forbids fixing it inside the composition, so the season-level spread has to
+> come from `stan_minutes`; a board built from the composition alone is calibrated per game
+> and far too confident per season, which is exactly what a 2-of-12 cut is decided on. The
+> 4.65x game-level figure is a **diagnostic to check draws against, not an input**. Rules that
+> must not be violated: draw never plug in; one shared `min` draw per player-game feeds all
+> eleven heads; sequential structure goes on minutes only; **the posterior draw is the outer
+> loop**, shared across all players, because that shared `β` is the cross-player correlation
+> this layer exists for. **Gate A**: the simulator must reproduce the marginals it was handed —
+> season-total dk_pts against `season_total_metrics.csv`, the GP pmf against
+> `stan_games_played_gp_pmf.csv`, per-game bonus rate against `bonus_calibration.csv`, and the
+> season-total minutes spread against `minutes_unification.csv`'s 302.75. A miss here is a
+> wiring fault, not a modelling one.
 
 ### 5. `make bracket` — lineups, ties, advancement, payouts
 
