@@ -84,12 +84,19 @@ def ordinal_colors(th: dict, n: int) -> list[str]:
 
 def apply_theme(fig: go.Figure, th: dict, height: int = 420,
                 legend: bool = True) -> go.Figure:
-    """Recessive hairline chrome, pinned surfaces, no dashes anywhere."""
+    """Recessive hairline chrome, pinned surfaces, no dashes anywhere.
+
+    The title is set as `text` **and** font rather than font alone: styling
+    `title_font` on an untitled figure leaves plotly.js a title object with no text,
+    which it renders as the literal string "undefined" in a browser. Kaleido does not,
+    so this is only ever seen on the page.
+    """
     fig.update_layout(
         height=height,
         paper_bgcolor=th["surface"], plot_bgcolor=th["surface"],
         font=dict(family=FONT, size=13, color=th["ink2"]),
-        title_font=dict(family=FONT, size=15, color=th["ink"]),
+        title=dict(text=fig.layout.title.text or "",
+                   font=dict(family=FONT, size=15, color=th["ink"])),
         margin=dict(l=8, r=8, t=48, b=8),
         showlegend=legend,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0,

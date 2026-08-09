@@ -55,9 +55,17 @@ Two dropdowns — season **S** and player **P** — then three things:
 
 | element | what it shows |
 |---|---|
-| **The radial chart**, centre | P's score on each of the first ten principal components. Each component is a spoke; the radius is that component's score in **standard deviations from the league mean**. |
-| **Ten loadings panels**, arrayed around it | For each component, its strongest loadings as a diverging bar chart, under a 3–5 word title interpreting them, with the rotation player-season at each end of the axis. |
+| **The radial chart**, left | P's score on each of the first ten principal components. Each component is a spoke; the radius is that component's score in **standard deviations from the league mean**. |
+| **One component panel**, right | The component whose spoke was last clicked: its strongest loadings as a diverging bar chart, P's score on it, the rotation player-season at each end of the axis, and a paragraph on what the loadings say. |
 | **Nearest neighbours**, below | The three player-seasons closest to P·S in PCA space, optionally overlaid on the radial chart. |
+
+**One component at a time, opened by clicking its spoke.** The first version arrayed all
+ten loadings panels around the chart, which crammed the page badly enough that each
+panel's explanation had to be hidden in an expander to fit — and an explanation behind a
+click is an explanation nobody reads. Showing the one component the reader asked about
+buys the room to print it. The selected spoke is enlarged and ringed so the chart says
+what the panel is explaining, and a `Component` dropdown mirrors the same choice for
+anyone not using a mouse.
 
 ### The decisions inside it
 
@@ -106,11 +114,26 @@ panel therefore read "rebounding big" and dropped the "not a shooter" half of an
 is defined by the opposition. Each side now gets half the slots, a short side is backfilled
 by magnitude, and the rows are sorted by signed loading so the bars diverge around zero.
 
-**The panels follow the circle, not the reading order.** The first spoke is at the top and
-the rest run counterclockwise, so components 1–5 descend the left of the chart and 6–10
-climb the right. The left column of panels therefore reads PC1→PC5 top to bottom and the
-right column reads PC10→PC6 — which looks wrong in a list and is right beside a circle.
-Every panel is titled with its component number, so the ordering is never ambiguous.
+**The chart is drawn on cartesian axes, not on a plotly `polar` subplot, because
+Streamlit cannot report a click on a polar trace.** This was measured, not assumed: a
+probe app rendering a `Scatterpolar` and a `Scatter` side by side, both with
+`on_select="rerun", selection_mode="points"`, returns `[]` for every click on the polar
+markers and a full point payload for the cartesian ones. Since clicking a spoke *is* the
+interaction, the polar subplot had to go. The disc is now placed by hand — rings and
+spokes as shapes, spoke and ring labels as annotations, the polygon as a `Scatter` in
+`(r·cosθ, r·sinθ)` — which costs about sixty lines and buys back two things beyond the
+click: exact control over the ring labels, which a `polar` axis will not give either
+(it rotates radial tick text by `angle - tickangle` and ignores `ticksuffix` outright),
+and a grid made of shapes, so nothing but a data point can be picked up as a click.
+
+An invisible marker trace with a 30px radius sits under the visible one in the same
+point order, so a click *near* a vertex still lands on it.
+
+**The first spoke is at the top and the rest run counterclockwise**, so components 1–5
+descend the left of the disc and 6–10 climb the right. That was chosen when ten panels
+were arrayed around the chart and their column order had to follow the circle; it is kept
+because the ordering is a property readers learn once, and a fixed layout is worth more
+than the reason it was originally fixed.
 
 ### Pinning the interpretation
 
@@ -153,18 +176,35 @@ rather than hiding them:
 
 ### Verification, as run
 
-The same Streamlit `AppTest` harness the walkthrough used: `app.py` executed for real in
-both appearance modes, plus a season switch, a player switch, the neighbour overlay and the
-same-season toggle. Final state: **11 charts, 5 tiles, 12 tables, 3 selectors, 0 exceptions,
-0 missing-artifact warnings**, light and dark.
+Three layers, and each one caught something the layer above it could not.
 
-`AppTest` proves the page runs; it cannot prove the page is legible. Both figures were also
-rendered to PNG through kaleido and looked at, which is what caught three things nothing
-else would have: the balanced-loadings problem above, a legend that listed the comparison
-player before the selected one, and radial tick labels rendered on their side. That last one
-is a plotly-ism worth recording — a polar tick label is rotated by `angle - tickangle`, so
-upright text needs the two set **equal** rather than `tickangle=0`, and `ticksuffix` is
-ignored on a polar radial axis, so the unit has to be written into `ticktext`.
+**`AppTest`** — `app.py` executed for real in both appearance modes, plus a season switch,
+a player switch, the neighbour overlay, the component selector and the same-season toggle.
+Final state: **2 charts, 6 tiles, 3 tables, 4 selectors, 0 exceptions, 0 missing-artifact
+warnings**, light and dark.
+
+**Figures rendered to PNG** through kaleido and looked at. This caught the
+balanced-loadings problem above and a legend that listed the comparison player before the
+selected one.
+
+**The live page screenshotted and driven in a real browser**, via Playwright against the
+installed Chrome. This is the layer that earned its keep:
+
+- The radar rendered a literal **"undefined"** where its title would be. `apply_theme` set
+  `title_font` on a figure with no title, which leaves plotly.js a title object with no
+  text; kaleido draws nothing for that, so the PNG check could not see it. Fixed in
+  `apply_theme` for every figure, and pinned by a test.
+- **Streamlit returns no selection for a click on a polar trace.** A probe app comparing
+  polar and cartesian traces in the same page settled it, and the radar was rebuilt on
+  cartesian axes as a result — see above. Then the fix itself was verified by clicking
+  spoke 8 and spoke 6 in the browser and asserting the panel heading followed.
+- The header's five metric tiles clipped their own values inside a narrow column. Moving
+  the row to full width plus a small style block (`stMetricValue` to 1.4rem, the label to
+  0.75rem — the test IDs were checked against this Streamlit's frontend bundle rather than
+  assumed) fixed it.
+
+The rule this leaves behind is in `dashboard/README.md`: `AppTest` proves the page runs, a
+PNG proves the figure is legible, and only a browser proves the page is.
 
 ---
 
@@ -260,16 +300,24 @@ New, in the same plain-`assert` synthetic-builder style:
 - **Scaling.** SD units put every spoke on one scale; a degenerate component does not
   divide by zero; `clamp` pins rather than rescales.
 - **The fingerprint.** The true score survives beside the pinned radius, so a hover cannot
-  read 2.0 for a 17.8; an absent player-season raises.
+  read 2.0 for a 17.8; an absent player-season raises. The hover string is preformatted to
+  one decimal rather than left to a d3 format spec, which does not apply to a value
+  arriving from a mixed-dtype `customdata` array and let a `1.7174781203` onto the screen.
+- **The click.** A payload resolves by spoke label or by point index under any of the four
+  key spellings; the polygon's repeated closing vertex wraps to the first component; an
+  empty or unrecognisable selection changes nothing.
 - **Loadings.** Sorted signed; the balance rule is pinned against the *real* PC1, including
   an assertion that the naive top-8 rule would have shown only positives; a one-sided
   component backfills rather than shrinking the panel.
 - **Neighbours.** Own seasons excluded; season restriction; sorted with a distance; and the
   raw-versus-Mahalanobis case where the two metrics pick different players.
-- **Figures.** The radial range is fixed regardless of how extreme the player is; the
-  polygon closes; a pinned spoke is drawn open and hovers its true score; an overlay takes
+- **Figures.** The score-to-radius map puts the centre at −2 SD and the rim at +2; the axis
+  is fixed regardless of how extreme the player is and every vertex stays inside the rim;
+  the polygon closes; the grid is shapes and the only traces are the hit layer and the
+  data, so nothing else can be reported as a clicked point; a pinned spoke is drawn open
+  and hovers its true score; the selected spoke is enlarged and ringed; an overlay takes
   slot 2 and turns the legend on; loading bars take the diverging ends rather than two
-  categorical slots.
+  categorical slots; and an untitled figure carries an empty title rather than a bare font.
 - **The artifact contract.** Every component's anchor is a real feature in the shipped
   loadings, every component names two real player-seasons, and the shipped decomposition
   still points the labelled way.

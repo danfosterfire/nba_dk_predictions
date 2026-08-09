@@ -139,6 +139,25 @@ def test_light_mode_pins_the_surface_the_palette_was_validated_against():
     assert theme.theme("light")["surface"] == "#fcfcfb"
 
 
+def test_an_untitled_figure_gets_an_empty_title_rather_than_a_bare_font():
+    """plotly.js renders a title object with a font and no text as "undefined".
+
+    Only in a browser — kaleido draws nothing — so this is invisible to a PNG check
+    and was found by screenshotting the running page.
+    """
+    th = theme.theme("light")
+    assert theme.apply_theme(go.Figure(), th).layout.title.text == ""
+    kept = theme.apply_theme(go.Figure(layout=dict(title="Kept")), th)
+    assert kept.layout.title.text == "Kept"
+
+
+def test_the_radar_is_untitled_and_a_loadings_panel_keeps_its_heading():
+    th = theme.theme("light")
+    assert charts.fig_radar(_fingerprint(), th, "P").layout.title.text == ""
+    panel = charts.fig_loadings(pca.top_loadings(_loadings(), "pc1", 4), th, "PC1")
+    assert panel.layout.title.text == "PC1"
+
+
 # ── Component specification ───────────────────────────────────────────────────
 
 def test_the_spec_declares_one_component_per_spoke_in_order():
@@ -292,8 +311,31 @@ def test_feature_names_are_prettified_family_first():
     assert pca.pretty_feature("usg_pct_oreb") == "usage · % OREB"
     assert pca.pretty_feature("adv_ts_pct") == "advanced · TS%"
     assert pca.pretty_feature("sco_pct_pts_2pt_mr") == "scoring · % PTS 2PT mid-range"
+    # a compound the one-token-at-a-time pass would render as "AST to"
+    assert pca.pretty_feature("adv_ast_to") == "advanced · AST/TOV"
+    assert pca.pretty_feature("adv_ast_ratio") == "advanced · AST ratio"
     # an unknown family passes through rather than losing its first token
     assert pca.pretty_feature("mystery_column") == "mystery column"
+
+
+def test_a_click_resolves_to_a_component_by_its_spoke_label():
+    assert pca.component_from_click([{"theta": "PC4", "point_index": 99}]) == "pc4"
+
+
+def test_a_click_falls_back_to_the_point_index_when_theta_is_absent():
+    for key in ("point_index", "pointIndex", "point_number", "pointNumber"):
+        assert pca.component_from_click([{key: 2}]) == "pc3"
+
+
+def test_the_repeated_closing_vertex_wraps_to_the_first_component():
+    """The polygon repeats its first point to close itself, so index 10 is PC1."""
+    assert pca.component_from_click([{"point_index": pca.N_COMPONENTS}]) == "pc1"
+
+
+def test_an_empty_or_unrecognisable_selection_changes_nothing():
+    assert pca.component_from_click([]) is None
+    assert pca.component_from_click(None) is None
+    assert pca.component_from_click([{"theta": "not a spoke"}]) is None
 
 
 def test_variance_share_keys_on_the_pc_name_not_the_index():
@@ -413,22 +455,59 @@ def _fingerprint(pinned: bool = False) -> pd.DataFrame:
                            scores.loc[0, "season"])
 
 
+def test_the_score_to_radius_map_puts_the_centre_at_minus_two_and_the_rim_at_plus_two():
+    assert charts.unit_radius(-2.0, 2.0) == 0.0
+    assert charts.unit_radius(0.0, 2.0) == 0.5
+    assert charts.unit_radius(2.0, 2.0) == charts.RIM == 1.0
+
+
+def test_the_first_spoke_sits_at_the_top_and_the_rest_run_counterclockwise():
+    """The side panel order follows the circle, so the direction is load bearing."""
+    assert charts.spoke_angle(0, 10) == charts.ANGULAR_ROTATION == 90
+    assert charts.spoke_angle(1, 10) == 126          # counterclockwise, to the left
+    assert charts.ANGULAR_DIRECTION == "counterclockwise"
+
+
 def test_the_radar_axis_is_fixed_so_two_fingerprints_differ_in_shape():
     th = theme.theme("light")
-    fig = charts.fig_radar(_fingerprint(), th, "P")
-    assert list(fig.layout.polar.radialaxis.range) == [-2.0, 2.0]
-    # the same range regardless of how extreme the player is
-    extreme = charts.fig_radar(_fingerprint(pinned=True), th, "P")
-    assert list(extreme.layout.polar.radialaxis.range) == [-2.0, 2.0]
+    for fig in (charts.fig_radar(_fingerprint(), th, "P"),
+                charts.fig_radar(_fingerprint(pinned=True), th, "P")):
+        assert list(fig.layout.xaxis.range) == [-charts.AXIS_EXTENT,
+                                                charts.AXIS_EXTENT]
+        # every plotted vertex is inside the rim however extreme the player is
+        player = fig.data[-1]
+        assert max(x * x + y * y for x, y in zip(player.x, player.y)) <= 1.0 + 1e-9
+    # and circles stay circular when the container is not square
+    assert fig.layout.yaxis.scaleanchor == "x" and fig.layout.yaxis.scaleratio == 1
 
 
-def test_the_radar_closes_its_polygon_and_draws_a_league_average_ring():
+def test_the_grid_is_shapes_so_nothing_but_a_data_point_can_be_clicked():
+    """Streamlit reports a click as a trace point index; a grid trace would alias."""
     fig = charts.fig_radar(_fingerprint(), theme.theme("light"), "P")
-    ring, player = fig.data[0], fig.data[-1]
-    assert set(ring.r) == {0.0} and ring.showlegend is False
-    assert len(player.r) == pca.N_COMPONENTS + 1          # first point repeated
-    assert player.theta[0] == player.theta[-1]
+    assert len(fig.data) == 2                            # the hit layer and the player
+    rings = [s for s in fig.layout.shapes if s.type == "circle"]
+    spokes = [s for s in fig.layout.shapes if s.type == "line"]
+    assert len(rings) == 4        # −2 is the centre, so four rings are drawable
+    assert len(spokes) == pca.N_COMPONENTS
+    assert len(fig.layout.annotations) == pca.N_COMPONENTS + 5   # spokes + ring labels
+
+
+def test_the_radar_closes_its_polygon():
+    player = charts.fig_radar(_fingerprint(), theme.theme("light"), "P").data[-1]
+    assert len(player.x) == pca.N_COMPONENTS + 1          # first point repeated
+    assert (player.x[0], player.y[0]) == (player.x[-1], player.y[-1])
     assert player.fill == "toself"
+
+
+def test_a_generous_invisible_hit_layer_sits_under_the_visible_markers():
+    """A click near a vertex has to land, and it must not steal the hover."""
+    fig = charts.fig_radar(_fingerprint(), theme.theme("light"), "P")
+    hit, player = fig.data[0], fig.data[-1]
+    assert hit.marker.size == charts.HIT_MARKER > charts.SELECTED_MARKER
+    assert hit.marker.color == "rgba(0,0,0,0)"
+    assert hit.hoverinfo == "skip" and hit.showlegend is False
+    # same order as the visible points, so either one resolves to the same component
+    assert list(hit.x) == list(player.x)[:-1]
 
 
 def test_a_pinned_spoke_is_drawn_open_and_hovers_its_true_score():
@@ -436,10 +515,35 @@ def test_a_pinned_spoke_is_drawn_open_and_hovers_its_true_score():
     player = fig.data[-1]
     assert "circle-open" in player.marker.symbol
     assert "circle" in player.marker.symbol              # only the pinned one is open
-    # the hover reads customdata, not r, so a pinned spoke cannot claim to be a 2.0
-    assert "customdata[1]" in player.hovertemplate
-    off_axis = [c[1] for c in player.customdata if abs(c[1]) > pca.AXIS_LIMIT]
-    assert off_axis
+    # the hover reads customdata, not the plotted radius, so a pinned spoke cannot
+    # claim to be a 2.0
+    assert "customdata[2]" in player.hovertemplate
+    assert any(abs(float(c[2])) > pca.AXIS_LIMIT for c in player.customdata)
+
+
+def test_the_hover_score_is_preformatted_to_one_decimal():
+    """A d3 spec over a mixed-dtype customdata array is how 14 digits reach the screen."""
+    player = charts.fig_radar(_fingerprint(), theme.theme("light"), "P").data[-1]
+    assert ":.2f" not in player.hovertemplate
+    for _, _, score in player.customdata:
+        assert isinstance(score, str)
+        whole, _, decimals = score.partition(".")
+        assert len(decimals) == 1 and whole[0] in "+-"
+
+
+def test_the_selected_spoke_is_enlarged_and_ringed():
+    """The chart has to say which component the panel beside it is explaining."""
+    fig = charts.fig_radar(_fingerprint(), theme.theme("light"), "P", selected="PC4")
+    marker = fig.data[-1].marker
+    index = pca.PC_NAMES.index("pc4")
+    assert marker.size[index] == charts.SELECTED_MARKER
+    assert all(s == charts.MARKER for i, s in enumerate(marker.size) if i != index)
+    assert marker.line.width[index] == 2
+
+
+def test_nothing_is_enlarged_when_no_spoke_is_selected():
+    fig = charts.fig_radar(_fingerprint(), theme.theme("light"), "P")
+    assert set(fig.data[-1].marker.size) == {charts.MARKER}
 
 
 def test_an_overlay_takes_the_second_slot_and_turns_the_legend_on():
@@ -451,12 +555,6 @@ def test_an_overlay_takes_the_second_slot_and_turns_the_legend_on():
     assert with_overlay.layout.showlegend is True
     overlay = next(t for t in with_overlay.data if t.name == "Q")
     assert overlay.line.color == th["series"][1] and overlay.fill is None
-
-
-def test_the_first_spoke_sits_at_the_top_so_the_side_panels_can_follow_it():
-    fig = charts.fig_radar(_fingerprint(), theme.theme("light"), "P")
-    assert fig.layout.polar.angularaxis.rotation == charts.ANGULAR_ROTATION == 90
-    assert fig.layout.polar.angularaxis.direction == "counterclockwise"
 
 
 def test_loading_bars_take_the_diverging_ends_not_two_categorical_slots():

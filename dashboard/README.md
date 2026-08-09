@@ -85,7 +85,22 @@ inherited from Streamlit's chrome, so the measured contrast figures apply as doc
    is missing instead of raising.
 3. Build figures in `charts.py` and hand them to `st.plotly_chart` — a figure builder takes
    the theme dict and returns a `go.Figure`, so it stays testable.
-4. Verify with a Streamlit `AppTest` in both appearance modes, **and look at the rendered
-   figure.** `AppTest` proves the page runs; it cannot prove the page is legible. Rendering
-   view 1's charts to PNG is what caught a loadings panel that silently dropped the negative
-   half of an axis.
+4. Verify in three layers, because each one sees what the one above it cannot.
+   **`AppTest`** in both appearance modes proves the page runs. **A figure rendered to PNG**
+   proves the figure is legible — it caught a loadings panel that silently dropped the
+   negative half of an axis. **The live page in a real browser** proves the page is, and
+   is the only layer that can: it caught a plotly `title_font` with no text rendering as
+   the literal string "undefined", metric tiles clipping their own values, and a click
+   handler that never fired.
+
+## Two things plotly and Streamlit do that cost a day
+
+Recorded because neither is discoverable from the docs and both were found by looking at
+the running page:
+
+- **Streamlit reports no selection for a click on a `polar` trace.** `on_select="rerun",
+  selection_mode="points"` returns `[]` for every click on a `Scatterpolar` and a full
+  payload for a `Scatter` in the same app. The radial chart is therefore drawn on cartesian
+  axes with its grid as shapes; see the header comment in `charts.py`.
+- **A title object with a font and no text renders as "undefined".** Only in a browser —
+  kaleido draws nothing — so `apply_theme` sets `title.text` explicitly.

@@ -1,11 +1,14 @@
 """Player style fingerprints — one player-season's PCA scores, read radially.
 
-Pick a season and a player. The centre chart puts each of the first ten principal
-components on its own spoke and the player's score for that component on the radius, in
-standard deviations from the league mean, on an axis fixed at ±2 SD for every player and
-every season — so two fingerprints differ in *shape*, never in scale. Around it, the
-loadings that define each component, in the same angular order. Below it, the three
-player-seasons nearest this one in PCA space.
+Pick a season and a player. The chart puts each of the first ten principal components on
+its own spoke and the player's score for that component on the radius, in standard
+deviations from the league mean, on an axis fixed at ±2 SD for every player and every
+season — so two fingerprints differ in *shape*, never in scale.
+
+**Click a spoke** and the panel beside the chart explains that component: its strongest
+loadings, the rotation player-seasons at either end of the axis, and what the loadings
+say. One component at a time, because ten panels around the chart left no room to read
+any of them.
 
 Everything on the page is read from what `make pca` wrote. The only typed content is the
 ten component titles, which are an interpretation of the loadings and are pinned to a
@@ -33,8 +36,20 @@ from dashboard.artifacts import features_dir, optional, rel
 from dashboard.charts import fig_loadings, fig_radar
 from dashboard.theme import theme
 
-TOP_LOADINGS = 8
+TOP_LOADINGS = 10
 NEIGHBOURS = 3
+NO_OVERLAY = "— none —"
+
+# Streamlit's metric tiles are sized for a three-tile hero row; five of them clipped
+# their own values. A static style block is the smallest fix that keeps the tiles —
+# no data reaches it, so there is nothing for the HTML escape to matter to.
+TILE_CSS = """
+<style>
+  [data-testid="stMetricValue"] { font-size: 1.4rem; line-height: 1.5rem; }
+  [data-testid="stMetricLabel"] p { font-size: 0.75rem; }
+  [data-testid="stMetric"] { padding: 0.2rem 0 0 0; }
+</style>
+"""
 
 
 # ── Loading ───────────────────────────────────────────────────────────────────
@@ -64,38 +79,64 @@ def detected_mode() -> str:
     return "light"
 
 
+def click_target(event) -> list:
+    """The clicked points out of a `plotly_chart` selection, whatever shape it arrives in."""
+    selection = getattr(event, "selection", None)
+    if selection is None and isinstance(event, dict):
+        selection = event.get("selection")
+    if selection is None:
+        return []
+    points = (selection.get("points") if hasattr(selection, "get")
+              else getattr(selection, "points", None))
+    return list(points or [])
+
+
 # ── Panels ────────────────────────────────────────────────────────────────────
-
-def loading_panel(pc: str, loadings: pd.DataFrame, scores: pd.DataFrame,
-                  share: dict[str, float], th: dict) -> None:
-    """One component: its title, its top loadings, and the seasons at either end."""
-    component = pca.BY_PC[pc]
-    frame = pca.top_loadings(loadings, pc, TOP_LOADINGS)
-    pct = share.get(pc)
-    heading = f"{pc.upper()} · {component.title}"
-    if pct is not None:
-        heading += f"  ({pct:.1%} of variance)"
-    st.plotly_chart(fig_loadings(frame, th, heading),
-                    width="stretch", key=f"loadings-{pc}")
-
-    high, low = pca.exemplars(scores, pc)
-    st.caption(f"**+** {high}  ·  **−** {low}")
-    with st.expander("What this axis reads", expanded=False):
-        st.markdown(component.reads)
-        st.caption(f"Direction anchored on `{component.anchor}` loading positive.")
-        st.dataframe(frame[["feature", "loading"]], hide_index=True,
-                     width="stretch")
-
 
 def header_tiles(row: pd.Series) -> None:
     tiles = [("Team", str(row["team_abbreviation"]), "Season-end team in the box scores"),
              ("Age", f"{row['age']:.0f}", "Age during the season"),
              ("Games", f"{row['gp']:.0f}", "Games played"),
-             ("Minutes", f"{row['min']:.1f}", "Minutes per game"),
+             ("Minutes / g", f"{row['min']:.1f}", "Minutes per game"),
              ("DK pts / g", f"{row['dk_pts_per_game']:.1f}",
               "DraftKings fantasy points per game — the project's target")]
     for col, (label, value, helptext) in zip(st.columns(len(tiles)), tiles):
         col.metric(label, value, help=helptext)
+
+
+def component_panel(pc: str, loadings: pd.DataFrame, scores: pd.DataFrame,
+                    fingerprint: pd.DataFrame, share: dict[str, float],
+                    th: dict) -> None:
+    """The one component the reader clicked, with room to actually read it."""
+    component = pca.BY_PC[pc]
+    row = fingerprint[fingerprint["pc"] == pc].iloc[0]
+    pct = share.get(pc)
+
+    st.markdown(f"### {pc.upper()} · {component.title}")
+    if pct is not None:
+        st.caption(f"{pct:.1%} of the matrix's variance")
+    st.metric("This player-season", f"{row['sd']:+.1f} SD",
+              help="Distance from the league mean on this component."
+                   + (" Outside the ±2 SD axis, so the chart pins it."
+                      if row["pinned"] else ""))
+
+    frame = pca.top_loadings(loadings, pc, TOP_LOADINGS)
+    st.plotly_chart(fig_loadings(frame, th, "Strongest loadings"),
+                    width="stretch", key=f"loadings-{pc}")
+
+    high, low = pca.exemplars(scores, pc)
+    st.markdown(f"**Most positive** — {high}  \n**Most negative** — {low}")
+    st.caption(f"Rotation seasons only: {pca.EXEMPLAR_MIN_MPG:.0f}+ minutes a game over "
+               f"{pca.EXEMPLAR_MIN_GP}+ games. Unfiltered, the extremes are "
+               "sub-500-minute players whose rate stats are noise.")
+
+    st.markdown(component.reads)
+    st.caption(f"Direction anchored on `{component.anchor}` loading positive, so a refit "
+               "that flips the axis cannot silently invert this reading.")
+
+    with st.expander("Table view — the loadings above"):
+        st.dataframe(frame[["feature", "loading"]].round({"loading": 4}),
+                     hide_index=True, width="stretch")
 
 
 def neighbour_table(table: pd.DataFrame) -> pd.DataFrame:
@@ -113,6 +154,7 @@ def neighbour_table(table: pd.DataFrame) -> pd.DataFrame:
 def main() -> None:
     st.set_page_config(page_title="NBA player style fingerprints", layout="wide",
                        page_icon="🏀")
+    st.markdown(TILE_CSS, unsafe_allow_html=True)
     st.title("Player style fingerprints")
     st.caption("Where one player-season sits on the ten largest axes of variation in "
                "the season matrix — each spoke a principal component, each radius that "
@@ -159,39 +201,48 @@ def main() -> None:
     table = pca.neighbors(scores, int(row["player_id"]), season, k=NEIGHBOURS,
                           same_season_only=same_season)
 
+    st.subheader(f"{player} · {season}")
+    header_tiles(row)
     st.markdown("---")
-    left, centre, right = st.columns([1.15, 2.1, 1.15], gap="medium")
 
-    # The panel columns follow the circle: components 1–5 run down the left of the
-    # chart in order, 6–10 climb the right, so the right column reads 10 → 6.
-    with left:
-        for pc in pca.PC_NAMES[:5]:
-            loading_panel(pc, loadings, scores, share, th)
-    with right:
-        for pc in reversed(pca.PC_NAMES[5:]):
-            loading_panel(pc, loadings, scores, share, th)
+    chart, panel = st.columns([1.2, 1], gap="large")
 
-    with centre:
-        st.subheader(f"{player} · {season}")
-        header_tiles(row)
-
+    with chart:
+        # Rendered above the chart rather than beside the neighbour table, so the
+        # overlay's value is known before the figure it changes is built.
+        options = [NO_OVERLAY] + [f"{r.Player} · {r.Season}"
+                                  for r in neighbour_table(table).itertuples()]
+        choice = st.selectbox(
+            "Compare with a nearest neighbour", options, index=0,
+            help="Draws that player-season's fingerprint over this one, unfilled.")
         overlay, overlay_name = None, ""
-        if len(table):
-            options = ["— none —"] + [f"{r.Player} · {r.Season}"
-                                      for r in neighbour_table(table).itertuples()]
-            choice = st.selectbox(
-                "Overlay a nearest neighbour", options, index=0,
-                help="Draws that player-season's fingerprint over this one, unfilled.")
-            if choice != "— none —":
-                match = table.iloc[options.index(choice) - 1]
-                overlay = pca.fingerprint(scores, int(match["player_id"]),
-                                          str(match["season"]))
-                overlay_name = choice
+        if choice != NO_OVERLAY:
+            match = table.iloc[options.index(choice) - 1]
+            overlay = pca.fingerprint(scores, int(match["player_id"]),
+                                      str(match["season"]))
+            overlay_name = choice
 
-        st.plotly_chart(
+        selected = st.session_state.get("component", pca.PC_NAMES[0])
+        if selected not in pca.BY_PC:
+            selected = pca.PC_NAMES[0]
+        event = st.plotly_chart(
             fig_radar(frame, th, f"{player} · {season}", limit=pca.AXIS_LIMIT,
-                      overlay=overlay, overlay_name=overlay_name),
-            width="stretch", key="radar")
+                      overlay=overlay, overlay_name=overlay_name,
+                      selected=selected.upper()),
+            width="stretch", key="radar", on_select="rerun", selection_mode="points",
+            # Drawing the disc on cartesian axes brings plotly's zoom/pan modebar with
+            # it, and neither gesture means anything on a fixed ±2 SD axis.
+            config={"displayModeBar": False})
+
+        clicked = pca.component_from_click(click_target(event))
+        if clicked is not None and clicked != selected:
+            # Written before the panel's selectbox is instantiated, which is what lets a
+            # click and the selectbox drive one value instead of two that drift apart.
+            st.session_state["component"] = clicked
+            st.rerun()
+
+        st.caption(":material/ads_click: Click a spoke to read that component beside "
+                   "the chart.")
 
         pinned = frame[frame["pinned"]]
         if len(pinned):
@@ -207,20 +258,29 @@ def main() -> None:
             st.dataframe(
                 frame[["label", "title", "sd", "pinned"]].rename(columns={
                     "label": "Component", "title": "Reads as", "sd": "Score (SD)",
-                    "pinned": "Pinned"}).round({"Score (SD)": 2}),
+                    "pinned": "Pinned"}).round({"Score (SD)": 1}),
                 hide_index=True, width="stretch")
 
-        st.subheader("Nearest neighbours in PCA space")
-        st.caption(
-            f"Euclidean distance over the raw scores of PC1–PC{pca.N_COMPONENTS}, which "
-            "is distance in the standardized feature space the PCA was fitted on — so "
-            "the high-variance style axes dominate, as they should. "
-            + ("Restricted to this season."
-               if same_season else "Across all seasons."))
-        if len(table):
-            st.dataframe(neighbour_table(table), hide_index=True, width="stretch")
-        else:
-            st.info("No comparable player-seasons under the current filter.")
+    with panel:
+        st.selectbox(
+            "Component", pca.PC_NAMES, key="component",
+            format_func=lambda p: f"{p.upper()} · {pca.BY_PC[p].title}",
+            help="The same choice the chart's spokes make, for anyone not using a "
+                 "mouse.")
+        component_panel(st.session_state["component"], loadings, scores, frame,
+                        share, th)
+
+    st.markdown("---")
+    st.subheader("Nearest neighbours in PCA space")
+    st.caption(
+        f"Euclidean distance over the raw scores of PC1–PC{pca.N_COMPONENTS}, which is "
+        "distance in the standardized feature space the PCA was fitted on — so the "
+        "high-variance style axes dominate, as they should. "
+        + (f"Restricted to {season}." if same_season else "Across all 30 seasons."))
+    if len(table):
+        st.dataframe(neighbour_table(table), hide_index=True, width="stretch")
+    else:
+        st.info("No comparable player-seasons under the current filter.")
 
 
 if __name__ == "__main__":

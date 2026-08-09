@@ -237,12 +237,19 @@ TOKENS = {
 }
 
 
+#: Token pairs the one-token-at-a-time pass gets wrong: `adv_ast_to` is the
+#: assist-to-turnover ratio, and "AST to" reads like an unfinished phrase.
+COMPOUNDS = {"ast_to": "AST/TOV"}
+
+
 def pretty_feature(name: str) -> str:
     """`usg_pct_oreb` → `usage · % OREB`. Cosmetic; the raw name stays in the hover."""
     head, _, rest = name.partition("_")
     family = FAMILY.get(head)
     if family is None:
         family, rest = "", name
+    for pair, replacement in COMPOUNDS.items():
+        rest = re.sub(rf"(?:^|(?<=_)){pair}(?:$|(?=_))", replacement, rest)
     words = [TOKENS.get(tok, tok.replace("_", " ")) for tok in rest.split("_")]
     body = re.sub(r" %", "%", " ".join(w for w in words if w))
     return f"{family} · {body}" if family else body
@@ -271,6 +278,30 @@ def top_loadings(loadings: pd.DataFrame, pc: str, n: int = 8) -> pd.DataFrame:
     picked = picked.sort_values("loading", ascending=False).reset_index(drop=True)
     picked["pretty"] = picked["feature"].map(pretty_feature)
     return picked
+
+
+def component_from_click(points, pcs: tuple[str, ...] = PC_NAMES) -> str | None:
+    """Which component a plotly click landed on, or `None` for an empty selection.
+
+    Streamlit hands back one dict per clicked point. Two things make this less direct
+    than an index lookup. The polygon repeats its first vertex to close itself, so the
+    last index wraps; and the chart carries up to three traces — the league-average ring,
+    an optional overlay, the player — which all share the same spoke order, so a click on
+    any of them resolves to the same component and the trace does not need identifying.
+
+    `theta` is preferred when present because it is the spoke's own label and survives
+    any change to trace order.
+    """
+    labels = {p.upper(): p for p in pcs}
+    for point in points or []:
+        theta = point.get("theta") if hasattr(point, "get") else None
+        if isinstance(theta, str) and theta.upper() in labels:
+            return labels[theta.upper()]
+        for key in ("point_index", "pointIndex", "point_number", "pointNumber"):
+            index = point.get(key) if hasattr(point, "get") else None
+            if isinstance(index, int):
+                return pcs[index % len(pcs)]
+    return None
 
 
 def variance_share(variance: pd.DataFrame) -> dict[str, float]:
