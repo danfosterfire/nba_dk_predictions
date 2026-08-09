@@ -268,6 +268,43 @@ stan:
     # six-fit sweep past this many hours.
     max_extrapolated_hours: 24
 
+# ── The simulation and drafting layer (src/models/posteriors.py, src/sim/) ────
+# `docs/simulations-plan.md` specifies the whole block. Only the keys a built module
+# actually reads live here — config nothing reads is config that drifts. The rest
+# (n_sims, pod_size, the tournament entry counts, the field model, error injection)
+# arrives with the modules that consume it.
+sim:
+  # Draws kept per head by `make posteriors`, THINNED ACROSS THE WHOLE POSTERIOR via
+  # `stan_utils.thin` — never sliced off the front, for the reason
+  # `season_terms._draw_components` records: a front slice takes a different part of the
+  # posterior from each head, silently.
+  posterior_draws: 1000
+  # THE DEFAULT IS `train`, and the reason is the realized backtest. It replays simulated
+  # portfolios against real 2022-23 / 2023-24 box scores — the validation seasons — and at
+  # `train_val` every one of those rows is in the fit (883 of 10,361 availability rows, 773
+  # of 9,403 component rows). Artifacts are namespaced by window under
+  # data/features/posteriors/<window>/, because all three windows are wanted at once:
+  #   train      the validation backtest and the strategy sweep
+  #   train_val  the one-shot test readout, which should describe the model that would
+  #              actually deploy — the same rule src/final_evaluation.py follows
+  #   full       the 2026-27 production board; reads the held-out seasons and is guarded
+  #              by src/models/held_out.py
+  # This is NOT the rule the four already-calibrated simulator inputs follow (the residual
+  # copula, the game-level minutes dispersion, the block variance inflation, the bonus
+  # overdispersion). Those are `train_val` because they are *given* to the simulator and
+  # never scored against realized data; coefficients generate the board that is.
+  fit_window: train
+
+  # `make scoring-periods` — the NBA week grid and DK's rounds on top of it.
+  scoring_periods:
+    # DK's tournament shape in NBA weeks: Round 1 is 17 weeks, then three double
+    # weeks. This is the *structure*, not the calendar. The published windows in
+    # docs/dk_best_ball_rules.md (Round 1 closing 2/14, the Cup final on 12/11/2026)
+    # belong to a single season's rules and slide against any other season's grid —
+    # 2025-26's week 17 closes 2/12. The week counts are what carries across seasons,
+    # so they drive the map and the calendar comparison is printed as drift.
+    round_weeks: [17, 2, 2, 2]
+
 eda:
   # Qualification filter for the season matrix. MIN is per-game, so this reads
   # "at least 20 games at 10+ minutes a night" — below that, per-36 rates from a

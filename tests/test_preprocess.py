@@ -2,11 +2,13 @@ import pandas as pd
 import pytest
 from src.data.preprocess import (
     ALL_SEASON_TYPES,
+    FIT_WINDOWS,
     FULL_WINDOW,
     PLAYOFFS,
     REGULAR_SEASON,
     TEST_SEASONS,
     TRAIN_VAL_WINDOW,
+    TRAIN_WINDOW,
     _parse_log_filename,
     clean,
     fit_window,
@@ -169,6 +171,51 @@ def test_test_seasons_agrees_with_every_model_module_that_defines_its_own():
     assert TEST_SEASONS == availability_test_seasons
     assert TEST_SEASONS == rates_test_seasons
     assert TEST_SEASONS == composition_test_seasons
+
+
+def test_train_window_also_drops_the_validation_seasons():
+    """The narrowest window exists because `train_val` is not clean for every reader.
+
+    A statistic scored against 2022-23 / 2023-24 cannot come from a window that contains
+    them, and `train_val` does — it excludes the test seasons and nothing else. So `train`
+    drops twice `TEST_SEASONS`, matching the two-step carve `held_out.selection_split`
+    performs on a design matrix.
+    """
+    frame = _seasons(["2020-21", "2021-22", "2022-23", "2023-24", "2024-25", "2025-26"])
+    train = fit_window(frame, TRAIN_WINDOW)
+    assert sorted(train["season"]) == ["2020-21", "2021-22"]
+    assert held_out_seasons(frame, window=TRAIN_WINDOW) == [
+        "2022-23", "2023-24", "2024-25", "2025-26"]
+    # Strictly nested, widest to narrowest — the property every consumer reasons with.
+    for wide, narrow in ((FULL_WINDOW, TRAIN_VAL_WINDOW), (TRAIN_VAL_WINDOW, TRAIN_WINDOW)):
+        assert set(fit_window(frame, narrow)["season"]) < set(
+            fit_window(frame, wide)["season"])
+
+
+def test_train_window_agrees_with_the_split_the_heads_actually_fit_on():
+    """`fit_window(frame, "train")` must name the seasons `selection_split` fits on.
+
+    Two definitions of "the training half" that can disagree is the same silent failure
+    `test_test_seasons_agrees_with_every_model_module` guards, one level up: the simulator's
+    calibration frames would exclude a different set from the coefficients' fitting frame,
+    and nothing would raise.
+    """
+    from src.models.held_out import selection_split
+
+    frame = _seasons(["2019-20", "2020-21", "2021-22", "2022-23", "2023-24", "2024-25",
+                      "2025-26"])
+    train, _ = selection_split(frame)
+    assert set(fit_window(frame, TRAIN_WINDOW)["season"]) == set(train["season"])
+
+
+def test_every_declared_fit_window_is_reachable():
+    """A window in `FIT_WINDOWS` that `fit_window` cannot apply would emit a column value
+    no consumer could ever filter to."""
+    frame = _seasons(["2018-19", "2019-20", "2020-21", "2021-22", "2022-23", "2023-24",
+                      "2024-25", "2025-26"])
+    kept = {w: fit_window(frame, w) for w in FIT_WINDOWS}
+    assert len(kept) == 3 and all(len(f) for f in kept.values())
+    assert len({len(f) for f in kept.values()}) == 3
 
 
 def test_fit_window_holds_out_the_same_seasons_as_split_seasons():

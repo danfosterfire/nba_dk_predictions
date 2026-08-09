@@ -2695,10 +2695,11 @@ REGISTRY: tuple[Decision, ...] = (
         topic="simulations",
         claim="The four numbers the simulator is **given** — the residual copula, the "
               "game-level minutes dispersion, the ten-game block inflation and the bonus "
-              "overdispersion — are calibrated on train + validation, excluding the "
-              "2024-25/2025-26 test seasons. Every one of their artifacts carries both "
-              "windows under a `fit_window` column and the consumers default to "
-              "`train_val`.",
+              "overdispersion — are calibrated per fit window rather than over every "
+              "season. Their artifacts carry a `fit_window` column and the consumers "
+              "default to `train_val`. **A third window, `train`, was added 2026-08-08** "
+              "— which window to consume is decided by what the number will be scored "
+              "against, not by which is widest.",
         because="None of the four is *fitted*, so no train/test split guard has ever "
                 "covered them, and all four were being measured over every season "
                 "including the two the heads hold out. That would calibrate the "
@@ -2710,7 +2711,19 @@ REGISTRY: tuple[Decision, ...] = (
                 "than argued about: every difference is below the precision the figures "
                 "are quoted at, so the leak could never have announced itself in a "
                 "backtest. `to_matrix` defaults to `train_val` because a default is what "
-                "an unthinking consumer gets.",
+                "an unthinking consumer gets. The 2026-08-08 addition closes the half of "
+                "this that `train_val` alone could not: it excludes the TEST seasons and "
+                "nothing else, so it is clean for the one-shot test readout and NOT for "
+                "the realized 2022-23 / 2023-24 backtest, which scores the very seasons "
+                "it contains. That gap only became reachable once `make posteriors` "
+                "started emitting coefficients per window — a backtest could then hold "
+                "clean coefficients beside a noise shape calibrated on the seasons it was "
+                "scoring. `train` drops twice TEST_SEASONS, the same two-step carve "
+                "`held_out.selection_split` performs, and three of the four modules "
+                "already looped over `FIT_WINDOWS` so they picked it up unchanged. The "
+                "measured move is again below the quoted precision — `min` block "
+                "inflation 2.4206 → 2.4167 — which is again the argument for fixing it "
+                "rather than arguing about it.",
         status="built",
         reproduce="make residual-correlation / serial-correlation / component-targets "
                   "/ stan-minutes → outputs/eda/residual_correlation.csv, "
@@ -2718,7 +2731,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/eda/bonus_calibration.csv, "
                   "outputs/predictions/stan_minutes_dispersion.csv",
         source="README.md",
-        reviewed="2026-08-04",
+        reviewed="2026-08-08",
         date="2026-08-04",
         tags=("simulator-input",),
     ),
@@ -3055,26 +3068,200 @@ REGISTRY: tuple[Decision, ...] = (
     Decision(
         id="no-head-persists-its-posterior",
         topic="simulations",
-        claim="**No Stan head writes its coefficient draws to disk**, so simulating from "
-              "the joint posterior currently means refitting. A posterior artifact is "
-              "step zero of the simulation layer.",
+        claim="**Every Stan head now writes its thinned posterior to disk** — `make "
+              "posteriors`, one pickle per head plus a manifest. Simulating from the "
+              "joint posterior no longer means refitting, and this is the only target in "
+              "the simulation layer that needs a CmdStan toolchain.",
         because="`make stan` writes metrics, diagnostics and per-row predictions and "
-                "throws the draws away. The one exception is `stan_composition`'s crash "
+                "threw the draws away. The one exception was `stan_composition`'s crash "
                 "checkpoint, which pickles alpha/beta/rho draws incidentally to survive a "
-                "9.9 h loop rather than as a consumable. Refitting costs ~137 min for the "
-                "component heads and ~9.9 h for the composition head — which a draft room "
-                "cannot do once and a strategy sweep cannot do a hundred times. The fix "
-                "is small and generalizes the checkpoint that already exists: thinned "
-                "draws plus the design recipe (features, scaler, spline knots, imputation "
-                "means, selected variant) and provenance, one file per head. It also "
-                "makes a walk-forward backtest affordable later without re-deciding "
-                "anything.",
+                "9.9 h loop rather than as a consumable. Refitting cost ~137 min for the "
+                "component heads and ~2.7 h for one composition arm — which a draft room "
+                "cannot do once and a strategy sweep cannot do a hundred times. "
+                "`src/models/posteriors.py` generalizes that checkpoint into a contract "
+                "over 18 heads: 1,000 draws thinned across the WHOLE posterior via "
+                "`stan_utils.thin` (never sliced off the front, for the reason "
+                "`season_terms._draw_components` records), the design recipe as an "
+                "ordered list of fitted steps (imputation means, log/logit transforms, "
+                "the fitted SplineTransformer and its knots, the dispersion bin edges), "
+                "the feature list, the fitted scaler, the selected variant read from the "
+                "sweep that chose it, and provenance. Each head is verified at build "
+                "time: the recipe applied to raw probe rows must reproduce the head's own "
+                "design matrix and predictions, and it does bit for bit (0.00e+00 against "
+                "bars of 1e-9 and 1e-8) — so a variant ladder that changes shape fails the "
+                "build rather than writing a wrong artifact. The fit window is stamped in "
+                "and enforceable via `require_window`, because a backtest scoring "
+                "validation with heads fitted at the `full` window has read the test "
+                "seasons THROUGH THE COEFFICIENTS, which no frame-level split guard can "
+                "see. It also makes a walk-forward backtest affordable later without "
+                "re-deciding anything.",
+        status="built",
+        reproduce="make posteriors → data/features/posteriors/train/manifest.csv, "
+                  "data/features/posteriors/train/availability.pkl",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-08",
+        date="2026-08-08",
+        tags=("architecture",),
+    ),
+    Decision(
+        id="game-level-dispersion-is-not-a-fit",
+        topic="minutes",
+        claim="`stan_minutes.game_level_dispersion` is a **data measurement, not a model "
+              "output** — the 4.65x figure does not depend on the Stan fit at all.",
+        because="It reads `targets` and `lengths`, computes each player-season's own realized "
+                "share as `mu`, and fits a dispersion to that; the `StanMinutes` object never "
+                "appears, so every Stan fit in the module could be deleted and it would still "
+                "return 4.65x. It lives there by convenience. That matters because `README.md` "
+                "cites it as one of two things the marginal head owns that the composition "
+                "does not produce — and the composition's selected arm already fits its own "
+                "game-level dispersion role-graded over four bins (rho 0.177 fringe to 0.085 "
+                "star). The two sit on different parameterizations, so they are not the same "
+                "number, but they are the same kind of quantity and only one can govern a "
+                "draw. If the simulator draws minutes from the composition, 4.65x is a "
+                "diagnostic to check those draws against rather than an input to them.",
+        status="measured",
+        reproduce="make stan-minutes → outputs/predictions/stan_minutes_dispersion.csv, "
+                  "outputs/predictions/stan_composition_dispersion.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-08",
+        date="2026-08-08",
+        tags=("architecture",),
+    ),
+    Decision(
+        id="minutes-head-supersession-is-open",
+        topic="minutes",
+        claim="Whether `stan_composition` **supersedes** `stan_minutes` in the production "
+              "chain is open, and one gate settles it: the composition's season-total sums "
+              "against the marginal head's season-total predictions, on validation.",
+        because="`README.md` says the two heads 'compose rather than compete', with the "
+                "marginal head still owning the season-level mean and the game-level "
+                "dispersion. Audited 2026-08-08, that sentence asserts three things and only "
+                "one holds. The dispersion claim is false as stated (see "
+                "[[game-level-dispersion-is-not-a-fit]]). The season-mean claim is simply "
+                "**untested** — the two heads score at different units (minutes at "
+                "season-total, CRPS 143.9 / MAE 199.6 / R2 0.883; composition per-team-game, "
+                "CRPS 4.494 / MAE 6.33 / R2 0.474) and the composition's per-game predictions "
+                "sum to a season total by construction, so it can produce the season mean and "
+                "nobody has measured whether it is better. What IS load-bearing is the year "
+                "effect: `season_terms` selected the `year` arm for `min` (val MAE 199.03 "
+                "against base 199.72, sigma_year 0.0231), it is the only head in the project "
+                "shipping a season term, and it is worth +10.4% on a 15-man roster's "
+                "season-total sd — the spread a 2-of-12 knockout is decided on. "
+                "`composition_glm.stan` carries no year block, so retiring the marginal head "
+                "today would drop the project's only era correction. Coverage cuts the other "
+                "way (the composition cannot drop rookies, since the team sum must be "
+                "complete), and cost is a non-argument: 0.341 h against the composition's "
+                "9.92 h.",
         status="open",
-        unblocks="make posteriors writes data/features/posteriors/<head>.pkl",
+        unblocks="make minutes-unification → outputs/predictions/minutes_unification.csv",
         source="docs/simulations-plan.md",
         reviewed="2026-08-08",
         date="2026-08-08",
         tags=("next", "architecture"),
+    ),
+    Decision(
+        id="game-length-is-drawn-not-looked-up",
+        topic="simulations",
+        claim="**Game length is a random variable in a forward simulation**, not a lookup, "
+              "and it needs its own Stan head with a full posterior.",
+        because="Every backtest so far reads `game_length` from "
+                "`data/features/game_length.parquet`, because in a replay the games already "
+                "happened. In the production run and in every simulated-truth season the "
+                "sweep draws, nothing knows how long a game will be — and both minutes heads "
+                "need it: the composition head allocates exactly 5 x game_length per "
+                "team-game and the marginal head uses it as binomial trials. A point-MLE "
+                "version already exists in the wrong module and the wrong form "
+                "(`stan_composition.fit_ot_tail`, two floats). It needs no new .stan source: "
+                "`betabinomial_glm.stan` for whether a game goes to overtime, collapsed to "
+                "season cells, and `betageometric_duration.stan` for how deep — the same "
+                "frailty device the absence-spell process uses one level down, and the "
+                "natural fix for the plain geometric's only miss (it over-predicts 3OT+ by 3 "
+                "games in 2,460). Roughly 30 collapsed rows and 2-4 parameters: the cheapest "
+                "head in the project.",
+        status="open",
+        unblocks="make stan-game-length, registered in make posteriors",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-08",
+        date="2026-08-08",
+        tags=("next", "architecture"),
+    ),
+    Decision(
+        id="overtime-rate-is-a-trend-not-a-wander",
+        topic="simulations",
+        claim="The league overtime rate carries a **real season trend** — logit slope "
+              "−0.00893 per season (z = −3.38) — against season dispersion of only 1.11x "
+              "binomial. The train window's 0.0608 overstates 2026-27 by ~17% relative.",
+        because="Measured over 35,546 regular-season games: the fitted rate falls from "
+                "0.0670 in 1996-97 to 0.0526 in 2025-26 and extrapolates to 0.0521 for "
+                "2026-27; pooled over the last five seasons it is 0.0504 against 0.0613 over "
+                "the first twenty-five. Near-binomial season dispersion is what makes this a "
+                "trend rather than a wander, the distinction `src/eda/season_effects.py` "
+                "exists to draw, so this would be the second head to ship a season term "
+                "after minutes. **Size it honestly**: the trend is worth about 0.09% of "
+                "total minutes, so it is not a mean-effects story. It is a tail story — "
+                "overtime is where 40+ minute games come from (1,650 player-games exceed 48 "
+                "minutes, maximum 63.0), and under a best-ball weekly max plus a threshold "
+                "bonus an OT frequency 17% too high inflates every star's simulated ceiling, "
+                "which is the statistic a 2-of-12 pod is most sensitive to.",
+        status="measured",
+        reproduce="make game-length → data/features/game_length.parquet, "
+                  "outputs/eda/game_length_coverage.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-08",
+        date="2026-08-08",
+        tags=("season-effects",),
+    ),
+    Decision(
+        id="overtime-is-shared-by-both-teams",
+        topic="simulations",
+        claim="The game-length draw happens **once per game, shared by both teams** — never "
+              "per team-game and never per player.",
+        because="Overtime is a property of the game: every player on the floor gets the extra "
+                "minutes together. Drawing it per team-game would silently destroy that, and "
+                "it is a real source of the correlated upside the tournament objective "
+                "rewards — a same-team stack, which the strategy layer explicitly considers, "
+                "shares its overtimes. It joins the four existing rules the season simulator "
+                "must not violate, and it is the kind of wiring error that produces a "
+                "plausible marginal and a wrong joint, which is exactly what this layer is "
+                "built to get right.",
+        status="settled",
+        reproduce="make game-length → data/features/game_length.parquet",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-08",
+        date="2026-08-08",
+        tags=("architecture",),
+    ),
+    Decision(
+        id="posteriors-fit-on-train-not-train-val",
+        topic="simulations",
+        claim="Persisted posteriors default to the **`train`** fit window, not `train_val`, "
+              "and artifacts are namespaced by window. The plan's original "
+              "`fit_window: train_val` was reversed on 2026-08-08 before anything consumed "
+              "it.",
+        because="The reasoning for `train_val` was that it matches the four simulator "
+                "inputs already calibrated that way — the residual copula, the game-level "
+                "minutes dispersion, the block variance inflation and the bonus "
+                "overdispersion. That analogy does not transfer. Those four are GIVEN to "
+                "the simulator and never scored against realized data; they set the shape "
+                "of the noise. The posterior coefficients generate the board, and the "
+                "realized backtest replays portfolios drafted from that board against real "
+                "2022-23 and 2023-24 box scores — the validation seasons. At `train_val` "
+                "every one of those rows is in the fit: 883 of 10,361 availability rows "
+                "(8.5%) and 773 of 9,403 component rows (8.2%). Per row the leverage on a "
+                "~12-parameter GLM is tiny, but as a class this is the shape of all four "
+                "sub-1% reversals already logged in this repo. `train_val` is not "
+                "discarded, it moves to the consumer it fits: the one-shot test readout on "
+                "2024-25 / 2025-26, which should describe the model that would actually "
+                "deploy — the rule src/final_evaluation.py already follows. `full` remains "
+                "the production board and is guarded. All three are wanted at once, so "
+                "data/features/posteriors/<window>/ replaces a flat layout in which the "
+                "second window silently overwrote the first.",
+        status="settled",
+        reproduce="make posteriors → data/features/posteriors/train/manifest.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-08",
+        date="2026-08-08",
+        tags=("methodology", "leakage"),
     ),
     Decision(
         id="sim-tensor-is-player-by-period",
@@ -3130,17 +3317,27 @@ REGISTRY: tuple[Decision, ...] = (
         topic="simulations",
         claim="DK's scoring periods are **NBA week ranges** — derive them from "
               "`ScheduleLeagueV2`'s `weekNumber`, do not re-derive weeks from raw dates.",
-        because="Checked on 2025-26: the NBA's own week numbering runs Monday-Sunday, "
-                "partitions game dates with zero dates in more than one week, and Week 17 "
-                "closes 2026-02-12 against DK's stated Round-1 close of 2/14. The "
-                "bucketing module still has to own three edge cases once rather than "
-                "per-use: a postponed game scores in the period it is played, the NBA Cup "
-                "final (12/11/2026) scores nowhere, and the all-star gap breaks week "
-                "adjacency. Recorded as open rather than measured because the probe was "
-                "a live call to `ScheduleLeagueV2` and nothing is on disk until "
-                "`make scoring-periods` writes it.",
-        status="open",
-        unblocks="make scoring-periods writes data/features/scoring_periods.parquet",
+        because="The NBA's own week numbering runs Monday-Sunday and partitions game "
+                "dates with zero dates in more than one week. `weekNumber` is populated "
+                "from 2017-18 only, so the 21 older seasons need a derivation, and the "
+                "one that ships — dense-rank the Mondays that carry games — reproduces "
+                "the NBA's own numbering on **10,749 of 10,749 games across all nine "
+                "seasons that publish one**. Dense-ranking rather than counting elapsed "
+                "weeks is the whole trick: in 2019-20 the NBA numbered the bubble "
+                "restart weeks 22-24, consecutive with March, where elapsed calendar "
+                "weeks give 41-43. The module owns the three edge cases once — a "
+                "postponed game scores in the period it is played (the schedule endpoint "
+                "serves realized dates, so this is 0 of 7,380 games today and stops "
+                "being free the moment a forward schedule is read), the NBA Cup final "
+                "scores nowhere, and the all-star gap moves no Monday and so shifts no "
+                "period. Round 1 = 17 weeks and Rounds 2-4 = one double week each is "
+                "asserted for all 27 full-length seasons; the 1998-99 and 2011-12 "
+                "lockouts and 2020-21 are too short to close every round, which is the "
+                "case DK's own shortened-season rule already covers.",
+        status="built",
+        reproduce="make scoring-periods → data/features/scoring_periods.parquet, "
+                  "outputs/eda/scoring_periods_audit.csv, "
+                  "outputs/eda/scoring_periods_rounds.csv",
         source="docs/simulations-plan.md",
         reviewed="2026-08-08",
         date="2026-08-08",

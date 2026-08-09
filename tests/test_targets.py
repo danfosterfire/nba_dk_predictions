@@ -164,9 +164,10 @@ def _calibration_games(n_players: int = 40, games: int = 60, seed: int = 0,
     """
     rng = np.random.default_rng(seed)
     # Several season labels, assigned round-robin so each player still has exactly one
-    # player-season. `bonus_calibration` measures both fit windows and cannot hold out
-    # two seasons from a single-season frame.
-    seasons = ["2019-20", "2020-21", "2021-22"]
+    # player-season. `bonus_calibration` measures every fit window, and the narrowest —
+    # `train` — drops twice `TEST_SEASONS`, so the frame needs more than four season
+    # labels or the window is empty and raises.
+    seasons = ["2017-18", "2018-19", "2019-20", "2020-21", "2021-22", "2022-23"]
     rows = []
     for p in range(n_players):
         mpg = rng.uniform(14.0, 36.0)

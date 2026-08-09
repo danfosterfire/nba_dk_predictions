@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from src.data.preprocess import (FIT_WINDOWS, FULL_WINDOW, TRAIN_VAL_WINDOW,
+from src.data.preprocess import (FIT_WINDOWS, FULL_WINDOW, TRAIN_WINDOW,
                                  compute_dk_pts, fit_window, held_out_seasons)
 
 # The linear part of DraftKings NBA scoring.
@@ -515,15 +515,17 @@ def run(cfg: dict) -> Path:
     # The overdispersion is a simulator INPUT, so measuring it over the held-out seasons
     # would tune the bonus on the seasons the simulator is later scored against. Nothing
     # here is a fit in the train/test sense, so no split guard covers it.
-    held = ", ".join(held_out_seasons(targets))
     opt = cal[cal["analysis"] == "fitted"].pivot_table(
         index="unit", columns="fit_window", values="overdispersion")
     if set(FIT_WINDOWS).issubset(opt.columns):
         opt = opt[FIT_WINDOWS]
-        opt["delta"] = opt[TRAIN_VAL_WINDOW] - opt[FULL_WINDOW]
-        print(f"\n  Fitted optimum by fit window ({held} held out of `{TRAIN_VAL_WINDOW}`) "
-              f"— the simulator draws at\n  the player-GAME unit, so `{TRAIN_VAL_WINDOW}` "
-              f"of that row is the one to ship:")
+        opt["widest_minus_narrowest"] = opt[FULL_WINDOW] - opt[TRAIN_WINDOW]
+        print("\n  Fitted optimum by fit window. The simulator draws at the player-GAME "
+              "unit, and WHICH\n  WINDOW of that row to ship is decided by what the "
+              "number will be scored against, not by\n  which is widest:")
+        for window in FIT_WINDOWS:
+            held = ", ".join(held_out_seasons(targets, window=window)) or "nothing"
+            print(f"    {window:9s} holds out {held}")
         print(opt.to_string(float_format=lambda v: f"{v:.4f}"))
     print(f"\nBonus calibration: {len(cal):,} rows → {cal_dest}")
     return dest

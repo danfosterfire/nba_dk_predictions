@@ -44,10 +44,17 @@ Nothing here is fitted, so nothing here is scored on a held-out split — which 
 why this artifact could quietly be measured over every season including the two the heads
 hold out. The block inflation is not a finding the simulator reads *about*, it is a number
 the simulator will be *given*, so calibrating it on 2024-25/2025-26 would tune the
-simulator on the seasons it is later backtested against. Every row is emitted twice, under
-`fit_window` in {`full`, `train_val`}; **consume `train_val`**. `full` stays because the
-difference is worth having on disk rather than assumed, and because the prose in
-`CLAUDE.md` and `docs/` quotes the full-window figures.
+simulator on the seasons it is later backtested against. Every row is emitted **three
+times**, under `fit_window` in {`full`, `train_val`, `train`}, and **which one to consume is
+decided by what the number will be scored against, not by which is widest**: `train` for the
+realized 2022-23 / 2023-24 backtest, since `train_val` contains those seasons; `train_val`
+for the one-shot test readout; `full` for production. `full` also stays because the
+difference is worth having on disk rather than assumed, and because the prose in `CLAUDE.md`
+and `docs/` quotes the full-window figures.
+
+The third window was added on 2026-08-08, when `make posteriors` started emitting
+coefficients per window and it became possible for a backtest to hold clean coefficients
+alongside a noise shape calibrated on the very seasons it was scoring.
 """
 
 from pathlib import Path
@@ -57,7 +64,7 @@ import pandas as pd
 import yaml
 
 from src.data.preprocess import (FIT_WINDOWS, FULL_WINDOW, TRAIN_VAL_WINDOW,
-                                 fit_window, held_out_seasons)
+                                 TRAIN_WINDOW, fit_window, held_out_seasons)
 
 # Counts modelled with `min` as exposure. Excludes the makes, which are conditioned on
 # their own attempts and handled as conversions below.
@@ -316,19 +323,22 @@ def run(cfg: dict) -> Path:
 
     # The block inflation is a simulator input, so the window it was calibrated on is a
     # correctness property and not a footnote. Held out: whatever `fit_window` drops.
-    held = ", ".join(held_out_seasons(df))
     pivot = table.pivot(index="component", columns="fit_window",
                         values="block_inflation")[FIT_WINDOWS]
-    pivot["delta"] = pivot[TRAIN_VAL_WINDOW] - pivot[FULL_WINDOW]
-    print(f"\nBlock variance inflation by fit window ({held} held out of `train_val`) — "
-          f"the simulator\nconsumes `train_val`, because a number it is GIVEN must not be "
-          f"calibrated on the seasons\nit is later scored against:")
+    pivot["widest_minus_narrowest"] = pivot[FULL_WINDOW] - pivot[TRAIN_WINDOW]
+    print("\nBlock variance inflation by fit window — a number the simulator is GIVEN must "
+          "not be\ncalibrated on the seasons it is later scored against, so WHICH window "
+          "to consume is decided\nby what it will be scored against, not by which is "
+          "widest:")
+    for window in FIT_WINDOWS:
+        held = ", ".join(held_out_seasons(df, window=window)) or "nothing"
+        print(f"  {window:9s} holds out {held}")
     print(pivot.sort_values(FULL_WINDOW, ascending=False)
           .to_string(float_format=lambda v: f"{v:.4f}"))
-    worst = pivot["delta"].abs().idxmax()
-    print(f"  largest move: {worst} {pivot.loc[worst, FULL_WINDOW]:.4f} -> "
-          f"{pivot.loc[worst, TRAIN_VAL_WINDOW]:.4f} "
-          f"({pivot.loc[worst, 'delta']:+.4f})")
+    worst = pivot["widest_minus_narrowest"].abs().idxmax()
+    print(f"  largest move across windows: {worst} "
+          f"{pivot.loc[worst, FULL_WINDOW]:.4f} -> {pivot.loc[worst, TRAIN_WINDOW]:.4f} "
+          f"({-pivot.loc[worst, 'widest_minus_narrowest']:+.4f})")
     print(f"Serial correlation: {len(table):,} component rows "
           f"({len(FIT_WINDOWS)} fit windows) → {dest}")
     return dest

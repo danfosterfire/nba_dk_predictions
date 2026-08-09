@@ -50,8 +50,17 @@ ALL_SEASON_TYPES = "all"
 # block variance inflation and the bonus overdispersion — are **calibrations, not fits**,
 # so nothing stops them from being measured over every season including the held-out ones.
 # Doing that would calibrate the simulator on the seasons it is later scored against.
-# `fit_window` is the one-line fix, and the artifacts carry both windows so the size of
+# `fit_window` is the one-line fix, and the artifacts carry every window so the size of
 # the difference is on disk rather than assumed.
+#
+# **There are three windows, not two, and the third was added on 2026-08-08.** `train_val`
+# is clean for a *test-split* readout and not for a *validation* one — it contains 2022-23
+# and 2023-24, which is exactly what the realized backtest in `docs/simulations-plan.md`
+# scores against. Once `make posteriors` started emitting coefficients per window, a
+# backtest could have clean coefficients and a noise shape calibrated on the seasons it was
+# scoring, which is a leak wearing the previous fix's clothes. So the windows now mirror
+# the three consumers one-for-one: `train` for anything scored on validation, `train_val`
+# for the one-shot test readout, `full` for production.
 #
 # `tests/test_preprocess.py` pins this against the model modules' copies: two definitions
 # of "which seasons are held out" that could disagree is a worse failure than a duplicated
@@ -60,17 +69,30 @@ TEST_SEASONS = 2
 
 FULL_WINDOW = "full"
 TRAIN_VAL_WINDOW = "train_val"
-FIT_WINDOWS = [FULL_WINDOW, TRAIN_VAL_WINDOW]
+TRAIN_WINDOW = "train"
+# Widest first, so a table pivoted on this column reads left-to-right as "progressively
+# more held out".
+FIT_WINDOWS = [FULL_WINDOW, TRAIN_VAL_WINDOW, TRAIN_WINDOW]
+
+# How many trailing season labels each window drops. `train` drops twice `TEST_SEASONS`
+# because the validation split is carved out of the training half — the same two-step
+# `models.held_out.selection_split` performs, expressed here as one count.
+_WINDOW_DROP = {FULL_WINDOW: 0, TRAIN_VAL_WINDOW: 1, TRAIN_WINDOW: 2}
 
 
 def fit_window(frame: pd.DataFrame, window: str = TRAIN_VAL_WINDOW,
                test_seasons: int = TEST_SEASONS) -> pd.DataFrame:
     """Restrict `frame` to a fit window, keyed on its `season` column.
 
-    `full` returns everything; `train_val` drops the trailing `test_seasons` season
-    labels — the same seasons `split_seasons` holds out, derived the same way (sort the
-    labels present, take the last N) rather than hard-coded, so a change to the data
-    window moves both together.
+    `full` returns everything; `train_val` drops the trailing `test_seasons` season labels;
+    `train` drops twice that many, so the validation seasons go too. All three derive the
+    labels the same way `split_seasons` does — sort the labels present, take the last N —
+    rather than hard-coding them, so a change to the data window moves everything together.
+
+    **Which one to consume is decided by what the number will be scored against**, not by
+    which is widest. A statistic used while scoring 2022-23 / 2023-24 must come from
+    `train`, because `train_val` contains those seasons; `train_val` is for the one-shot
+    test readout; `full` is production.
 
     Note this keys on the season a row is *from*, which for these calibration frames is
     the season being held out. A design matrix's `season` is its *target* season and its
@@ -81,6 +103,7 @@ def fit_window(frame: pd.DataFrame, window: str = TRAIN_VAL_WINDOW,
         raise ValueError(f"unknown fit window {window!r}; expected one of {FIT_WINDOWS}")
     if window == FULL_WINDOW or not test_seasons:
         return frame
+    test_seasons = test_seasons * _WINDOW_DROP[window]
     order = sorted(frame["season"].unique())
     # An empty fitting half is the failure this repo has already shipped once in another
     # costume — a frame that silently shrank rather than raising. Every downstream
@@ -90,15 +113,19 @@ def fit_window(frame: pd.DataFrame, window: str = TRAIN_VAL_WINDOW,
     if len(order) <= test_seasons:
         raise ValueError(
             f"cannot hold out {test_seasons} of {len(order)} seasons ({order}) — the "
-            f"{TRAIN_VAL_WINDOW!r} window would be empty. Every correlation measured on "
+            f"{window!r} window would be empty. Every correlation measured on "
             "it would be NaN, which reads as a null rather than as missing data.")
     return frame[~frame["season"].isin(set(order[-test_seasons:]))]
 
 
 def held_out_seasons(frame: pd.DataFrame,
-                     test_seasons: int = TEST_SEASONS) -> list[str]:
-    """The season labels `fit_window` drops — for printing what was excluded."""
-    return sorted(frame["season"].unique())[-test_seasons:] if test_seasons else []
+                     test_seasons: int = TEST_SEASONS,
+                     window: str = TRAIN_VAL_WINDOW) -> list[str]:
+    """The season labels `fit_window` drops for `window` — for printing what was excluded."""
+    if window not in FIT_WINDOWS:
+        raise ValueError(f"unknown fit window {window!r}; expected one of {FIT_WINDOWS}")
+    dropped = test_seasons * _WINDOW_DROP[window]
+    return sorted(frame["season"].unique())[-dropped:] if dropped else []
 
 
 def _parse_log_filename(stem: str) -> tuple[str, str]:

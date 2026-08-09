@@ -72,8 +72,8 @@ import pandas as pd
 import yaml
 from sklearn.preprocessing import SplineTransformer
 
-from src.data.preprocess import (FULL_WINDOW, TRAIN_VAL_WINDOW, fit_window,
-                                 held_out_seasons)
+from src.data.preprocess import (FIT_WINDOWS, FULL_WINDOW, TRAIN_VAL_WINDOW,
+                                 TRAIN_WINDOW, fit_window, held_out_seasons)
 from src.eda.availability import with_lags
 from src.models.availability import (EPS, FEATURE_COLS, RHO_MAX, RHO_MIN,
                                      fit_dispersion)
@@ -540,10 +540,9 @@ def run(cfg: dict) -> dict[str, Path]:
     targets = pd.read_parquet(Path(cfg["data"]["features_dir"])
                               / "component_targets.parquet")
     lengths = pd.read_parquet(Path(cfg["data"]["features_dir"]) / "game_length.parquet")
-    game_rhos = [game_level_dispersion(targets, lengths, window=w)
-                 for w in (FULL_WINDOW, TRAIN_VAL_WINDOW)]
-    game_rho = game_rhos[0]
-    simulator_rho = game_rhos[1]
+    game_rhos = [game_level_dispersion(targets, lengths, window=w) for w in FIT_WINDOWS]
+    by_window = {r["fit_window"]: r for r in game_rhos}
+    game_rho = by_window[FULL_WINDOW]
     season_rho = float(chosen["val_rho"])
     print(f"\nTwo dispersions, and they are different quantities:")
     print(f"  season-level rho (what this fit estimates): {season_rho:.5f}")
@@ -554,16 +553,20 @@ def run(cfg: dict) -> dict[str, Path]:
           "one:\n  iid game noise is diluted by ~1/G while a shared season multiplier "
           "passes through in full.\n  Drawing per-game minutes from the season-level rho "
           "would make every simulated game far\n  too close to the player's average.")
-    held = ", ".join(held_out_seasons(targets))
-    print(f"\n  Both fit windows, because this is a simulator INPUT and calibrating it on "
-          f"the seasons the\n  simulator is scored against is leakage the split cannot "
-          f"catch. Holding out {held}:")
-    print(f"    {FULL_WINDOW:9s} rho {game_rho['rho']:.5f} -> "
-          f"{game_rho['implied_overdispersion']:.2f}x over "
-          f"{game_rho['n_player_games']:,} player-games")
-    print(f"    {TRAIN_VAL_WINDOW:9s} rho {simulator_rho['rho']:.5f} -> "
-          f"{simulator_rho['implied_overdispersion']:.2f}x over "
-          f"{simulator_rho['n_player_games']:,} player-games   <- the one to consume")
+    print(f"\n  All three fit windows, because this is a simulator INPUT and calibrating "
+          f"it on the seasons\n  the simulator is scored against is leakage the split "
+          f"cannot catch. Which one to consume is\n  decided by what the number will be "
+          f"scored against, not by which is widest:")
+    consumer = {FULL_WINDOW: "production (2026-27)",
+                TRAIN_VAL_WINDOW: "the one-shot test readout",
+                TRAIN_WINDOW: "the realized 2022-23 / 2023-24 backtest"}
+    for window in FIT_WINDOWS:
+        row = by_window[window]
+        held = ", ".join(held_out_seasons(targets, window=window)) or "nothing"
+        print(f"    {window:9s} rho {row['rho']:.5f} -> "
+              f"{row['implied_overdispersion']:.2f}x over "
+              f"{row['n_player_games']:,} player-games; holds out {held}\n"
+              f"              -> {consumer[window]}")
 
     diag = diagnostics_frame(diagnostics)
     artifacts = {

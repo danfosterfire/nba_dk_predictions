@@ -97,7 +97,42 @@ make season-terms      # does any head need a season term, and which kind? A tre
                        #   season × role arm the availability era effect calls for.
                        #   An ABLATION over the shipped heads, so also not in `stan`;
                        #   it reads their selected specs from their artifacts.
+make posteriors        # PERSIST the fits: 18 heads refitted once at the variant their
+                       #   own sweep selected, each writing thinned draws + the design
+                       #   recipe + provenance to
+                       #   data/features/posteriors/<window>/<head>.pkl.
+                       #   `make stan` throws its coefficient draws away, so without
+                       #   this the simulation layer has to refit to draw anything.
+                       #   WINDOW=train by default — the backtest scores the validation
+                       #   seasons, which train_val has already read; `--window full`
+                       #   fits on the held-out seasons and is guarded. Budget most of a
+                       #   day, and use `--groups <family>` to redo one family. Not in
+                       #   `stan`: it consumes those artifacts rather than being one.
 ```
+
+### The simulation layer
+
+Everything here is numpy over the posterior pickles. Only `make posteriors` above needs a
+sampler.
+
+```bash
+make scoring-periods   # one row per (season, game_id): its scoring period and its DK
+                       #   tournament round → data/features/scoring_periods.parquet.
+                       #   A best-ball lineup is scored WEEKLY, so every weekly max,
+                       #   round total and advancement cut downstream aggregates over a
+                       #   period — this is the only module that says what one is.
+                       #   DK's periods are NBA weeks: ScheduleLeagueV2 carries
+                       #   `weekNumber` from 2017-18, and the 21 older seasons get a
+                       #   derivation that reproduces it on 10,749 of 10,749 games.
+                       #   Owns three edge cases once — a postponed game scores in the
+                       #   period PLAYED, the NBA Cup final scores nowhere, and the
+                       #   all-star gap moves no Monday. Schedules cache to data/raw, so
+                       #   a rebuild needs no network; REFRESH=1 re-pulls them.
+```
+
+**After `make posteriors`, nothing else in the simulation layer needs CmdStan.** That is the
+point of it — `src/sim/` is numpy over the pickles, and a draft room loading a board cannot
+wait on a sampler.
 
 Fitted **separately**, one model per head, because the chain
 `availability → min | available → counts | min → makes | attempts` factorizes the joint

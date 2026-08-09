@@ -12,7 +12,7 @@ PIP    := .venv/bin/pip
         variance-budget residual-correlation season-effects \
         stan stan-availability stan-minutes stan-components stan-composition \
         stan-substitution season-terms games-played stan-games-played \
-        final-evaluation
+        posteriors scoring-periods final-evaluation
 
 venv:
 	/opt/homebrew/bin/python3.14 -m venv .venv
@@ -220,6 +220,47 @@ stan-composition:
 # honest while elapsed wall clock does not.
 stan: stan-availability stan-minutes stan-components stan-composition
 
+# ── The simulation layer's step zero ──────────────────────────────────────────
+# `make stan` writes metrics, diagnostics and per-row predictions and THROWS THE
+# COEFFICIENT DRAWS AWAY, so simulating from the joint posterior has meant refitting.
+# This refits each head ONCE at its shipped variant and persists the thinned draws, the
+# design recipe and the provenance to data/features/posteriors/<head>.pkl — after which
+# `make posteriors` is the only target in the simulation layer that needs a CmdStan
+# toolchain and everything downstream is numpy.
+#
+# BUDGET MOST OF A DAY, for the same reason `stan` does: eighteen fits, of which the
+# composition head is one and is hours on its own. Each artifact is written the moment it
+# is built and the manifest merges by head, so
+#
+#   $(PYTHON) -m src.models.posteriors --groups components
+#
+# re-does one family without touching the rest.
+#
+# Artifacts are namespaced by fit window — data/features/posteriors/<window>/ — because all
+# three windows are wanted at once and have different consumers:
+#   train      DEFAULT. The realized backtest scores 2022-23 / 2023-24, and `train_val`
+#              fits on them.
+#   train_val  the one-shot test readout, which should describe the model that would
+#              actually deploy — the rule src/final_evaluation.py already follows.
+#   full       the 2026-27 production board. Reads the held-out seasons, so it is guarded
+#              by src/models/held_out.py.
+WINDOW ?= train
+
+posteriors:
+	$(PYTHON) -m src.models.posteriors --window $(WINDOW)
+
+# One row per (season, game_id): its scoring period and its DK tournament round. A
+# best-ball lineup is scored weekly, so every weekly max, round total and advancement
+# cut downstream is an aggregate over a period, and this is the only module that says
+# what a period is. DK's periods are NBA weeks: ScheduleLeagueV2 carries `weekNumber`
+# from 2017-18 on, and older seasons get a derivation that reproduces it exactly on all
+# nine seasons that publish one. Owns three edge cases once — a postponed game scores in
+# the period it is PLAYED in, the NBA Cup final scores nowhere, and the all-star gap
+# breaks week adjacency without moving a Monday. Schedules cache to data/raw, so a
+# rebuild does not need the endpoint; `REFRESH=1` re-pulls them.
+scoring-periods:
+	$(PYTHON) -m src.features.scoring_periods $(if $(REFRESH),--refresh,)
+
 # Does any head need a season term, and which kind? A trend covariate and a year-level
 # random effect for every head, plus the season x role interaction the availability era
 # effect calls for, scored on held-out CRPS, interval coverage and season-total dk_pts.
@@ -241,8 +282,12 @@ eda: season-matrix pca archetypes team-context context-value opponent \
      availability availability-profile season-effects report-calibration \
      adp-panel adp-profile
 
+# Through `$(PYTHON) -m`, not `.venv/bin/streamlit`: the venv's console scripts carry an
+# absolute shebang from the directory the venv was created in, so they broke when the repo
+# was renamed off `nba_deep_learning`. Module invocation reads the interpreter from
+# `$(PYTHON)` and survives a rename.
 dashboard:
-	.venv/bin/streamlit run dashboard/app.py
+	$(PYTHON) -m streamlit run dashboard/app.py
 
 # Registry drift report — see dashboard/README.md. A report, not a gate: it exits 0
 # with findings on purpose, because failing on a doc edit trains people to ignore it.
@@ -291,7 +336,7 @@ predict:
 	$(PYTHON) -m src.predict
 
 test:
-	.venv/bin/pytest tests/ -v
+	$(PYTHON) -m pytest tests/ -v
 
 # Run the full pipeline end-to-end
 pipeline: fetch preprocess features train evaluate

@@ -54,7 +54,7 @@ import pandas as pd
 import yaml
 
 from src.data.preprocess import (FIT_WINDOWS, FULL_WINDOW, TRAIN_VAL_WINDOW,
-                                 fit_window, held_out_seasons)
+                                 TRAIN_WINDOW, fit_window, held_out_seasons)
 from src.eda.serial_correlation import (
     CONVERSIONS,
     COUNT_COMPONENTS,
@@ -177,6 +177,13 @@ def to_matrix(long: pd.DataFrame, basis: str | None = None,
     `window=FULL_WINDOW` deliberately to reproduce the prose figures. A frame with no
     `fit_window` column at all is treated as one window, so older artifacts and the
     synthetic frames in the tests still pivot.
+
+    **`train_val` is the safe default, not the safe answer for every caller.** It excludes
+    the test seasons and nothing else, so a backtest scored on 2022-23 / 2023-24 must pass
+    `window=TRAIN_WINDOW` — those seasons are inside `train_val`. The default stays here
+    because it is the one that is never *wrong*, only sometimes wider than a particular
+    caller may read; the three windows and their consumers are set out in
+    `src/data/preprocess.py`.
     """
     sub = long if basis is None else long[long["basis"] == basis]
     if "fit_window" in sub.columns:
@@ -328,26 +335,38 @@ def run(cfg: dict) -> Path:
           "imposing the raw one double-counts minutes.")
 
     # ── the window the copula is actually calibrated on ──────────────────────
-    held = ", ".join(held_out_seasons(df))
     print(f"\nThe copula is a simulator INPUT, so its calibration window matters and no "
-          f"split guard\ncovers it — nothing here is fitted. `{TRAIN_VAL_WINDOW}` holds "
-          f"out {held}, and it is the\nmatrix to consume ({to_matrix.__name__} defaults "
-          f"to it):")
+          f"split guard\ncovers it — nothing here is fitted. `{TRAIN_VAL_WINDOW}` is the "
+          f"default ({to_matrix.__name__}\ndefaults to it) because a default is what an "
+          f"unthinking consumer gets, but a backtest\nscored on the validation seasons "
+          f"has to ask for `{TRAIN_WINDOW}` — they are inside "
+          f"`{TRAIN_VAL_WINDOW}`:")
+    for window in FIT_WINDOWS:
+        held = ", ".join(held_out_seasons(df, window=window)) or "nothing"
+        print(f"  {window:9s} holds out {held}")
     keys = ["off_diagonal_mean", "off_diagonal_mean_counts_only", "off_diagonal_max",
             "off_diagonal_min", "substitution_r", "min_eigenvalue"]
     both = pd.DataFrame([summarize(table, MINUTES_CONDITIONED, w) for w in FIT_WINDOWS])
     contrast = both.set_index("fit_window")[keys].T
-    contrast["delta"] = contrast[TRAIN_VAL_WINDOW] - contrast[FULL_WINDOW]
+    contrast["widest_minus_narrowest"] = contrast[FULL_WINDOW] - contrast[TRAIN_WINDOW]
     print(contrast.to_string(float_format=lambda v: f"{v:+.4f}"))
-    sim = both[both["fit_window"] == TRAIN_VAL_WINDOW].iloc[0]
-    if sim["min_eigenvalue"] <= 0:
+    # Checked on EVERY window, not just the default one. Each is consumed by some
+    # backtest — `train` by the realized 2022-23 / 2023-24 readout, `train_val` by the test
+    # readout, `full` by production — and one of them being PSD says nothing about another:
+    # they are measured on different rows. A non-PSD matrix on the window a caller actually
+    # asks for is a copula that cannot be built, discovered at draw time instead of here.
+    bad = both[both["min_eigenvalue"] <= 0]
+    if len(bad):
         raise ValueError(
-            f"the {TRAIN_VAL_WINDOW} conditioned matrix is NOT positive semi-definite "
-            f"(min eigenvalue {sim['min_eigenvalue']:+.4f}) — a Gaussian copula cannot "
-            "be built from it. The full-window matrix being PSD is not a substitute: the "
-            "simulator consumes this one.")
-    print(f"  {TRAIN_VAL_WINDOW} min eigenvalue {sim['min_eigenvalue']:+.4f} — still PSD, "
-          f"so the copula is usable on the window it should be calibrated on.")
+            f"the conditioned matrix is NOT positive semi-definite on "
+            f"{list(bad['fit_window'])} (min eigenvalue "
+            f"{bad['min_eigenvalue'].min():+.4f}) — a Gaussian copula cannot be built "
+            "from it. Another window being PSD is not a substitute: some consumer asks "
+            "for this one.")
+    print("  min eigenvalue by window: "
+          + ", ".join(f"{r['fit_window']} {r['min_eigenvalue']:+.4f}"
+                      for _, r in both.iterrows())
+          + " — all PSD, so the copula is usable on whichever window a caller asks for.")
     print(f"\nResidual correlation: {len(table):,} pair rows "
           f"({len(FIT_WINDOWS)} fit windows) → {dest}")
     return dest

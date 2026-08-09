@@ -169,12 +169,17 @@ discipline is not clean:
   (persistence splitting on attempts vs conversions, "shrink conversion percentages hard",
   minutes weighting, and the shot-attempt reparameterization itself). That is model design
   informed by data that includes the test window, and no split guard can see it.
-- **The four numbers the simulator will consume as direct inputs are now calibrated on
-  train + validation**, because they are *given* to the simulator rather than scored by it:
-  the residual copula, the game-level minutes dispersion, the block variance inflation and
-  the bonus overdispersion. Their artifacts carry both windows under a `fit_window` column
-  and the consumers default to `train_val`; the full-window figures move by less than the
-  precision they are quoted at, which is why the leak would never have announced itself.
+- **The four numbers the simulator will consume as direct inputs are calibrated per fit
+  window**, because they are *given* to the simulator rather than scored by it: the residual
+  copula, the game-level minutes dispersion, the block variance inflation and the bonus
+  overdispersion. Their artifacts carry a `fit_window` column and the consumers default to
+  `train_val`; the full-window figures move by less than the precision they are quoted at,
+  which is why the leak would never have announced itself. **A third window, `train`, was
+  added 2026-08-08**, because `train_val` is clean for a *test*-split readout and not for a
+  *validation* one: it contains 2022-23 and 2023-24, which is exactly what the realized
+  backtest scores against. Which window to consume is decided by what the number will be
+  scored against, not by which is widest — and the same rule now governs the persisted
+  posteriors, which are namespaced by window (`make posteriors`).
 
 ### The output contract — twelve components, and `dk_pts` falls out
 
@@ -434,7 +439,7 @@ with the MLE inside the 95% credible interval for 21 of 21 terms. Cost is concen
 entirely in the spline variants. Dropping the test side halved the component fit count from
 74 and cut sampler time from 305.0 to **137.4** minutes *while* raising every selection fit
 to full-length chains — which incidentally fixed the one fit that used to miss its R̂ bar.
-779 tests pass (`.venv/bin/pytest tests/`).
+846 tests pass (`.venv/bin/pytest tests/`).
 
 ---
 
@@ -478,10 +483,13 @@ not currently clear its floor.
 ```
 src/data/       fetch, preprocess, availability capture (box-score status, injury
                 reports, ESPN feed), ADP capture
-src/features/   component targets, game length, team context, opponent, availability, ADP
+src/features/   component targets, game length, team context, opponent, availability, ADP,
+                and scoring periods — the NBA week grid DK's tournament rounds sit on
 src/eda/        the season-level analysis pipeline — one module per artifact
 src/models/     the Stan heads (availability, minutes, composition, components,
-                season terms) plus the sklearn references they are checked against
+                season terms) plus the sklearn references they are checked against,
+                and `posteriors.py`, which persists every fitted head's thinned draws
+                and design recipe so nothing downstream has to refit
 src/stan/       three .stan sources for eleven-plus heads
 dashboard/      nine-tab project walkthrough; reads artifacts only, never refits
 docs/           plan docs — predictions, availability, minutes composition, ADP,

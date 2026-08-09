@@ -92,3 +92,7 @@ to the relevant docs for the task at hand. The docs are:
 - Do not update @CLAUDE.md or @README.md with detailed findings. Instead, update 
   the relevant detailed plan doc in /docs, and include that document in the 
   list of docs above.
+- Keep responses focused, brief, and concise. Keep disclaimers and caveats short, 
+and spend most of the response on the main answer. When asked to explain 
+something, give a high-level summary unless an 
+in-depth explanation is specifically requested.
