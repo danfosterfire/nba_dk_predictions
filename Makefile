@@ -13,7 +13,7 @@ PIP    := .venv/bin/pip
         stan stan-availability stan-minutes stan-components stan-composition \
         stan-substitution season-terms games-played stan-games-played \
         stan-game-length posteriors minutes-unification composition-effects \
-        scoring-periods draft-pool final-evaluation
+        scoring-periods draft-pool simulate-season final-evaluation
 
 venv:
 	/opt/homebrew/bin/python3.14 -m venv .venv
@@ -316,6 +316,17 @@ scoring-periods:
 # dual convention rides along as `dual_*` so a sensitivity run is a column swap.
 draft-pool:
 	$(PYTHON) -m src.features.draft_pool
+
+# ── The simulation layer (src/sim/) ───────────────────────────────────────────
+# THE tensor: player x scoring_period x sim dk_pts plus a uint8 games-played twin, one
+# .npz per season. Per-game draws happen INSIDE the module and are summed into the 20
+# scoring periods immediately, because the bonus is a per-game threshold on five components
+# and E[bonus] != bonus(E[x]) — nothing downstream ever materializes a player x game x sim
+# array. It is a staircase rather than one step: +1.5 for a double-double and +3 more for a
+# triple-double, stacking to 4.5, so the convexity is sharper than either alone. Numpy only: it reads `make posteriors`' pickles and needs no
+# CmdStan. Defaults to the two VALIDATION seasons; `--season` and `--n-sims` override.
+simulate-season:
+	$(PYTHON) -m src.sim.season
 
 # Does any head need a season term, and which kind? A trend covariate and a year-level
 # random effect for every head, plus the season x role interaction the availability era

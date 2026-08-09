@@ -1271,8 +1271,11 @@ make minutes-unification ✅ src/models/minutes_unification.py
                                                    draws, so it needs no CmdStan
                                                    -> outputs/predictions/minutes_unification.csv
 
-make simulate-season src/sim/season.py             THE tensor
+make simulate-season ✅ src/sim/season.py           THE tensor: player x scoring_period x
+                                                   sim dk_pts plus a uint8 games-played
+                                                   twin. Per-game draws happen INSIDE it
                                                    -> data/features/sim_tensor_<season>.npz
+                                                      + outputs/predictions/sim_season_gate_a.csv
 
 make draft-sim       src/sim/draft.py              snake draft vs an ADP field
 make bracket         src/sim/bracket.py            4 rounds, advancement, ties, payouts
@@ -1325,8 +1328,155 @@ here because this is the module that could quietly break them:
    what a 2-of-12 cut is decided on, so the error lands squarely on the objective. Measured
    by `make minutes-unification`; see "The third prerequisite".
 
-Consumers default to the `train_val` fit window, matching the four numbers already calibrated
-that way.
+Consumers default to the `train` fit window — see "One window per consumer": the realized
+backtest scores 2022-23 and 2023-24, which `train_val` fits on.
+
+### What was built, and what Gate A found — 2026-08-09
+
+`src/sim/season.py`, `make simulate-season`. **Two tensors, 386 x 20 x 2,000 and
+387 x 20 x 2,000, 77 MB each, at 76 s per season of pure numpy and no CmdStan anywhere.** The
+per-sim loop is the whole design: one posterior draw per simulated season shared by every
+player and every head, a game-length draw per game shared by both teams, an availability
+draw laid out into spells, one minutes draw pushed through all eleven component heads as
+exposure, and `compute_dk_pts` on the drawn integer box score — scattered into the twenty
+scoring periods with a single `bincount`, so no `player x game x sim` array is ever
+materialized.
+
+**Two structural choices were forced by the identities rather than chosen.** The component
+heads are fitted at the *season* unit, so drawing them per game needs the negative
+binomial's own Poisson-Gamma representation — a season-level `Gamma(phi, 1/phi)` frailty per
+(player, sim), which *is* the fitted head's season-total spread, plus per-game Poisson noise
+around `rate x minutes x frailty`. The conversion heads factorize the same way and more
+cleanly: `p ~ Beta(a, b)` once per (player, sim), then `Binomial(attempts_g, p)` per game
+sums to **exactly** `BetaBinomial(sum attempts, mu, rho)`. That is also what "sequential
+structure goes on minutes and nowhere else" asks for, since both field-goal conversion heads
+are measured nulls for a hot hand.
+
+#### Gate A, in full
+
+Each row against the artifact that set it. Validation only; the two seasons are reported
+separately because pooling them would hide the one figure that moves.
+
+| check | 2022-23 | 2023-24 | bar | artifact |
+|---|---|---|---|---|
+| season-total dk_pts MAE | **402.14** | **407.89** | 400.46 | `season_total_metrics.csv` |
+| …CRPS | **280.49** | **281.03** | 287.26 | " |
+| …R² | 0.6481 | 0.6589 | 0.7073 | " |
+| …bias | −21.93 | −63.34 | −3.06 | " |
+| games played CRPS | **9.6754** | **9.7829** | 10.0057 | `stan_games_played_metrics.csv` |
+| …bias, in games | **+0.127** | **−0.363** | — | " |
+| …pooled GP pmf total variation | **0.0602** | **0.0588** | — | `stan_games_played_gp_pmf.csv` |
+| bonus per played game | 0.1733 | 0.1702 | 0.1559 / 0.1626 realized | `bonus_calibration.csv` |
+| …on **realized** minutes | **0.1535** | **0.1477** | 0.1559 / 0.1626 | `component_targets.parquet` |
+| season minutes sd, given GP | **322.05** | **319.32** | 302.75 | `minutes_unification.csv` |
+
+**Three of the four gate rows pass and the fourth is traced out of this module.** Season
+totals land on the incumbent's MAE within 2%, and *better* than it on CRPS — the deliverable
+is a distribution and that is the distributional metric. Games played reproduces the
+availability head it was handed rather than approximating it: CRPS **below** the head's own
+10.0057 (the simulator integrates over the posterior draw where the head's published figure
+is scored per row), a bias of a tenth of a game, and a pooled pmf within 0.06 total variation
+of the persisted one on a mean of 55.8 games against 55.6.
+
+**The bonus is +11% high in 2022-23 and +5% in 2023-24, and the cause is upstream.** Running
+the identical `draw_components` call on **realized** minutes and realized played games gives
+0.1535 against a realized 0.1559 and 0.1477 against 0.1626 — i.e. the component chain,
+its season/game frailty split and its copula are calibrated on the bonus to within 1.5% and
+9% respectively, in the *low* direction. Everything above that comes from the minutes the
+simulator draws, and the next row says why.
+
+#### The diagnostic that earned its keep: the composition's game-level minutes dispersion
+
+`docs/simulations-plan.md` demoted `stan_minutes_dispersion.csv`'s **4.65x** from a simulator
+*input* to "a diagnostic to check the composition's draws against". Run for the first time,
+it fails — and not because of anything in `src/sim/`:
+
+| source | implied game-level overdispersion |
+|---|---|
+| realized 2022-23 minutes | **4.22** |
+| the simulator's draws | **8.42** |
+| the composition head's own draws, on **realized** availability, sigma = 0 | **7.70** |
+| …with the shipped sigma = 0.45 | 7.87 |
+
+So the shipped composition head puts roughly **1.8x** too much game-to-game spread on a
+player's minutes, measured against his own realized season share, and the simulator inherits
+it almost exactly. The injected player-season effect is not the cause (7.70 at sigma = 0),
+and neither is the availability draw (the middle row conditions on realized availability).
+This is compatible with everything already measured about the head — its per-team-game CRPS
+of 4.4945 and its PIT are statements about the *allocation*, not about a player's dispersion
+around his own season mean — and it is exactly the miss the diagnostic was kept for. It is
+also the mechanism behind the bonus row: the bonus is convex in minutes, so an over-dispersed
+minutes draw over-produces double-doubles.
+
+**Two more diagnostics, both reported rather than gated.**
+
+- **Serial dependence is not consumed, and that is now a measured decision rather than an
+  omission.** `serial_correlation.csv`'s **2.43x** ten-game block inflation is a named
+  simulator input; the simulator produces **1.40** / **1.52**, because the composition's
+  draws are iid across games once availability is fixed and only the spell process clusters
+  them. The mechanism to close it is ~3 lines — a `sigma_block * z[player, block]` term in
+  the linear predictor — and it is **deliberately not shipped**, because it would add
+  variance to a minutes draw that is already 1.8x too dispersed at the game level. The two
+  live in one variance budget and the block term should be fitted against the dispersion
+  miss, not on top of it.
+- **The copula needed inverting, and conflating the two matrices was a real bug.**
+  `residual_correlation.csv` measures the correlation of *Pearson residuals*; under a
+  lognormal frailty of variance `v = 0.025`, `corr(resid_a, resid_b) = R_ab * v *
+  sqrt(mu_a mu_b) / sqrt((1+v mu_a)(1+v mu_b))`, so the frailty correlation that produces a
+  given residual correlation is roughly **ten times** it. The first build handed the copula
+  the residual matrix directly and imposed a tenth of the intended dependence — every cell
+  present, every shape right, only the numbers wrong. Inverting the relation at the
+  population mean per-game count and projecting back to a valid correlation matrix takes the
+  simulated off-diagonal mean from **−0.002** to **+0.017** against a target of **+0.022**,
+  with a maximum cell error of 0.057. **4 of the 21 count pairs saturate**, which is itself a
+  finding: the measured residual coupling sits at the ceiling a frailty of this variance can
+  produce, so the bonus overdispersion and the residual correlation are close to two views of
+  one per-game "big night" factor rather than two independent inputs.
+
+#### Two wiring faults Gate A caught, both invisible in the output
+
+Both would have produced a completely plausible board.
+
+- **The availability denominator.** Taking the panel as it stands gives a traded player rows
+  on *both* teams and a denominator of **92.6** games against the head's **82.0**, so the
+  head's rate ran against ~13% too many opportunities. `features.availability.season_availability`
+  already settles this — a traded player is attributed wholly to his **last team** — and
+  reproducing that convention puts the two within one game on 432 of 433 players.
+- **The players the availability head has no row for.** It is a lag-1 design, so 106 of 539
+  rostered players in 2022-23 are outside its frame. Scoring them at the head's *intercept*
+  put them at **58.4** simulated games against a realized **30.1**, and because the minutes
+  allocation is zero-sum that moved ~**29,500** minutes a season off the players the tensor
+  scores — a season-total dk_pts bias of **−90.8**. They now get the expanding-window
+  empirical rate of no-design player-seasons in the earlier seasons selection may read
+  (**0.4303** for 2022-23), which is the same point-in-time device
+  `stan_composition.rookie_share_priors` already uses for their minutes share. The bias falls
+  to **−21.9**.
+
+#### What the artifact carries, and the honest caveats
+
+`data/features/sim_tensor_<season>.npz`: `dk_pts` (float32), `games_played` (uint8),
+`player_id`, `season_minutes`, `prior_minutes`, the round map for the twenty slots, and the
+provenance a consumer needs to refuse the wrong one — fit window, sim count, posterior draw
+count, seed, the composition variant, and the player-season sigma with its source.
+
+- **The tensor scores 386 of 539 rostered players.** The missing 153 have no component-head
+  design row (`>= 200 prior minutes`), and they are *kept in the minutes allocation* —
+  dropping them would hand their minutes to their teammates — but cannot be scored. Pricing
+  them is item 4's open question and belongs with the 2026 draft class the board build
+  already flagged.
+- **The season total is scored over DK's window, not the schedule.** Round 4 closes before
+  the NBA season does, so the tensor carries 20 of ~24 weeks and both sides of the Gate A
+  comparison are restricted to it. Games played is scored over the whole schedule, because
+  that is the availability head's own denominator.
+- **`offset_clipped` is the one design column supplied from an expectation rather than a
+  draw.** The fitted head reads it off the realized allocation; a forward season has none, so
+  it is evaluated at the deterministic proportional allocation. It marks ~1% of rows and
+  carries a correction coefficient.
+- **A feasibility repair fires on 0.12–0.18% of simulated team-games.** A team-game allocates
+  `5 x game_length` minutes under a per-player cap of `game_length`, so it needs five
+  available players; below that the highest-ranked absentees are promoted and the count is
+  reported.
+- **Mid-season trades are still not modelled**, inherited from the prediction layer.
 
 ### `src/sim/draft.py` — the draft simulator
 
@@ -1608,7 +1758,7 @@ Every gate is judged on validation or on simulated truth. None reads the test sp
 
 | Gate | Pass condition | Why this bar |
 |---|---|---|
-| **A** | the season simulator reproduces the **marginals it was built from**: season-total dk_pts distribution against `season_total_metrics.csv`, GP pmf against `stan_games_played_gp_pmf.csv`, and per-game bonus rate against `bonus_calibration.csv` | An assembly bug is silent. Every input head is already calibrated, so a simulator that misses a marginal it was handed has a wiring fault, not a modelling one |
+| **A** ✅ ⚠️ | the season simulator reproduces the **marginals it was built from**: season-total dk_pts distribution against `season_total_metrics.csv`, GP pmf against `stan_games_played_gp_pmf.csv`, and per-game bonus rate against `bonus_calibration.csv` | An assembly bug is silent. Every input head is already calibrated, so a simulator that misses a marginal it was handed has a wiring fault, not a modelling one. **Run 2026-08-09**: season totals pass (MAE 402.14 / 407.89 against 400.46, CRPS 280.49 / 281.03 against 287.26), games played passes (CRPS 9.6754 / 9.7829 against the head's 10.0057, bias +0.127 / −0.363), minutes spread passes given games played (322.05 / 319.32 against 302.75); the **bonus is +11% / +5% high and is traced out of the module** — on realized minutes the same draw reads 0.1535 / 0.1477 against 0.1559 / 0.1626, so it is the composition head's 1.8x game-level minutes over-dispersion. Two wiring faults were caught and fixed |
 | **B** | simulated drafts reproduce the **observed ADP curve** — mean absolute rank gap under the 17.0-pick recalibration error, so the field model is no worse than the market proxy it consumes | The field model's only real calibration target. Failing it means the opponent model is not a field |
 | **C** | the **error-injected** simulated world reproduces the model's measured out-of-sample miss: availability CRPS ≈ 10.006 games, component R² in 0.81–0.95, season-total MAE ≈ 400.5 dk_pts | Without this the sweep cannot price ADP, exposure caps, or any other hedge against model error |
 | **D** | the sweep selects **materially different** rosters for the two tiers | If the $20 and $52 strategies converge, either the objective is not doing its job or the tier difference is smaller than the economics imply. Either way it needs to be known before entering |
@@ -1623,7 +1773,7 @@ Every gate is judged on validation or on simulated truth. None reads the test sp
 sim:
   posterior_draws: 1000          # thinned across the whole posterior, never sliced
   fit_window: train              # NOT train_val — see "One window per consumer" below
-  n_sims: 2000                   # strategy sweep
+  n_sims: 2000                   # strategy sweep; sim s uses posterior draw s % 1000
   n_sims_draft: 500              # in-draft; a ranking, not a level
   scoring_periods: 20            # R1's 17 weeks + three double weeks
   pod_size: 12
@@ -1735,6 +1885,20 @@ Plain `assert` with synthetic builders, no fixtures or classes, mirroring
   what is blocked is *retiring the marginal minutes head*, which needs a converged
   full-window fit. Whoever books the machine should run the pilot ladder first and read the
   arm ordering, per "The ladder, and the pilot that keeps it affordable".
+- 🔴 **The composition head is 1.8x too dispersed at the game level**, measured by
+  `make simulate-season`'s Gate A: implied overdispersion **7.70** from the head's own draws
+  on realized availability against **4.22** realized, at sigma = 0 so the injected
+  player-season effect is not the cause. It over-produces the double-double bonus by ~11%
+  and inflates every star's single-game ceiling, which is the statistic a 2-of-12 pod is most
+  sensitive to. It does **not** show up in the head's own per-team-game CRPS or PIT, which
+  are statements about the allocation rather than about a player's spread around his own
+  season mean.
+- **The 2.43x ten-game block inflation is not consumed**, and cannot be until the row above
+  is settled: the simulator reads 1.40 / 1.52, and adding the ~3-line block term would put
+  more variance into a minutes draw that is already too wide at the game level.
+- **153 of 539 rostered players are in the minutes allocation but not in the tensor**, for
+  want of a component-head design row. They cannot be dropped (the allocation is zero-sum)
+  and cannot be scored. Pricing them is the same open question as the 2026 draft class.
 - **Tournament structures may change** for the live 2026-27 contests. Re-verify the metadata
   and prize CSVs before treating any backtest result as load-bearing.
 - **This doc is not yet in `make docs-audit`.** Add it once it carries measured figures rather
@@ -1748,7 +1912,7 @@ Ordered so the **live-draft path closes at item 7**. Items 2, 3 and 3b depend on
 run in any order alongside item 1. **Item 3c must follow 3b** — both were expected to edit
 `stan_composition`, though 3c in the event did not — and both must land before item 4, which
 imports whatever they settle. **Item 3d follows 3c** and does edit that head, so nothing else
-may be in flight on it. Items 1, 2, 3, 3b and 3c are done; **item 3d is next.**
+may be in flight on it. Items 1, 2, 3, 3b, 3c and 4 are done; **item 5 is next.**
 
 **Item 3d's capability landed 2026-08-09 and its full-window commitment did not** — the
 distinction is spelled out under item 3d itself. Item 4 is **not** blocked by that: it
@@ -2097,7 +2261,18 @@ reasons under "What was built".
 > `player_season_effect_sweep` to read sigma from the artifact, and **re-run `make
 > minutes-unification` to re-take the supersession decision rather than re-arguing it**.
 
-### 4. `make simulate-season` — the tensor, and Gate A
+### 4. `make simulate-season` — the tensor, and Gate A ✅ built 2026-08-09
+
+**Two 77 MB tensors, three of Gate A's four rows passing, and the fourth traced out of the
+module.** The measured outcome is under "What was built, and what Gate A found" above. Three
+things are worth carrying into item 5 and beyond: the composition head is **1.8x too
+dispersed at the game level** against a player's own realized season share, which is a
+property of the shipped head rather than of the assembly and is what over-produces the bonus;
+the **2.43x serial-dependence input is deliberately not consumed** until that is settled,
+because both live in one variance budget; and the residual copula had to be **inverted**
+before use, since the frailty correlation that produces a given residual correlation is about
+ten times it.
+
 
 > Read `docs/simulations-plan.md` ("The output contract", "`src/sim/season.py`") and
 > `docs/predictions-plan.md`. Create the `src/sim/` package and build `src/sim/season.py` +

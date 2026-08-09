@@ -351,6 +351,12 @@ sim:
   # `season_terms._draw_components` records: a front slice takes a different part of the
   # posterior from each head, silently.
   posterior_draws: 1000
+  # Simulated seasons per target season — `make simulate-season`. Sim `s` uses posterior
+  # draw `s % posterior_draws` for EVERY player and every head, so at 2,000 sims over 1,000
+  # draws each draw generates two boards. That mapping is the layer's rule 4: players share
+  # `beta`, so one draw has to move the whole board together. The tensor is
+  # players x 20 x n_sims float32 plus a uint8 twin, ~90 MB at 450 players.
+  n_sims: 2000
   # THE DEFAULT IS `train`, and the reason is the realized backtest. It replays simulated
   # portfolios against real 2022-23 / 2023-24 box scores — the validation seasons — and at
   # `train_val` every one of those rows is in the fit (883 of 10,361 availability rows, 773

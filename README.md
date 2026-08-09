@@ -5,10 +5,10 @@ Predict a player's performance in a popular NBA best-ball fantasy contest (`dk_p
 season starts.
 
 A chain of Bayesian component models — availability, minutes-as-team-composition, and the
-box-score components of `dk_pts` — is fitted in Stan on 30 seasons of NBA box scores. Those
-fits are built; the layers they exist to serve are not yet. Drawing whole seasons from their
-joint posterior, ranking players from those draws, and backtesting drafting strategies under
-real contest rules are the next three stages, and are labelled as planned below.
+box-score components of `dk_pts` — is fitted in Stan on 30 seasons of NBA box scores. Drawing
+whole seasons from their joint posterior is built (`make simulate-season`); ranking players
+from those draws and backtesting drafting strategies under real contest rules are the next
+two stages, and are labelled as planned below.
 
 This file is the overview. `CLAUDE.md` is the working reference for conventions and measured
 facts; `docs/*-plan.md` hold the detailed designs.
@@ -382,14 +382,18 @@ season-terms`) is a 108-fit ablation asking whether any head needs a year trend 
 random effect to track league-wide era movement. [src/eda/season_effects.py](src/eda/season_effects.py)
 measures the league series it would be correcting for.
 
-### Simulation — planned
+### Simulation — built
 
-Not built, though its first three prerequisites now are —
-[posteriors.py](src/models/posteriors.py) (`make posteriors`, twenty heads),
-[scoring_periods.py](src/features/scoring_periods.py) and
-[stan_game_length.py](src/models/stan_game_length.py).
-[docs/simulations-plan.md](docs/simulations-plan.md) holds the specification, which is pinned
-by measurements rather than guesses:
+[src/sim/season.py](src/sim/season.py) (`make simulate-season`) writes the layer's output
+contract: a `player × scoring_period × sim` tensor of `dk_pts` and a `uint8` games-played
+twin, per season. Per-game draws happen *inside* it and are summed into the twenty scoring
+periods immediately, so nothing downstream ever materializes a `player × game × sim` array.
+Its four prerequisites are [posteriors.py](src/models/posteriors.py) (`make posteriors`,
+twenty heads), [scoring_periods.py](src/features/scoring_periods.py),
+[stan_game_length.py](src/models/stan_game_length.py) and
+[minutes_unification.py](src/models/minutes_unification.py).
+[docs/simulations-plan.md](docs/simulations-plan.md) holds the specification and the Gate A
+readout; the specification is pinned by measurements rather than guesses:
 
 - **Draw, never plug in.** `E[min]` and `E[gp]` are wrong inputs to a threshold bonus. That
   now includes the length of the game itself: `stan_game_length` draws it, once per game and
@@ -601,6 +605,8 @@ src/models/     the Stan heads (availability, minutes, composition, components,
                 against, and `posteriors.py`, which persists every fitted head's thinned
                 draws and design recipe so nothing downstream has to refit
 src/stan/       four .stan sources for twenty-plus heads
+src/sim/        the simulation and drafting layer — numpy over the posterior artifacts,
+                so nothing here needs CmdStan. Today `season.py`, which writes THE tensor
 dashboard/      data visualizations over the artifacts — today the PCA player-style
                 fingerprint; reads artifacts only, never refits
 docs/           plan docs — predictions, availability, minutes composition, ADP,

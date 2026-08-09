@@ -3062,9 +3062,9 @@ REGISTRY: tuple[Decision, ...] = (
     Decision(
         id="spell-simulator-not-built",
         topic="simulations",
-        claim="**The spell process is now built** (`make stan-games-played`, 2026-08-05). "
-              "The residual copula over a shared `min` draw is not, and is the next piece "
-              "of work.",
+        claim="~~The residual copula over a shared `min` draw is not built.~~ **Both halves "
+              "now exist** — `make stan-games-played` (2026-08-05) and `make "
+              "simulate-season` (2026-08-09). See `season-simulator-output-contract`.",
         because="The specification was already pinned by measurements — block variance "
                 "inflation per component, a falsified 2-state Markov chain, a PSD "
                 "residual correlation matrix ready to use as a copula input, and the "
@@ -3075,13 +3075,109 @@ REGISTRY: tuple[Decision, ...] = (
                 "composition step that turns eleven marginal posteriors into one "
                 "correlated season. Validation will be posterior-predictive checks on "
                 "held-out team-total variance and same-team pairwise covariance — not "
-                "point accuracy.",
-        status="open",
-        reproduce="make stan-games-played → outputs/predictions/spell_process.csv",
+                "point accuracy. **Closed 2026-08-09**: the composition step is "
+                "`src/sim/season.py`, and the validation it got was Gate A — the "
+                "marginals it was handed — rather than the team-total PPC named here, "
+                "because the composition head already carries the team constraint exactly "
+                "and a PPC on it would test arithmetic rather than a model.",
+        status="built",
+        reproduce="make simulate-season → data/features/sim_tensor_2022-23.npz, "
+                  "outputs/predictions/sim_season_gate_a.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-05",
+        reviewed="2026-08-09",
         date="2026-07-29",
         tags=("next",),
+    ),
+    Decision(
+        id="gate-a-season-simulator-marginals",
+        topic="simulations",
+        claim="**Gate A: three of four rows pass and the fourth is traced out of the "
+              "module.** Season totals read MAE **402.14** / **407.89** against the "
+              "incumbent's 400.46 and CRPS **280.49** / **281.03** against 287.26; games "
+              "played reads CRPS **9.6754** / **9.7829** against the availability head's own "
+              "**10.0057** with a bias of **+0.127** / **−0.363** games; the season-minutes "
+              "spread given games played reads **322.05** / **319.32** against **302.75**. "
+              "The **bonus is +11% / +5% high**, and on REALIZED minutes the identical draw "
+              "reads **0.1535** / **0.1477** against a realized 0.1559 / 0.1626 — so the "
+              "component chain is calibrated and the miss is the minutes draw's.",
+        because="An assembly bug is silent: every input head is already calibrated, so a "
+                "simulator that misses a marginal it was handed has a wiring fault rather "
+                "than a modelling one. It caught two, both of which produced a completely "
+                "plausible board. Taking the availability panel as it stands gives a traded "
+                "player rows on BOTH teams and a denominator of **92.6** games against the "
+                "head's **82.0**; `season_availability`'s own convention — a traded player "
+                "belongs wholly to his last team — puts the two within one game on 432 of "
+                "433 players. And the 106 of 539 rostered players the lag-1 availability "
+                "design has no row for were being scored at the head's INTERCEPT, putting "
+                "them at **58.4** simulated games against a realized **30.1** and moving "
+                "~29,500 minutes a season off the players the tensor scores — a season-total "
+                "bias of **−90.8**, which fell to **−21.9** once they got the "
+                "expanding-window empirical rate of players like them.",
+        status="measured",
+        reproduce="make simulate-season → outputs/predictions/sim_season_gate_a.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("gate",),
+    ),
+    Decision(
+        id="composition-game-level-dispersion-too-wide",
+        topic="minutes",
+        claim="🔴 **The shipped composition head puts ~1.8x too much game-to-game spread on "
+              "a player's minutes.** Implied game-level overdispersion is **7.70** from the "
+              "head's own draws on realized availability against **4.22** realized on "
+              "2022-23 — at `sigma = 0`, so the injected player-season effect is not the "
+              "cause — and the simulator inherits **8.42**.",
+        because="This is the diagnostic `stan_minutes_dispersion.csv`'s 4.65x was demoted to "
+                "when `make minutes-unification` moved it from simulator INPUT to a number "
+                "the composition's draws are checked against, and the first time it ran it "
+                "found something. It is compatible with everything already measured about "
+                "the head: its per-team-game CRPS of 4.4945 and its PIT are statements about "
+                "the ALLOCATION — how the pot is split on a night — not about a player's "
+                "spread around his own realized season share, and no metric the head "
+                "published could see the second. It matters because the bonus is convex in "
+                "minutes, so it over-produces double-doubles by ~11% and inflates every "
+                "star's single-game ceiling, which is the statistic a 2-of-12 pod is most "
+                "sensitive to. It also blocks consuming `serial_correlation.csv`'s 2.43x "
+                "ten-game block inflation: the simulator reads 1.40 / 1.52 and the ~3-line "
+                "fix would put MORE variance into a minutes draw that is already too wide, "
+                "so the two have to be settled together rather than one at a time.",
+        status="measured",
+        reproduce="make simulate-season → outputs/predictions/sim_season_gate_a.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("simulator-input", "next"),
+    ),
+    Decision(
+        id="copula-is-not-the-residual-matrix",
+        topic="simulations",
+        claim="**The frailty correlation the copula needs is roughly TEN TIMES the residual "
+              "correlation `residual_correlation.csv` reports**, and handing the copula that "
+              "matrix directly imposes a tenth of the intended dependence — every cell "
+              "present, every shape right, only the numbers wrong.",
+        because="Under a lognormal per-game frailty of variance `v`, `corr(resid_a, "
+                "resid_b) = R_ab * v * sqrt(mu_a*mu_b) / sqrt((1+v*mu_a)*(1+v*mu_b))`, so at "
+                "`v = 0.025` and typical per-game means the residual correlation is about a "
+                "tenth of the frailty correlation producing it. Inverting the relation at the "
+                "population mean per-game count and projecting back to a valid correlation "
+                "matrix takes the simulated off-diagonal mean from **−0.002** to **+0.017** "
+                "against a target of **+0.022**, max cell error 0.057. **4 of the 21 count "
+                "pairs saturate** at the inversion, which is a finding rather than a "
+                "nuisance: the measured residual coupling sits at the ceiling a frailty of "
+                "this variance can produce, so the bonus overdispersion (0.025) and the "
+                "residual correlation are close to two views of ONE per-game 'big night' "
+                "factor rather than two independent simulator inputs. The conversion rows are "
+                "deliberately not imposed — three of the four heads have block inflations of "
+                "1.035, 1.007 and 1.103, the measured nulls that make a season-level `p` the "
+                "right factorization; `fg3a | fga` at 1.575 is the one real gap and is "
+                "reported rather than asserted away.",
+        status="measured",
+        reproduce="make simulate-season → outputs/predictions/sim_season_gate_a.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("simulator-input",),
     ),
     Decision(
         id="no-head-persists-its-posterior",
@@ -3743,22 +3839,34 @@ REGISTRY: tuple[Decision, ...] = (
         topic="simulations",
         claim="The simulator's contract to everything downstream is a "
               "`player x scoring_period x sim` tensor of dk_pts — **never a player-game "
-              "array**.",
+              "array**. **Built 2026-08-09**: 386 x 20 x 2,000 plus a `uint8` games-played "
+              "twin, **77 MB** per season at **76 s** of numpy.",
         because="Best ball scores by scoring period, and there are only 20 of them (Round "
                 "1's 17 weeks plus three double weeks). At ~550 players and 2,000 sims "
                 "that is ~88 MB in float32 — small enough to hold for a whole strategy "
                 "sweep and to load into a draft room in under a second. Per-game draws "
-                "still happen inside the simulator, because the double-double bonus is a "
-                "per-game threshold on five components and E[bonus] != bonus(E[x]), but "
-                "they are summed into periods immediately. Fixing this contract is the "
+                "still happen inside the simulator, because the bonus is a per-game "
+                "threshold on five components and E[bonus] != bonus(E[x]) — and it is a "
+                "STAIRCASE rather than one step (+1.5 for a double-double, +3 more for a "
+                "triple-double, stacking to 4.5), so the convexity bites twice — but they "
+                "are summed into periods immediately. Fixing this contract is the "
                 "difference between a draft sweep that runs in minutes and one that runs "
                 "in hours, and it is what makes the sub-second in-draft recompute "
-                "achievable.",
-        status="settled",
-        reproduce="make component-targets → outputs/eda/bonus_calibration.csv",
-        unblocks="src/sim/season.py writes data/features/sim_tensor_<season>.npz",
+                "achievable. Two structural choices in the build were forced by identities "
+                "rather than chosen: the component heads are fitted at the SEASON unit, so "
+                "a per-game draw goes through the negative binomial's own Poisson-Gamma "
+                "representation (a season-level `Gamma(phi, 1/phi)` frailty per "
+                "player-sim, which IS the fitted head's season-total spread, plus per-game "
+                "Poisson noise), and a conversion head's `p` drawn once per player-sim with "
+                "a binomial per game sums to EXACTLY the fitted beta-binomial — which is "
+                "also what 'sequential structure goes on minutes and nowhere else' asks "
+                "for, both field-goal conversion heads being measured nulls for a hot hand.",
+        status="built",
+        reproduce="make simulate-season → data/features/sim_tensor_2022-23.npz, "
+                  "data/features/sim_tensor_2023-24.npz, "
+                  "outputs/predictions/sim_season_gate_a.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-09",
         date="2026-08-08",
         tags=("architecture",),
     ),
