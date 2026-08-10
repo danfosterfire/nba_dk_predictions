@@ -13,7 +13,8 @@ PIP    := .venv/bin/pip
         stan stan-availability stan-minutes stan-components stan-composition \
         stan-substitution season-terms games-played stan-games-played \
         stan-game-length posteriors minutes-unification composition-effects \
-        scoring-periods draft-pool simulate-season bracket final-evaluation
+        scoring-periods draft-pool simulate-season bracket draft-sim \
+        final-evaluation
 
 venv:
 	/opt/homebrew/bin/python3.14 -m venv .venv
@@ -346,6 +347,25 @@ simulate-season:
 # prize CSV. `--n-field` sets deep-round resolution; see configs/default.yaml.
 bracket:
 	$(PYTHON) -m src.sim.bracket
+
+# The snake draft: 12 entries, 16 rounds, one engine and two modes. REACTIVE is primary —
+# a pick function sees the board and ranks the remaining players by their MARGINAL LINEUP
+# VALUE on the sim tensor, so positional scarcity is priced by the same matroid that
+# decides a real week. RANKING-SUBMISSION is the fallback and is DK's documented autodraft
+# verbatim: queue first, then the pre-draft ranking, under 8G/8F/3C caps, with an exclusion
+# list that yields only when a needed position would otherwise go unfilled.
+#
+# Opponents autodraft off the DK-RECALIBRATED consensus (draft_pool.adp_dk_scale), never
+# the raw one — docs/adp-plan.md measured that DK takes centers 11.9 picks earlier because
+# category-league ADP discounts them for FT%, and uncorrected that reads as model edge on
+# one position. The opponent model is a REGISTRY: a strategy supplies static keys and an
+# optional roster-aware bonus, and the engine owns availability, caps and legality.
+#
+# Gate B fits `rank_noise_sd` rather than choosing it: simulate many drafts, take each
+# player's mean pick over the drafts he went in (DK's own definition of an ADP), and score
+# it against the curve the field consumed, against the recalibration's own 17.0-pick error.
+draft-sim:
+	$(PYTHON) -m src.sim.draft
 
 # Does any head need a season term, and which kind? A trend covariate and a year-level
 # random effect for every head, plus the season x role interaction the availability era

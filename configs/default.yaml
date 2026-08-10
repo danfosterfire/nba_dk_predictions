@@ -442,6 +442,53 @@ sim:
     # at -rake; both are known exactly, so they check the payout wiring end to end.
     n_null: 250
 
+  # ── The opponent field — `make draft-sim` ─────────────────────────────────
+  # In-draft sims for the reactive recommender. The in-draft decision is a RANKING of
+  # candidates, not an estimate of a level, so it does not need the sweep's 2,000.
+  n_sims_draft: 500
+  pod_size: 12
+
+  field:
+    # docs/adp-plan.md binds this: never the raw consensus. A Yahoo/ESPN consensus
+    # correlates with the one real DK board at rho 0.870 but with a 21.9-pick mean absolute
+    # rank gap, and DK drafts centers 11.9 picks earlier because category-league ADP
+    # discounts them for FT% while DK Best Ball pays rebounds 1.25 and blocks 2.0 flat.
+    # Uncorrected, that scoring-system artifact would read as model edge on exactly one
+    # position. `draft_pool.adp_dk_scale` is the recalibrated column.
+    adp_source: dk_recalibrated
+    # BOTH ARE FITTED BY GATE B, not chosen — null means "read the selected row from
+    # outputs/predictions/draft_gate_b.csv", the same rule src/final_evaluation.py follows
+    # for which arm shipped. A literal number here would be a second source of truth.
+    #
+    # What the fit found, and it is the reason the plan said fit rather than choose: a
+    # CONSTANT rank noise is not identified by a mean-ADP target at all. E[pick] is the
+    # board rank for any interior player under symmetric noise of any size, so the whole
+    # grid is flat to a few hundredths of a pick. A rank-DEPENDENT shape is identified,
+    # because it is pinned at both ends at once — the top of the board, where the observed
+    # curve is nearly deterministic (the consensus #1 goes at 1.05), and the deep rounds,
+    # where it compresses.
+    noise_model: null
+    rank_noise_sd: null
+    # DK's own autodraft defaults, from docs/dk_best_ball_rules.md. They are MAXIMA and
+    # imply no minimum: 8G + 8F + 0C satisfies all three and seats no centre.
+    position_caps: {G: 8, F: 8, C: 3}
+    # Which is why this is separate. It restricts a seat whose remaining picks equal the
+    # slots it still owes, so every drafted roster stays scorable by bracket.best_lineup —
+    # which would otherwise return a plausible six-man total. Not a DK rule; a guard.
+    require_legal_lineup: true
+    # `adp_need`'s lean toward positions still owed, in picks of board rank. 0 = off.
+    need_weight: 0.0
+    # Drafts per Gate B grid point. 192 picks x this x the pool, vectorized over drafts.
+    n_drafts: 400
+    # UNCALIBRATED, and deliberately an interface rather than a measurement.
+    # docs/simulations-plan.md names field quality by tier as a live risk in a specific
+    # direction: a $20 field plausibly holds far more autodraft entries than a $52 one,
+    # which is the OPPOSITE of what the rake maths would suggest. One hard-coded field
+    # would bake that in where nobody could see it. Shares per tournament, resolved
+    # through `default`; registered strategies are `adp`, `adp_need`, `ranking_submission`.
+    composition:
+      default: {adp: 1.0}
+
 eda:
   # Qualification filter for the season matrix. MIN is per-game, so this reads
   # "at least 20 games at 10+ minutes a night" — below that, per-36 rates from a

@@ -4165,15 +4165,153 @@ REGISTRY: tuple[Decision, ...] = (
                 "because a fast clock can outrun a human and because the opponent model "
                 "needs DK's documented autodraft logic (queue → ranking → 8G/8F/3C caps) "
                 "regardless.",
-        status="settled",
-        reproduce="make adp-draftkings → "
-                  "data/raw/dk_draft_rankings/DkPreDraftRankings_July28_2026.csv, "
-                  "data/features/adp_draftkings.parquet",
-        unblocks="dashboard/draft_room.py and src/sim/draft.py",
+        status="built",
+        reproduce="make draft-sim → outputs/predictions/draft_reactive.csv, "
+                  "outputs/predictions/draft_field.csv",
+        unblocks="dashboard/draft_room.py",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-09",
         date="2026-08-08",
         tags=("strategy", "product"),
+    ),
+    Decision(
+        id="draft-field-is-recalibrated-adp-plus-rank-noise",
+        topic="drafting",
+        claim="`make draft-sim` ships the 12-entry, 16-round snake: opponents autodraft "
+              "off the **DK-recalibrated** consensus under DK's own 8G/8F/3C caps, and "
+              "**Gate B passes at 5.922 picks against a 17.0 bar**.",
+        because="Gate B is the field model's only real calibration target — observed ADP "
+                "is the field's own realized behaviour, so simulating many drafts and "
+                "taking each player's mean pick over the drafts he went in (DK's own "
+                "definition) must reproduce the curve the field consumed. Pooled over the "
+                "two validation seasons the mean absolute rank gap is 5.922 picks on the "
+                "fit region and 9.082 over every ADP'd player, against the "
+                "recalibration's own 17.0-pick cross-validated error. The ranking is "
+                "`draft_pool.adp_dk_scale` and never the raw consensus, which "
+                "docs/adp-plan.md binds: DK drafts centers 11.9 picks earlier because "
+                "category-league ADP discounts them for FT% while DK Best Ball pays "
+                "rebounds 1.25 and blocks 2.0 flat, and uncorrected that scoring-system "
+                "artifact reads as model edge on exactly one position. Noise goes on the "
+                "**rank** rather than the recalibrated value, because the fitted isotonic "
+                "map is 58 distinct values over 253 grid points and its 55-wide plateau "
+                "would make fifty-five players exchangeable.",
+        status="built",
+        reproduce="make draft-sim → outputs/predictions/draft_gate_b.csv, "
+                  "outputs/predictions/draft_adp_curve.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("artifact", "market", "gate"),
+    ),
+    Decision(
+        id="mean-adp-does-not-identify-a-constant-rank-noise",
+        topic="drafting",
+        claim="🔴 A **constant** rank noise is not identified by a mean-ADP target at all — "
+              "the whole sd 0-to-30 grid moves the objective by **0.110** picks in 2022-23 "
+              "and **0.117** in 2023-24, with the two seasons disagreeing about where "
+              "its optimum sits inside that band. A rank-**dependent** shape is, and both validation "
+              "seasons fit **sd = 4.00** independently.",
+        because="Under symmetric noise of any size E[pick] is the board rank for any "
+                "interior player, so a curve of *means* constrains the field's mean and "
+                "says almost nothing about its spread. The plan's instruction to fit "
+                "rank_noise_sd rather than choose it is what exposed that; choosing a "
+                "plausible value would have concealed that the data never spoke. The "
+                "tiered arm scales docs/adp-plan.md's measured tier disagreement (5.1 picks "
+                "in rounds 1-2 against 30.8 in rounds 9+) to mean 1 and fits one scalar, so "
+                "the ladder stays one-dimensional; it is pinned at both ends at once — the "
+                "observed consensus #1 goes at 1.05 and the tiered field puts him at 1.469 "
+                "against the constant arm's 2.479 at the same scale. Every grid point runs "
+                "from the same seed, so the flatness is the objective rather than Monte "
+                "Carlo error. The selected arm beats the no-noise floor by +0.044 picks, "
+                "which is NOT a result: what rules out "
+                "a zero-noise field is that every draft then plays out identically, so two "
+                "drafts share **100%** of a seat's roster (15.2% at the shipped sd) and the "
+                "35,280-entry field the bracket scores is twelve rosters repeated. No "
+                "marginal ADP statistic can see that.",
+        status="measured",
+        reproduce="make draft-sim → outputs/predictions/draft_gate_b.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("market", "gate", "caveat"),
+    ),
+    Decision(
+        id="opponent-strategy-is-a-registry",
+        topic="drafting",
+        claim="The opponent model is a **registry**, not a hard-coded field: a strategy "
+              "supplies static keys and an optional roster-aware bonus, and the engine owns "
+              "availability, the caps, exclusions and seatability.",
+        because="ADP-plus-noise is a first pass and is known to be missing things real "
+                "drafters do — accounting for the positions a roster still owes, and "
+                "positional runs. Making that an extension point rather than a rewrite is "
+                "what keeps the improvement cheap when real pick logs arrive. Three "
+                "strategies are registered: `adp` is the shipped field, `adp_need` is the "
+                "same thing leaning toward owed slots (built and switched off, because "
+                "nothing calibrates `need_weight`), and `ranking_submission` is an entry "
+                "being autodrafted off a submitted board — a real population in a cheap "
+                "field and the reason `sim.field.composition` is keyed by tournament. Field "
+                "composition varies by tier in the interface with nothing calibrating it: a "
+                "$20 field plausibly holds far more autodraft entries than a $52 one, in "
+                "the OPPOSITE direction from the rake maths, and one hard-coded field would "
+                "bake that in where nobody could see it.",
+        status="built",
+        reproduce="make draft-sim → outputs/predictions/draft_field.csv, "
+                  "outputs/predictions/draft_gate_b.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("architecture", "strategy"),
+    ),
+    Decision(
+        id="dk-caps-bind-autodraft-not-a-manual-pick",
+        topic="drafting",
+        claim="DK's 8G/8F/3C limits bind **autodraft** and not a person, so our own seat "
+              "drafts uncapped — and they imply no **minimum**, so a separate guard keeps "
+              "every drafted roster able to seat seven.",
+        because="The rules are explicit in both directions and each one is a plausible "
+                "wrong answer. 'The only way to override them once the draft starts is to "
+                "make a manual selection' — so applying the caps to the reactive seat would "
+                "silently forbid a roster a human may draft. And 8G + 8F + 0C satisfies "
+                "every cap while seating no centre, for which bracket.best_lineup returns a "
+                "plausible six-man total without raising; `require_legal_lineup` restricts a "
+                "seat whose remaining picks equal the slots it still owes, which is a guard "
+                "on scorability rather than a DK rule. A capped seat with no open position "
+                "falls back to the whole board rather than raising, which is what DK "
+                "documents.",
+        status="settled",
+        reproduce="make draft-sim → outputs/predictions/draft_reactive.csv, "
+                  "docs/dk_best_ball_rules.md",
+        source="docs/dk_best_ball_rules.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("rules", "strategy"),
+    ),
+    Decision(
+        id="real-pick-logs-are-the-missing-field-calibration",
+        topic="drafting",
+        claim="🎯 Entering ~20 cheap 12-entry pods and recording the pick order against the "
+              "contemporaneous DK board is the calibration the opponent model is missing, "
+              "and it is **not backfillable**.",
+        because="Gate B measured that an aggregate ADP curve constrains the field's mean and "
+                "essentially not its noise (0.110-0.117 picks across the whole sd grid), so "
+                "further ADP work cannot settle how a field behaves. A pick log identifies "
+                "four things directly: the noise level, from the VARIANCE of a player's pick "
+                "rather than its mean; whether the tiered shape is right at all; positional "
+                "runs, the largest dynamic ADP-plus-noise cannot generate and the reason "
+                "`adp_need` ships switched off; and the autodraft share, which is "
+                "`sim.field.composition`'s uncalibrated knob. ~$40 buys 3,840 picks, which "
+                "is a large sample for a two-parameter noise model. The board must be "
+                "captured alongside: a pick log without the contemporaneous board measures "
+                "the field's noise plus the board's drift, and DK's board has zero Wayback "
+                "presence and cannot be recovered afterwards.",
+        status="deadline",
+        due="2026-10-31",
+        unblocks="a field model calibrated on behaviour rather than on aggregates, and "
+                 "`need_weight` / `composition` becoming measurements",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("market", "capture", "strategy"),
     ),
     Decision(
         id="select-on-p-advance-report-roi",

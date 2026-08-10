@@ -1277,7 +1277,13 @@ make simulate-season ✅ src/sim/season.py           THE tensor: player x scorin
                                                    -> data/features/sim_tensor_<season>.npz
                                                       + outputs/predictions/sim_season_gate_a.csv
 
-make draft-sim       src/sim/draft.py              snake draft vs an ADP field
+make draft-sim ✅    src/sim/draft.py              a 12-entry, 16-round snake over one
+                                                   engine with two modes — reactive
+                                                   (primary) and ranking-submission. The
+                                                   opponent model is a REGISTRY; the field
+                                                   drafts off the DK-recalibrated consensus
+                                                   -> outputs/predictions/draft_{gate_b,
+                                                      adp_curve,field,reactive}.csv
 make bracket ✅      src/sim/bracket.py            best 7 of 16 by slot per period, the
                                                    4-round chain, the cascading tie-break,
                                                    wildcards and payouts. Every structural
@@ -1498,6 +1504,136 @@ rank noise, subject to DK's real 8G/8F/3C caps. Two modes over one engine:
 not.** Observed ADP *is* the field's realized aggregate behaviour, so simulating many drafts
 and measuring the resulting average draft position must reproduce the observed ADP curve. That
 is Gate B, and it is what "calibrated to reproduce ADP" means concretely.
+
+### What was built, and what Gate B found — 2026-08-09
+
+`src/sim/draft.py`, `make draft-sim`. **Gate B passes wide — pooled mean absolute rank gap
+5.922 picks against the 17.0 bar — and the interesting result is what the fit could not
+resolve.**
+
+| arm | 2022-23 | 2023-24 | pooled | grid spread over sd ∈ [0, 30] |
+|---|---|---|---|---|
+| `constant`, best sd | **0.00** | **4.00** | — | **0.110** / **0.117** picks |
+| **`tiered`, best sd** ✅ | **4.00** | **4.00** | **4.00** | 29.449 / 29.535 picks |
+| tiered MAE (fit region) | 6.294 | 5.551 | **5.922** | bar **17.0** |
+| tiered MAE (all ADP'd) | 8.309 | 9.856 | 9.082 | bar 17.0 |
+
+🔴 **A constant rank noise is not identified by a mean-ADP target, and that is a property of
+the target rather than a failure of the fit.** Under symmetric noise of any size `E[pick]` is
+the board rank for any interior player, so the whole grid from sd = 0 to sd = 30 moves the
+objective by **0.110 picks** in 2022-23 and **0.117** in 2023-24 — a tenth of a pick across a
+range whose top is plainly absurd — and the two seasons put its optimum in different places
+(**0.00** and **4.00**) inside that band. Every grid point is run from the same seed, so those
+are paired comparisons and the flatness is the objective rather than Monte Carlo error. The
+plan's instruction to *fit* `rank_noise_sd` rather than choose it was worth following for
+exactly this reason: choosing a plausible value would have concealed that the data never spoke.
+
+**A rank-dependent shape is identified, because it is pinned at both ends at once.** The
+tiered arm scales `docs/adp-plan.md`'s measured tier disagreement (5.1 picks in rounds 1–2
+against 30.8 in rounds 9+) to mean 1 and fits one scalar over it, so the ladder stays
+one-dimensional. Its optimum is interior — 5.966 at sd = 0, falling monotonically to
+**5.922** at 4.00, then 6.138, 7.244, 10.03 and 35.41 — and **both validation seasons land on
+4.00 independently**, which is the replication since they share no rows. The mechanism is
+visible in the elite tier: the observed consensus #1 goes at **1.05**, and at its optimum the
+tiered field puts him at **1.469** against the constant arm's **2.479** at the same scale.
+
+**The selected arm beats the no-noise floor by +0.044 picks, which is not a result**, and it
+is not why a noise of zero cannot ship. `field_diversity` is:
+
+| | roster overlap between two drafts | distinct players drafted |
+|---|---|---|
+| `rank_noise_sd = 0` | **100%** | **1.000×** one draft's worth |
+| shipped (`tiered`, 4.00) | **15.2%** | **1.133×** |
+
+At zero noise every draft plays out identically, so a seat holds one roster in every simulated
+season and the 35,280-entry field `make bracket` scores is **twelve rosters repeated**. Every
+marginal statistic about it is fine. The joint object is not a field, and no ADP curve can see
+it — which is the sharpest argument in this section for capturing real pick logs.
+
+🔴 **The fit excludes the transfer map's terminal plateau, and that is about identification
+rather than about passing.** The fitted isotonic recalibration takes 253 consensus ranks to 58
+values, and both validation boards run off the end of it into one flat value — **160.14**, held
+by **33** players in 2022-23 and **60** in 2023-24. Inside that plateau the target carries no
+ordering information at all, so no field can reproduce it and any noise that shortens the tail
+scores better, which drags an unrestricted fit toward implausibly large values. Gate B is
+reported on **both** populations and passes on both (5.922 and 9.082 against 17.0), so the
+restriction never rescues the gate.
+
+**Three further things the build settled.**
+
+- **A monotone recalibration cannot reorder a board**, so using the DK-recalibrated consensus
+  rather than the raw one changes the ADP *values* and not a single pick. That is not an
+  argument against it — the values are Gate B's target, they are the units the blend `α` will
+  sweep in, and `docs/adp-plan.md`'s binding stands — but the C/F/G bias it was partly
+  motivated by is *not* corrected by the shipped one-dimensional map, which is why the
+  position offset was measured at −0.29 picks and left out. Noise therefore goes on the
+  **rank**: the map's 55-wide plateau would make fifty-five players exchangeable under noise
+  applied to the value.
+- **DK's 8 G / 8 F / 3 C caps bind autodraft and not a person.** The rules are explicit —
+  "the only way to override them once the draft starts is to make a manual selection" — so the
+  reactive seat runs under `manual_config` and the eleven opponents keep the caps. Applying
+  them to our own seat would silently forbid a roster a human may draft.
+- **The caps do not imply a minimum**, and `require_legal_lineup` is the separate guard that
+  does. 8 G + 8 F + 0 C satisfies every DK cap and seats no centre, and
+  `bracket.best_lineup` returns a plausible six-man total for it without raising. A test pins
+  both directions on a board whose centres all rank behind the last pick.
+
+**The reactive mode is exercised rather than described**, and its latency is item 7's
+headline in advance: ranked by marginal lineup value over the full remaining pool at
+`n_sims = 500`, one recompute costs roughly **0.76 s mean and 1.5 s max** — wall clock, so it
+measures the machine rather than the model. Gate E's bar is 1,000 ms.
+So the draft room is on the edge and the two levers the plan already named — a partial sort,
+and not re-ranking the deep tail — are needed rather than optional.
+
+**Artifacts.** `outputs/predictions/draft_{gate_b,adp_curve,field,reactive}.csv`. The shipped
+field is read from `draft_gate_b.csv` by `selected_field`, because `configs/default.yaml`
+carries `rank_noise_sd: null` — a literal number there would be a second source of truth for a
+figure the artifact owns, which is the rule `src/final_evaluation.py` already follows.
+
+### 🎯 Real pick logs are the calibration this layer is missing
+
+Raised 2026-08-09, out of Gate B. The measurement above says plainly that **the aggregate ADP
+curve cannot identify how noisy a field is** — it constrains the mean, and a field is a joint
+object. Entering a few cheap 12-entry pods early and recording the pick order would identify
+directly what no amount of further ADP work can:
+
+- **the noise level**, from the *variance* of a player's pick position rather than its mean —
+  one board, twenty pods, and `rank_noise_sd` is measured instead of fitted against a flat
+  objective. **The binding sample size is the number of pods, not the number of picks**: a
+  drafted player leaves the board, so each pod observes him exactly once and twenty pods give
+  twenty observations of his pick position however many picks that is. Twenty 12-man pods are
+  worth far more than a handful of larger ones;
+- **whether the noise is private or shared** — twelve drafters with independent opinions, or
+  a room that collectively moves off the printed board. Both reproduce the same mean ADP and
+  they are not the same field: private noise makes rosters diverge, a shared shift moves
+  everyone together. It is a *between*-pod statistic and separable by attenuation. Under
+  private noise a player goes when the first of twelve drafters to over-rate him gets the
+  clock, which is an order statistic over twelve draws and concentrates hard, so his pick
+  position varies much less across pods than the per-drafter sd; a shared shift passes through
+  one-for-one. Predict the across-pod pick sd from the fitted private model and compare it to
+  the realized one. This is the same identity the minutes head turns on — per-game noise
+  averages down by ~1/√G while a season-level multiplier does not, which is why summed
+  composition draws came out 4.68× too narrow;
+- **the shape**, i.e. whether the tiered hypothesis is right at all. The elite tier is nearly
+  deterministic in the observed ADP and the deep rounds are close to uncorrelated; a pick log
+  says whether that is one noise scale varying with rank or two different behaviours;
+- **positional runs**, which are the largest thing the current model does not have. Real
+  drafters take a centre because they need one, and runs at a position are a well-known draft
+  dynamic that pure ADP-plus-noise cannot generate. `AdpNeedAware` is built and switched off
+  precisely because nothing calibrates `need_weight`;
+- **the autodraft share**, which is `field_composition`'s uncalibrated knob and the tier risk
+  this doc already logs. An entry that is autodrafting is visible in a pick log as a seat that
+  never deviates from the board.
+
+What to record, per pod: the **board** in force (a DK pre-draft-rankings CSV captured the same
+day), then one row per pick — `pick_number`, `seat`, `player`, and whether the pick was manual
+or autodrafted where it can be told. Twenty pods at a $1–3 entry is ~$40 and 3,840 picks, which
+is a large sample for a two-parameter noise model. **The board capture matters as much as the
+picks**: a pick log without the contemporaneous board measures the sum of the field's noise and
+the board's drift, and DK's board cannot be backfilled (see `docs/adp-plan.md`).
+
+This is a **data-capture deadline like the October board**, not a modelling task: drafts happen
+before October and a pod not entered is not recoverable afterwards.
 
 ### `src/sim/bracket.py` — rounds, advancement, ties, payouts ✅ built 2026-08-09
 
@@ -1937,7 +2073,7 @@ Every gate is judged on validation or on simulated truth. None reads the test sp
 | Gate | Pass condition | Why this bar |
 |---|---|---|
 | **A** ✅ ⚠️ | the season simulator reproduces the **marginals it was built from**: season-total dk_pts distribution against `season_total_metrics.csv`, GP pmf against `stan_games_played_gp_pmf.csv`, and per-game bonus rate against `bonus_calibration.csv` | An assembly bug is silent. Every input head is already calibrated, so a simulator that misses a marginal it was handed has a wiring fault, not a modelling one. **Run 2026-08-09**: season totals pass (MAE 402.14 / 407.89 against 400.46, CRPS 280.49 / 281.03 against 287.26), games played passes (CRPS 9.6754 / 9.7829 against the head's 10.0057, bias +0.127 / −0.363), minutes spread passes given games played (322.05 / 319.32 against 302.75); the **bonus is +11% / +5% high and is traced out of the module** — on realized minutes the same draw reads 0.1535 / 0.1477 against 0.1559 / 0.1626, so it is the composition head's 1.8x game-level minutes over-dispersion. Two wiring faults were caught and fixed |
-| **B** | simulated drafts reproduce the **observed ADP curve** — mean absolute rank gap under the 17.0-pick recalibration error, so the field model is no worse than the market proxy it consumes | The field model's only real calibration target. Failing it means the opponent model is not a field |
+| **B** ✅ ⚠️ | simulated drafts reproduce the **observed ADP curve** — mean absolute rank gap under the 17.0-pick recalibration error, so the field model is no worse than the market proxy it consumes | The field model's only real calibration target. Failing it means the opponent model is not a field. **Run 2026-08-09**: passes wide, pooled **5.922** picks on the fit region and **9.082** over every ADP'd player. The caveat is the fit rather than the gate — a **constant** rank noise is not identified by a mean-ADP target at all (the whole sd 0–30 grid spans **0.110** / **0.117** picks and the two seasons disagree about its optimum inside that band), while a rank-dependent shape is, with both validation seasons landing on **sd = 4.00** independently. What separates the shipped arm from a zero-noise field is not the 0.044-pick margin but `field_diversity`: at sd = 0 two drafts share **100%** of a seat's roster |
 | **C** | the **error-injected** simulated world reproduces the model's measured out-of-sample miss: availability CRPS ≈ 10.006 games, component R² in 0.81–0.95, season-total MAE ≈ 400.5 dk_pts | Without this the sweep cannot price ADP, exposure caps, or any other hedge against model error |
 | **D** | the sweep selects **materially different** rosters for the two tiers | If the $20 and $52 strategies converge, either the objective is not doing its job or the tier difference is smaller than the economics imply. Either way it needs to be known before entering |
 | **E** | in-draft recompute **under 1.0 s** at `n_sims = 500` on the full remaining pool | The 30-second clock. Failing it drops the draft room to ranking-submission mode |
@@ -1961,10 +2097,21 @@ sim:
     600k_shootaround: {entries: 10}
     20k_spin_move:    {entries: 4}
 
+  n_sims_draft: 500              # in-draft; a ranking, not a level
+  pod_size: 12
+
   field:
     adp_source: dk_recalibrated  # docs/adp-plan.md: never the raw consensus
-    rank_noise_sd: null          # fitted by Gate B, not chosen
-    position_caps: {G: 8, F: 8, C: 3}   # DK's own autodraft defaults
+    noise_model: null            # fitted by Gate B — `tiered` beat `constant`
+    rank_noise_sd: null          # fitted by Gate B, not chosen. Both read from
+                                 # outputs/predictions/draft_gate_b.csv's selected row
+    position_caps: {G: 8, F: 8, C: 3}   # DK's own autodraft defaults — MAXIMA, and they
+                                 # imply no minimum: 8G + 8F + 0C seats no centre
+    require_legal_lineup: true   # the separate guard that does. Not a DK rule
+    need_weight: 0.0             # `adp_need`'s lean toward owed positions, in picks
+    n_drafts: 400                # drafts per Gate B grid point
+    composition:                 # UNCALIBRATED, per tier, resolved through `default`
+      default: {adp: 1.0}
 
   error_injection:
     enabled: true                # Gate C. Disabling it changes the question being asked
@@ -2048,7 +2195,29 @@ Plain `assert` with synthetic builders, no fixtures or classes, mirroring
 
 - **The 2026-27 schedule is not published.** Blocks the production run only. Poll `ScheduleLeagueV2`.
 - **Field skill by tournament tier is unmeasured**, and will bias any opponent model that
-  assumes one field composition across a $20 and a $52 contest.
+  assumes one field composition across a $20 and a $52 contest. Since 2026-08-09 it is at
+  least *visible*: `sim.field.composition` is per tournament with a `default`, and
+  `make draft-sim` writes the resolved mix and seat assignment per tier to
+  `draft_field.csv` with `calibrated = False` on every row.
+- 🎯 **Real 12-entry pick logs are the missing calibration, and they are on the same
+  clock as the October board.** Gate B measured that a mean-ADP curve constrains the field's
+  *mean* and says essentially nothing about its noise — 0.110 to 0.117 picks across the whole
+  sd grid. Twenty cheap pods (~$40, 3,840 picks) with the contemporaneous DK board captured
+  alongside would identify the noise level from pick *variance*, test the tiered shape, expose
+  positional runs — the largest dynamic ADP-plus-noise cannot generate, and the reason
+  `AdpNeedAware` ships switched off — and reveal the autodraft share the tier risk above turns
+  on. Not backfillable: a pod not entered is gone. See "Real pick logs are the calibration
+  this layer is missing".
+- **`make bracket` still drafts its field with `placeholder_field`.** `src/sim/draft.py`
+  exists and Gate B passes, but repointing the bracket invalidates every figure in
+  `bracket_*.csv` and needs a full re-run, so it is sequenced with item 8 rather than done
+  in passing. The consequence today is that the bracket's field ranks by the **simulator's own
+  projection** rather than by market ADP, which makes it stronger and more correlated than a
+  real pod.
+- **Gate E is not free.** The reactive recompute measures roughly **0.76 s mean and 1.5 s max**
+  at `n_sims = 500` over the full remaining pool, against a 1,000 ms bar. The two levers the plan
+  named — a partial sort for best-7-by-slot, and not re-ranking the deep tail every pick — are
+  required rather than optional.
 - **The DK ADP capture deadline is live** — an early-to-mid October 2026 board is the second
   anchor the recalibration needs, and it cannot be backfilled. See `docs/adp-plan.md`.
 - **No-redraft risk is not in the ranking.** A Round-1 pick who is traded or suffers a
@@ -2123,7 +2292,8 @@ Ordered so the **live-draft path closes at item 7**. Items 2, 3 and 3b depend on
 run in any order alongside item 1. **Item 3c must follow 3b** — both were expected to edit
 `stan_composition`, though 3c in the event did not — and both must land before item 4, which
 imports whatever they settle. **Item 3d follows 3c** and does edit that head, so nothing else
-may be in flight on it. Items 1, 2, 3, 3b, 3c, 4 and 5 are done; **item 6 is next.**
+may be in flight on it. Items 1, 2, 3, 3b, 3c, 4, 5 and 6 are done; **item 7 is next**, and
+it closes the live-draft path.
 
 **Item 3d's capability landed 2026-08-09 and its full-window commitment did not** — the
 distinction is spelled out under item 3d itself. Item 4 is **not** blocked by that: it
@@ -2535,7 +2705,24 @@ a fixed pool means its winnings come out of everyone else's.
 > hand-built lineups with known scores, both tie-break cascades, and the advance chain
 > reproducing `economics.advance_table` field sizes exactly for all five tournaments.
 
-### 6. `make draft-sim` — the snake draft and the ADP field, and Gate B
+### 6. `make draft-sim` — the snake draft and the ADP field, and Gate B ✅ built 2026-08-09
+
+**Gate B passes wide and the fit is the finding** — see "What was built, and what Gate B
+found" above. Four things carry into items 7 and 8. The **mean-ADP target does not identify a
+constant rank noise** (0.110–0.117 picks across the whole grid), which is why real pick logs
+are now a named capture rather than a nicety. The **opponent model is a registry**, so a more
+realistic drafter is a class with one or two methods and not a second draft loop. **DK's caps
+bind autodraft and not a manual pick**, so our own seat runs uncapped. And the reactive
+recompute measures roughly **0.76 s mean / 1.5 s max** at `n_sims = 500` over the full
+remaining pool, so Gate E is not free.
+
+Two things it deliberately did **not** do, both stated rather than quietly deferred:
+`bracket.placeholder_field` is **not** repointed at this module — the swap is `draft_field`
+into one call site, but it invalidates every figure in `bracket_*.csv` and wants a full
+`make bracket` re-run, which belongs with item 8 where the field is rebuilt per strategy
+anyway. And the in-draft objective is **marginal lineup value**, not the payout-weighted
+bracket EV decision 5 names; `recommend`'s `value` argument is the seam item 7 substitutes it
+through.
 
 > Read `docs/simulations-plan.md` ("`src/sim/draft.py`") and `docs/adp-plan.md`. Build
 > `src/sim/draft.py`: a 12-entry, 16-round snake draft over one engine with two modes —
