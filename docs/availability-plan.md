@@ -791,7 +791,7 @@ the tail has failed at the thing that matters.
 >
 > Max coefficient gap **0.00335**, largest gap **0.085 posterior sd**, and the MLE sits inside
 > the 95% credible interval for **21/21** terms. R̂ **1.0019**, min ESS 2,314, **0
-> divergences**, 195 s over 4 chains. Both `evaluate` and `crps` are imported from the MLE
+> divergences**, 196 s over 4 chains. Both `evaluate` and `crps` are imported from the MLE
 > module rather than reimplemented, so a metric difference could not have been a
 > metric-implementation difference.
 >
@@ -993,7 +993,7 @@ season rehabbing — which is exactly the population the preseason snapshot iden
 > Selected on validation, and there is no test column at all — `src/models/held_out.py` now
 > raises on the held-out frame and `src/final_evaluation.py` reads it once, at the end. The
 > selected variant clears the no-fit floor by **+0.0299 R² and −17.5 minutes of CRPS**. Max
-> R̂ **1.0054**, **0 divergences** over 4 fits, 1,227 s total.
+> R̂ **1.0054**, **0 divergences** over 4 fits, 1,503 s total.
 >
 > ⚠️ **This table was a TEST evaluation until 2026-08-06** and read, as
 > `val CRPS / test CRPS / test R²`: floor 161.45 / **168.24** / **0.8166**, linear

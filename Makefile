@@ -12,7 +12,9 @@ PIP    := .venv/bin/pip
         variance-budget residual-correlation season-effects \
         stan stan-availability stan-minutes stan-components stan-composition \
         stan-substitution season-terms games-played stan-games-played \
-        posteriors scoring-periods final-evaluation
+        stan-game-length posteriors minutes-unification composition-effects \
+        scoring-periods draft-pool simulate-season bracket draft-sim \
+        draft-room draft-room-prep strategy-sweep final-evaluation
 
 venv:
 	/opt/homebrew/bin/python3.14 -m venv .venv
@@ -199,6 +201,17 @@ stan-components:
 stan-substitution:
 	$(PYTHON) -m src.models.stan_components --gate0
 
+# The game-length head — docs/simulations-plan.md, "The second prerequisite: game length is
+# a random variable forward, not a lookup". Whether a game goes to overtime
+# (betabinomial_glm.stan on ~30 season cells) x how deep (betageometric_duration.stan on
+# four collapsed depth rows). NO new .stan source, ~2-4 parameters, seconds of sampler
+# time: the cheapest head in the project.
+#
+# `stan-composition` imports its floor and its draw, so this target has to be ahead of it —
+# the same ordering constraint the composition already has on `stan-minutes`.
+stan-game-length:
+	$(PYTHON) -m src.models.stan_game_length
+
 # The team-game minutes composition (docs/minutes-composition-plan.md). Gates A-E all
 # pass at the full window, so it is now part of the `stan` aggregate.
 stan-composition:
@@ -218,7 +231,7 @@ stan-composition:
 # one arm rather than the run. Sleeping the machine mid-run is safe: the sampler suspends
 # and resumes, and perf_counter does not advance while asleep, so the reported cost stays
 # honest while elapsed wall clock does not.
-stan: stan-availability stan-minutes stan-components stan-composition
+stan: stan-availability stan-minutes stan-game-length stan-components stan-composition
 
 # ── The simulation layer's step zero ──────────────────────────────────────────
 # `make stan` writes metrics, diagnostics and per-row predictions and THROWS THE
@@ -249,6 +262,35 @@ WINDOW ?= train
 posteriors:
 	$(PYTHON) -m src.models.posteriors --window $(WINDOW)
 
+# Does the composition supersede the marginal minutes head? README.md claimed the two
+# "compose rather than compete", with the marginal head still owning the season-level mean
+# and the game-level dispersion. This scores both at the SEASON unit on the same validation
+# player-seasons — the comparison neither head's own metrics table could make, because they
+# publish at different units.
+#
+# Needs `make posteriors` and nothing else: it rehydrates both heads around their persisted
+# draws and calls their own `predict_samples`, so it costs seconds rather than the
+# composition's 9.92 h, and no arm is a differently-fitted model from the one it is compared
+# against. No CmdStan.
+minutes-unification:
+	$(PYTHON) -m src.models.minutes_unification
+
+# Item 3d: fit the per-(player, season) random effect `make minutes-unification` measured
+# the need for, and sweep a team-context block alongside it. Four arms — a same-window
+# `base` control plus `ps`, `team`, `ps_team` — at the PILOT window by default, because the
+# ordering is what the pilot buys and the full-window commitment is a separate decision.
+#
+# NEEDS CmdStan, and it is expensive: `dense_e` is forced off on the random-effect arms
+# (12,307 units at the full window would be a 12,332-square mass matrix), so part of the
+# treedepth win the dense metric bought is given back. Gate A probes the `ps` arm rather
+# than a plain one and aborts before a run that will not fit the budget.
+#
+# Deliberately NOT part of `make stan`, and deliberately not writing
+# outputs/predictions/stan_composition_*.csv: that artifact is the incumbent's record and
+# `make docs-audit` re-derives eleven quoted figures from it.
+composition-effects:
+	$(PYTHON) -m src.models.composition_effects
+
 # One row per (season, game_id): its scoring period and its DK tournament round. A
 # best-ball lineup is scored weekly, so every weekly max, round total and advancement
 # cut downstream is an aggregate over a period, and this is the only module that says
@@ -260,6 +302,117 @@ posteriors:
 # rebuild does not need the endpoint; `REFRESH=1` re-pulls them.
 scoring-periods:
 	$(PYTHON) -m src.features.scoring_periods $(if $(REFRESH),--refresh,)
+
+# One row per (season, player): team, DK position eligibility, ADP, and the prior-season
+# key the heads score him from. This is the board the draft simulator picks from, and
+# eligibility is the load-bearing half — a best-ball week starts 2 G / 2 F / 1 C / 2 UTIL,
+# so it decides which slots a player can fill and therefore every weekly max downstream.
+#
+# 🔴 IT REVERSES A PLAN ASSUMPTION. docs/simulations-plan.md said team_rosters_*.csv
+# carries "DK-shaped dual eligibility". It does not: both DK boards print exactly ONE of
+# G / F / C for all 1,640 rows, and DK's label is 99.85% stable across them. Validated on
+# the persistent DK id (never a name), DK's letter equals NBA.com's primary on 86.63% of
+# players and lies inside NBA.com's position set on 92.61%. So `position` ships a single
+# letter — DK's own where a board exists, NBA.com's primary otherwise — and the rejected
+# dual convention rides along as `dual_*` so a sensitivity run is a column swap.
+draft-pool:
+	$(PYTHON) -m src.features.draft_pool
+
+# ── The simulation layer (src/sim/) ───────────────────────────────────────────
+# THE tensor: player x scoring_period x sim dk_pts plus a uint8 games-played twin, one
+# .npz per season. Per-game draws happen INSIDE the module and are summed into the 20
+# scoring periods immediately, because the bonus is a per-game threshold on five components
+# and E[bonus] != bonus(E[x]) — nothing downstream ever materializes a player x game x sim
+# array. It is a staircase rather than one step: +1.5 for a double-double and +3 more for a
+# triple-double, stacking to 4.5, so the convexity is sharper than either alone. Numpy only: it reads `make posteriors`' pickles and needs no
+# CmdStan. Defaults to the two VALIDATION seasons; `--season` and `--n-sims` override.
+simulate-season:
+	$(PYTHON) -m src.sim.season
+
+# The contest itself: best 7 of 16 by slot each scoring period, the four-round advance
+# chain, the cascading tie-break, wildcards and payouts. Every structural number — round
+# count, pod size, advance count, cash table — is read from dashboard/economics.py, which
+# derives it from the two captured DK CSVs, so pointing this at the live 2026-27 contests
+# is a data change and not a code change.
+#
+# The lineup is an ASSIGNMENT problem, not a greedy fill: seating a dual-eligible player in
+# the first slot he fits can lock a better player out, and it never raises. Seatable
+# 7-subsets are the independent sets of a transversal matroid, so sorting by score and
+# keeping every player who preserves seatability is exactly optimal.
+#
+# Its own check is the symmetric-field null, which is known in closed form: an exchangeable
+# entry advances at n_advance/pod_size and is worth exactly -rake, because the prize pool is
+# paid out in full. That exercises the pod sizes, the advance chain, the wildcard fill and
+# every cash band at once — and it is what caught a transcription slip in the 15k_and_one
+# prize CSV. `--n-field` sets deep-round resolution; see configs/default.yaml.
+bracket:
+	$(PYTHON) -m src.sim.bracket
+
+# The snake draft: 12 entries, 16 rounds, one engine and two modes. REACTIVE is primary —
+# a pick function sees the board and ranks the remaining players by their MARGINAL LINEUP
+# VALUE on the sim tensor, so positional scarcity is priced by the same matroid that
+# decides a real week. RANKING-SUBMISSION is the fallback and is DK's documented autodraft
+# verbatim: queue first, then the pre-draft ranking, under 8G/8F/3C caps, with an exclusion
+# list that yields only when a needed position would otherwise go unfilled.
+#
+# Opponents autodraft off the DK-RECALIBRATED consensus (draft_pool.adp_dk_scale), never
+# the raw one — docs/adp-plan.md measured that DK takes centers 11.9 picks earlier because
+# category-league ADP discounts them for FT%, and uncorrected that reads as model edge on
+# one position. The opponent model is a REGISTRY: a strategy supplies static keys and an
+# optional roster-aware bonus, and the engine owns availability, caps and legality.
+#
+# Gate B fits `rank_noise_sd` rather than choosing it: simulate many drafts, take each
+# player's mean pick over the drafts he went in (DK's own definition of an ADP), and score
+# it against the curve the field consumed, against the recalibration's own 17.0-pick error.
+draft-sim:
+	$(PYTHON) -m src.sim.draft
+
+# The live draft room. `draft-room-prep` is the offline half: it drafts and scores each
+# season's reference field ONCE into data/features/draft_room_field_<season>.npz — the
+# population the recommender's `q` is read from — checks it against the symmetric-field
+# null, and measures GATE E, which is the 1.0 s per-recompute bar a 30-second fast-draft
+# clock implies. `draft-room` is the page, and it loads that artifact rather than
+# rebuilding it, so launching a room is a second rather than a minute.
+#
+# Two things make the recompute fit, and both are in docs/simulations-plan.md: n_sims
+# drops to 500 in-draft because the decision is a RANKING of candidates rather than an
+# estimate of a level, and best-7-by-slot is ONE matroid exchange per candidate rather
+# than a re-solve — exact, not approximate, and pinned against bracket.best_lineup.
+#
+# The objective is decision 5's: payout-weighted EV over all four rounds, with the
+# survivor population of rounds 2-4 obtained by reweighting the same field rather than by
+# dealing it. Read draft_room_null.csv before trusting an EV level and
+# draft_room_stability.csv before trusting a close call between two candidates.
+draft-room-prep:
+	$(PYTHON) -m src.sim.draft_room
+
+# Module invocation for the same reason `dashboard` uses it: the venv's console scripts
+# carry an absolute shebang and do not survive the repo being renamed.
+draft-room:
+	$(PYTHON) -m streamlit run dashboard/draft_room.py
+
+# The strategy sweep: a table over ranking source, blend weight (overall and per round),
+# position caps, exposure caps, stacking, in-draft objective and entry count, scored on
+# simulated truth and read out against realized 2022-23 / 2023-24.
+#
+# GATE C runs first because it gates the sweep's validity. The plan's premise is that a
+# world drawn from the model's own posterior is too easy, so alpha goes to zero for reasons
+# that have nothing to do with the market; measured, the premise is half right. The
+# MAGNITUDE of the model's miss is already reproduced without any injection — 419.6 dk_pts
+# of season-total MAE against a measured 400.5. What is wrong is the two rankers' relative
+# standing: in that world the model leads ADP by +0.11 Spearman, while on realized
+# validation seasons the MARKET leads by +0.06. So the injection ROTATES the error onto the
+# market-visible direction at a fixed magnitude rather than adding noise on top of it, and
+# `rho` is solved from that gap. An independent route — the correlation between market
+# disagreement and the model's realized error — agrees to within a step.
+#
+# Selection is LIFT IN P(top 2 of 12), which is exact for the ADP baseline (n_advance /
+# pod_size) and resolves orders of magnitude faster than ROI; ROI rides alongside with a
+# bootstrap interval against the break-even hurdle. GATE D asks whether the two tiers
+# actually select different rosters and reports the mechanism, since a ranking strategy is
+# tier-blind by construction and only the bracket-EV arms read the payout table.
+strategy-sweep:
+	$(PYTHON) -m src.sim.strategy
 
 # Does any head need a season term, and which kind? A trend covariate and a year-level
 # random effect for every head, plus the season x role interaction the availability era

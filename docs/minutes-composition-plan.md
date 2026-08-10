@@ -408,13 +408,32 @@ they are good for is direction and magnitude, and on both the story is unchanged
 - **Joint per-team-game NLL** (plug-in, non-bijection caveat) — composition **32.862**
   against independent **37.984** on validation. Contrast, not a headline.
 
-**OT tail** — invariant to the split by construction: `fit_ot_tail` receives 1996-97 →
-2021-22 either way, and the fitted parameters reproduced to six decimals across the re-run.
-Fit on 30,626 regular-season training games: p_any = **0.0608**, p_more = **0.1408**. Scored
-on 2,460 validation team-games: predicted **128.4** / 18.1 / 3.0 games at 1/2/3+ OT against
-observed **120** / 18 / 0 — the two-parameter form holds and overpredicts single-OT by
-**7.0%**, a milder era decline in OT rate than the 15.7% the retired test column showed.
-`sample_game_length` is the simulator's game-length draw and carries that caveat with it.
+**OT tail** — ⚠️ **moved out of this head on 2026-08-09.** `fit_ot_tail`,
+`sample_game_length` and `ot_tail_check` are deleted from `stan_composition.py`, and
+`stan_composition_ot_tail.csv` with them; `src/models/stan_game_length.py`
+(`make stan-game-length`) owns the game-length draw now, as a Bayesian head with a full
+posterior and a fitted season trend. This head was never a consumer — it reads the
+**realized** `game_length` on every row it fits or scores, and only a forward simulation
+needs a draw — so the tail was parked here rather than belonging here. See
+`docs/simulations-plan.md`, "The second prerequisite".
+
+**The figures below did not move**, because the retired pair survives as the new head's
+mandatory no-fit floor: the same function on the same rows. They are re-derived by
+`make stan-game-length` and audited from
+`outputs/predictions/stan_game_length_{metrics,ppc}.csv`.
+
+Invariant to the split by construction: the floor receives 1996-97 → 2021-22 either way, and
+the fitted parameters reproduced to six decimals across the re-run. Fit on 30,626
+regular-season training games: p_any = **0.0608**, p_more = **0.1408**. Scored on 2,460
+validation team-games: predicted **128.4** / 18.1 / 3.0 games at 1/2/3+ OT against observed
+**120** / 18 / 0 — the two-parameter form holds and overpredicts single-OT by **7.0%**, a
+milder era decline in OT rate than the 15.7% the retired test column showed.
+
+**That 7.0% is what the replacement fixes**, and it is the reason the two-parameter form was
+retired rather than merely relocated: a fitted season slope takes the summed OT-class error
+on the same 2,460 games from **22.97** to **9.42**. The caveat this paragraph used to end
+with — "`sample_game_length` is the simulator's game-length draw and carries that caveat with
+it" — no longer applies to anything the simulator will call.
 
 ### The retired TEST column, held for the record
 
@@ -494,3 +513,211 @@ is: shorten select chains first, then subsample train team-games, and cut arms l
   which read their data from a JSON file, so macOS pages out the ~2.5 GB of frames it is not
   touching. That reads alarmingly like a leak on `ps` and is the opposite — it is the OS
   reclaiming idle pages, and they page back in when the fit returns.
+
+---
+
+## The per-(player, season) random effect — the head-level record, 2026-08-09
+
+Driven by `docs/simulations-plan.md`'s item 3d; that document carries the design, the gates
+and the verdict. This section is the head's own record of what changed in it.
+
+### What the head gained
+
+`composition_glm.stan` carries an **optional** `sigma_u * u_z[unit_idx]` term on the linear
+predictor, indexed by **(player, season)** and disabled exactly by `U_n = 0`:
+
+```
+eta = logit_prior + alpha + X * beta + sigma_u * u_z[unit_idx]
+```
+
+`u_z` and `sigma_u` are zero-length when `U_n = 0`, so the disabled model is not "the same
+model with a small coefficient" — it is literally the parameter space, priors and likelihood
+that produced every figure above. This file's load-bearing property is unaffected. It is the
+`S = 0` device from `betabinomial_glm.stan`, and this file already used the same trick for
+`n_rho_par` on the binomial arm, so it is a house pattern rather than an import.
+
+**The nesting is pinned as an identity, not as source text.** At `sigma_u = 0` the effect
+model's log density exceeds the `U_n = 0` model's by exactly `−½Σz²`, which is the
+`std_normal` prior on `z` and nothing else — so the likelihood, the stick-breaking offset,
+the truncation term, the priors on `alpha`/`beta` and the dispersion term are all untouched.
+`tests/test_stan_composition.py::test_U_n_zero_nests_exactly_inside_the_player_season_model`.
+
+The index is the season and not the career: a player's minutes role is a property of the
+season he is in, and a career-long effect would be absorbed by `logit_share_lag1` and the
+offset. Non-centred by default, because rows per unit run median 57 but p10 11 and minimum 1
+— the well-informed units would prefer centred and the one-game units funnel under it, so
+divergences are the diagnostic and a centred arm is the first response.
+
+### Why the metric is now conditional, and what it cost
+
+`fit` chose `dense_e` unconditionally, on a measurement recorded above: at ~25 parameters the
+dense adaptation is free, and it took the one-season probe from treedepth 8–9 and 645 s under
+`diag_e` to treedepth 4 and 65 s. **That argument does not survive the random effect.** The
+full training window carries **12,307** player-season units against 631,158 rows, so a dense
+metric is a 12,332-square mass matrix — roughly 1.2 GB and a Cholesky of it per adaptation
+window. The metric is therefore chosen by the data (`diag_e` whenever `U_n > 0`) and recorded
+in the diagnostics, and the treedepth win is given back.
+
+**Measured, on one training season of the pilot window (26,039 rows, 605 units, 200 + 200 ×
+4 chains):** the shipped specification fits in **125 s** under `dense_e` with max R̂ 1.0172,
+minimum ESS 400, 0 divergences and no treedepth saturation. The same rows with the effect on,
+under `diag_e`, take **1,496 s** — **12.0×** — and do *not* converge at that budget: max R̂
+**1.0948** against the 1.01 bar and minimum ESS **35** against 400.
+
+**The diagnosis is mixing, not geometry, and the distinction decides what to do about it.**
+Zero divergences with 17 treedepth-saturated draws and a step size of 0.00942 is a sampler
+taking very long trajectories through a poorly conditioned diagonal metric — not one falling
+into a funnel. A funnel would say "change the parameterization"; this says "the trajectories
+are long and there is no cheap metric that shortens them", so 1,496 s is a **lower bound** on
+a usable fit rather than an estimate of one.
+
+**`ps_centered` tested the other half of that claim and it is a null.** On identical rows the
+centred arm reads 2,510 s, R̂ 1.1067, min ESS 27, **0 divergences** and **212**
+treedepth-saturated draws. The wall clock is contended and not a clean comparison; the
+saturation count is not, because it is a property of the geometry rather than of the machine,
+and it rises **12.5×**. Zero divergences in *both* coordinate systems, with saturation
+sharply worse under centring, says the posterior is not funnelling either way — so the
+parameterization is not the lever, and the plan's stated first response does not apply. The
+premise it rested on does not survive this window either: it argued from "p10 11, minimum 1",
+where the pilot's units run median 49 with only **1.8%** carrying a single row.
+
+### Five configurations were tested and the SHIPPED one is the best of them
+
+The hypothesis was that the graded `rho` and `sigma_u` compete for the same within-unit
+overdispersion — a ridge between two parameters absorbing one quantity, which is what a
+collapsed step size with no divergences looks like. **It is refuted, and so is every other
+sampler-side lever.** All five arms are the same one-season frame, features and iterations;
+only the dispersion, the parameterization or the metric varies.
+
+| arm | dispersion | parameterization | max R̂ | min ESS | div | treedepth-sat | fitted σ_u |
+|---|---|---|---|---|---|---|---|
+| `base` | graded ×4 | — | **1.0172** | **400** | 0 | **0** | — |
+| **`ps` (shipped spec)** | **graded ×4** | non-centred | **1.0948** | **35** | 0 | 17 | **0.4776** |
+| `ps_centered` | graded ×4 | centred | 1.1067 | 27 | 0 | 212 | 0.4809 |
+| `ps_shared_rho` | shared ×1 | non-centred | 1.1390 | 20 | 0 | 0 | 0.4986 |
+| `ps_no_rho` | none | non-centred | 1.3289 | 11 | 0 | **791** | 0.5414 |
+
+**Read the diagnostics, not the wall clocks.** The probes ran under varying contention — up
+to three concurrent fits on 14 cores — so their timings are not comparable to each other.
+R̂, ESS and treedepth saturation are properties of the geometry and are.
+
+Three conclusions follow. **Removing `rho` makes it dramatically worse**, not better: R̂
+1.3289 and 791 of 800 draws at max treedepth. `rho` is *helping* — strip the dispersion and
+the binomial likelihood sharpens, each unit's `u_z` is pinned hard by its own rows, and the
+geometry degrades. **Grading `rho` is better than sharing it** (R̂ 1.0948 against 1.1390),
+so the four-bin dispersion the head already ships is doing useful work alongside the effect
+rather than fighting it. And **the shipped configuration is the best random-effect arm on
+every diagnostic that matters** — no parameterization, dispersion structure or metric tried
+here improves on it.
+
+### The dense metric is out too, and for the reason nobody checked first
+
+A fourth attempt: `dense_e` is what took this head from treedepth 8-9 to treedepth 4 before
+the effect existed, and 791-of-800 treedepth saturation is exactly the symptom it fixes. The
+module refused it on every random-effect arm on **memory** grounds, and that reasoning is
+wrong — the matrix is 3.1 MB at 605 units and 38.1 MB at 2,204, against 1.2 GB only at the
+full window. So it was switched back on and measured.
+
+**It is far worse, and the constraint that actually binds is estimability, not memory.** A
+dense metric estimates a `P × P` covariance *from the warmup draws*, so it needs draws on the
+order of the parameter count:
+
+| | params | warmup | draws per parameter |
+|---|---|---|---|
+| effect-free head | 26 | 1,000 | **38.5** |
+| one-season probe | 635 | 1,000 | 1.57 |
+| pilot window | 2,234 | 1,000 | 0.45 |
+
+Below one draw per parameter the adaptation is rank-deficient, CmdStan's regularization
+shrinks it back toward diagonal, and the Cholesky is paid for nothing. Measured: the `ps` arm
+under `dense_e` ran past **an hour** on rows `diag_e` finished in 25 minutes, and was killed
+rather than finished. More warmup does not rescue it — 605 units would need ~12,700 warmup
+draws to reach 20 per parameter.
+
+**The original instinct was right and the reasoning behind it was wrong, and correcting only
+the reasoning made things worse.** `choose_metric` now gates on both, with
+`DENSE_DRAWS_PER_PARAM` as the binding term; at 1,000 warmup draws it admits ~50 parameters,
+which is precisely the regime the effect-free head lives in and why `dense_e` was measured to
+help there.
+
+**So the cost is intrinsic to the parameter, not a configuration mistake.** Adding 605 unit
+parameters to this likelihood makes a posterior NUTS walks slowly, and **four** attempts to
+tune that away have failed — centring, sharing `rho`, dropping `rho`, and the dense metric.
+What remains untried is mechanical rather than statistical: `reduce_sum` threading, against
+one vectorized call plus **1,487** scalar truncation calls per gradient at the pilot window
+with 4 chains on 14 cores.
+
+**`sigma_u` moves in exactly the direction the mechanism predicts**, which is a check on the
+whole ablation: 0.4776 with graded `rho`, 0.4986 with one shared `rho`, 0.5414 with none.
+The less dispersion the likelihood carries, the more of it the random effect absorbs.
+
+The cheaper lever is not in the sampler at all — see `docs/potential-to-dos.md`, where the
+**fitting window** is worth 6.0× with evidence that it costs nothing.
+
+### Two warmup rejection classes the probes surfaced, and only one is new
+
+Both are non-fatal — warmup recovers — but they waste adaptation, and one of them is a live
+trap for whoever revisits the centred arm.
+
+**The beta-binomial shape underflow is PRE-EXISTING and not the random effect's doing.**
+`beta_binomial_lpmf: First prior sample size parameter[k] is 0` fires ~28 times per fit at
+line 212, and it fires **equally in the `base` arm** — 28 for `base` against 28 for `ps` on
+the same probe. So it is a property of the shipped head, not of the new block, and it was
+worth checking before blaming the parameter. The mechanism is the mirror of the one this
+file's header already guards: `s * inv_logit(-eta)` was adopted so that `b` survives large
+*positive* `eta`, and `a = s * inv_logit(eta)` is left unguarded against large *negative*
+`eta`, where `inv_logit` underflows to exactly 0 at around −745. The rejections are proof
+that warmup reaches that far down on some rows.
+
+**The centred arm's prior is undefined at `sigma_u = 0`, and that one IS new.**
+`normal_lpdf: Scale parameter is 0` at line 196 fires only in `ps_centered`, because
+`vector<lower=0>[H_u] sigma_u` admits exactly 0 and `u_z ~ normal(0, sigma_u[1])` has no
+density there. The non-centred branch is immune — `u_z ~ std_normal()` does not reference
+`sigma_u` at all. It is recorded rather than fixed because `ps_centered` is a measured null
+and is not in the shipped ladder; a lower bound of `1e-9` on `sigma_u` would close it if the
+arm is ever revived.
+
+The practical consequence for this head should not be softened: **a full-window fit with the
+effect is not a same-day operation** — extrapolated by rows and units with this head's own
+measured 1.63× Gate A correction, roughly 6.3 h per random-effect arm at the pilot window and
+~38 h at the full one. That is why the ladder runs at the pilot window first and why the
+injection retains a shippable fallback with σ estimated on `train`.
+
+**One number came back for free and it is the best kind: a replication.** The under-converged
+one-season fit puts `sigma_u` at **0.4776**, against **0.375** from the injection grid scored
+on validation and **0.450** from the same grid scored on train. Three routes to the effect
+size — a Stan parameter, a validation-scored grid and a train-scored grid — inside a band of
+0.10. That is Gate P5 passing, and it is corroboration of the size rather than a value to
+ship, because the chains had not mixed.
+
+### What is NOT in this head's own sweep, and why
+
+`make stan-composition` is unchanged — same four arms, same artifacts, same selected variant.
+The new ladder is `make composition-effects`, writing
+`outputs/predictions/composition_effects_*.csv`. Three reasons, and the first is a build
+gate: `stan_composition_metrics.csv` is this head's record and `make docs-audit` re-derives
+eleven quoted figures from it, so a partial run at a pilot window would have failed the gate
+on bookkeeping rather than on a measurement. The incumbent is deliberately not refitted — its
+posterior is on disk at `data/features/posteriors/<window>/composition.pkl` — and the arm
+ordering is a separate decision from the full-window commitment, which is the path this head
+already took once from Gate A to Gate E.
+
+### The team-context block, and one departure from the specification
+
+The head's 25 features are all properties of the player alone; a head whose entire job is
+dividing a fixed team pot among teammates carried nothing about the teammates. The `team`
+arms add five columns from `data/features/team_context_tierA.parquet` — `role_crowding`
+(minutes-weighted archetype similarity, leave-one-out), `teammate_usage_max/sum/load` and
+`n_teammates` — chosen tight rather than complete, because the deviation they are meant to
+explain is only ~7.5% predictable and this is the most expensive fit in the project.
+
+The block gets **one** `team_missing` indicator, not one per column, for the reason
+`design_missing` exists: five identical flags are a degenerate subspace the sampler pays for
+in treedepth. But it is a **second** indicator rather than a reuse of `design_missing`, which
+is a deliberate departure from the plan's instruction and is measured rather than assumed:
+the two mark different rows. `design_missing` flags a composition row with no
+availability-design row at all; the team block additionally misses **4.14%** of pilot
+training rows that *do* have a design, because `team_context_tierA.parquet` is built off the
+season matrix's qualified frame. It covers **93.55%** of pilot training rows and **94.20%** of
+validation rows. Folding the two together would leave that 4.14% imputed to the training mean
+with nothing for `beta` to correct on.

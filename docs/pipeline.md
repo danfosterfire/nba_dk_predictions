@@ -78,8 +78,15 @@ make stan-minutes      # min | available, trials = real game length (NEVER 48)
 make stan-components   # 8 NB count heads + 3 beta-binomial conversion heads
 make stan-composition  # the team-game minutes COMPOSITION — the per-game allocation
                        #   (zero-sum + the cap); see docs/minutes-composition-plan.md
-make stan              # all four, in chain order — composition AFTER stan-minutes,
-                       #   which it imports from and measures itself against
+make stan-game-length  # does a game go to OVERTIME, and how deep. The one thing a
+                       #   forward simulation cannot look up: both minutes heads need a
+                       #   length, and in a replay it comes from the parquet. Two
+                       #   existing .stan sources, ~30 collapsed rows, 0.3 s of sampler
+                       #   — the cheapest head in the project, which is why it runs
+                       #   first in the aggregate. Replaced stan_composition.fit_ot_tail.
+make stan              # all five, cheapest first so a plumbing failure surfaces in
+                       #   seconds, and composition AFTER stan-minutes, which it imports
+                       #   from and measures itself against
 make games-played      # the games-played spell process, numpy only — the collapse, the
                        #   spell classes, the closed-form beta-geometric fits and Gate 0's
                        #   empirical-hazard Monte Carlo. NO Stan, so a process class can
@@ -98,7 +105,7 @@ make season-terms      # does any head need a season term, and which kind? A tre
                        #   season × role arm the availability era effect calls for.
                        #   An ABLATION over the shipped heads, so also not in `stan`;
                        #   it reads their selected specs from their artifacts.
-make posteriors        # PERSIST the fits: 18 heads refitted once at the variant their
+make posteriors        # PERSIST the fits: 20 heads refitted once at the variant their
                        #   own sweep selected, each writing thinned draws + the design
                        #   recipe + provenance to
                        #   data/features/posteriors/<window>/<head>.pkl.
@@ -129,6 +136,51 @@ make scoring-periods   # one row per (season, game_id): its scoring period and i
                        #   period PLAYED, the NBA Cup final scores nowhere, and the
                        #   all-star gap moves no Monday. Schedules cache to data/raw, so
                        #   a rebuild needs no network; REFRESH=1 re-pulls them.
+
+make draft-pool        # the board: one row per (season, player) with team, DK position
+                       #   eligibility, ADP and the prior-season key the heads score him
+                       #   from → data/features/draft_pool.parquet. 13,105 player-seasons
+                       #   over 31 seasons, 942 of them the 2026-27 production board.
+                       #   IT REVERSED A PLAN ASSUMPTION: DK is SINGLE-position — both
+                       #   boards print exactly one of G/F/C for all 1,640 rows, zero
+                       #   duals — so NBA.com's `G-F` duals are not DK-shaped. Validated
+                       #   on the persistent DK id, DK's letter equals NBA.com's primary
+                       #   on 86.63% of players and lies inside its set on 92.61%
+                       #   → outputs/eda/draft_pool_position_audit.csv. Membership is
+                       #   season-start rosters from the game logs, never the roster CSV,
+                       #   which is a current-status snapshot carrying February signings.
+
+make minutes-unification
+                       # the two minutes heads scored against each other at the SEASON
+                       #   unit, on the 742 validation player-seasons both cover
+                       #   → outputs/predictions/minutes_unification.csv. Settles whether
+                       #   the composition supersedes the marginal head; it does NOT, so
+                       #   both ship. The mean is a tie (MAE 200.28 against 200.12) and
+                       #   the SPREAD is not: summed composition draws are 4.68x too
+                       #   narrow at the season unit, and the team constraint forbids
+                       #   fixing it inside the head — a team's season minutes have a
+                       #   predictive sd of 0.00 across draws. REFITS NOTHING: it
+                       #   rehydrates each head around its persisted `make posteriors`
+                       #   draws and calls the head's own predict path, so it costs
+                       #   seconds against the composition's 9.92 h and needs no CmdStan.
+                       #   It also runs the same injection grid on TRAINING rows, which is
+                       #   what makes the injection shippable: sigma_train = 0.450 against
+                       #   the validation grid's 0.375.
+
+make composition-effects
+                       # item 3d — the per-(player, season) random effect fitted as
+                       #   `sigma_u` in composition_glm.stan, and a team-context block
+                       #   swept alongside it. Four arms (`base` `ps` `ps_team` `team`)
+                       #   at the PILOT window
+                       #   → outputs/predictions/composition_effects_{metrics,season,
+                       #   deviation,diagnostics}.csv. NEEDS CmdStan and is EXPENSIVE:
+                       #   `dense_e` is not viable at 12,307 player-season units so the
+                       #   random-effect arms drop to `diag_e`, and Gate A probes the `ps`
+                       #   arm rather than a plain one for exactly that reason. Writes its
+                       #   own artifacts rather than stan_composition_*.csv, which is the
+                       #   incumbent's record and is quoted by `make docs-audit`. The
+                       #   deviation table lands BEFORE any sampling, so an aborted run
+                       #   still leaves it.
 ```
 
 **After `make posteriors`, nothing else in the simulation layer needs CmdStan.** That is the

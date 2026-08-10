@@ -1789,11 +1789,29 @@ REGISTRY: tuple[Decision, ...] = (
                 "to the split by construction — `fit_ot_tail` receives 1996-97 → 2021-22 "
                 "either way — and reproduced to six decimals on the 2026-08-08 refit; the "
                 "retired test reading was 256.9 against 222 on twice as many team-games.",
-        status="built",
-        reproduce="make stan-composition → "
-                  "outputs/predictions/stan_composition_ot_tail.csv",
+        status="withdrawn",
+        replaced_by="Three parameters, in `src/models/stan_game_length.py` "
+                    "(`make stan-game-length`), 2026-08-09. The ~7% overprediction this "
+                    "entry logged as 'one more entry for the season-effects ledger' was a "
+                    "real season trend and is now fitted: a logit slope on the season index "
+                    "takes the summed OT-class error on the same 2,460 validation games "
+                    "from **22.97** to **9.42**, and the predicted rate from 0.0608 to "
+                    "0.0555 against 0.0561 observed. Depth keeps its one parameter and "
+                    "gains a Beta frailty (kappa **37.7**) so it carries a posterior. "
+                    "'A covariate model is not worth it at a 6% base rate' survives for "
+                    "the *matchup* covariate and not for the season index — the two arms "
+                    "went opposite ways. `fit_ot_tail` / `sample_game_length` / "
+                    "`ot_tail_check` are deleted from `stan_composition`, which was never "
+                    "a consumer: it reads the realized game length on every row it fits.",
+        caught_by="`make stan-game-length`, the arm ladder against this pair as its no-fit "
+                  "floor. The floor still reads p_any 0.0608 / p_more 0.1408 on the same "
+                  "30,626 games, so the figures above are reproduced rather than revised — "
+                  "what changed is that they are no longer what ships.",
+        reproduce="make stan-game-length → "
+                  "outputs/predictions/stan_game_length_metrics.csv, "
+                  "outputs/predictions/stan_game_length_ppc.csv",
         source="docs/minutes-composition-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-09",
         date="2026-07-31",
         tags=("simulator-input",),
     ),
@@ -3044,9 +3062,9 @@ REGISTRY: tuple[Decision, ...] = (
     Decision(
         id="spell-simulator-not-built",
         topic="simulations",
-        claim="**The spell process is now built** (`make stan-games-played`, 2026-08-05). "
-              "The residual copula over a shared `min` draw is not, and is the next piece "
-              "of work.",
+        claim="~~The residual copula over a shared `min` draw is not built.~~ **Both halves "
+              "now exist** — `make stan-games-played` (2026-08-05) and `make "
+              "simulate-season` (2026-08-09). See `season-simulator-output-contract`.",
         because="The specification was already pinned by measurements — block variance "
                 "inflation per component, a falsified 2-state Markov chain, a PSD "
                 "residual correlation matrix ready to use as a copula input, and the "
@@ -3057,13 +3075,109 @@ REGISTRY: tuple[Decision, ...] = (
                 "composition step that turns eleven marginal posteriors into one "
                 "correlated season. Validation will be posterior-predictive checks on "
                 "held-out team-total variance and same-team pairwise covariance — not "
-                "point accuracy.",
-        status="open",
-        reproduce="make stan-games-played → outputs/predictions/spell_process.csv",
+                "point accuracy. **Closed 2026-08-09**: the composition step is "
+                "`src/sim/season.py`, and the validation it got was Gate A — the "
+                "marginals it was handed — rather than the team-total PPC named here, "
+                "because the composition head already carries the team constraint exactly "
+                "and a PPC on it would test arithmetic rather than a model.",
+        status="built",
+        reproduce="make simulate-season → data/features/sim_tensor_2022-23.npz, "
+                  "outputs/predictions/sim_season_gate_a.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-05",
+        reviewed="2026-08-09",
         date="2026-07-29",
         tags=("next",),
+    ),
+    Decision(
+        id="gate-a-season-simulator-marginals",
+        topic="simulations",
+        claim="**Gate A: three of four rows pass and the fourth is traced out of the "
+              "module.** Season totals read MAE **402.14** / **407.89** against the "
+              "incumbent's 400.46 and CRPS **280.49** / **281.03** against 287.26; games "
+              "played reads CRPS **9.6754** / **9.7829** against the availability head's own "
+              "**10.0057** with a bias of **+0.127** / **−0.363** games; the season-minutes "
+              "spread given games played reads **322.05** / **319.32** against **302.75**. "
+              "The **bonus is +11% / +5% high**, and on REALIZED minutes the identical draw "
+              "reads **0.1535** / **0.1477** against a realized 0.1559 / 0.1626 — so the "
+              "component chain is calibrated and the miss is the minutes draw's.",
+        because="An assembly bug is silent: every input head is already calibrated, so a "
+                "simulator that misses a marginal it was handed has a wiring fault rather "
+                "than a modelling one. It caught two, both of which produced a completely "
+                "plausible board. Taking the availability panel as it stands gives a traded "
+                "player rows on BOTH teams and a denominator of **92.6** games against the "
+                "head's **82.0**; `season_availability`'s own convention — a traded player "
+                "belongs wholly to his last team — puts the two within one game on 432 of "
+                "433 players. And the 106 of 539 rostered players the lag-1 availability "
+                "design has no row for were being scored at the head's INTERCEPT, putting "
+                "them at **58.4** simulated games against a realized **30.1** and moving "
+                "~29,500 minutes a season off the players the tensor scores — a season-total "
+                "bias of **−90.8**, which fell to **−21.9** once they got the "
+                "expanding-window empirical rate of players like them.",
+        status="measured",
+        reproduce="make simulate-season → outputs/predictions/sim_season_gate_a.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("gate",),
+    ),
+    Decision(
+        id="composition-game-level-dispersion-too-wide",
+        topic="minutes",
+        claim="🔴 **The shipped composition head puts ~1.8x too much game-to-game spread on "
+              "a player's minutes.** Implied game-level overdispersion is **7.70** from the "
+              "head's own draws on realized availability against **4.22** realized on "
+              "2022-23 — at `sigma = 0`, so the injected player-season effect is not the "
+              "cause — and the simulator inherits **8.42**.",
+        because="This is the diagnostic `stan_minutes_dispersion.csv`'s 4.65x was demoted to "
+                "when `make minutes-unification` moved it from simulator INPUT to a number "
+                "the composition's draws are checked against, and the first time it ran it "
+                "found something. It is compatible with everything already measured about "
+                "the head: its per-team-game CRPS of 4.4945 and its PIT are statements about "
+                "the ALLOCATION — how the pot is split on a night — not about a player's "
+                "spread around his own realized season share, and no metric the head "
+                "published could see the second. It matters because the bonus is convex in "
+                "minutes, so it over-produces double-doubles by ~11% and inflates every "
+                "star's single-game ceiling, which is the statistic a 2-of-12 pod is most "
+                "sensitive to. It also blocks consuming `serial_correlation.csv`'s 2.43x "
+                "ten-game block inflation: the simulator reads 1.40 / 1.52 and the ~3-line "
+                "fix would put MORE variance into a minutes draw that is already too wide, "
+                "so the two have to be settled together rather than one at a time.",
+        status="measured",
+        reproduce="make simulate-season → outputs/predictions/sim_season_gate_a.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("simulator-input", "next"),
+    ),
+    Decision(
+        id="copula-is-not-the-residual-matrix",
+        topic="simulations",
+        claim="**The frailty correlation the copula needs is roughly TEN TIMES the residual "
+              "correlation `residual_correlation.csv` reports**, and handing the copula that "
+              "matrix directly imposes a tenth of the intended dependence — every cell "
+              "present, every shape right, only the numbers wrong.",
+        because="Under a lognormal per-game frailty of variance `v`, `corr(resid_a, "
+                "resid_b) = R_ab * v * sqrt(mu_a*mu_b) / sqrt((1+v*mu_a)*(1+v*mu_b))`, so at "
+                "`v = 0.025` and typical per-game means the residual correlation is about a "
+                "tenth of the frailty correlation producing it. Inverting the relation at the "
+                "population mean per-game count and projecting back to a valid correlation "
+                "matrix takes the simulated off-diagonal mean from **−0.002** to **+0.017** "
+                "against a target of **+0.022**, max cell error 0.057. **4 of the 21 count "
+                "pairs saturate** at the inversion, which is a finding rather than a "
+                "nuisance: the measured residual coupling sits at the ceiling a frailty of "
+                "this variance can produce, so the bonus overdispersion (0.025) and the "
+                "residual correlation are close to two views of ONE per-game 'big night' "
+                "factor rather than two independent simulator inputs. The conversion rows are "
+                "deliberately not imposed — three of the four heads have block inflations of "
+                "1.035, 1.007 and 1.103, the measured nulls that make a season-level `p` the "
+                "right factorization; `fg3a | fga` at 1.575 is the one real gap and is "
+                "reported rather than asserted away.",
+        status="measured",
+        reproduce="make simulate-season → outputs/predictions/sim_season_gate_a.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("simulator-input",),
     ),
     Decision(
         id="no-head-persists-its-posterior",
@@ -3118,45 +3232,422 @@ REGISTRY: tuple[Decision, ...] = (
                 "star). The two sit on different parameterizations, so they are not the same "
                 "number, but they are the same kind of quantity and only one can govern a "
                 "draw. If the simulator draws minutes from the composition, 4.65x is a "
-                "diagnostic to check those draws against rather than an input to them.",
+                "diagnostic to check those draws against rather than an input to them. "
+                "**Confirmed 2026-08-09**: the simulator does draw its per-game allocation "
+                "from the composition, so the composition's rho governs and 4.65x is now a "
+                "diagnostic. The coincidence is worth naming so nobody merges the two — "
+                "`make minutes-unification` also reports the marginal head's season-total "
+                "predictive sd as 4.68x the composition's, and that is a different "
+                "quantity at a different unit that happens to land on a similar number.",
         status="measured",
         reproduce="make stan-minutes → outputs/predictions/stan_minutes_dispersion.csv, "
-                  "outputs/predictions/stan_composition_dispersion.csv",
+                  "outputs/predictions/stan_composition_dispersion.csv, "
+                  "outputs/predictions/minutes_unification.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-09",
         date="2026-08-08",
         tags=("architecture",),
     ),
     Decision(
         id="minutes-head-supersession-is-open",
         topic="minutes",
-        claim="Whether `stan_composition` **supersedes** `stan_minutes` in the production "
-              "chain is open, and one gate settles it: the composition's season-total sums "
-              "against the marginal head's season-total predictions, on validation.",
-        because="`README.md` says the two heads 'compose rather than compete', with the "
-                "marginal head still owning the season-level mean and the game-level "
-                "dispersion. Audited 2026-08-08, that sentence asserts three things and only "
-                "one holds. The dispersion claim is false as stated (see "
-                "[[game-level-dispersion-is-not-a-fit]]). The season-mean claim is simply "
-                "**untested** — the two heads score at different units (minutes at "
-                "season-total, CRPS 143.9 / MAE 199.6 / R2 0.883; composition per-team-game, "
-                "CRPS 4.494 / MAE 6.33 / R2 0.474) and the composition's per-game predictions "
-                "sum to a season total by construction, so it can produce the season mean and "
-                "nobody has measured whether it is better. What IS load-bearing is the year "
-                "effect: `season_terms` selected the `year` arm for `min` (val MAE 199.03 "
-                "against base 199.72, sigma_year 0.0231), it is the only head in the project "
-                "shipping a season term, and it is worth +10.4% on a 15-man roster's "
-                "season-total sd — the spread a 2-of-12 knockout is decided on. "
-                "`composition_glm.stan` carries no year block, so retiring the marginal head "
-                "today would drop the project's only era correction. Coverage cuts the other "
-                "way (the composition cannot drop rookies, since the team sum must be "
-                "complete), and cost is a non-argument: 0.341 h against the composition's "
-                "9.92 h.",
-        status="open",
-        unblocks="make minutes-unification → outputs/predictions/minutes_unification.csv",
+        claim="**The composition does not supersede the marginal minutes head — both ship.** "
+              "Measured 2026-08-09 at the season unit on validation, the composition's "
+              "summed season totals score CRPS **170.06** against the marginal head's "
+              "**144.35**, a paired-bootstrap gap of **+25.70** minutes with a 95% interval "
+              "of **[+18.96, +33.25]**.",
+        because="`README.md` said the two heads 'compose rather than compete', with the "
+                "marginal head owning the season-level mean and the game-level dispersion. "
+                "That sentence asserted three things; the audit killed one and the gate "
+                "killed a second. The dispersion claim is false as stated (see "
+                "[[game-level-dispersion-is-not-a-fit]]). **The season-level MEAN claim is "
+                "also false** — the composition matches it, with MAE 200.28 against 200.12, "
+                "R2 0.8848 against 0.8829, and a bias of +2.41 against -14.09, so it is the "
+                "less biased of the two. What survives is the season-level **spread**: the "
+                "composition's season-total predictive sd is 64.7 minutes against 302.7, "
+                "**4.68x too narrow**, and its PIT KS is 0.3341 against 0.0735. Summing "
+                "iid-across-games draws cannot manufacture season-level heterogeneity — "
+                "per-game noise averages down by ~1/sqrt(G) while a season-level multiplier "
+                "passes through in full — and the team constraint forbids any *shared* fix, "
+                "since a team's season minutes are fixed at 5 x sum(game_length) and "
+                "measure a predictive sd of exactly 0.00 across draws. **That rules out a "
+                "shared effect, not every effect**, and the qualifier is load-bearing: see "
+                "[[a-season-term-cannot-widen-the-composition]], where an injected "
+                "per-(player, season) effect closes the gap to a tie. So this entry records "
+                "which head ships **today**, not a ceiling. The composition is "
+                "therefore beaten at the season unit by the carry-forward no-fit floor "
+                "(170.06 against **161.29**, `stan_minutes.FloorMinutes` — prior share x "
+                "realized length, no fitting) on the same rows where it beats its own "
+                "per-team-game floor decisively (4.4945 against 4.6776). Same head, same "
+                "draws, opposite verdicts at two units: the unit is the claim. "
+                "The year effect stands untouched and never had to be ported: "
+                "`season_terms` keeps the `year` arm for `min` on the head that still ships "
+                "it. Cost was never an argument — 0.341 h against 9.92 h.",
+        status="settled",
+        reproduce="make minutes-unification → outputs/predictions/minutes_unification.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
-        date="2026-08-08",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("architecture",),
+    ),
+    Decision(
+        id="a-season-term-cannot-widen-the-composition",
+        topic="minutes",
+        claim="**A season term — trend or year random effect — cannot close the "
+              "composition's season-total variance gap.** The variance a league-wide term "
+              "could reach is **0.000000%** of the composition's residual variance. The "
+              "effect that would fit is indexed by **(player, season)**, not by season.",
+        because="The natural follow-up to [[minutes-head-supersession-is-open]], since the "
+                "marginal minutes head is the one place in this project shipping a season "
+                "term. Three independent reasons it is the wrong instrument. (1) A year "
+                "term is a league-wide shift shared by every row in a posterior draw "
+                "(`stan_utils.YearTerm`), so the only variance it can explain is that of "
+                "the league-wide mean residual across seasons — 0.000 minutes against a "
+                "residual sd of 243.50, because a head that allocates every minute has "
+                "residuals summing to zero within each season. Zero by construction, not by "
+                "accident. (2) The team constraint makes any shared shift a pure "
+                "re-allocation: adding the same delta to every player's eta re-tilts the "
+                "stick-breaking toward the top of the rotation and leaves the team total at "
+                "5 x sum(game_length). (3) Size — the per-player-season log deviation of "
+                "realized from predicted season minutes has sd **0.2836** over the 867 "
+                "validation rows clearing 200 realized minutes, against a fitted "
+                "`sigma_year` of 0.0231, roughly 12x apart. **And the (player, season) "
+                "version is not merely the right shape — measured, it closes the gap.** "
+                "Injecting `sigma * z` per player-season per posterior draw into the "
+                "existing posterior and re-running the head's own allocation moves the "
+                "season-total predictive sd from 64.65 to **239.45** at sigma **0.375** and "
+                "the CRPS to **142.17**, which **ties** the marginal head (-2.18, interval "
+                "[-6.96, +2.85]) with the team constraint still exact; at sigma 0.45 the PIT "
+                "KS of 0.0659 is better than the marginal head's 0.0735. MAE moves under a "
+                "minute across the sweep, so it buys spread and not fit. **So the 4.68x is "
+                "a missing parameter, not a ceiling.** The caveat is load-bearing: sigma is "
+                "read off validation, so that is a tuned upper bound on the "
+                "parameterization rather than a score, and a real fit estimates it on train "
+                "and re-estimates beta alongside. Costs still to size: ~10,000 parameters "
+                "on a 683k-row head that already costs 9.92 h and adapts a dense_e metric "
+                "over ~25, and the effect competes with the per-player cap to explain "
+                "exactly the star rows that matter most.",
+        status="measured",
+        reproduce="make minutes-unification → outputs/predictions/minutes_unification.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("architecture",),
+    ),
+    Decision(
+        id="player-season-effect-is-fitted-not-injected",
+        topic="minutes",
+        claim="The composition's missing season-level spread is closed by a fitted "
+              "per-**(player, season)** random effect, **not** by a season term and **not** "
+              "by a fixed-effect block. Build item 3d fits `sigma_u` in "
+              "`composition_glm.stan` and sweeps team context alongside it.",
+        because="Three measurements settle the shape. A season term reaches **0.000000%** of "
+                "the residual variance, because a league-wide shift on a head that allocates "
+                "every minute has no level to move ([[a-season-term-cannot-widen-the-"
+                "composition]]). An **injected** per-player-season effect does close it — sd "
+                "64.65 to 239.45, CRPS 170.06 to 142.17, a tie with the marginal head at "
+                "sigma 0.375 — but its sigma is tuned on the split it is scored against, "
+                "which is why it is fitted here rather than shipped. And **fixed effects "
+                "cannot replace it**: measured on 9,793 train player-seasons, the deviation "
+                "`logit(realized share) - logit(prior share)` has sd 0.674 and is only 5.2% "
+                "predictable in sample — own lag-1 deviation r = **-0.201** (mean reversion, "
+                "not persistence), departed teammates' share +0.041, arrivals -0.063, net "
+                "opened +0.088, joint R2 0.040 -> **0.052**. The signs are all correct, so "
+                "the construction is sound and the magnitudes are the finding: this is the "
+                "same wall the rest of the project hits, where availability persists at "
+                "r = 0.317 and five games of the real season settle 86% of the season total. "
+                "The team block still ships **in the same fit** — three extra columns cost "
+                "nothing beside a 12,307-unit random effect, `team_context_tierA.parquet` is "
+                "already built leave-one-out and point-in-time safe, and features that do "
+                "predict part of the deviation shrink `sigma_u`, which improves the draft "
+                "ranking rather than only the spread. Running them as two sessions would buy "
+                "a second refit of the project's most expensive head for about one point of "
+                "R2. Cost risk is named: `dense_e` is not viable at 12,307 units and the "
+                "arms must drop to `diag_e`.",
+        status="open",
+        unblocks="the full-window fit of the +ps arm — the CAPABILITY landed 2026-08-09 "
+                 "(see [[composition-carries-an-optional-player-season-effect]]); what is "
+                 "still open is which window it is committed at",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("next", "architecture"),
+    ),
+    Decision(
+        id="composition-carries-an-optional-player-season-effect",
+        topic="minutes",
+        claim="`composition_glm.stan` carries an **optional** per-(player, season) random "
+              "effect, and **`U_n = 0` nests the shipped head exactly** — not approximately. "
+              "`make posteriors` persists `sigma_u` and only `sigma_u`; the fitted `u_z` are "
+              "never stored.",
+        because="The build half of [[player-season-effect-is-fitted-not-injected]]. The "
+                "nesting is checked as an IDENTITY rather than as source text: at "
+                "`sigma_u = 0` the effect model's log density exceeds the `U_n = 0` model's "
+                "by exactly `-0.5 * sum(z^2)` and nothing else, so the likelihood, the "
+                "stick-breaking offset, the priors on alpha/beta and the dispersion term are "
+                "untouched. That is the only thing separating 'a parameter was added' from "
+                "'the shipped head was silently changed', and every figure the incumbent's "
+                "artifact carries depends on it. The `S = 0` device is copied from "
+                "`betabinomial_glm.stan`, which is a house pattern rather than an import — "
+                "`n_rho_par` already uses it here for the binomial arm. `u_z` is discarded "
+                "for the same reason `year_z` is: a fitted per-level value describes a level "
+                "that is over, and carrying one forward would be a player-season FIXED "
+                "effect smuggled into a prediction-time model. The predictive integrates "
+                "over a fresh `z ~ N(0,1)` per (unit, posterior draw), shared across that "
+                "unit's games — the sharing is the whole mechanism, since per-game noise "
+                "averages down by ~1/sqrt(G) when summed to a season while a season-level "
+                "shift passes through in full. `posteriors._finish` gained the capability "
+                "rather than being routed around it, thinning `sigma_u` on the SAME draw "
+                "index as alpha/beta; the year-effect refusal stays and now names this as "
+                "the worked example, because an artifact that silently drops a fitted random "
+                "effect has a narrower predictive than the head it claims to persist, which "
+                "is the one failure a round-trip on the mean cannot see.",
+        status="built",
+        reproduce="make test → tests/test_stan_composition.py, tests/test_posteriors.py",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("architecture",),
+    ),
+    Decision(
+        id="the-player-season-effect-costs-12x",
+        topic="minutes",
+        claim="**Fitting the player-season effect costs 12.0x the shipped arm on identical "
+              "rows, and does not converge at short chains** — so the full-window commitment "
+              "is a schedule decision, not a technical one. The fitted `sigma_u` "
+              "nonetheless REPLICATES the injection at **0.4776**.",
+        because="Gate A, probing the arm that carries the cost risk rather than a plain one. "
+                "On one training season of the pilot window (26,039 rows, 605 units, "
+                "200 + 200 x 4 chains) the shipped specification fits in **125 s** under "
+                "`dense_e` with max R-hat 1.0172, min ESS 400, 0 divergences and no "
+                "treedepth saturation; the `ps` arm on the SAME rows under `diag_e` takes "
+                "**1,496 s** and misses both convergence bars — R-hat **1.0948** against "
+                "1.01 and min ESS **35** against 400. **The diagnosis is mixing, not "
+                "geometry**: 0 divergences with 17 treedepth-saturated draws and a step size "
+                "of 0.00942 is a sampler taking very long trajectories through a poorly "
+                "conditioned diagonal metric, not one falling into a funnel — so 1,496 s is "
+                "a LOWER bound on a usable fit. `dense_e` is not an option at 12,307 units "
+                "(a 12,332-square mass matrix, ~1.2 GB and a Cholesky per adaptation "
+                "window), so the treedepth win that metric bought is given back in full, "
+                "exactly as [[player-season-effect-is-fitted-not-injected]] predicted. "
+                "**The centred parameterization — the plan's own named first response — is "
+                "a measured null**: on identical rows `ps_centered` reads 2,510 s, R-hat "
+                "1.1067, min ESS 27, 0 divergences and **212** treedepth-saturated draws "
+                "against the non-centred arm's 17. The wall clock is contended and not a "
+                "clean comparison; the saturation count is, because it is a property of the "
+                "geometry rather than of the machine, and it rises 12.5x. Zero divergences "
+                "in BOTH coordinate systems rules out a funnel either way, so the "
+                "parameterization is not the lever — and the premise behind the default "
+                "does not survive this window, since the plan argued from 'p10 11, minimum "
+                "1' where the pilot's units run median 49 with only 1.8% carrying a single "
+                "row. **Five configurations were tested and the SHIPPED one is the best of "
+                "them**, on identical rows and iterations: `ps` (graded rho, non-centred) "
+                "R-hat **1.0948** / ESS 35 / 17 saturated; `ps_centered` 1.1067 / 27 / 212; "
+                "`ps_shared_rho` 1.1390 / 20 / 0; `ps_no_rho` **1.3289** / 11 / **791 of "
+                "800**. Removing `rho` makes it dramatically WORSE, so it is helping rather "
+                "than competing — strip the dispersion and the binomial likelihood "
+                "sharpens, each unit's `u_z` is pinned by its own rows, and the geometry "
+                "degrades; grading `rho` also beats sharing it. **So the cost is intrinsic "
+                "to adding 605+ unit parameters to this likelihood, not a configuration "
+                "mistake**, and three attempts to tune it away all failed. `sigma_u` moves "
+                "exactly as the mechanism predicts across the ablation — 0.4776 graded, "
+                "0.4986 shared, 0.5414 none — which checks it. The remaining untried lever "
+                "is mechanical (`reduce_sum` against 1,487 scalar truncation calls per "
+                "gradient); the cheaper one is not in the sampler at all, see "
+                "[[fit-window-may-not-need-1996]]. "
+                "Extrapolated by rows AND units with this head's own measured 1.63x Gate A "
+                "correction: **~6.3 h per random-effect arm at the pilot window**, ~15.7 h "
+                "for the four-arm ladder, and **~38 h** for one arm at the full window. "
+                "**The free result is the replication.** The under-converged fit puts "
+                "`sigma_u` at **0.4776**, and the centred arm at **0.4809**, against 0.375 "
+                "from the injection grid scored on validation and 0.450 from the same grid "
+                "scored on train — four routes to the effect size inside a band of 0.11, "
+                "which is Gate P5 passing. The last pair is the strongest of them: the "
+                "injections share arithmetic, while the two parameterizations share only "
+                "the model. Read it as corroboration of the SIZE, not as a value to ship: "
+                "the chains had not mixed.",
+        status="measured",
+        reproduce="make composition-effects → "
+                  "outputs/predictions/composition_effects_diagnostics.csv, "
+                  "outputs/predictions/composition_effects_metrics.csv, "
+                  "outputs/predictions/composition_effects_season.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("architecture", "cost"),
+    ),
+    Decision(
+        id="fit-window-may-not-need-1996",
+        topic="minutes",
+        claim="**The 22 training seasons before 2018-19 may be buying nothing**, and the "
+              "fitting window is a **6.0x** cost lever on the fitted `sigma_u` work — "
+              "37.6 h at the full window against 6.3 h at 2018-19 onward, per "
+              "random-effect arm.",
+        because="Scored on the SAME 742 validation player-seasons, the shipped composition "
+                "specification fitted on 4 training seasons beats the full-window incumbent "
+                "on five of seven metrics — per-team-game CRPS **4.4561** against 4.4945, "
+                "R2 0.4758 against 0.4741, PIT KS 0.0311 against 0.0428 — and loses "
+                "narrowly at the season unit (CRPS 171.57 against 170.06, predictive sd "
+                "58.81 against 64.65). **This is a prompt, not a finding**: one arm, no "
+                "bootstrap on a 0.04 CRPS gap, and the two fits ran at different iteration "
+                "counts. Two independent arguments point the same way. The target season is "
+                "2026-27 and the early seasons are a different sport — league three-point "
+                "share drifted +0.057 over the fourteen seasons to 2011-12 and then rose "
+                "**+0.171** over the fourteen after, making **2012-13** the measured "
+                "breakpoint; and **1996-97 is a different rule regime entirely**, the last "
+                "season of the NBA's shortened three-point line, whose restoration in "
+                "1997-98 is the largest single-season move in the whole series at "
+                "**-0.0524**. Shortening the window also drops the dense mass matrix from "
+                "1.2 GB to 38 MB, which returns `dense_e` to the table — see "
+                "[[the-player-season-effect-costs-12x]]. One wrinkle blocks acting on it: "
+                "`stan.composition.first_season` is read by both the incumbent's sweep and "
+                "`posteriors.composition_artifact`, so re-scoping production silently "
+                "re-scopes the audited artifact. The ladder that would settle it is in "
+                "docs/potential-to-dos.md.",
+        status="open",
+        unblocks="a window ladder on stan-availability and stan-components at matched "
+                 "iteration counts with a paired bootstrap — minutes rather than hours, and "
+                 "it gates whether the expensive head is worth re-scoping",
+        source="docs/potential-to-dos.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("next", "architecture", "cost"),
+    ),
+    Decision(
+        id="composition-effects-is-its-own-target",
+        topic="minutes",
+        claim="The player-season / team-context ladder runs as **`make composition-effects`**, "
+              "writing its own artifacts, rather than as extra arms inside "
+              "`make stan-composition`.",
+        because="Three reasons, and the first is a build gate. (1) "
+                "`outputs/predictions/stan_composition_metrics.csv` is the incumbent's "
+                "record and `make docs-audit` re-derives eleven quoted figures from it, so a "
+                "partial run — three new arms, no `binomial`, no `betabinom`, at a pilot "
+                "window — would have failed the gate on bookkeeping rather than on a "
+                "measurement. (2) `docs/simulations-plan.md` says explicitly not to refit the "
+                "incumbent: its posterior is on disk and is the comparison baseline. (3) The "
+                "arm ORDERING and the full-window COMMITMENT are separate decisions, and "
+                "this head already took exactly that path once from Gate A to Gate E. The "
+                "ladder is four arms rather than three because a pilot-window ordering is "
+                "uninterpretable against a full-window baseline, so `base` — the shipped "
+                "specification on THIS window — is a same-window control, the same role "
+                "`season_trend_covered` plays in [[game-length-is-drawn-not-looked-up]].",
+        status="settled",
+        reproduce="make composition-effects → "
+                  "outputs/predictions/composition_effects_deviation.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("architecture", "provenance"),
+    ),
+    Decision(
+        id="the-minutes-deviation-is-barely-predictable",
+        topic="minutes",
+        claim="**The deviation a player-season effect is a parameter for is ~7.5% "
+              "predictable from pre-season information, and the team-context block is worth "
+              "+1.2 points of R2 of that.** Recorded as a null on the feature side and as "
+              "the argument for a random effect on the parameter side.",
+        because="`logit(realized minutes share) - logit(prior share)` over **8,570** "
+                "full-window training player-seasons has sd **0.5954**. Against it: the "
+                "player's own lag-1 deviation correlates **-0.2519** — mean reversion, not "
+                "persistence — departed teammates' prior share **+0.0411**, arrivals "
+                "**-0.0105**, net minutes opened **+0.0672**. In-sample R2 runs **0.0634** "
+                "from own history, **0.0699** adding roster churn, **0.0750** adding the "
+                "five-column team block; the block ALONE reads 0.0065. Every sign is right, "
+                "so the construction is sound and the magnitudes are the finding. This "
+                "promotes the scratch figures `docs/simulations-plan.md` had been quoting as "
+                "prose (-0.201 / +0.041 / -0.063 / +0.088, R2 0.040 -> 0.052) into an "
+                "artifact; the +1.2 points reproduces exactly and the individual "
+                "correlations reproduce in sign and rough magnitude on a differently "
+                "qualified population. **The implication is the item's whole design**: if "
+                "the deviation were forecastable you would add features, and it is not, so "
+                "you add a random effect and let the spread be honest. It is the same wall "
+                "the rest of the project hits, where availability persists at r = 0.317 and "
+                "five games of the real season settle 86% of the season total.",
+        status="measured",
+        reproduce="make composition-effects → "
+                  "outputs/predictions/composition_effects_deviation.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("architecture",),
+    ),
+    Decision(
+        id="injected-sigma-estimated-on-train-is-0.45",
+        topic="minutes",
+        claim="**The injection's sigma, re-estimated on TRAIN, is 0.450** — one grid step "
+              "from the 0.375 read off validation. The fallback in "
+              "[[player-season-effect-is-fitted-not-injected]] is therefore shippable today, "
+              "and ties the marginal head at the season unit.",
+        because="The injection's load-bearing caveat was that sigma is tuned on the split it "
+                "is scored against. `minutes_unification.estimate_sigma_on_train` runs the "
+                "identical grid — same arithmetic, same metric, same code path — over the "
+                "last two TRAINING seasons (2020-21, 2021-22; 1,145 player-seasons) and the "
+                "CRPS optimum is interior at **0.450** (117.07, against 117.45 at 0.375 and "
+                "119.55 at 0.600). **The agreement is the result**: two grids on disjoint "
+                "rows disagree by one step, and the two candidates are 0.4 CRPS minutes "
+                "apart on train and 0.7 on validation, so the figure was never moved by the "
+                "evaluation rows. At sigma 0.450 the validation reading is CRPS **142.87** "
+                "against the marginal head's 144.35 — gap **-1.49**, interval "
+                "[-6.14, +3.22], a TIE — with PIT KS **0.0659** against 0.0735, so it is the "
+                "better calibrated of the two at the season unit while the team constraint "
+                "still holds exactly. This does not retire the fitted version: only a fit "
+                "estimates sigma jointly with beta, and only a fit can shrink sigma in "
+                "response to features, which is Gate P4. What it does is take the schedule "
+                "risk out of the item — drafts happen before October and this needs no "
+                "refit. **SHIPPED 2026-08-09** as `sim.minutes.player_season_sigma`, and "
+                "applied by `minutes_unification.rehydrate_composition` rather than by the "
+                "simulator, so a consumer gets the effect by loading the head instead of by "
+                "remembering to apply it — which was the injection's worst property and "
+                "exactly the provenance failure this repo has been bitten by before. A "
+                "fitted `sigma_u` takes precedence automatically if one is ever persisted, "
+                "and 0.0 recovers the un-injected head exactly, which is the control every "
+                "claim here is measured against. The fitted version did not converge in the "
+                "budget available; see docs/potential-to-dos.md.",
+        status="settled",
+        reproduce="make minutes-unification → outputs/predictions/minutes_unification.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("architecture",),
+    ),
+    Decision(
+        id="simulator-minutes-draw-is-both-heads",
+        topic="simulations",
+        claim="**The simulator's minutes draw is an OPEN design question, and blending the "
+              "two heads is the worst of the three options.** Recommended: inject a "
+              "per-(player, season) effect into the composition's draw, which needs no "
+              "refit, keeps the team constraint, and ties the marginal head.",
+        because="This entry originally read 'take the allocation from the composition and "
+                "the season-level spread from the marginal head'. That is not the clean "
+                "composition it sounds like, and the sigma sweep in "
+                "[[a-season-term-cannot-widen-the-composition]] is what exposed it: "
+                "**independent per-player season multipliers are renormalized away by the "
+                "allocation step**, because the composition distributes a fixed pot, so the "
+                "spread does not survive the blend — and scaling after allocation breaks the "
+                "constraint instead. Worse, the marginal head's independence is not a "
+                "neutral simplification. On 963 single-team validation player-seasons its "
+                "mean pairwise teammate correlation is **-0.0001** against the **-0.0664** a "
+                "fixed team total forces at the measured 16.05-player roster size, and it "
+                "puts a **1,022.9**-minute predictive sd on a team season total that is "
+                "physically fixed near 19,810. The composition sits on the constraint at "
+                "-0.0509. Two strategy axes depend on that sign directly and are both in "
+                "the sweep's config: a same-team **stack**'s minutes are anti-correlated "
+                "rather than independent, and **handcuffing** a starter with his backup is "
+                "a hedge that exists only if the model carries the correlation — a head "
+                "without it cannot discover the strategy at all. So the order is: inject "
+                "the effect (no refit, sigma must be re-estimated on train first); or fit "
+                "sigma in Stan, which reopens supersession at the cost of a refit of the "
+                "project's most expensive head; and blend only as a last resort. "
+                "**Option 2 was chosen on 2026-08-09** — see "
+                "[[player-season-effect-is-fitted-not-injected]]; option 1 survives as that "
+                "item's named fallback if the fit blows the budget.",
+        status="open",
+        unblocks="build item 3d, then item 4 consumes whatever it settles",
+        reproduce="make minutes-unification → outputs/predictions/minutes_unification.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
         tags=("next", "architecture"),
     ),
     Decision(
@@ -3177,13 +3668,74 @@ REGISTRY: tuple[Decision, ...] = (
                 "frailty device the absence-spell process uses one level down, and the "
                 "natural fix for the plain geometric's only miss (it over-predicts 3OT+ by 3 "
                 "games in 2,460). Roughly 30 collapsed rows and 2-4 parameters: the cheapest "
-                "head in the project.",
-        status="open",
-        unblocks="make stan-game-length, registered in make posteriors",
+                "head in the project. **Built 2026-08-09** and it came in as sized: four Stan "
+                "fits, **0.3 s** of sampler time, 0 divergences, max R-hat **1.0048**. Both "
+                "gates pass — the summed OT-class error on the 2,460 validation games falls "
+                "from the incumbent's **22.97** to **9.42**, and the complete model clears the "
+                "no-fit floor on held-out log-likelihood per game. The frailty's stated "
+                "motivation turned out to be backwards; see "
+                "`overtime-depth-frailty-ships-for-the-posterior-not-the-fit`.",
+        status="built",
+        reproduce="make stan-game-length → "
+                  "outputs/predictions/stan_game_length_metrics.csv, "
+                  "outputs/predictions/stan_game_length_ppc.csv, "
+                  "outputs/predictions/stan_game_length_depth.csv, "
+                  "outputs/predictions/stan_game_length_diagnostics.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-09",
         date="2026-08-08",
-        tags=("next", "architecture"),
+        tags=("architecture",),
+    ),
+    Decision(
+        id="overtime-depth-frailty-ships-for-the-posterior-not-the-fit",
+        topic="simulations",
+        claim="The Beta frailty on overtime depth was motivated by a miss it does **not** "
+              "fix, and ships anyway — for a reason that is not fit quality.",
+        because="`docs/simulations-plan.md` argued the frailty is 'the natural fix for the "
+                "plain geometric's one miss — it over-predicts 3OT+ by 3 games in 2,460'. "
+                "Those 3 games are a *validation* OVER-prediction, and a frailty puts MORE "
+                "mass in the tail: the beta-geometric predicts **3.1** there against the "
+                "geometric's **3.0**, so it is marginally worse at exactly the miss it was "
+                "named for. What it does fix is the opposite miss on the fitting half, where "
+                "the geometric UNDER-predicts 3OT — **37** observed against **31.7** "
+                "geometric and **34.5** beta-geometric on 1,861 overtime games. On validation "
+                "the plain geometric leads by **0.00350** nats per overtime game over 138 of "
+                "them, about one 2OT game's worth of evidence, so the two are not "
+                "distinguishable there. It ships because it NESTS the geometric (kappa to "
+                "infinity, fitted at **37.7**) and is the only form of the depth model that "
+                "carries a posterior — which is the whole point of moving this off a pair of "
+                "hardcoded floats.",
+        status="measured",
+        reproduce="make stan-game-length → outputs/predictions/stan_game_length_depth.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("simulator-input",),
+    ),
+    Decision(
+        id="matchup-closeness-does-not-predict-overtime",
+        topic="simulations",
+        claim="`|prior-season net rating difference|` between the two scheduled teams is a "
+              "**null** for overtime — right sign, no value.",
+        because="The speculative third arm of the game-length ladder, and the plan expected a "
+                "null. It fits **−0.0119** per net-rating point, which is the direction the "
+                "story predicts (evenly matched teams should be likelier to be tied at the "
+                "buzzer), and still loses to its own same-window control by **−0.000270** "
+                "nats per game. The control is the load-bearing part: "
+                "`team_estimated_metrics_*.csv` starts at 2014-15, so the arm fits only "
+                "**8,289** of 30,626 training games, and without a matched control a loss "
+                "would not separate 'the covariate is worthless' from 'seven seasons cannot "
+                "fit a trend'. It separates them, and the answer is that the WINDOW is what "
+                "costs: on the short window the season slope degrades from **−0.00701** to "
+                "**−0.02901** logit per season and the OT-class error triples from 9.42 to "
+                "**35.48**. Recorded so the covariate is not rebuilt.",
+        status="null",
+        reproduce="make stan-game-length → "
+                  "outputs/predictions/stan_game_length_metrics.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("null-result",),
     ),
     Decision(
         id="overtime-rate-is-a-trend-not-a-wander",
@@ -3202,12 +3754,23 @@ REGISTRY: tuple[Decision, ...] = (
                 "overtime is where 40+ minute games come from (1,650 player-games exceed 48 "
                 "minutes, maximum 63.0), and under a best-ball weekly max plus a threshold "
                 "bonus an OT frequency 17% too high inflates every star's simulated ceiling, "
-                "which is the statistic a 2-of-12 pod is most sensitive to.",
-        status="measured",
-        reproduce="make game-length → data/features/game_length.parquet, "
-                  "outputs/eda/game_length_coverage.csv",
+                "which is the statistic a 2-of-12 pod is most sensitive to. **Fitted "
+                "2026-08-09** and it holds, with one caveat the measurement added: on the "
+                "`train` window the slope is **−0.00701** rather than −0.00893 (the plan's "
+                "figure is the full 30 seasons; selection may only read 26), extrapolating to "
+                "**0.0542** for 2026-27. The residual season rho is **2.49e-4** "
+                "[1.66e-5, 7.14e-4], 1.22x binomial at the posterior median — but on 26 cells, "
+                "against the uniform prior `betabinomial_glm.stan` deliberately puts on rho, "
+                "that leans upward, and a Pearson dispersion around the fitted trend reads "
+                "**0.91**, i.e. UNDER-dispersed. Read the fitted rho as an upper bound on the "
+                "wander, not a measurement of it. The conclusion is unchanged: the movement is "
+                "in the slope, which extrapolates to a season that has not happened, and not "
+                "in a residual spread, which does not.",
+        status="built",
+        reproduce="make stan-game-length → "
+                  "outputs/predictions/stan_game_length_metrics.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-09",
         date="2026-08-08",
         tags=("season-effects",),
     ),
@@ -3223,11 +3786,19 @@ REGISTRY: tuple[Decision, ...] = (
                 "shares its overtimes. It joins the four existing rules the season simulator "
                 "must not violate, and it is the kind of wiring error that produces a "
                 "plausible marginal and a wrong joint, which is exactly what this layer is "
-                "built to get right.",
-        status="settled",
-        reproduce="make game-length → data/features/game_length.parquet",
+                "built to get right. **Implemented 2026-08-09** as "
+                "`stan_game_length.sample_game_length(rng, n_games, draws)`, which returns "
+                "exactly `n_games` lengths and raises if handed a per-cell probability vector "
+                "instead of a per-game one — the truncation that would otherwise produce a "
+                "plausible season from the wrong frame. Three tests pin it: the shape, the "
+                "48/53/58 grid, and that the season frailty is shared across the slate rather "
+                "than drawn per game (checked in BOTH directions, since a per-game frailty "
+                "reproduces the marginal and shows binomial spread).",
+        status="built",
+        reproduce="make stan-game-length → "
+                  "outputs/predictions/stan_game_length_ppc.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-09",
         date="2026-08-08",
         tags=("architecture",),
     ),
@@ -3268,22 +3839,34 @@ REGISTRY: tuple[Decision, ...] = (
         topic="simulations",
         claim="The simulator's contract to everything downstream is a "
               "`player x scoring_period x sim` tensor of dk_pts — **never a player-game "
-              "array**.",
+              "array**. **Built 2026-08-09**: 386 x 20 x 2,000 plus a `uint8` games-played "
+              "twin, **77 MB** per season at **76 s** of numpy.",
         because="Best ball scores by scoring period, and there are only 20 of them (Round "
                 "1's 17 weeks plus three double weeks). At ~550 players and 2,000 sims "
                 "that is ~88 MB in float32 — small enough to hold for a whole strategy "
                 "sweep and to load into a draft room in under a second. Per-game draws "
-                "still happen inside the simulator, because the double-double bonus is a "
-                "per-game threshold on five components and E[bonus] != bonus(E[x]), but "
-                "they are summed into periods immediately. Fixing this contract is the "
+                "still happen inside the simulator, because the bonus is a per-game "
+                "threshold on five components and E[bonus] != bonus(E[x]) — and it is a "
+                "STAIRCASE rather than one step (+1.5 for a double-double, +3 more for a "
+                "triple-double, stacking to 4.5), so the convexity bites twice — but they "
+                "are summed into periods immediately. Fixing this contract is the "
                 "difference between a draft sweep that runs in minutes and one that runs "
                 "in hours, and it is what makes the sub-second in-draft recompute "
-                "achievable.",
-        status="settled",
-        reproduce="make component-targets → outputs/eda/bonus_calibration.csv",
-        unblocks="src/sim/season.py writes data/features/sim_tensor_<season>.npz",
+                "achievable. Two structural choices in the build were forced by identities "
+                "rather than chosen: the component heads are fitted at the SEASON unit, so "
+                "a per-game draw goes through the negative binomial's own Poisson-Gamma "
+                "representation (a season-level `Gamma(phi, 1/phi)` frailty per "
+                "player-sim, which IS the fitted head's season-total spread, plus per-game "
+                "Poisson noise), and a conversion head's `p` drawn once per player-sim with "
+                "a binomial per game sums to EXACTLY the fitted beta-binomial — which is "
+                "also what 'sequential structure goes on minutes and nowhere else' asks "
+                "for, both field-goal conversion heads being measured nulls for a hot hand.",
+        status="built",
+        reproduce="make simulate-season → data/features/sim_tensor_2022-23.npz, "
+                  "data/features/sim_tensor_2023-24.npz, "
+                  "outputs/predictions/sim_season_gate_a.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-09",
         date="2026-08-08",
         tags=("architecture",),
     ),
@@ -3293,24 +3876,112 @@ REGISTRY: tuple[Decision, ...] = (
         claim="Strategy tuning runs on **simulated truth with the model's measured "
               "out-of-sample error injected**. An uninjected simulated backtest cannot "
               "price ADP, exposure caps, or any other hedge against model error.",
-        because="A season drawn from the model's own posterior is a world where the model "
-                "is perfectly calibrated by construction, so ADP can only add noise and "
-                "the sweep drives alpha to zero for reasons that have nothing to do with "
-                "whether the market knows something. The same failure hits every "
-                "error-hedging strategy. So the truth draw is perturbed to reproduce the "
-                "measured miss — availability CRPS 10.006 games, component R2 0.81-0.95 "
-                "against the no-fit floors, season-total MAE 400.5 dk_pts — before "
-                "anything is scored against it. An uninjected sweep is not a conservative "
-                "version of this; it answers a different question and its alpha is not "
-                "transportable. Realized 2022-23 / 2023-24 remains the honest readout, at "
-                "N = 2 seasons.",
-        status="settled",
-        reproduce="make stan-components → outputs/predictions/stan_component_metrics.csv",
-        unblocks="Gate C in docs/simulations-plan.md",
+        because="A world drawn from the model's own posterior leaves the model an "
+                "unbiased, efficient predictor of it and the market a strictly noisier "
+                "view of the same thing, so the sweep drives alpha to zero for reasons "
+                "that have nothing to do with whether the market knows something. The "
+                "same failure hits every error-hedging strategy. The conclusion held when "
+                "it was built on 2026-08-09; the stated mechanism did not — see "
+                "`uninjected-world-is-not-too-easy`. What the injection actually does is "
+                "ROTATE the error onto the market-visible direction at fixed magnitude, "
+                "with the scale solved from the season-total MAE bar (400.46) and the "
+                "market weight solved from the realized market-minus-model Spearman gap. "
+                "Both land exactly. Realized 2022-23 / 2023-24 remains the honest readout, "
+                "at N = 2 seasons, and its edge is not distinguishable from zero.",
+        status="built",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_gate_c.csv, "
+                  "outputs/predictions/strategy_injection.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-09",
         date="2026-08-08",
         tags=("methodology",),
+    ),
+    Decision(
+        id="uninjected-world-is-not-too-easy",
+        topic="simulations",
+        claim="~~The uninjected simulated world is too easy, so the model looks better "
+              "there than it is.~~ **The magnitude of the model's miss is already right; "
+              "what is wrong is the market's standing against it.**",
+        because="Gate C's premise was a claim about magnitude and had never been measured. "
+                "Measured on 2026-08-09, the uninjected world reproduces the model's "
+                "out-of-sample miss on two of four rows and is HARDER than reality on the "
+                "other two: season-total MAE 414.97 / 398.96 against a bar of 400.46, "
+                "availability CRPS 10.0935 / 9.9387 against 10.0057, season-total R2 0.552 "
+                "/ 0.599 against 0.7073. That is what a head which shrinks hard delivers — "
+                "its predictive spread is about the size of its real error — and Gate A "
+                "had half-said it, with the simulator's season-total CRPS beating the "
+                "incumbent's against realized data. The real defect is that the simulated "
+                "error is orthogonal to everything: on realized validation seasons the "
+                "market's Spearman against season totals is ABOVE the model's by +0.052 "
+                "and +0.016, while in the model's own posterior world the model leads by "
+                "-0.111 and -0.118. Adding noise cannot fix that; noise is what the model "
+                "already has too much of relative to the market.",
+        status="withdrawn",
+        replaced_by="market-skill-gap-is-the-injection-target",
+        caught_by="make strategy-sweep — `magnitude_check`, the measurement the premise "
+                  "rested on and nobody had taken",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_gate_c.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("methodology", "strategy"),
+    ),
+    Decision(
+        id="market-skill-gap-is-the-injection-target",
+        topic="simulations",
+        claim="The error injection is calibrated to the **market-minus-model Spearman "
+              "gap**, not to the magnitude of the model's miss alone.",
+        because="A blend weight is priced against the two rankers' RELATIVE skill, and "
+                "that is the one thing a posterior-drawn world gets backwards. So the "
+                "injection solves two parameters rather than plugging any in: `g` holds "
+                "the season-total MAE on 400.46 and `rho` puts the simulated skill gap on "
+                "the realized +0.0521 / +0.0160. Both land exactly. `rho` comes back "
+                "0.4292 / 0.3999, and an INDEPENDENT route — the correlation between the "
+                "market's disagreement and the model's realized residual, sharing no "
+                "arithmetic with the first — reads 0.3083 / 0.3360, so the market sees "
+                "9.5-11.3% of the variance of the model's miss. Two Gate C rows are not "
+                "met and both are conservative: season-total R2 0.543 / 0.573 against "
+                "0.7073 and per-game rate R2 0.528 / 0.581 against the count heads' "
+                "0.81-0.95 floor band, i.e. the injected world is harder to rank in than "
+                "reality. The 0.81-0.95 band is the COUNT heads' carry-forward floor; read "
+                "off the selected rows of the same file it becomes [0.13, 0.96], which no "
+                "world could fail, and a test pins which rows it comes from.",
+        status="measured",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_gate_c.csv, "
+                  "outputs/predictions/strategy_injection.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("methodology", "market", "strategy"),
+    ),
+    Decision(
+        id="sweep-runs-on-the-priceable-board",
+        topic="simulations",
+        claim="The strategy sweep restricts the draft board to the **347-359 players the "
+              "tensor can price**, symmetrically for our entries and for the field.",
+        because="`make simulate-season` scores 386 of 539 rostered players and pads the "
+                "rest with ZEROS so a draft can still run into them. A model-ranked "
+                "strategy never takes one; measured on every run by drafting thirty pods on "
+                "the unrestricted board, the ADP field takes 1.2556 and 1.1861 per "
+                "sixteen-man entry across the two validation seasons and 73.06% / 74.72% of "
+                "its entries hold at least one, each a roster spot scoring nothing all "
+                "season. That is a coverage hole in the tensor arriving as a "
+                "handicap on one side of the comparison, and it was worth more than every "
+                "strategy axis combined: in a reduced-budget diagnostic before the fix a "
+                "PURE-ADP entry of our own read P(top 2 of 12) = 0.285 against an exact "
+                "0.1667, and model_mean read 0.43. "
+                "`make bracket` sees the same thing from the other end, where "
+                "the best-available benchmark reads p_advance = 1.0 in all five "
+                "tournaments. The cost is stated rather than hidden — who is on the board "
+                "at pick k changes, by 101 of 448 rows in 2022-23 and 16 of the 196 the "
+                "market prices — and the right fix is upstream, by pricing those players.",
+        status="settled",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_injection.csv, "
+                  "outputs/predictions/strategy_null.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("methodology", "strategy"),
     ),
     Decision(
         id="scoring-periods-are-nba-weeks",
@@ -3530,14 +4201,16 @@ REGISTRY: tuple[Decision, ...] = (
                 "10,000x entry, so above its round-2 floor it rewards correlated upside "
                 "and differentiation from the field; P(reach round 4) at random is "
                 "0.139%. Its rake hurdle is also 43% higher (+17.60% against +12.32%). "
-                "Confirming the sweep actually selects different rosters for the two is "
-                "Gate D.",
+                "Confirming the sweep actually selects different rosters for the two was "
+                "Gate D, and on 2026-08-09 it FAILED — see `tiers-share-one-board`. The "
+                "two stakes still ship, because the structures and the rake differ; what "
+                "does not differ is the roster, so it is one board entered twice.",
         status="settled",
         reproduce="make dashboard → dashboard/economics.py, "
                   "data/raw/dk_best_ball_tournament_metadata.csv, "
                   "data/raw/dk_best_ball_tournament_prize_structure.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-09",
         date="2026-08-08",
         tags=("economics", "strategy"),
     ),
@@ -3556,13 +4229,17 @@ REGISTRY: tuple[Decision, ...] = (
                 "itself goes through `selection_split` and never materializes the test "
                 "rows. Prose already failed once here: the games-played head's Gate D was "
                 "specified with test figures as its bars and settled which model ships, "
-                "on a margin a paired bootstrap could not distinguish from zero.",
+                "on a margin a paired bootstrap could not distinguish from zero. Half of "
+                "this landed on 2026-08-09: `make strategy-sweep` runs through "
+                "`selection_split`, is pinned by a test that raises before it loads any "
+                "artifact, and wrote the frozen strategy to "
+                "`outputs/predictions/strategy_shipped.csv`. The test-side runner is build "
+                "item 10 and has not been run.",
         status="settled",
-        reproduce="make final-evaluation → src/models/held_out.py, "
-                  "src/final_evaluation.py",
-        unblocks="src/sim/strategy.py and its final-evaluation counterpart",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_shipped.csv",
+        unblocks="build item 10, the one-shot test-split risk readout",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-09",
         date="2026-08-08",
         tags=("methodology", "split"),
     ),
@@ -3582,15 +4259,153 @@ REGISTRY: tuple[Decision, ...] = (
                 "because a fast clock can outrun a human and because the opponent model "
                 "needs DK's documented autodraft logic (queue → ranking → 8G/8F/3C caps) "
                 "regardless.",
-        status="settled",
-        reproduce="make adp-draftkings → "
-                  "data/raw/dk_draft_rankings/DkPreDraftRankings_July28_2026.csv, "
-                  "data/features/adp_draftkings.parquet",
-        unblocks="dashboard/draft_room.py and src/sim/draft.py",
+        status="built",
+        reproduce="make draft-sim → outputs/predictions/draft_reactive.csv, "
+                  "outputs/predictions/draft_field.csv",
+        unblocks="dashboard/draft_room.py",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-09",
         date="2026-08-08",
         tags=("strategy", "product"),
+    ),
+    Decision(
+        id="draft-field-is-recalibrated-adp-plus-rank-noise",
+        topic="drafting",
+        claim="`make draft-sim` ships the 12-entry, 16-round snake: opponents autodraft "
+              "off the **DK-recalibrated** consensus under DK's own 8G/8F/3C caps, and "
+              "**Gate B passes at 5.922 picks against a 17.0 bar**.",
+        because="Gate B is the field model's only real calibration target — observed ADP "
+                "is the field's own realized behaviour, so simulating many drafts and "
+                "taking each player's mean pick over the drafts he went in (DK's own "
+                "definition) must reproduce the curve the field consumed. Pooled over the "
+                "two validation seasons the mean absolute rank gap is 5.922 picks on the "
+                "fit region and 9.082 over every ADP'd player, against the "
+                "recalibration's own 17.0-pick cross-validated error. The ranking is "
+                "`draft_pool.adp_dk_scale` and never the raw consensus, which "
+                "docs/adp-plan.md binds: DK drafts centers 11.9 picks earlier because "
+                "category-league ADP discounts them for FT% while DK Best Ball pays "
+                "rebounds 1.25 and blocks 2.0 flat, and uncorrected that scoring-system "
+                "artifact reads as model edge on exactly one position. Noise goes on the "
+                "**rank** rather than the recalibrated value, because the fitted isotonic "
+                "map is 58 distinct values over 253 grid points and its 55-wide plateau "
+                "would make fifty-five players exchangeable.",
+        status="built",
+        reproduce="make draft-sim → outputs/predictions/draft_gate_b.csv, "
+                  "outputs/predictions/draft_adp_curve.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("artifact", "market", "gate"),
+    ),
+    Decision(
+        id="mean-adp-does-not-identify-a-constant-rank-noise",
+        topic="drafting",
+        claim="🔴 A **constant** rank noise is not identified by a mean-ADP target at all — "
+              "the whole sd 0-to-30 grid moves the objective by **0.110** picks in 2022-23 "
+              "and **0.117** in 2023-24, with the two seasons disagreeing about where "
+              "its optimum sits inside that band. A rank-**dependent** shape is, and both validation "
+              "seasons fit **sd = 4.00** independently.",
+        because="Under symmetric noise of any size E[pick] is the board rank for any "
+                "interior player, so a curve of *means* constrains the field's mean and "
+                "says almost nothing about its spread. The plan's instruction to fit "
+                "rank_noise_sd rather than choose it is what exposed that; choosing a "
+                "plausible value would have concealed that the data never spoke. The "
+                "tiered arm scales docs/adp-plan.md's measured tier disagreement (5.1 picks "
+                "in rounds 1-2 against 30.8 in rounds 9+) to mean 1 and fits one scalar, so "
+                "the ladder stays one-dimensional; it is pinned at both ends at once — the "
+                "observed consensus #1 goes at 1.05 and the tiered field puts him at 1.469 "
+                "against the constant arm's 2.479 at the same scale. Every grid point runs "
+                "from the same seed, so the flatness is the objective rather than Monte "
+                "Carlo error. The selected arm beats the no-noise floor by +0.044 picks, "
+                "which is NOT a result: what rules out "
+                "a zero-noise field is that every draft then plays out identically, so two "
+                "drafts share **100%** of a seat's roster (15.2% at the shipped sd) and the "
+                "35,280-entry field the bracket scores is twelve rosters repeated. No "
+                "marginal ADP statistic can see that.",
+        status="measured",
+        reproduce="make draft-sim → outputs/predictions/draft_gate_b.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("market", "gate", "caveat"),
+    ),
+    Decision(
+        id="opponent-strategy-is-a-registry",
+        topic="drafting",
+        claim="The opponent model is a **registry**, not a hard-coded field: a strategy "
+              "supplies static keys and an optional roster-aware bonus, and the engine owns "
+              "availability, the caps, exclusions and seatability.",
+        because="ADP-plus-noise is a first pass and is known to be missing things real "
+                "drafters do — accounting for the positions a roster still owes, and "
+                "positional runs. Making that an extension point rather than a rewrite is "
+                "what keeps the improvement cheap when real pick logs arrive. Three "
+                "strategies are registered: `adp` is the shipped field, `adp_need` is the "
+                "same thing leaning toward owed slots (built and switched off, because "
+                "nothing calibrates `need_weight`), and `ranking_submission` is an entry "
+                "being autodrafted off a submitted board — a real population in a cheap "
+                "field and the reason `sim.field.composition` is keyed by tournament. Field "
+                "composition varies by tier in the interface with nothing calibrating it: a "
+                "$20 field plausibly holds far more autodraft entries than a $52 one, in "
+                "the OPPOSITE direction from the rake maths, and one hard-coded field would "
+                "bake that in where nobody could see it.",
+        status="built",
+        reproduce="make draft-sim → outputs/predictions/draft_field.csv, "
+                  "outputs/predictions/draft_gate_b.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("architecture", "strategy"),
+    ),
+    Decision(
+        id="dk-caps-bind-autodraft-not-a-manual-pick",
+        topic="drafting",
+        claim="DK's 8G/8F/3C limits bind **autodraft** and not a person, so our own seat "
+              "drafts uncapped — and they imply no **minimum**, so a separate guard keeps "
+              "every drafted roster able to seat seven.",
+        because="The rules are explicit in both directions and each one is a plausible "
+                "wrong answer. 'The only way to override them once the draft starts is to "
+                "make a manual selection' — so applying the caps to the reactive seat would "
+                "silently forbid a roster a human may draft. And 8G + 8F + 0C satisfies "
+                "every cap while seating no centre, for which bracket.best_lineup returns a "
+                "plausible six-man total without raising; `require_legal_lineup` restricts a "
+                "seat whose remaining picks equal the slots it still owes, which is a guard "
+                "on scorability rather than a DK rule. A capped seat with no open position "
+                "falls back to the whole board rather than raising, which is what DK "
+                "documents.",
+        status="settled",
+        reproduce="make draft-sim → outputs/predictions/draft_reactive.csv, "
+                  "docs/dk_best_ball_rules.md",
+        source="docs/dk_best_ball_rules.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("rules", "strategy"),
+    ),
+    Decision(
+        id="real-pick-logs-are-the-missing-field-calibration",
+        topic="drafting",
+        claim="🎯 Entering ~20 cheap 12-entry pods and recording the pick order against the "
+              "contemporaneous DK board is the calibration the opponent model is missing, "
+              "and it is **not backfillable**.",
+        because="Gate B measured that an aggregate ADP curve constrains the field's mean and "
+                "essentially not its noise (0.110-0.117 picks across the whole sd grid), so "
+                "further ADP work cannot settle how a field behaves. A pick log identifies "
+                "four things directly: the noise level, from the VARIANCE of a player's pick "
+                "rather than its mean; whether the tiered shape is right at all; positional "
+                "runs, the largest dynamic ADP-plus-noise cannot generate and the reason "
+                "`adp_need` ships switched off; and the autodraft share, which is "
+                "`sim.field.composition`'s uncalibrated knob. ~$40 buys 3,840 picks, which "
+                "is a large sample for a two-parameter noise model. The board must be "
+                "captured alongside: a pick log without the contemporaneous board measures "
+                "the field's noise plus the board's drift, and DK's board has zero Wayback "
+                "presence and cannot be recovered afterwards.",
+        status="deadline",
+        due="2026-10-31",
+        unblocks="a field model calibrated on behaviour rather than on aggregates, and "
+                 "`need_weight` / `composition` becoming measurements",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("market", "capture", "strategy"),
     ),
     Decision(
         id="select-on-p-advance-report-roi",
@@ -3609,15 +4424,336 @@ REGISTRY: tuple[Decision, ...] = (
                 "also prices something scoring rounds independently cannot: the round-2 "
                 "to round-4 field is not an ADP field, it is the population that already "
                 "cleared a 2-of-12 cut, so an independent-field model would systematically "
-                "overstate continuation value.",
-        status="settled",
-        reproduce="make dashboard → dashboard/economics.py, "
-                  "data/raw/dk_best_ball_tournament_prize_structure.csv",
-        unblocks="src/sim/bracket.py and src/sim/strategy.py",
+                "overstate continuation value. **Measured in the draft room 2026-08-09 "
+                "and pricing all five captured structures turns the caveat into a "
+                "pattern**: the EV error tracks the ratio of the final table's size to "
+                "the population reaching it, so `88k_alley_oop` and `20k_spin_move` "
+                "reproduce the symmetric null exactly (-0.0%) while `15k_and_one`, "
+                "`50k_four_pt_play` and `600k_shootaround` read -2.7%, -4.2% and -17.2%. "
+                "The EV is trustworthy where the money is spread and untrustworthy where "
+                "it is concentrated. P(top 2 of 12) is exact in all five, because Round 1 "
+                "is a 2-of-12 cut in every one. On the ranking side, across two "
+                "independently drafted "
+                "fields the bracket-EV ranking keeps its top pick on 87.5% of board "
+                "states, with a rank correlation of 0.8771 and a top-3 overlap of 0.750 "
+                "on `600k_shootaround`, while P(top 2 of 12) keeps it on 100% at 0.9979 "
+                "and 1.000. Both statistics ship in the room; the EV is the objective and "
+                "P(advance) is the one that resolves.",
+        status="built",
+        reproduce="make draft-room-prep → outputs/predictions/draft_room_stability.csv, "
+                  "outputs/predictions/draft_room_null.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-09",
         date="2026-08-08",
         tags=("methodology", "strategy"),
+    ),
+    Decision(
+        id="tiers-share-one-board",
+        topic="drafting",
+        claim="**Gate D fails: the $20 and $52 tiers do not select materially different "
+              "rosters**, so one board serves both.",
+        because="In all six comparisons the cross-tier roster overlap sits inside the "
+                "within-tier band — 0.480 against 0.517 / 0.396 for the shipped arm in "
+                "2022-23 — and both tiers select the same strategy. That holds under a "
+                "tier-BLIND ranking, where the board key knows nothing about which payout "
+                "table it is drafting into and Gate D could only fail, AND under a "
+                "`bracket_ev` objective that prices each candidate against that "
+                "tournament's own pods, advance counts and cash bands (0.713 against 0.704 "
+                "/ 0.792). The mechanism is Round 1: both tournaments cut 2 of 12 in the "
+                "only zero-consolation round, so 83% of paths end identically and "
+                "everything the economics say about the tail — a 10,000x top prize against "
+                "a flat final table — moves the objective very little. "
+                "`two-strategies-two-tiers` said comparing the tiers is itself a result; "
+                "this is the result, and its practical consequence for October is one "
+                "board rather than two.",
+        status="measured",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_gate_d.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("economics", "strategy"),
+    ),
+    Decision(
+        id="alpha-has-a-sign-but-not-a-location",
+        topic="drafting",
+        claim="**Blending the market in pays and is resolved; which `alpha` is not.** The "
+              "shipped strategy is marginal-lineup-value ranking blended 30% into the "
+              "DK-recalibrated ADP rank.",
+        because="Paired on the simulated season — which is what makes anything resolve, "
+                "since unpaired intervals cover the whole table — every blend arm is at or "
+                "above the pure model and pure ADP loses decisively (-0.0576 and -0.0987 "
+                "of lift in P(top 2 of 12)). The blend is worth a further +0.0338 [+0.0237, "
+                "+0.0446] on top of the best in-draft objective, so it adds to the "
+                "positional pricing rather than substituting for it. But 600k_shootaround "
+                "peaks at alpha = 0.15 and 20k_spin_move at 0.70, with 0.30 and 0.50 "
+                "unresolved against zero at 600k: the axis has a sign and not a location. "
+                "That is Gate B's `rank_noise_sd` finding one layer up, and for the same "
+                "reason — a flat objective near its optimum. The per-round direction "
+                "`docs/adp-plan.md` predicts (lean on the market in the deep rounds, where "
+                "disagreement is 30.8 picks against 5.1) beats its own reverse control by "
+                "+0.0340 [+0.0266, +0.0423] at 20k and by an unresolved +0.0050 at 600k — "
+                "right where it resolves, never wrong.",
+        status="measured",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_paired.csv, "
+                  "outputs/predictions/strategy_shipped.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("market", "strategy"),
+    ),
+    Decision(
+        id="stacking-is-a-measured-loss",
+        topic="drafting",
+        claim="**Same-team stacking costs and buys nothing.** It does not ship.",
+        because="Against its own uncapped twin, a 12-pick stacking bonus costs -0.0179 "
+                "[-0.0244, -0.0119] and -0.0431 [-0.0507, -0.0358] of lift in "
+                "P(top 2 of 12) across the two tiers, and buys +0.0077 [-0.0039, +0.0181] "
+                "and -0.0401 of P(at least one entry advances). A 4-pick bonus is smaller "
+                "and the same sign. That is the direction the zero-sum minutes constraint "
+                "implies: a team's season minutes are a fixed pot, so teammates' totals are "
+                "anti-correlated at a measured mean pairwise r = -0.0509, and the shared "
+                "upside a stack buys (overtimes, blowouts) does not pay for it. The axis "
+                "was flagged as possibly mispriced with the WRONG SIGN under an "
+                "independent-minutes model; the composition head carries the sign, and the "
+                "answer is that the strategy is a loss rather than a hedge.",
+        status="null",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_paired.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("strategy",),
+    ),
+    Decision(
+        id="exposure-caps-trade-lift-for-breadth",
+        topic="drafting",
+        claim="**An exposure cap is a real trade with a measured price on both sides**, and "
+              "it cannot be selected by the criterion the sweep selects on.",
+        because="Against its own uncapped twin, a 40% cap costs -0.0461 [-0.0538, -0.0385] "
+                "of per-entry lift in P(top 2 of 12) and buys +0.0236 [+0.0142, +0.0332] of "
+                "P(at least one of the portfolio's entries advances). Neither dominates. "
+                "The two statistics are not two views of one quantity: ten entries holding "
+                "the same sixteen players have the SAME P(advance) as one entry and a much "
+                "lower P(any), which is `1 - prod(1 - p)` computed inside a simulated season "
+                "and not recoverable from per-entry means. Since "
+                "`select-on-p-advance-report-roi` selects on the per-entry figure, the cap "
+                "can only ever show up there as a cost — so the portfolio statistic is "
+                "reported beside it rather than instead of it, and the decision to ship "
+                "without a cap is a decision rather than an omission.",
+        status="measured",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_paired.csv, "
+                  "outputs/predictions/strategy_sweep.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("strategy",),
+    ),
+    Decision(
+        id="ev-and-survival-disagree-at-the-top-tier",
+        topic="drafting",
+        claim="At `600k_shootaround` the payout-weighted EV objective is the **worst** "
+              "resolved arm on P(top 2 of 12) and the **best** on ROI.",
+        because="`bracket_ev` reads -0.0225 [-0.0339, -0.0111] of lift against the model "
+                "baseline while returning ROI +61.8 against the shipped arm's +21.5. The "
+                "two criteria genuinely disagree, and the tournament is the one whose money "
+                "is in the tail: a P(advance)-maximal roster is a chalk roster, which the "
+                "draft room measured independently. `select-on-p-advance-report-roi` "
+                "settles which one selects — the lift, because it resolves and the ROI does "
+                "not — so the disagreement is recorded rather than smoothed. It is also the "
+                "sharpest argument for reading the lift and not the ROI level: at the "
+                "shipped field size the symmetric-field null's E[payout] is -15.0% for this "
+                "tournament and -0.0% for `20k_spin_move`.",
+        status="measured",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_paired.csv, "
+                  "outputs/predictions/strategy_sweep.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("economics", "strategy"),
+    ),
+    Decision(
+        id="realized-edge-is-not-distinguishable-from-zero",
+        topic="drafting",
+        claim="On the two realized validation seasons the shipped strategy's edge is "
+              "**+0.235 / +0.019** and **+0.172 / -0.026** in lift, i.e. not "
+              "distinguishable from zero.",
+        because="N = 2 seasons of correlated pods is the ceiling on the honest estimate and "
+                "the readout does not pretend otherwise — its intervals resample the FIELD "
+                "and the entries, because a season cannot be resampled and there are two of "
+                "them. 2022-23 is a good season in both tiers and 2023-24 is a wash in "
+                "which an ADP-drafted entry beat the shipped one (0.2545 against 0.1855, "
+                "and 0.2045 against 0.1412). The readout's job is to catch a strategy "
+                "broken in a way the simulated world cannot see, and nothing here is "
+                "broken; it is not a selector and it changed nothing. The simulated lift "
+                "(+0.211 / +0.199) is separately an UPPER bound, because the error "
+                "injection acts on the season-level rate and leaves the model's knowledge "
+                "of the distribution's shape exact.",
+        status="measured",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_realized.csv, "
+                  "outputs/predictions/strategy_shipped.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("methodology", "strategy"),
+    ),
+    Decision(
+        id="best-seven-is-one-matroid-exchange",
+        topic="drafting",
+        claim="A candidate's weekly-lineup lift is **one exchange**, not a re-solve: "
+              "`max(0, score − threshold[mask])` against a threshold computed once per "
+              "(period, sim). Exact, not approximate.",
+        because="`docs/simulations-plan.md` named a partial sort as one of the two levers "
+                "that make Gate E fit, and this is the exact form of it. `bracket."
+                "best_lineup` is matroid greedy, and for a matroid the max-weight basis "
+                "of `S + c` is either the old basis or a single exchange out of it — so "
+                "with the basis in hand a candidate costs one subtraction over "
+                "`[candidate, period, sim]` rather than a 16-step greedy over a "
+                "`[candidate, period, sim, 17]` gather. **Which player he displaces is "
+                "decided by Hall's condition, not by score**: the man he replaces must "
+                "relieve every tight constraint at once, so displacing the lineup's "
+                "lowest scorer outright is the plausible wrong answer — it lets a fifth "
+                "guard evict a centre. Pinned against `best_lineup` itself on "
+                "single-position and dual-eligible rosters, because a wrong threshold "
+                "still returns a ranked table.",
+        status="built",
+        reproduce="make draft-room-prep → outputs/predictions/draft_room_gate_e.csv, "
+                  "src/sim/draft_room.py",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("performance", "correctness"),
+    ),
+    Decision(
+        id="gate-e-passes-with-headroom",
+        topic="drafting",
+        claim="**Gate E passes with 5x of headroom**: 112 ms mean and 200 ms worst over "
+              "the full remaining pool at `n_sims = 500`, against a 1,000 ms bar. The "
+              "draft room is a recommender, not a ranking exporter.",
+        because="A 30-second fast-draft clock has to hold a recompute, a human reading "
+                "the table and a click, and the plan named the fallback if it could not: "
+                "export a static ranking plus exclusion list in DK's pre-draft-rankings "
+                "format. `make draft-sim` measured the earlier marginal-lineup-value "
+                "recompute at 0.76 s mean and 1.5 s max, over the bar — so the two levers "
+                "were required rather than optional. Both shipped: `n_sims = 500` in-draft "
+                "because the decision is a ranking of candidates rather than an estimate "
+                "of a level, and `best-seven-is-one-matroid-exchange`. The fallback stays "
+                "built (`draft.export_ranking`) and is now genuinely a fallback.",
+        status="built",
+        reproduce="make draft-room-prep → outputs/predictions/draft_room_gate_e.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("performance", "gate"),
+    ),
+    Decision(
+        id="a-pick-is-priced-inside-a-completed-roster",
+        topic="drafting",
+        claim="Every candidate is scored inside a **completed** roster — what we hold, "
+              "him, and the best available at each pick we have left — and the "
+              "completion fills the 2 G / 2 F / 1 C slate before taking best available.",
+        because="A payout is a step function of *place*, and place is a property of a "
+                "finished sixteen. Scored as the roster stands at pick 3, our entry sits "
+                "so far below a field of complete rosters that P(top 2 of 12) is zero for "
+                "every candidate and the ranking has no resolution at all. **The slate "
+                "order is not cosmetic**: the completion is the baseline every candidate "
+                "is measured against, so deferring the centre to the last forced pick "
+                "leaves a replacement-level centre in the base and prices every centre on "
+                "the board against that scrub — measured on 2022-23's opening pick, it "
+                "put five centres in the top seven and dropped Dončić to eighth. Filling "
+                "the slate first is `bracket.top_roster`'s existing convention. The cost "
+                "is one stated assumption: a candidate the completion already claims "
+                "prices at the same roster as every other such candidate, because taking "
+                "him now buys the sixteen we were going to have plus the spare — so they "
+                "tie, and `rank_cushion` breaks it.",
+        status="built",
+        reproduce="make draft-room-prep → outputs/predictions/draft_room_picks.csv, "
+                  "src/sim/draft_room.py",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("methodology", "strategy"),
+    ),
+    Decision(
+        id="injury-notes-are-shown-and-never-scored",
+        topic="drafting",
+        claim="The draft room displays both injury feeds beside the recommendation and "
+              "**never inside it** — the notes reach a human, not a value.",
+        because="This is the first thing in the project to show a drafter something the "
+                "model has not seen: nothing consumes either feed today, so the "
+                "availability head knows how much a player missed *last* season and "
+                "cannot know he had surgery in June. That gap is the reason to show it "
+                "and the reason to quarantine it. The feeds describe **today**, so on a "
+                "backtest board today's status IS the resolved outcome, and folding "
+                "either into a ranking is the leak `point-in-time-discipline` forbids — "
+                "one no split guard could catch, because the guards sit on frames rather "
+                "than on displayed text. A test pins the columns out of both the ranking "
+                "and the pick log. Three build findings: the NBA report is game-day and "
+                "its last report naming anybody is 2026-06-13, 57 days stale against "
+                "ESPN's 2026-08-03 snapshot of 148 players (67 on a validation board), so "
+                "the two are shown separately with their dates rather than blended; "
+                "neither feed carries a player id, so the name join gets uniqueness on "
+                "**both** sides as its second guard and refuses ambiguous keys rather "
+                "than guessing, since a wrong note costs a pick and shows up nowhere; and "
+                "a capture describing another season is flagged above the table, tested "
+                "by calendar-year overlap rather than by a month rule, which is what "
+                "`adp-freeze-rule` records getting wrong.",
+        status="built",
+        reproduce="make draft-room → src/sim/draft_room.py, dashboard/draft_room.py",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("product", "leakage"),
+    ),
+    Decision(
+        id="the-pick-log-is-autosaved-with-the-advice-attached",
+        topic="drafting",
+        claim="The draft room writes its pick log **after every pick**, and each row "
+              "carries what the room advised at the moment that pick was made.",
+        because="A draft is the one artifact in this project that cannot be regenerated — "
+                "every other figure is a `make` target away, and a pod is played once. "
+                "Autosaving beats a button that has to be remembered with eight seconds "
+                "on the clock, and 192 rows of CSV is microseconds. The advice columns "
+                "are the half that cannot be reconstructed afterwards: re-ranking from a "
+                "finished log would score each pick against a board state that did not "
+                "exist when it was made. On our own rows `cost_vs_best` is what "
+                "overriding the model cost by the model's own reckoning, which is the "
+                "only honest record of whether a human under a 30-second clock helps or "
+                "hurts; on an opponent's row the same columns price what the field took "
+                "against what our board wanted, so they are kept and `followed` is null "
+                "there rather than `False`. This is the capture "
+                "`real-pick-logs-are-the-missing-field-calibration` asks for, with the "
+                "board attached by construction. `outputs/` is gitignored like "
+                "`data/raw/`, so the log wants the same backup the DK boards do.",
+        status="built",
+        reproduce="make draft-room → src/sim/draft_room.py, dashboard/draft_room.py",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("capture", "product"),
+    ),
+    Decision(
+        id="draft-room-imports-src-sim",
+        topic="drafting",
+        claim="`dashboard/draft_room.py` is the **one** file in the dashboard package "
+              "allowed to import from `src/`, and the exemption is bounded at `src.sim` "
+              "by a test rather than waived.",
+        because="`dashboard/README.md`'s rule exists so a view cannot refit, re-project or "
+                "re-cluster — so what is rendered cannot drift from what was fitted. The "
+                "draft room is not a view; it drives a live decision, and what it needs "
+                "is `bracket.best_lineup` and `draft.legal_mask`. The alternative to "
+                "importing them is reimplementing the matroid that seats a weekly lineup "
+                "and the rules that decide which players are legal — which is the drift "
+                "the rule was written to prevent, arriving through the other door, and "
+                "`CLAUDE.md`'s 'never reimplement what exists' forbids it directly. So "
+                "`SRC_IMPORTERS` names the single file and a second test holds it to "
+                "`src.sim`, the numpy layer over the artifacts that imports no CmdStan: "
+                "an exempt page still cannot fit anything. Everything it computes lives "
+                "in `src/sim/draft_room.py`; the page is the surface.",
+        status="settled",
+        reproduce="make test → tests/test_dashboard.py, dashboard/README.md",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("architecture", "conventions"),
     ),
     Decision(
         id="dk-position-eligibility-from-rosters",
@@ -3633,12 +4769,297 @@ REGISTRY: tuple[Decision, ...] = (
                 "NBA.com → DK mapping gets validated against rather than assumed. The "
                 "2026-27 rosters do carry nulls, for unsigned and two-way players, and "
                 "the DK board covers exactly those.",
-        status="measured",
-        reproduce="make fetch → data/raw/team_rosters_2023_24.csv, "
-                  "data/features/adp_dk_id_map.parquet",
+        status="withdrawn",
+        replaced_by="**DraftKings is single-position.** Both boards print exactly one of "
+                    "`G` / `F` / `C` for every player — 1,640 rows across two seasons, "
+                    "zero duals — and DK's own label is 99.85% stable across them (1 "
+                    "change in 667 shared ids). NBA.com hands a dual to 18.2% of "
+                    "rostered players and DK hands out none, so the two are competing "
+                    "opinions rather than a coarse and a fine view. `POSITION` is still "
+                    "the right source and is still complete; what was wrong is that its "
+                    "duals are DK-shaped. See "
+                    "`dk-is-single-position-and-the-map-is-86-percent`.",
+        caught_by="`make draft-pool`, doing the validation this entry called for instead "
+                  "of assuming it. The disagreement is not a parsing artifact of one "
+                  "file: it reproduces independently on both boards, and every "
+                  "disagreement is between adjacent classes — there is not one G↔C swap "
+                  "in either board.",
+        reproduce="make draft-pool → outputs/eda/draft_pool_position_audit.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-09",
         date="2026-08-08",
+        tags=("joins", "rules", "reversal"),
+    ),
+    Decision(
+        id="dk-is-single-position-and-the-map-is-86-percent",
+        topic="drafting",
+        claim="A player is eligible at **exactly one** of G / F / C, because that is what "
+              "DK's own board says. Joined on the persistent DK id against the "
+              "contemporaneous 2025-26 roster, DK's letter equals NBA.com's **primary** "
+              "on **86.63%** of players and lies inside NBA.com's position set on "
+              "**92.61%**.",
+        because="Read the two halves of that measurement separately. Where NBA.com "
+                "commits to one letter DK contradicts it 9.02% of the time; where "
+                "NBA.com says tweener, DK always picks one of the two it named "
+                "(**100.00%**) but takes the primary only 67.03% of the time — on `G-F` "
+                "it is 16 G against 19 F. So mapping NBA.com onto DK's single slot is "
+                "~87% correct and the residual is genuine label disagreement, not a bug. "
+                "Granting both letters of a dual was measured and rejected: it never "
+                "misses DK's letter but hands a spurious second slot to 18.2% of "
+                "players, and a spurious eligibility inflates every lineup it touches. "
+                "Primary-only misassigns ~13% symmetrically, which is noise in *which* "
+                "slot a player fills; dual is an upward bias in every simulated score, in "
+                "exactly the direction that makes a strategy look profitable when it is "
+                "not. A fitted majority map was also rejected — it scores 87.2% against "
+                "86.6% and the whole difference is flipping `G-F` on a 19-vs-16 split, "
+                "which is a coin toss with a lookup table. Backtest seasons therefore "
+                "carry mapped positions and the production season carries DK's own, so "
+                "the backtest understates lineup fit — the conservative direction.",
+        status="measured",
+        reproduce="make draft-pool → outputs/eda/draft_pool_position_audit.csv, "
+                  "data/features/draft_pool.parquet",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
         tags=("joins", "rules"),
+    ),
+    Decision(
+        id="draft-pool-is-the-board",
+        topic="drafting",
+        claim="`make draft-pool` writes the board: one row per (season, player) with "
+              "team, single-class eligibility, ADP and the prior-season key — **13,105 "
+              "player-seasons over 31 seasons**, 942 of them the 2026-27 production "
+              "board.",
+        because="Membership is `team_context.season_start_roster` rather than the roster "
+                "CSV, because that CSV is a *current-status* snapshot — the 2025-26 file "
+                "carries `HOW_ACQUIRED = 'Signed on 03/04/26'` — and would put February "
+                "signings in an October draft pool. It is read for `POSITION` only, which "
+                "is a static attribute rather than a season outcome. 2026-27 has no game "
+                "log, so its pool is the DK board itself, which is the authoritative "
+                "answer rather than a fallback. **162 board rows carry no `player_id` and "
+                "are kept, not dropped**: they are the 2026 draft class, several of whom "
+                "go early (AJ Dybantsa at ADP 41.8), and the field takes them at their "
+                "ADP whether or not the model can score them — who is on the board at "
+                "pick k is the quantity a snake draft turns on. They get a negative "
+                "surrogate id that can never collide with an `nba_api` id, flagged "
+                "`has_nba_id`. 132 players (1.0%) get no position from any source and are "
+                "dropped as unslottable; they are a coverage hole in the 1996-2007 roster "
+                "files, worst 26 in 1996-97 and at most 4 in either validation season.",
+        status="built",
+        reproduce="make draft-pool → data/features/draft_pool.parquet, "
+                  "outputs/eda/draft_pool_coverage.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("artifact",),
+    ),
+    Decision(
+        id="adp-coverage-is-five-seasons-not-nine",
+        topic="drafting",
+        claim="Point-in-time-legal ADP covers **five** seasons, not the nine "
+              "`adp_panel.parquet` holds: 2014-15, 2022-23, 2023-24, 2025-26 and 2026-27.",
+        because="In 2017-18, 2018-19, 2019-20 and 2024-25 *every* archived snapshot "
+                "postdates the season's first game, so `adp.training_rows` admits none of "
+                "them — the board those seasons drafted on was never captured, and the "
+                "frozen value that survives is not the qualifying observation. Two "
+                "consequences. Both validation seasons survive, which is the coverage the "
+                "realized backtest needs (424 ADP'd players over 912 pool rows). But the "
+                "plan's 'cheap widening' to 2014-15 / 2017-18 / 2018-19 / 2019-20 loses "
+                "three of its four extra seasons, so that fallback is a two-season "
+                "widening. And 2024-25 — a test season — carries no legal ADP at all, "
+                "which item 10's risk readout has to account for.",
+        status="measured",
+        reproduce="make draft-pool → outputs/eda/draft_pool_coverage.csv",
+        source="docs/adp-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("joins", "leakage"),
+    ),
+    Decision(
+        id="weekly-lineup-is-an-assignment-problem",
+        topic="drafting",
+        claim="The best-ball weekly lineup is solved **exactly**, by matroid greedy — not "
+              "by seating each player in the first slot he fits.",
+        because="A week starts 2 G / 2 F / 1 C / 2 UTIL out of 16, and a dual-eligible "
+                "player put in the first slot he fits can lock a better player out of the "
+                "lineup entirely. On the roster `tests/test_bracket.py` pins, first-fit "
+                "scores **186** against the true **188** — it seats a G/F dual at guard, "
+                "which fills both guard seats and both UTIL seats with guards and strands "
+                "the fifth guard, so the lineup has to reach down to a 23-point centre. "
+                "The error is one-sided (it can only understate) and silent. No solver is "
+                "needed: a lineup's value depends on *which* seven are picked and never on "
+                "where they sit, and the seatable 7-subsets are the independent sets of a "
+                "transversal matroid, so sorting by score and keeping every player who "
+                "preserves seatability is provably optimal. Seatability is Hall's "
+                "condition — eight inequalities over the subsets of {G, F, C}, of which "
+                "the full set is the roster-size constraint. Sixteen vectorized steps, no "
+                "dependency. DK ships single-position players today "
+                "(`dk-is-single-position-and-the-map-is-86-percent`), so this costs "
+                "nothing now and is what makes `dual_*` a column swap rather than a "
+                "rewrite.",
+        status="built",
+        reproduce="make bracket → src/sim/bracket.py, outputs/predictions/"
+                  "bracket_structure.csv, outputs/predictions/bracket_entries.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("contest-rules", "algorithm"),
+    ),
+    Decision(
+        id="symmetric-field-null-is-the-brackets-gate",
+        topic="drafting",
+        claim="The bracket checks itself against the **symmetric-field null**: an "
+              "exchangeable entry advances at `n_advance / pod_size` and is worth exactly "
+              "`-rake`. All five captured tournaments reconcile to **1e-16**.",
+        because="The identity holds only if the pod sizes, the advance chain, the wildcard "
+                "fill and every cash band are simultaneously right, because a field of "
+                "identical entries must collect the whole prize pool and nothing more. "
+                "That makes it a single arithmetic check over the entire contest layer, "
+                "and it earned its keep twice on the day it was written. It caught a "
+                "tie-break that handed our own entries every tie — they carried a real "
+                "per-player split and the field a column of zeros, which is not a missing "
+                "level but a winning one — worth **+68%** on P(reach round 4) and the "
+                "difference between a -11% ROI and a **+71%** one. And it caught a "
+                "transcription error in the prize CSV: `15k_and_one` appeared to pay 24 of "
+                "its 42 finalists for $13,200 against a stated $15,000, while the other "
+                "four reconciled to the cent. A brute force over every pod-size assignment "
+                "consistent with the CSV found none that closed the gap, which is what "
+                "identified the rows rather than the inferred pods as the fault; the "
+                "source was corrected the same day.",
+        status="built",
+        reproduce="make bracket → src/sim/bracket.py, outputs/predictions/"
+                  "bracket_null.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("gate", "economics"),
+    ),
+    Decision(
+        id="survivor-population-is-weighted-not-selected",
+        topic="drafting",
+        claim="Rounds 2-4 face the selected survivor population, carried as a **weight per "
+              "field entry** rather than as a surviving subset.",
+        because="Scoring rounds independently against a fresh ADP field would overstate "
+                "continuation value, so the field is cut by the same pods and the same "
+                "ranking all the way through — that part is the plan's. What is not "
+                "forced is the representation, and selecting a subset does not work at "
+                "this contest's depth: `600k_shootaround` advances 1 in 720 across three "
+                "cuts, so a 3,000-entry stand-in leaves **four** entries at round 4 and an "
+                "entry's 48 opponents there are four entries repeated twelve times. Its "
+                "place collapses onto a handful of values, and against a 10,000x top prize "
+                "that is a large upward bias rather than noise — the symmetric-field null "
+                "read **+0.72** instead of -0.1497. A weight *is* the probability of "
+                "having survived, so the selection is preserved exactly while every atom "
+                "stays alive. Place is then `1 + #{pod-mates who outscored the entry}`, and "
+                "that count is **hypergeometric** in the survivor pool rather than "
+                "binomial, because a pod is dealt and not sampled with replacement — "
+                "invisible at round 1, where 11 pod-mates come from tens of thousands, and "
+                "decisive at the final round, where the pod *is* the whole surviving field "
+                "(49 finalists and 8). Drawing 7 of 8 without replacement is nearly "
+                "deterministic where `Binomial(7, u)` is not, and the spurious variance "
+                "runs through a payout curve convex in place, so it manufactures money: "
+                "**+0.08 of ROI** on `20k_spin_move`, visible only once the field was sized "
+                "at its true 432 entries. Wildcards are implemented on the same footing and "
+                "are dormant against all five captured structures, whose field-size chains "
+                "divide exactly.",
+        status="withdrawn",
+        replaced_by="**Tournament progression is dealt and ranked, not modelled.** The "
+                    "weighting existed only because the field had been sized by a knob; "
+                    "once it is the tournament's real `total_entries` the degeneracy it "
+                    "was written for cannot happen — 35,280 -> 5,880 -> 490 -> 49 are all "
+                    "real populations — so each round now shuffles the survivors, deals "
+                    "real pods, ranks them by the rules' cascade and carries the top "
+                    "`n_advance` forward. See "
+                    "`tournament-progression-is-dealt-not-modelled`.",
+        caught_by="Its own symmetric-field null, twice. The parametric place model cost a "
+                  "binomial pod-mate count where a pod is dealt *without* replacement "
+                  "(+0.08 of ROI on `20k_spin_move`) and an off-by-one on whether an entry "
+                  "joins the field or occupies one of its slots (last place reachable 0.016 "
+                  "of the time against 0.125 in a pod of 8). Both were patches to a model "
+                  "that should not have existed; the second failure is what prompted the "
+                  "question of why place was being modelled at all. The degeneracy the "
+                  "entry describes is real and stays on the record — a 3,000-entry "
+                  "stand-in leaves four survivors at round 4 against a 49-entry final "
+                  "table, and the null read +0.72 against an exact -0.1497. The wrong "
+                  "lesson is that the survivor population needs a model; the right one is "
+                  "that the field size is a structural number.",
+        reproduce="make bracket → src/sim/bracket.py, outputs/predictions/"
+                  "bracket_structure.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("contest-rules", "monte-carlo"),
+    ),
+    Decision(
+        id="tournament-progression-is-dealt-not-modelled",
+        topic="drafting",
+        claim="Rounds are **dealt and ranked**, not modelled: the whole contest is played "
+              "out at its real field size, and an entry's place is its place.",
+        because="Each round shuffles the survivors, deals them into real pods, ranks each "
+                "pod by the rules' own cascade and carries the top `n_advance` forward, "
+                "with our entries simply *in* the field at known rows — which is what DK "
+                "does with them. There is no distribution over pod-mates to get right, no "
+                "survivor-population approximation, and the tie-break is applied within the "
+                "contest actually being decided rather than over a global ordering. Two "
+                "quantities that were Monte Carlo estimates become **exact identities**: "
+                "every round's survivor count equals the published field size, and the "
+                "payouts sum to the prize pool — measured at **0.00e+00** error for all "
+                "five tournaments. All five are simulated rather than only the two being "
+                "entered, at the cost of one scoring pass, because four structures the "
+                "money is not going into are four more chances for a structural bug to "
+                "surface.",
+        status="built",
+        reproduce="make bracket → src/sim/bracket.py, outputs/predictions/"
+                  "bracket_structure.csv, outputs/predictions/bracket_null.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("contest-rules", "simplification"),
+    ),
+    Decision(
+        id="bracket-field-is-the-real-entry-count",
+        topic="drafting",
+        claim="The simulated field is each tournament's own **`total_entries`** — 35,280 "
+              "for `600k_shootaround`, 432 for `20k_spin_move` — and not a knob.",
+        because="It is a structural number and belongs with the others in "
+                "`dashboard/economics.py`, but it is also load-bearing rather than "
+                "cosmetic: the final round is one contest of everyone who reached it, so "
+                "the field size *is* the last pod (49 and 8), and the survivor population "
+                "at every earlier round is the real one instead of a stand-in for it. "
+                "Sizing it by hand was what let `600k_shootaround`'s round 4 be decided "
+                "against four entries. `--n-field` still subsamples for fast iteration, "
+                "and the artifact records `field_is_real` so a subsampled run cannot be "
+                "mistaken for a real one.",
+        status="built",
+        reproduce="make bracket → outputs/predictions/bracket_null.csv, "
+                  "data/raw/dk_best_ball_tournament_metadata.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("economics", "contest-rules"),
+    ),
+    Decision(
+        id="draft-pool-is-the-wrong-frame-for-the-split",
+        topic="drafting",
+        claim="The train/validation split must **not** be derived from "
+              "`draft_pool.parquet`. It carries the live 2026-27 board, so "
+              "`selection_split` returns 2023-24 and **2024-25** as validation — one "
+              "season forward, and 2024-25 is held out.",
+        because="`src/models/held_out.py` makes the test split a capability, but the guard "
+                "sits on the *frame* it is handed and cannot see that the frame is wrong. "
+                "`make bracket`'s first version derived its seasons from the draft pool "
+                "and ran a full backtest on 2024-25 without raising, because by that "
+                "frame's reckoning 2024-25 was validation. The pool is right to carry "
+                "2026-27 — that is the production board — so the fix is on the consumer: "
+                "the split comes from the component design `make simulate-season` builds "
+                "its tensors against, which is also the only frame that can be right, "
+                "since the bracket scores those tensors. Pinned by a test that re-locks "
+                "the guard first, since `conftest` unlocks the suite.",
+        status="built",
+        reproduce="make bracket → src/sim/bracket.py, src/models/held_out.py",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("split", "leakage"),
     ),
 )

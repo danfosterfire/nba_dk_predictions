@@ -33,7 +33,8 @@ to the relevant docs for the task at hand. The docs are:
   - dk_best_ball_rules.md: Copy of the tournament rules for draft kings best 
   ball tournaments **always read this**.
   - docs-audit.md: How the two documentation guards work — `make docs-audit` 
-  (re-derives every quoted figure from its artifact, a gate) and `make 
+  (re-derives every quoted result from its artifact, a gate; sampler timings are 
+  presence-checked only) and `make 
   dashboard-audit` (registry drift, a report). Read this before editing a 
   quoted figure or adding a doc to the audit.
   - eda-plan.md: Plan and notes for exploratory data analysis and feature 
@@ -52,6 +53,10 @@ to the relevant docs for the task at hand. The docs are:
   - old_readme.md: Archival project context. Superceded by @README.md.
   - pipeline.md: Lists and describes the make files used to implement the 
   project pipeline. 
+  - potential-to-dos.md: Parking lot for measurable ideas that are not yet 
+  scheduled — what to compare, what evidence points at it, and what would 
+  settle it. Not commitments and not results; deliberately outside 
+  `make docs-audit`.
   - predictions-plan.md: Plan and notes for the models for the various box-score 
   statistics that feed into the *dk_pts* figure. Work completed and mostly 
   archival.

@@ -18,6 +18,17 @@ removed on 2026-08-08; commit `e8e58b0` holds it.
 > or re-cluster anything — it opens files. `test_the_dashboard_imports_nothing_from_src`
 > walks the package with `ast` and fails if one appears.
 
+**One page is exempt and the exemption is pinned rather than waived.** `draft_room.py` is
+not a view — it drives a live draft under a thirty-second clock — and it needs
+`bracket.best_lineup` and `draft.legal_mask`. The alternative to importing them is
+reimplementing the matroid that seats a weekly lineup and the rules that decide which
+players are legal, which is the drift the rule exists to prevent arriving through the
+other door. So `SRC_IMPORTERS` in `tests/test_dashboard.py` names the one file and
+`test_the_one_exempt_page_reaches_no_further_than_the_simulation_layer` holds it to
+`src.sim` — numpy over the artifacts, importing no CmdStan — so an exempt page still
+cannot refit anything. Everything it computes lives in `src/sim/draft_room.py`; this file
+is the surface. Registered as `draft-room-imports-src-sim`.
+
 Where a view *interprets* an artifact — naming a principal component, say — the
 interpretation carries a machine-checkable anchor so it cannot silently invert. See
 `pca.COMPONENTS` and `pca.orient()`.
@@ -28,6 +39,8 @@ interpretation carries a machine-checkable anchor so it cannot silently invert. 
 dashboard/
   README.md       this file
   app.py          the PCA fingerprint view: page, controls, layout
+  draft_room.py   the live draft room — `make draft-room`. A separate page, not a tab of
+                  app.py, and the one file that imports src/ (see above)
   pca.py          its pure layer — orientation, SD scaling, loadings, neighbours
   charts.py       fig_radar / fig_loadings
   theme.py        SERIES, THEMES, ALL_PAIRS_CAP, theme(), apply_theme(), ordinal_colors()

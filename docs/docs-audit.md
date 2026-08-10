@@ -73,6 +73,28 @@ historical claim is excluded from the value check and still presence-checked, so
 mode it guards is **deletion**, not drift. There are 56 of them. Without the flag the only
 options are to "correct" a reversal out of existence or to leave it unprotected.
 
+**Sampler wall clock is presence-checked too, and for a different reason — added
+2026-08-09.** Anything derived from `COST_COLUMNS` (`wall_clock_s`, `probe_hours`,
+`fit_seconds`) is exempt from the value check: **31 claims**, every wall clock, every
+"sampler minutes", every share-of-sweep ratio. Every other figure here is a property of the
+data and reproduces exactly at a fixed seed; a timing is a property of the *machine* and of
+whatever else is running on it. Re-running `make stan-minutes` at identical data and seed
+reproduced every statistical figure to the digit and moved its four timings by up to 32%,
+because another head was sampling on the other cores — the gate failed on six figures, none
+of which said anything about the model.
+
+The cost of leaving it strict is worse than the noise: it puts the project in a position
+where the only way to pass a **gate** is to spend sampler hours re-measuring a number nobody
+consumes, which is exactly the refit aborted on 2026-08-09. A gate satisfiable only by
+burning compute on a non-result teaches people to stop trusting the gate.
+
+Two deliberate limits. It is **narrow** — a claim reading `max_rhat` or `divergences` from
+the same diagnostics CSV stays a hard failure, which is where an overlong run from bad
+geometry surfaces now that the timing does not. And it is **automatic**, keyed on the
+artifact column actually read rather than on a per-claim flag, so a timing claim added later
+inherits it without anyone remembering; `tests/test_docs_audit.py` pins both halves, plus
+that the exemption has not quietly swallowed the registry.
+
 **Extending it to the three new docs found drift in all three**, which is the argument for
 having built it: the serial-correlation table in `predictions-plan.md` (twelve rows, refreshed
 in `CLAUDE.md` and not here), the roster-coverage and residual-correlation figures corrected in

@@ -254,6 +254,24 @@ stan:
     # `stan_games_played.probe_timing`.
     max_extrapolated_hours: 6.0
 
+  # The game-length head — docs/simulations-plan.md, "The second prerequisite". Whether a
+  # game goes to overtime and how deep, so a FORWARD simulation can draw a length instead
+  # of looking one up. It sits under `stan:` rather than under `sim:` because it is a
+  # fitted model; only its draws are a simulator input.
+  game_length:
+    # Depth counts 33,433 / 1,821 / 250 / 37 / 5 over 35,546 regular-season games; nothing
+    # past 4OT. Continuation is 0.1382 / 0.1438 / 0.1190 by depth, so a geometric in depth
+    # covers 2OT-4OT for free and there is no depth dependence to fit.
+    arms: [floor, season_trend, season_trend_matchup]
+    # Regular season only, matching every other fitting frame and the contest window.
+    season_type: regular
+    # Half-normal scale on the beta-geometric concentration, mirroring games_played.
+    kappa_scale: 25.0
+    # Cells for the matchup arm only. A beta-binomial at one game per row is a Bernoulli
+    # and its dispersion is unidentified, so the per-game gap is binned; the edges are
+    # quantiles of the FITTING half.
+    matchup_bins: 10
+
   # The team-game minutes composition head — docs/minutes-composition-plan.md.
   composition:
     # The frame is built over every season (lags and the expanding rookie prior need
@@ -264,9 +282,63 @@ stan:
     # Joint draws kept per predictive. Each is a full sequential allocation of every
     # team-game, so this is the wall-clock knob for scoring, not for fitting.
     predictive_samples: 200
+    # Whether `make posteriors` fits the composition WITH the per-(player, season) random
+    # effect and the team-context block. Both default OFF, so the persisted head is the one
+    # `make stan-composition` selected until `make composition-effects` says otherwise —
+    # this module persists what shipped rather than re-deciding it. Turning
+    # `player_season_effect` on changes what the artifact carries (`sigma_u_draws`, and a
+    # predictive that consumes it) and costs a refit of the project's most expensive head
+    # under `diag_e`; see docs/simulations-plan.md, "Fitting sigma".
+    player_season_effect: false
+    team_context: false
     # Gate A: abort before the sweep if the one-season timing probe extrapolates the
     # six-fit sweep past this many hours.
     max_extrapolated_hours: 24
+
+    # ── Item 3d — `make composition-effects`, src/models/composition_effects.py ──
+    # The per-(player, season) random effect (`sigma_u` in composition_glm.stan) and the
+    # team-context block. Its own target rather than an extension of the sweep above,
+    # because `outputs/predictions/stan_composition_metrics.csv` is the incumbent's record
+    # and `make docs-audit` re-derives eleven quoted figures from it — a partial run would
+    # overwrite them with figures answering a different question.
+    effects:
+      # The PILOT window, deliberately: 97,587 rows / 2,204 units against the full
+      # window's 631,158 / 12,307. Get the arm ordering here, then commit the selected arm
+      # to the full window. This head took exactly that path once already.
+      first_season: "2018-19"
+      # `base` is the shipped specification refitted on THIS window — a same-window
+      # control, not a refit of the incumbent, and it exists for the same reason
+      # `stan_game_length`'s `season_trend_covered` does: a pilot-window arm ordering is
+      # uninterpretable against a full-window baseline.
+      #
+      # ORDERED BY DECISION VALUE, not by cost, with one exception. `base` runs first
+      # because it is cheap and exercises the whole pipeline — scoring, the season-unit
+      # comparison, the artifacts — before hours are spent, which is the same
+      # "cheapest first, so a plumbing failure surfaces in seconds" rule `make stan`
+      # follows. Then `ps`, which alone decides P2 and P3. Each arm checkpoints as it
+      # lands, so a run that is cut short still leaves the gates that decide the item.
+      #
+      # `ps_team` IS DELIBERATELY NOT HERE, and that is a measured decision rather than a
+      # budget cut. It exists for Gate P4 — does the team block reduce fitted `sigma_u`? —
+      # and `make composition-effects` already answered the question P4 is a proxy for, on
+      # 8,570 training player-seasons and without a sampler: the block is worth +1.2 points
+      # of R2 on a deviation that is 7.5% predictable in total. A 6.3 h fit cannot resolve
+      # that better than the regression did, so the arm buys a null we have already priced.
+      # `team` stays because it is ~30 min under `dense_e` and prices the same block at the
+      # per-team-game unit, which the deviation regression does not reach. Put `ps_team`
+      # back if `ps` passes P2 and the team block is wanted in the shipped arm.
+      arms: [base, ps, team]
+      warmup: 500
+      samples: 500
+      # Half-normal scale on sigma_u. Weakly informative by ~2x against the injection's
+      # measured 0.375-0.45, so Gate P5 is a replication rather than a foregone conclusion.
+      u_sd_scale: 1.0
+      # Matches `max_extrapolated_hours` above rather than being tighter: Gate A here
+      # probes the `ps` arm — the one carrying the cost risk — and the measured
+      # extrapolation for the four-arm pilot is most of a day. That is a real budget for
+      # this head (`make stan-composition` itself is 9.92 h), so the gate exists to catch a
+      # run that is worse than that, not to refuse the one the plan specifies.
+      max_extrapolated_hours: 24
 
 # ── The simulation and drafting layer (src/models/posteriors.py, src/sim/) ────
 # `docs/simulations-plan.md` specifies the whole block. Only the keys a built module
@@ -279,6 +351,12 @@ sim:
   # `season_terms._draw_components` records: a front slice takes a different part of the
   # posterior from each head, silently.
   posterior_draws: 1000
+  # Simulated seasons per target season — `make simulate-season`. Sim `s` uses posterior
+  # draw `s % posterior_draws` for EVERY player and every head, so at 2,000 sims over 1,000
+  # draws each draw generates two boards. That mapping is the layer's rule 4: players share
+  # `beta`, so one draw has to move the whole board together. The tensor is
+  # players x 20 x n_sims float32 plus a uint8 twin, ~90 MB at 450 players.
+  n_sims: 2000
   # THE DEFAULT IS `train`, and the reason is the realized backtest. It replays simulated
   # portfolios against real 2022-23 / 2023-24 box scores — the validation seasons — and at
   # `train_val` every one of those rows is in the fit (883 of 10,361 availability rows, 773
@@ -295,6 +373,29 @@ sim:
   # never scored against realized data; coefficients generate the board that is.
   fit_window: train
 
+  # ── The minutes draw ──────────────────────────────────────────────────────
+  # THE SHIPPED per-(player, season) effect size, injected into the composition's linear
+  # predictor at draw time. `make minutes-unification` measured the composition's season
+  # totals 4.68x too narrow and traced it to this missing parameter; injecting `sigma * z`
+  # per unit per posterior draw and re-running the head's OWN sequential allocation moves
+  # the season-total predictive sd from 64.65 to 280.87 and TIES the marginal head
+  # (CRPS 142.87 against 144.35, gap -1.49 [-6.14, +3.22]), with better calibration
+  # (PIT KS 0.0659 against 0.0735) and the team constraint still exact.
+  #
+  # **0.450 is estimated on TRAIN**, by running the identical grid over the last two
+  # training seasons — so it owes the evaluation split nothing, which was the injection's
+  # one load-bearing caveat. Five independent routes agree: 0.375 (validation CRPS grid),
+  # ~0.41 (calibration target — the ratio of the head's residual sd to its predictive sd),
+  # 0.450 (train CRPS grid), 0.4776 and 0.4809 (fitted in Stan, non-centred and centred).
+  #
+  # A FITTED `sigma_u` is strictly better in two respects — beta estimated jointly with it,
+  # and the predictive integrating over sigma's posterior rather than plugging one in — and
+  # `composition_glm.stan` carries the parameter. It is not shipped because it costs ~6 h
+  # per arm even at a 4-season window and did not converge in the budget available; see
+  # docs/potential-to-dos.md. Set to 0.0 to recover the un-injected head exactly.
+  minutes:
+    player_season_sigma: 0.450
+
   # `make scoring-periods` — the NBA week grid and DK's rounds on top of it.
   scoring_periods:
     # DK's tournament shape in NBA weeks: Round 1 is 17 weeks, then three double
@@ -304,6 +405,134 @@ sim:
     # 2025-26's week 17 closes 2/12. The week counts are what carries across seasons,
     # so they drive the map and the calendar comparison is printed as drift.
     round_weeks: [17, 2, 2, 2]
+
+  # The two tournaments that go live this year, and how many entries each takes.
+  # Near-equal stake — $200 against $208 — across two structures whose objectives differ
+  # in shape rather than scale, which is why comparing them is itself a result
+  # (`two-strategies-two-tiers`). The NAMES are keys into
+  # data/raw/dk_best_ball_tournament_metadata.csv, and every structural number behind
+  # them — round count, pod size, advance count, cash table — is derived by
+  # dashboard/economics.py rather than repeated here. Adding a third tournament is a
+  # line here plus a row there; nothing in src/sim/ knows a tournament by name.
+  tournaments:
+    600k_shootaround: {entries: 10}
+    20k_spin_move: {entries: 4}
+
+  # `make bracket`. There is NO field-size knob: each contest is played at its own
+  # `total_entries` from data/raw/dk_best_ball_tournament_metadata.csv — 35,280 down to
+  # 216 — like every other structural number, and all five are simulated rather than only
+  # the two being entered. They cost one scoring pass between them: the field is drafted
+  # once per season at the largest size and each contest takes the prefix it needs, which
+  # is valid because entries are exchangeable and every field size is a multiple of the
+  # 12-entry round-1 pod.
+  #
+  # The size is load-bearing, not just sample size. The final round is one contest of
+  # everyone who reached it, so the field size *is* the last pod (49 and 8 for the two
+  # targets), and 600k_shootaround advances 1 in 720 across three cuts: against a
+  # 3,000-entry stand-in its round 4 was decided by four surviving entries and the
+  # symmetric-field null read ROI +0.72 instead of the exact -0.1497. That is the convexity
+  # of a 10,000x top prize against a degenerate pool, not noise — and it is what made an
+  # earlier version reach for a parametric progression model, since withdrawn.
+  bracket:
+    # Simulated seasons. The field's per-period array is entries x 20 x n_sims float32, so
+    # this is the memory knob: 0.71 GB at 600k_shootaround's real field size.
+    n_sims: 250
+    # Exchangeable entries scored alongside, to reproduce the symmetric-field null
+    # empirically. Their P(advance) must come back at n_advance / pod_size and their ROI
+    # at -rake; both are known exactly, so they check the payout wiring end to end.
+    n_null: 250
+
+  # ── The opponent field — `make draft-sim` ─────────────────────────────────
+  # In-draft sims for the reactive recommender. The in-draft decision is a RANKING of
+  # candidates, not an estimate of a level, so it does not need the sweep's 2,000.
+  n_sims_draft: 500
+  pod_size: 12
+
+  # ── The live draft room — `make draft-room` ───────────────────────────────
+  draft_room:
+    # Twelve-seat pods of the fitted field, drafted and scored ONCE per season and cached
+    # to data/features/draft_room_field_<season>.npz. This is the population `q` — the
+    # probability a pod-mate outscores us — is read from, so it decides the resolution of
+    # every EV the room prints. 100 pods (1,200 entries) reproduce `20k_spin_move`'s
+    # symmetric-field null to -0.03% and cost ~13 s to build; `600k_shootaround` reads
+    # -17% because two thirds of its EV sits in a 49-seat final table that 0.139% of
+    # entries reach, and that does not converge at any affordable size — 300 pods buys
+    # -7.7% for 43 s and does NOT make the ranking more stable. See
+    # `draft_room_stability.csv`.
+    field_drafts: 100
+    # Which of the three registered objectives the table is ordered by. `bracket_ev` is
+    # the decision-5 objective and the default; `p_advance` is P(top 2 of 12), the one
+    # figure here that reproduces its analytic value exactly and the statistic
+    # docs/simulations-plan.md says the strategy sweep selects on.
+    objective: bracket_ev
+    # Our seat in the twelve-entry pod, zero-indexed. DK randomizes it once the lobby
+    # fills, so this is set in the page rather than trusted from here.
+    seat: 0
+
+  # ── The strategy sweep — `make strategy-sweep` ────────────────────────────
+  strategy:
+    # Simulated worlds each strategy is scored on. Our entries and the field share them,
+    # so every comparison is PAIRED and resolves far faster than the count suggests.
+    n_sims: 500
+    # Twelve-seat pods in the reference field, drafted once per season on the injected
+    # world and reused across the whole table. The same caveat draft_room records: the
+    # advance rate is exact at this size and 600k_shootaround's EV level is not.
+    field_drafts: 100
+    # GATE C. Disabling the injection changes the question being asked, so there is no
+    # switch here — what the injection does is CALIBRATED rather than chosen, from two
+    # measurements taken on realized validation seasons:
+    #   * the season-total MAE bar (400.46, season_total_metrics.csv) fixes the scale;
+    #   * the MARKET SKILL GAP — spearman(ADP, realized) minus spearman(model, realized) —
+    #     fixes how much of the error the market can see.
+    # The second is the one the plan did not name and it is the one that matters. The
+    # uninjected world already reproduces the model's measured miss in MAGNITUDE (419.6
+    # against 400.5 on 2022-23); what it gets backwards is the two rankers' relative
+    # standing, leading by +0.11 Spearman where reality has the market ahead by +0.06.
+    # A blend weight priced in that world is priced against a market that is a strictly
+    # noisier copy of the model, which is exactly what Gate C exists to prevent.
+    error_injection:
+      targets: [season_total_mae, market_skill_gap]
+
+  field:
+    # docs/adp-plan.md binds this: never the raw consensus. A Yahoo/ESPN consensus
+    # correlates with the one real DK board at rho 0.870 but with a 21.9-pick mean absolute
+    # rank gap, and DK drafts centers 11.9 picks earlier because category-league ADP
+    # discounts them for FT% while DK Best Ball pays rebounds 1.25 and blocks 2.0 flat.
+    # Uncorrected, that scoring-system artifact would read as model edge on exactly one
+    # position. `draft_pool.adp_dk_scale` is the recalibrated column.
+    adp_source: dk_recalibrated
+    # BOTH ARE FITTED BY GATE B, not chosen — null means "read the selected row from
+    # outputs/predictions/draft_gate_b.csv", the same rule src/final_evaluation.py follows
+    # for which arm shipped. A literal number here would be a second source of truth.
+    #
+    # What the fit found, and it is the reason the plan said fit rather than choose: a
+    # CONSTANT rank noise is not identified by a mean-ADP target at all. E[pick] is the
+    # board rank for any interior player under symmetric noise of any size, so the whole
+    # grid is flat to a few hundredths of a pick. A rank-DEPENDENT shape is identified,
+    # because it is pinned at both ends at once — the top of the board, where the observed
+    # curve is nearly deterministic (the consensus #1 goes at 1.05), and the deep rounds,
+    # where it compresses.
+    noise_model: null
+    rank_noise_sd: null
+    # DK's own autodraft defaults, from docs/dk_best_ball_rules.md. They are MAXIMA and
+    # imply no minimum: 8G + 8F + 0C satisfies all three and seats no centre.
+    position_caps: {G: 8, F: 8, C: 3}
+    # Which is why this is separate. It restricts a seat whose remaining picks equal the
+    # slots it still owes, so every drafted roster stays scorable by bracket.best_lineup —
+    # which would otherwise return a plausible six-man total. Not a DK rule; a guard.
+    require_legal_lineup: true
+    # `adp_need`'s lean toward positions still owed, in picks of board rank. 0 = off.
+    need_weight: 0.0
+    # Drafts per Gate B grid point. 192 picks x this x the pool, vectorized over drafts.
+    n_drafts: 400
+    # UNCALIBRATED, and deliberately an interface rather than a measurement.
+    # docs/simulations-plan.md names field quality by tier as a live risk in a specific
+    # direction: a $20 field plausibly holds far more autodraft entries than a $52 one,
+    # which is the OPPOSITE of what the rake maths would suggest. One hard-coded field
+    # would bake that in where nobody could see it. Shares per tournament, resolved
+    # through `default`; registered strategies are `adp`, `adp_need`, `ranking_submission`.
+    composition:
+      default: {adp: 1.0}
 
 eda:
   # Qualification filter for the season matrix. MIN is per-game, so this reads

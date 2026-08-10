@@ -509,3 +509,121 @@ def test_probe_rows_span_the_frame_rather_than_taking_its_head():
     probe = P.probe_rows(frame, 30)
     assert len(probe) == 30
     assert set(probe["season"]) == {"a", "b", "c"}
+
+
+# ── The composition's player-season effect ────────────────────────────────────
+
+def test_sigma_u_is_thinned_alongside_the_coefficients_and_the_term_is_copied():
+    """A random effect's SCALE has to travel with the draws it was fitted beside.
+
+    Two failures this pins. If `sigma_u_draws` is not thinned on the same index as
+    `alpha`/`beta`, a consumer applies draw 700's spread to draw 3's coefficients. And if
+    the term object is shared rather than copied, thinning the artifact mutates the live
+    head — the sort of aliasing bug that only shows up in a second consumer.
+    """
+    from src.models.stan_composition import PlayerSeasonTerm, StanComposition
+
+    model = StanComposition.__new__(StanComposition)
+    model.alpha_draws = np.arange(100, dtype=float)
+    model.beta_draws = np.arange(200, dtype=float).reshape(100, 2)
+    model.rho_draws = np.arange(100, dtype=float).reshape(100, 1)
+    model.ps = PlayerSeasonTerm(True, stream="live")
+    model.ps.sigma_draws = np.arange(100, dtype=float) / 100.0
+    model.ps.n_units = 7
+
+    thinned, draws, n_full = P._thinned(model, 10)
+    assert n_full == 100 and len(draws["sigma_u_draws"]) == 10
+    np.testing.assert_array_equal(draws["sigma_u_draws"],
+                                  draws["alpha_draws"] / 100.0)
+    assert thinned.ps is not model.ps
+    assert len(model.ps.sigma_draws) == 100
+
+
+def test_a_fitted_random_effect_is_persisted_or_refused_but_never_dropped():
+    """The failure mode is silent: an artifact carrying only `alpha` and `beta` for a head
+    fitted with a random effect has a *narrower* predictive than the head it claims to
+    persist, and a round-trip on the MEAN cannot see it. So the composition's `sigma_u` is
+    wired through and a year effect still raises."""
+    import inspect
+
+    source = inspect.getsource(P._finish)
+    assert "player_season_effect" in source and "sigma_u" in source
+    assert "NotImplementedError" in source
+
+
+def test_the_team_context_join_is_a_recipe_step_with_one_flag_and_train_means():
+    """A per-unit block joined at recipe time, so a consumer can score a raw frame. The
+    block travels inside the artifact rather than being re-read from parquet — a rebuilt
+    `team_context_tierA.parquet` must not silently change what a persisted posterior
+    scores."""
+    frame = pd.DataFrame({"player_id": [1, 2, 3], "season": "2021-22"})
+    block = pd.DataFrame({"player_id": [1, 2], "season": "2021-22",
+                          "role_crowding": [0.2, 0.4]})
+    step = {"kind": "join", "name": "team_context", "keys": ["player_id", "season"],
+            "flag": "team_missing", "block": block, "means": {"role_crowding": 0.3}}
+
+    out = P._apply_step(step, frame)
+    assert len(out) == len(frame)
+    np.testing.assert_allclose(out["role_crowding"].to_numpy(float), [0.2, 0.4, 0.3])
+    np.testing.assert_allclose(out["team_missing"].to_numpy(float), [0.0, 0.0, 1.0])
+
+
+def test_the_team_context_join_raises_rather_than_duplicating_rows():
+    """A block with two rows for one unit would silently double the design frame, which
+    every downstream shape check would then agree with."""
+    frame = pd.DataFrame({"player_id": [1], "season": "2021-22"})
+    block = pd.DataFrame({"player_id": [1, 1], "season": "2021-22",
+                          "role_crowding": [0.2, 0.4]})
+    step = {"kind": "join", "name": "team_context", "keys": ["player_id", "season"],
+            "flag": "team_missing", "block": block, "means": {"role_crowding": 0.3}}
+
+    with pytest.raises(ValueError, match="duplicated rows"):
+        P._apply_step(step, frame)
+
+
+def test_the_composition_team_recipe_reproduces_the_ladders_own_columns():
+    """The drift check for the team block, and it is the one that caught a real bug.
+
+    The recipe's `join` step must carry the **raw** block, not the ladder's already-imputed
+    frame. Built from `tr` the artifact would persist imputed values as if they were
+    observed and leave `team_missing` identically zero on every rebuilt frame — every
+    column present, every shape right, and only the numbers wrong, which is exactly the
+    failure mode the round-trip exists for and the one that got past the first version of
+    the imputation step too.
+    """
+    from src.models.availability import FEATURE_COLS
+    from src.models.stan_composition import (OWN, RHO_BIN_COL, RHO_BINS, TEAM_COLS,
+                                             TEAM_MISSING, effect_variants)
+
+    rng = np.random.default_rng(11)
+    n = 240
+    frame = pd.DataFrame({**_availability_block(n, rng),
+                          OWN: rng.normal(size=n) * 1.2,
+                          RHO_BIN_COL: rng.uniform(0.0, 0.35, n),
+                          "no_prior": rng.integers(0, 2, n).astype(float),
+                          "share_stale": rng.integers(0, 2, n).astype(float),
+                          "offset_clipped": rng.integers(0, 2, n).astype(float),
+                          "n_overtimes": rng.integers(0, 3, n).astype(float),
+                          "player_id": np.arange(n),
+                          "season": np.repeat(["2021-22", "2022-23"], n // 2)})
+    # The block covers two thirds of the units, which is the shape the real file has.
+    covered = frame.iloc[::3].index
+    block = pd.DataFrame({"player_id": frame.loc[covered, "player_id"].to_numpy(),
+                          "season": frame.loc[covered, "season"].to_numpy()})
+    for j, col in enumerate(TEAM_COLS):
+        block[col] = rng.normal(size=len(block)) + j
+
+    train, probe = frame.iloc[:150], frame.iloc[150:]
+    built, _ = effect_variants(train, probe, block, "betabinom_ot_graded", RHO_BINS)
+    tr, te, features, _, _, _, _ = built["team"]
+    steps = P._composition_steps(train, tr, features, OWN, RHO_BIN_COL, RHO_BINS,
+                                 team_block=block)
+
+    rebuilt = P.DesignRecipe(variant="team", features=features,
+                             scaler=StandardScaler().fit(_raw_matrix(tr, features)),
+                             steps=tuple(steps), builder="test").transform(probe)
+    assert TEAM_MISSING in features
+    assert 0 < rebuilt[TEAM_MISSING].mean() < 1, "the probe must have holes to check"
+    for name in features:
+        np.testing.assert_allclose(rebuilt[name].to_numpy(float),
+                                   te[name].to_numpy(float), rtol=0, atol=0)

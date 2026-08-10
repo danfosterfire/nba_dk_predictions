@@ -12,8 +12,17 @@ through the trials — `m_k = min(U, R_k)`, the remaining capacity.
 
 Design and gates: `docs/minutes-composition-plan.md`. Settled there: one pooled fit
 with N/U as per-row data (never per-OT-class fits), K = players who played (the
-availability head owns the played margin), a pilot window before any full-window
-commitment, and a geometric tail for the game-length class predictor.
+availability head owns the played margin), and a pilot window before any full-window
+commitment.
+
+**Game length is an INPUT to this head, and it is no longer defined here.** This module
+used to carry `fit_ot_tail` / `sample_game_length` — a two-parameter point-MLE geometric
+tail, parked here because the composition was the first thing that needed a game-length
+class. `src/models/stan_game_length.py` owns it as of 2026-08-09: a Bayesian head with a
+full posterior and a fitted season trend, seven seconds of sampler time rather than a
+by-product of a nine-hour one. Nothing here changed — this head consumes the *realized*
+`game_length` column on every row it fits or scores, and only a forward simulation needs
+the draw.
 
 ## The offset is the floor, and the floor is already a redistribution model
 
@@ -74,6 +83,7 @@ Usage:
 """
 
 import pickle
+import zlib
 from pathlib import Path
 
 import numpy as np
@@ -145,6 +155,178 @@ RHO_BINS = 4
 # attempts it clamps to the bound and counts it. The bound binds only in
 # short-rotation games (K = 6 occurs in 10 of 71,092 team-games).
 MAX_REDRAWS = 50
+
+# ── The per-(player, season) random effect ────────────────────────────────────
+
+# The unit the effect is indexed by. NOT the player: a minutes role is a property of the
+# season a player is in, and a career-long effect is already carried by `logit_share_lag1`
+# and the stick-breaking offset.
+UNIT_KEYS = ["player_id", "season"]
+
+# Half-normal scale on `sigma_u`, on the LINEAR PREDICTOR scale. Deliberately loose. The
+# two data-implied figures `make minutes-unification` reports are a log-ratio sd of 0.284
+# and a logit-share sd of 0.493, and the injection sweep's CRPS optimum sat at 0.375-0.45 —
+# so a half-normal(0, 1) is weakly informative by roughly a factor of two and the data
+# decides. Tightening it around the injection's value would make Gate P5 ("the fit
+# reproduces the injection") a foregone conclusion rather than a replication.
+U_SD_SCALE = 1.0
+
+# The team-context block, from `data/features/team_context_tierA.parquet`. Five columns,
+# not the file's eleven: the composition head is the most expensive fit in the project and
+# the deviation it is trying to explain is only ~5% predictable from pre-season information
+# at all, so the block is headed by `role_crowding` — the minutes-weighted archetype
+# similarity, which is the only column that can see that a departing star matters more to
+# his positional replacement than to the roster average — plus the usage aggregates and the
+# roster size. `teammate_assist_supply`, `teammate_spacing` and `team_pace` are production
+# context rather than minutes-allocation context and are left out.
+TEAM_COLS = ["role_crowding", "teammate_usage_max", "teammate_usage_sum",
+             "teammate_usage_load", "n_teammates"]
+TEAM_MISSING = "team_missing"
+
+# When `dense_e` is worth adapting. TWO constraints, and the second is the binding one —
+# which cost a wasted hour to learn on 2026-08-09 and is recorded so nobody re-learns it.
+#
+# **Memory** is quadratic in parameters and rules out only the widest window:
+#
+#   one-season probe    635 params      3.1 MB     0.09 GFLOP per Cholesky
+#   pilot window      2,234 params     38.1 MB     3.72 GFLOP
+#   full window      12,337 params  1,161.2 MB   625.90 GFLOP
+#
+# **Estimability** rules out all three. A dense metric estimates a P x P covariance from
+# the WARMUP draws, so it needs draws on the order of the parameter count — and the
+# random-effect arms have nothing like that:
+#
+#   635 params from 1,000 warmup draws   ->  1.57 draws per parameter
+#   2,234 params from 1,000 warmup draws ->  0.45 draws per parameter
+#
+# At under one draw per parameter the adaptation is rank-deficient, CmdStan's regularization
+# shrinks it back toward diagonal, and the extra cost buys nothing. Measured: the `ps` arm
+# under `dense_e` ran past **an hour** on rows `diag_e` finished in 25 minutes, and was
+# killed rather than finished. So the original instinct — no dense metric once the effect is
+# on — was right, and the reasoning behind it (memory) was wrong; correcting the reasoning
+# without correcting the rule made it worse. `DENSE_DRAWS_PER_PARAM` is what actually gates
+# it, and at 1,000 warmup draws that means ~50 parameters, which is the regime the
+# effect-free head lives in and the reason `dense_e` was measured to help there.
+DENSE_METRIC_MAX_MB = 256.0
+DENSE_DRAWS_PER_PARAM = 20.0
+
+
+def choose_metric(n_params: int, warmup: int = 1000,
+                  cap_mb: float = DENSE_METRIC_MAX_MB,
+                  draws_per_param: float = DENSE_DRAWS_PER_PARAM) -> str:
+    """`dense_e` only when the mass matrix both FITS and can be ESTIMATED.
+
+    The estimability test is the one that bites: a dense metric adapted from fewer warmup
+    draws than it has parameters is a rank-deficient covariance that CmdStan shrinks back
+    toward diagonal, so it costs the Cholesky and buys none of the conditioning.
+    """
+    if (n_params ** 2) * 8 / 1024 ** 2 > cap_mb:
+        return "diag_e"
+    return "dense_e" if warmup >= draws_per_param * n_params else "diag_e"
+
+
+def unit_codes(frame: pd.DataFrame) -> np.ndarray:
+    """0-based (player, season) index per row, for an effect shared across a unit's games."""
+    return frame.groupby(UNIT_KEYS, sort=True).ngroup().to_numpy()
+
+
+class PlayerSeasonTerm:
+    r"""The per-(player, season) random effect, held by `StanComposition`.
+
+    Disabled by default, in which case `data` returns the `U_n = 0` block — zero-length
+    `u_z` and `sigma_u` — and `shift` returns zeros. The disabled head is then the model
+    that existed before this block, exactly, rather than "the same model with a small
+    coefficient". `stan_utils.YearTerm` is the pattern; the differences are the index and
+    what sharing means.
+
+    ## The fitted `u_z` are discarded, for the same reason `year_z` is
+
+    A fitted `u_z[unit]` describes a player-season that is over. The seasons this project
+    forecasts have no `u`, and carrying one forward would be a player-season fixed effect
+    smuggled in — the exact thing that is unusable at prediction time. So the predictive
+    integrates over a **fresh** `z ~ N(0, 1)`:
+
+        eta_new = logit_prior + alpha + x'beta + sigma_u * z,  z ~ N(0, 1)
+
+    one `z` per (unit, posterior draw), **shared across that unit's games within a draw**.
+    That sharing is the whole mechanism: per-game noise averages down by ~1/sqrt(G) when
+    summed to a season while a season-level shift passes through in full, which is the
+    4.68x the gate measured. Drawing an independent `z` per game would reproduce the
+    per-game marginal and buy none of the season-level spread.
+
+    ## What it does NOT break
+
+    The effect enters the linear predictor of a *step*, so the sequential allocation still
+    hands the team exactly `5 x game_length` minutes and still caps every player at
+    `game_length`. A player-season shifted up takes its minutes from a teammate, which is
+    the dynamic the head exists for — unlike a shared shift, which is definitionally a
+    re-allocation and buys no spread at all.
+    """
+
+    def __init__(self, enabled: bool = False, scale: float = U_SD_SCALE,
+                 seed: int = 42, stream: str = "", centered: bool = False):
+        self.enabled = bool(enabled)
+        self.scale, self.seed, self.stream = float(scale), int(seed), str(stream)
+        # Same model, different coordinates for NUTS to walk. Non-centred by default because
+        # the funnel it avoids produces WRONG answers where the centred form's failure mode
+        # is merely slow ones; `centered=True` is the response to a collapsed step size with
+        # treedepth saturation, which is what a well-informed unit under a non-centred
+        # parameterization looks like. `shift` is identical either way — the predictive of a
+        # unit that has not happened is `sigma_u * z` under both.
+        self.centered = bool(centered)
+        self.sigma_draws = np.zeros(0)
+        self.n_units = 0
+
+    def _rng(self) -> np.random.Generator:
+        return np.random.default_rng([self.seed, zlib.crc32(self.stream.encode())])
+
+    def data(self, train: pd.DataFrame) -> dict:
+        """The `U_n` / `unit_idx` / `u_sd_scale` keys. Stan has no optional data, so the
+        disabled block is passed too — with `U_n = 0` and every index 0, which the model
+        never reads."""
+        if not self.enabled:
+            self.n_units = 0
+            return {"U_n": 0, "unit_idx": [0] * len(train),
+                    "u_sd_scale": float(self.scale), "u_centered": 0}
+        codes = unit_codes(train)
+        self.n_units = int(codes.max()) + 1 if len(codes) else 0
+        return {"U_n": self.n_units, "unit_idx": (codes + 1).astype(int).tolist(),
+                "u_sd_scale": float(self.scale), "u_centered": int(self.centered)}
+
+    def absorb(self, fit) -> None:
+        """Keep the `sigma_u` draws; `u_z` is deliberately never stored."""
+        if not self.enabled:
+            self.sigma_draws = np.zeros(0)
+            return
+        draws = np.atleast_1d(fit.stan_variable("sigma_u"))
+        self.sigma_draws = np.asarray(draws).reshape(len(draws), -1)[:, 0]
+
+    def shift(self, frame: pd.DataFrame, idx: np.ndarray) -> np.ndarray:
+        """`(rows x draws)` fresh `sigma_u * z`, shared across a unit's rows per draw.
+
+        `idx` is the same thinned posterior-draw index `_eta_base` used, so the sigma
+        applied to a column is the sigma of the draw whose `alpha` and `beta` built it.
+        """
+        idx = np.asarray(idx)
+        if not self.enabled or self.sigma_draws.size == 0:
+            return np.zeros((len(frame), len(idx)))
+        codes = unit_codes(frame)
+        n_units = int(codes.max()) + 1 if len(codes) else 0
+        z = self._rng().standard_normal(size=(n_units, len(idx)))
+        return self.sigma_draws[idx][None, :] * z[codes, :]
+
+    def summary(self) -> dict:
+        if not self.enabled or self.sigma_draws.size == 0:
+            return {"ps_effect": False, "sigma_u": 0.0, "sigma_u_sd": 0.0,
+                    "sigma_u_lo": 0.0, "sigma_u_hi": 0.0, "n_units": 0,
+                    "u_parameterization": "none"}
+        lo, hi = np.percentile(self.sigma_draws, [2.5, 97.5])
+        return {"ps_effect": True,
+                "sigma_u": float(self.sigma_draws.mean()),
+                "sigma_u_sd": float(self.sigma_draws.std(ddof=1)),
+                "sigma_u_lo": float(lo), "sigma_u_hi": float(hi),
+                "n_units": int(self.n_units),
+                "u_parameterization": "centered" if self.centered else "non_centered"}
 
 
 # ── Frame construction ────────────────────────────────────────────────────────
@@ -493,6 +675,105 @@ def variants(train: pd.DataFrame, test: pd.DataFrame, n_bins: int = RHO_BINS
     return out
 
 
+# ── Item 3d's ladder: the player-season effect and the team-context block ──────
+
+def team_context(features_dir: Path, cols: list[str] = TEAM_COLS) -> pd.DataFrame:
+    """The point-in-time-safe team block, one row per (player, season).
+
+    Built leave-one-out by `make team-context`, so a player's own prior season never
+    enters his own aggregate; every column is season S-1 statistics over the season-S
+    roster, which is this project's information set exactly.
+    """
+    path = Path(features_dir) / "team_context_tierA.parquet"
+    if not path.exists():
+        raise FileNotFoundError(f"no team context at {path}; run `make team-context`")
+    return pd.read_parquet(path, columns=UNIT_KEYS + list(cols))
+
+
+def attach_team_context(train: pd.DataFrame, val: pd.DataFrame, block: pd.DataFrame,
+                        cols: list[str] = TEAM_COLS
+                        ) -> tuple[pd.DataFrame, pd.DataFrame, list[str], dict]:
+    """Join the block, flag its holes with ONE indicator, impute from **train** means.
+
+    **One `team_missing` flag for the whole block, not one per column** — the same
+    decision `design_missing` embodies one block over: a player-season either has a team
+    row or it has none of it, so five per-column flags would be five exact copies of each
+    other and a degenerate subspace the sampler pays for in treedepth.
+
+    It is nonetheless a **second** indicator rather than a reuse of `design_missing`, and
+    that is a deliberate departure from the plan's instruction, measured rather than
+    assumed: the two mark different rows. `design_missing` flags a composition row with no
+    availability-design row at all; the team block additionally misses ~11% of rows that
+    *do* have a design, because `team_context_tierA` is built off the season matrix's
+    qualified frame. Folding them together would leave those rows silently imputed to the
+    training mean with nothing for `beta` to correct on. The overlap is reported by
+    `run` so the choice stays checkable.
+    """
+    tr = train.merge(block, on=UNIT_KEYS, how="left")
+    te = val.merge(block, on=UNIT_KEYS, how="left")
+    if len(tr) != len(train) or len(te) != len(val):
+        raise ValueError("the team-context join duplicated rows — it must be unique on "
+                         f"{UNIT_KEYS}")
+    for frame in (tr, te):
+        frame[TEAM_MISSING] = frame[cols[0]].isna().astype(float)
+    coverage = {
+        "team_rows_train": int((tr[TEAM_MISSING] == 0).sum()),
+        "team_share_train": float(1 - tr[TEAM_MISSING].mean()),
+        "team_share_val": float(1 - te[TEAM_MISSING].mean()),
+        # The two indicators are not the same column, which is why both ship.
+        "team_missing_and_design_missing": float(
+            ((tr[TEAM_MISSING] == 1) & (tr["design_missing"] == 1)).mean()),
+        "team_missing_with_design_present": float(
+            ((tr[TEAM_MISSING] == 1) & (tr["design_missing"] == 0)).mean()),
+    }
+    means = {c: float(tr.loc[tr[TEAM_MISSING] == 0, c].mean()) for c in cols}
+    for frame in (tr, te):
+        for c in cols:
+            frame[c] = frame[c].fillna(means[c])
+    return tr, te, list(cols) + [TEAM_MISSING], {**coverage, "team_means": means}
+
+
+def effect_variants(train: pd.DataFrame, val: pd.DataFrame, block: pd.DataFrame,
+                    base_variant: str = "betabinom_ot_graded", n_bins: int = RHO_BINS
+                    ) -> tuple[dict, dict]:
+    """The item-3d ladder, built on top of the shipped arm's frames and features.
+
+    Four arms. `base` is the shipped specification refitted on whatever window is being
+    run — a **same-window control**, not a refit of the incumbent, and it exists for the
+    same reason `stan_game_length`'s `season_trend_covered` does: a pilot-window arm
+    ordering is uninterpretable against a full-window baseline. The three that follow are
+    the ones the plan names.
+
+    | arm | mean function | effect | parameterization |
+    |---|---|---|---|
+    | `base` | shipped | — | — |
+    | `ps` | shipped | `sigma_u` | non-centred |
+    | `team` | shipped + team context | — | — |
+    | `ps_team` | shipped + team context | `sigma_u` | non-centred |
+    | `ps_centered` | shipped | `sigma_u` | **centred** |
+
+    `ps_centered` is the same model as `ps` in different coordinates, so it is a *sampler*
+    arm rather than a modelling one — it is in the ladder because the two are not
+    interchangeable in cost and the plan names the centred form as the first response when
+    the non-centred one misbehaves. It must never be selected on CRPS against `ps`: they have
+    the same posterior, and any difference between them is Monte Carlo error or a
+    convergence failure.
+
+    Returns `{arm: (train, val, features, dispersed, n_rho, player_season_effect, centered)}`
+    and the join's coverage report.
+    """
+    tr, te, feats, dispersed, n_rho = variants(train, val, n_bins)[base_variant]
+    tr_t, te_t, team_feats, coverage = attach_team_context(tr, te, block)
+    with_team = list(feats) + team_feats
+    return ({
+        "base": (tr, te, list(feats), dispersed, n_rho, False, False),
+        "ps": (tr, te, list(feats), dispersed, n_rho, True, False),
+        "team": (tr_t, te_t, with_team, dispersed, n_rho, False, False),
+        "ps_team": (tr_t, te_t, list(with_team), dispersed, n_rho, True, False),
+        "ps_centered": (tr, te, list(feats), dispersed, n_rho, True, True),
+    }, coverage)
+
+
 # ── Ragged arrays and the simulator ───────────────────────────────────────────
 
 def ragged_arrays(frame: pd.DataFrame) -> dict:
@@ -611,11 +892,20 @@ class StanComposition:
     def __init__(self, features: list[str], dispersed: int, n_rho: int = 1,
                  l2: float = GLM_L2, name: str = "stan", chains: int = 4,
                  warmup: int = 1000, samples: int = 1000, seed: int = 42,
-                 predictive_samples: int = PREDICTIVE_SAMPLES):
+                 predictive_samples: int = PREDICTIVE_SAMPLES,
+                 player_season_effect: bool = False,
+                 u_sd_scale: float = U_SD_SCALE, u_centered: bool = False,
+                 metric: str | None = None):
         self.features, self.dispersed, self.l2, self.name = features, dispersed, l2, name
         self.n_rho = int(n_rho)
         self.chains, self.warmup, self.samples, self.seed = chains, warmup, samples, seed
         self.predictive_samples = predictive_samples
+        # Disabled by default, so every existing caller builds the head that shipped.
+        self.ps = PlayerSeasonTerm(player_season_effect, u_sd_scale, seed, stream=name,
+                                   centered=u_centered)
+        # None = let `choose_metric` size it; a string forces it, which is what a probe
+        # comparing the two metrics on identical data needs.
+        self.metric = metric
 
     def stan_data(self, train: pd.DataFrame) -> dict:
         """The data dict `fit` passes to Stan — separate so diagnosis scripts and
@@ -623,6 +913,7 @@ class StanComposition:
         (X,), self.scaler = standardized(train, [train], self.features)
         arrays = ragged_arrays(train)
         return {
+            **self.ps.data(train),
             "G": len(arrays["starts"]), "P": len(train), "K": X.shape[1],
             "start": (arrays["starts"] + 1).tolist(),
             "len": arrays["lens"].tolist(),
@@ -649,17 +940,38 @@ class StanComposition:
         inits = {"alpha": 0.0, "beta": np.zeros(data["K"]).tolist()}
         if self.dispersed:
             inits["rho"] = [RHO_INIT] * self.n_rho
+        if data["U_n"]:
+            # Zero effects at a plausible scale — the same intercept-only reasoning every
+            # other head inits by. 0.3 rather than 0 because the centred arm's prior is
+            # `normal(0, sigma_u)` and a zero scale is not a starting point.
+            inits["u_z"] = np.zeros(data["U_n"]).tolist()
+            inits["sigma_u"] = [0.3]
 
         model = compile_model(MODEL)
         # dense_e, not the default diagonal metric: measured on the one-season probe,
         # the posterior's linear correlations hold NUTS at treedepth 8-9 under diag_e
         # (645s for 300+200 x 2 chains) and treedepth 4 under dense_e (65s). At
         # ~25 parameters the dense adaptation is free.
+        #
+        # **The random effect does not automatically put the dense metric out of reach**,
+        # and treating it as if it did was a measured mistake: the cost is quadratic in
+        # PARAMETERS, so a 605-unit probe wants a 3 MB matrix and only the 12,307-unit full
+        # window wants 1.2 GB. `choose_metric` sizes it, and `DENSE_METRIC_MAX_MB` carries
+        # the arithmetic. This matters because treedepth saturation — 791 of 800 draws on
+        # the `ps_no_rho` diagnostic under `diag_e` — is precisely what the dense metric
+        # fixed on this head before the effect existed.
+        metric = self.metric or choose_metric(
+            int(data["K"]) + 1 + data["n_rho"] + int(data["U_n"]), self.warmup)
         fit, self.diagnostics = sample(
             model, data, chains=self.chains, warmup=self.warmup,
             samples=self.samples, seed=self.seed, label=self.name, inits=inits,
-            metric="dense_e")
+            metric=metric)
+        self.diagnostics["metric"] = metric
+        self.diagnostics["parameterization"] = (
+            "none" if not data["U_n"] else
+            ("centered" if data["u_centered"] else "non_centered"))
         warn_if_unconverged(self.diagnostics)
+        self.ps.absorb(fit)
 
         draws = posterior(fit, ["alpha", "beta"])
         self.alpha_draws = draws["alpha"].reshape(-1)
@@ -679,15 +991,27 @@ class StanComposition:
         X = df[self.features].to_numpy(dtype=float)
         return self.scaler.transform(np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0))
 
+    def _draw_index(self) -> np.ndarray:
+        return thin(len(self.alpha_draws), self.predictive_samples)
+
     def _eta_base(self, df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray | None]:
-        idx = thin(len(self.alpha_draws), self.predictive_samples)
+        """The DETERMINISTIC linear predictor, without the player-season effect.
+
+        Deliberately excludes the random effect even when one is fitted, because two
+        consumers need exactly this: `posteriors._finish` stores it as the artifact's
+        round-trip reference (a fresh `z` per call would make the gate non-reproducible),
+        and `minutes_unification.player_season_effect_sweep` injects its own sigma on top.
+        `predict_samples` is where the fitted effect enters.
+        """
+        idx = self._draw_index()
         eta = self._design(df) @ self.beta_draws[idx].T + self.alpha_draws[idx][None, :]
         rho = self.rho_draws[idx] if self.dispersed else None
         return eta, rho
 
     def predict_samples(self, df: pd.DataFrame, seed: int = 0) -> np.ndarray:
         eta, rho = self._eta_base(df)
-        return simulate_minutes(df, eta, rho, seed)
+        return simulate_minutes(df, eta + self.ps.shift(df, self._draw_index()),
+                                rho, seed)
 
     def plug_in(self) -> tuple[float, np.ndarray, np.ndarray]:
         """Posterior means: intercept, coefficients, and rho **per bin**."""
@@ -847,9 +1171,9 @@ def _checkpoint(ckpt_dir: Path | None, label: str, row: dict,
                 diagnostics: list[dict], models: dict) -> None:
     """Flush one completed arm to disk: its metric row, its two diagnostics, its draws.
 
-    `run` writes its six CSVs only at the very end, and at full window the sweep is a
+    `run` writes its five CSVs only at the very end, and at full window the sweep is a
     ~14 h loop — so without this a crash in the last arm loses every fit before it.
-    With it the PPC / joint-NLL / OT-tail tail of `run` can be re-driven from the
+    With it the PPC and joint-NLL tail of `run` can be re-driven from the
     pickles in minutes. Follows the `data.boxscore_status.flush_every` precedent:
     append as you go, and never let the flush itself take the run down.
     """
@@ -1069,57 +1393,15 @@ def joint_nll_table(models: dict, selected: str, comparator: dict,
     return pd.DataFrame(rows)
 
 
-# ── The game-length class predictor: a geometric tail ─────────────────────────
-
-def fit_ot_tail(lengths: pd.DataFrame, train_seasons: set[str]) -> dict:
-    """P(any OT) and P(one more OT | current) on regular-season training games.
-
-    Two parameters cover 3OT/4OT for free, because the continuation probability is
-    nearly constant in depth (0.138 / 0.151 / 0.128 over the full 37,986 games).
-    """
-    reg = lengths[(lengths["season_type"] == "regular")
-                  & lengths["season"].isin(train_seasons)]
-    k = reg["n_overtimes"].to_numpy(int)
-    n_ot = int((k >= 1).sum())
-    return {"p_any_ot": float((k >= 1).mean()),
-            "p_more_ot": float((k >= 2).sum() / max(n_ot, 1)),
-            "n_games": int(len(reg)), "n_ot_games": n_ot}
-
-
-def sample_game_length(rng: np.random.Generator, size: int, p_any_ot: float,
-                       p_more_ot: float) -> np.ndarray:
-    """Game lengths on the 48/53/58/... grid — the simulator's game-length draw."""
-    n_ot = np.zeros(size, dtype=int)
-    any_ot = rng.random(size) < p_any_ot
-    n_ot[any_ot] = rng.geometric(1 - p_more_ot, size=int(any_ot.sum()))
-    return 48 + 5 * n_ot
-
-
-def ot_tail_check(lengths: pd.DataFrame, held_seasons: set[str],
-                  params: dict) -> pd.DataFrame:
-    """Predicted vs observed OT-class counts on the held-out seasons."""
-    reg = lengths[(lengths["season_type"] == "regular")
-                  & lengths["season"].isin(held_seasons)]
-    k = reg["n_overtimes"].to_numpy(int)
-    n = len(reg)
-    p_any, p_more = params["p_any_ot"], params["p_more_ot"]
-    rows = []
-    for depth in (0, 1, 2, 3):
-        if depth == 0:
-            predicted = n * (1 - p_any)
-            observed = int((k == 0).sum())
-            label = "regulation"
-        elif depth < 3:
-            predicted = n * p_any * (1 - p_more) * p_more ** (depth - 1)
-            observed = int((k == depth).sum())
-            label = f"{depth}OT"
-        else:
-            predicted = n * p_any * p_more ** 2
-            observed = int((k >= 3).sum())
-            label = "3OT+"
-        rows.append({"class": label, "observed": observed,
-                     "predicted": float(predicted), "n_games": n})
-    return pd.DataFrame(rows)
+# `fit_ot_tail`, `sample_game_length` and `ot_tail_check` lived here until 2026-08-09 and
+# are now `src/models/stan_game_length.py`. Three things were wrong with leaving them: they
+# were a point estimate where every other simulator input is a posterior; the simulator
+# would have had to import this nine-hour head to draw a game length; and they were
+# unconditional, where a fitted season trend cuts the OT-class error on validation from
+# 22.97 to 9.42 summed games. The pooled pair survives there as the head's mandatory no-fit
+# floor and still reads p_any = 0.0608 / p_more = 0.1408 on the same 30,626 training games,
+# so nothing about the incumbent's numbers moved — only who owns them. Registered as
+# `withdrawn` in `dashboard/decisions.py`.
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -1220,22 +1502,11 @@ def run(cfg: dict) -> dict[str, Path]:
           "  composition's last step is deterministic on the simplex slice, so it\n"
           "  wins partly by knowing the constraint. Contrast, not a headline.")
 
-    lengths = pd.read_parquet(Path(cfg["data"]["features_dir"])
-                              / "game_length.parquet")
-    train_seasons = set(train["season"].unique()) \
-        | {s for s in frame["season"].unique()
-           if s < min(train["season"].unique())}
-    held_seasons = set(val["season"].unique())
-    tail = fit_ot_tail(lengths, train_seasons - held_seasons)
-    tail_check = ot_tail_check(lengths, held_seasons, tail)
-    print(f"\nOT tail (train seasons): p_any = {tail['p_any_ot']:.4f}, "
-          f"p_more = {tail['p_more_ot']:.4f} over {tail['n_games']:,} games")
-    print(tail_check.round(1).to_string(index=False))
+    print("\nGame length: this head consumes the REALIZED length on every row it fits or "
+          "scores.\n  The forward draw moved to `make stan-game-length` on 2026-08-09 — "
+          "see the module docstring.")
 
     diag = diagnostics_frame(diagnostics)
-    ot_frame = pd.concat([pd.DataFrame([{**tail, "class": "params",
-                                         "observed": np.nan, "predicted": np.nan}]),
-                          tail_check], ignore_index=True)
     rho_rows = []
     for label, holder in models.items():
         model = holder["val"]
@@ -1252,7 +1523,6 @@ def run(cfg: dict) -> dict[str, Path]:
         "dispersion": (pd.DataFrame(rho_rows),
                        out_dir / "stan_composition_dispersion.csv"),
         "joint_nll": (joint, out_dir / "stan_composition_joint_nll.csv"),
-        "ot_tail": (ot_frame, out_dir / "stan_composition_ot_tail.csv"),
     }
     paths = {}
     for name, (df, dest) in artifacts.items():

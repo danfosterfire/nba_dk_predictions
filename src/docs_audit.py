@@ -49,6 +49,32 @@ report prints the pair, so the reversal stays legible from the audit alone.
 Without this field the two kinds are indistinguishable to the presence check, and the only
 alternative — leaving them unclaimed — protects nothing.
 
+## Cost figures — sampler wall clock is not a result
+
+The second population that is presence-checked but never value-checked, added 2026-08-09
+and keyed on the **artifact column** rather than marked per claim: anything derived from
+`COST_COLUMNS` (`wall_clock_s`, `probe_hours`, `fit_seconds`), which today is 31 claims —
+every wall clock, every "sampler minutes", every share-of-sweep ratio.
+
+Every other figure here is a property of the data and reproduces exactly at a fixed seed.
+A timing is a property of the *machine* and of whatever else is running on it. Re-running
+`make stan-minutes` at identical data and seed reproduced every statistical figure to the
+digit and moved its four timings by up to 32%, purely because another head was sampling on
+the other cores; the gate failed on six figures, none of which carried information about
+the model.
+
+The cost of getting this wrong is worse than the noise. It leaves the project in a position
+where the only way to make a **gate** pass is to spend sampler hours re-measuring a number
+nobody consumes — precisely the refit that was aborted, deliberately, on 2026-08-09. A gate
+that can be satisfied only by burning compute on a non-result teaches people to stop
+trusting the gate, which costs more than a stale timing ever could.
+
+Two deliberate limits. The rule is **narrow**: a claim reading `max_rhat` or `divergences`
+from the very same diagnostics CSV stays a hard failure, which is where an overlong run
+from bad geometry actually surfaces now that the timing does not. And it is **automatic**:
+because it keys on the column that was read, a timing claim added later inherits it without
+anyone remembering to mark it — which is the failure mode a per-claim flag would have.
+
 ## What this does and does not catch
 
 It catches the two failures that have actually happened here:
@@ -126,7 +152,18 @@ COMP_M = "outputs/predictions/stan_composition_metrics.csv"
 COMP_D = "outputs/predictions/stan_composition_diagnostics.csv"
 COMP_P = "outputs/predictions/stan_composition_ppc.csv"
 COMP_J = "outputs/predictions/stan_composition_joint_nll.csv"
-COMP_O = "outputs/predictions/stan_composition_ot_tail.csv"
+# The OT tail moved out of `stan-composition` on 2026-08-09 — `src/models/stan_game_length.py`
+# owns it now, and the pooled pair survives there as that head's no-fit floor. The claims
+# below still live in `docs/minutes-composition-plan.md`, because that is where the
+# composition's own record of them is; only the artifact behind them moved.
+GL_M = "outputs/predictions/stan_game_length_metrics.csv"
+GL_PPC = "outputs/predictions/stan_game_length_ppc.csv"
+# The two minutes heads scored at the SEASON unit against each other — `make
+# minutes-unification`. One row per arm plus one paired-bootstrap row, which is why the
+# delta columns are blank on the arm rows and vice versa.
+MIN_UNIF = "outputs/predictions/minutes_unification.csv"
+GL_DEPTH = "outputs/predictions/stan_game_length_depth.csv"
+GL_D = "outputs/predictions/stan_game_length_diagnostics.csv"
 COMP_RHO = "outputs/predictions/stan_composition_dispersion.csv"
 
 SERIAL = "outputs/eda/serial_correlation.csv"
@@ -244,6 +281,44 @@ def table(rel: str) -> pd.DataFrame | None:
     return _CACHE[rel]
 
 
+# ── Cost figures: presence-checked, never value-checked ──────────────────────
+#
+# **Sampler wall clock is not a result, and auditing it as one makes this gate lie.**
+# Every other figure here is a property of the data and reproduces exactly at a fixed
+# seed. A timing is a property of the *machine* and of whatever else was running on it:
+# re-running `make stan-minutes` on 2026-08-08 with identical data and seed reproduced
+# every statistical figure to the digit and moved its four timings by up to 32%, purely
+# because the composition head was sampling on the other cores. The audit failed on six
+# figures, none of which carried any information.
+#
+# The cost of getting this wrong is worse than the noise. It puts the project in a
+# position where the only way to make a GATE pass is to spend sampler hours re-measuring
+# a number nobody consumes — which is exactly the refit that was aborted, deliberately,
+# on 2026-08-09. A gate that can be satisfied only by burning compute on a non-result
+# trains people to stop trusting the gate.
+#
+# So a figure derived from any of these columns is **presence-checked**: the quoted
+# string must still appear in the doc, so a cost claim cannot be tidied away, but the
+# value is not compared. The rule lives here, once, keyed on the artifact column rather
+# than marked per claim — a timing claim added later inherits it without anyone
+# remembering to. Overlong runs from bad geometry surface in the diagnostics
+# (`treedepth_saturated`, `divergences`), which ARE value-checked and are the honest
+# place to catch them.
+COST_COLUMNS = frozenset({"wall_clock_s", "probe_hours", "fit_seconds"})
+
+# Columns touched while evaluating the claim currently under check. `check_values`
+# clears it before each `actual()` and reads it after.
+_columns_read: set[str] = set()
+
+
+def _note_columns(*columns: str) -> None:
+    _columns_read.update(c for c in columns if isinstance(c, str))
+
+
+def touched_cost_column() -> set[str]:
+    return set(_columns_read) & COST_COLUMNS
+
+
 class MissingColumn(KeyError):
     """A claim asks for a column its artifact no longer has.
 
@@ -257,6 +332,7 @@ class MissingColumn(KeyError):
 
 
 def _one(frame: pd.DataFrame | None, column: str, **where) -> float:
+    _note_columns(column)
     if frame is None:
         return float("nan")
     for col in (*where, column):
@@ -297,6 +373,7 @@ def cell(rel: str, column: str, **where) -> float:
 
 
 def total(rel: str, column: str) -> float:
+    _note_columns(column)
     frame = table(rel)
     return float(frame[column].sum()) if frame is not None else float("nan")
 
@@ -307,6 +384,7 @@ def rows(rel: str) -> float:
 
 
 def max_of(rel: str, column: str) -> float:
+    _note_columns(column)
     frame = table(rel)
     return float(frame[column].max()) if frame is not None else float("nan")
 
@@ -314,6 +392,7 @@ def max_of(rel: str, column: str) -> float:
 def mean_abs_dev(rel: str, column: str, centre: float, **where) -> float:
     """Mean |value - centre| over the matching rows — a calibration summary that is
     itself a quoted figure, so it has to come from the artifact like any other."""
+    _note_columns(column)
     frame = table(rel)
     if frame is None:
         return float("nan")
@@ -947,7 +1026,7 @@ def _availability() -> list[Claim]:
            lambda: (cell(STAN_MIN_M, "val_crps", variant="logit_own_spline")
                     - cell(STAN_MIN_M, "val_crps", variant="carry_forward")),
            "minutes CRPS gain over floor"))
-    add(_c("1,227", STAN_MIN_G, lambda: total(STAN_MIN_G, "wall_clock_s"),
+    add(_c("1,503", STAN_MIN_G, lambda: total(STAN_MIN_G, "wall_clock_s"),
            "minutes head wall clock"))
     add(_c("1.0054", STAN_MIN_G, lambda: max_of(STAN_MIN_G, "max_rhat"),
            "minutes head max R-hat"))
@@ -977,7 +1056,7 @@ def _availability() -> list[Claim]:
                    f"stan {model} {name}"))
     add(_c("1.0019", STAN_AV_D, lambda: cell(STAN_AV_D, "max_rhat"), "stan R-hat"))
     add(_c("2,314", STAN_AV_D, lambda: cell(STAN_AV_D, "min_ess_bulk"), "stan min ESS"))
-    add(_c("195", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
+    add(_c("196", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
            "stan wall clock"))
     add(_c("223", STAN_AV_B,
            lambda: cell(STAN_AV_B, "shared_beta_sd", n_players=883),
@@ -1364,6 +1443,156 @@ def _carry_bias_claims(doc: str,
     return C
 
 
+def _minutes_unification_claims(doc: str) -> list[Claim]:
+    """The season-unit head-to-head between the two minutes heads, claimable from any doc.
+
+    A shared builder for the same reason `_regime_claims` and `_season_term_claims` are: the
+    block is quoted in `README.md` and in `docs/simulations-plan.md`, and "current in one and
+    stale in the other" is the failure that has already happened twice here. The plan doc is
+    not in the audit yet — build item 11 adds it — so today this has one caller and the
+    second is why it is a function.
+
+    The verdict-bearing pair is claimed from **both** sides of each comparison rather than
+    only from the gap, because a headline that quotes 170.06 against 144.35 and a gap of
+    +25.70 can go stale in three independent places.
+    """
+    C: list[Claim] = []
+
+    def add(quoted, column, arm, label, **kw):
+        C.append(_c(quoted, MIN_UNIF, lambda: cell(MIN_UNIF, column, arm=arm), label,
+                    doc=doc, **kw))
+
+    COMP, MINS = "composition_sum", "minutes_head"
+    FLOOR, ALL = "carry_forward", "composition_sum_all_rows"
+    DELTA = "composition_minus_minutes"
+
+    # The verdict: CRPS at the season unit, both arms and the floor they are read against.
+    add("170.06", "crps_minutes", COMP, "composition summed to season totals, CRPS")
+    add("144.35", "crps_minutes", MINS, "marginal minutes head, season-total CRPS")
+    add("161.29", "crps_minutes", FLOOR,
+        "the season-unit no-fit carry-forward floor the composition fails to clear")
+
+    # The mean is a tie — three figures on each side, because "a tie" is the claim.
+    add("200.28", "mae_minutes", COMP, "composition season-total MAE")
+    add("200.12", "mae_minutes", MINS, "marginal head season-total MAE")
+    add("0.8848", "r2_minutes", COMP, "composition season-total R2")
+    add("0.8829", "r2_minutes", MINS, "marginal head season-total R2")
+    add("+2.41", "bias_minutes", COMP, "composition season-total bias")
+    add("−14.09", "bias_minutes", MINS, "marginal head season-total bias")
+
+    # The spread is not, and this is what keeps both heads in the chain.
+    add("64.65", "predictive_sd", COMP, "composition season-total predictive sd")
+    add("302.75", "predictive_sd", MINS, "marginal head season-total predictive sd")
+    add("0.3341", "pit_ks", COMP, "composition season-total PIT KS")
+    add("0.0735", "pit_ks", MINS, "marginal head season-total PIT KS")
+    add("0.00", "team_season_sd", ALL,
+        "a team's season minutes are fixed across draws — the structural half")
+
+    # The paired bootstrap, which is what makes the gap a verdict rather than a margin.
+    add("+25.70", "crps_delta", DELTA, "paired-bootstrap CRPS gap, composition − minutes")
+    add("+18.96", "ci_lo", DELTA, "bootstrap interval, lower")
+    add("+33.25", "ci_hi", DELTA, "bootstrap interval, upper")
+    add("4.68", "sd_ratio_minutes_over_composition", DELTA,
+        "how much narrower the composition's season total is")
+
+    # Coverage: the composition's genuine advantage, reported as its own row.
+    add("742", "n", MINS, "player-seasons both heads cover")
+    add("1,111", "n", ALL, "player-seasons the composition covers")
+    C.append(_c("369", MIN_UNIF,
+                lambda: cell(MIN_UNIF, "n", arm=ALL) - cell(MIN_UNIF, "n", arm=MINS),
+                "rows only the composition reaches — the `>= 200 prior minutes` drop",
+                doc=doc))
+
+    # The injected per-player-season effect: whether the narrow season total is a ceiling
+    # or a missing parameter. Claimed at the sweep's best sigma, plus the sigma itself,
+    # because "it ties at 0.375" goes stale if either half moves.
+    PS = "composition_sum_plus_player_season_effect"
+    # **The unit is part of the lookup, not decoration.** Since 2026-08-09 the same arm name
+    # also carries the fallback's `ps_sigma_on_train` rows — the identical grid scored on
+    # TRAINING player-seasons, so every sigma value appears twice. Without the unit filter
+    # `ps()` would be ambiguous and `best_sigma` would silently return the train grid's
+    # optimum, whose CRPS is lower for the ordinary reason that it is in-sample. This is the
+    # same silent-ambiguity failure the composition PPC lookups were fixed for.
+    UNIT = "ps_effect_sweep"
+
+    def ps(column: str, sigma: float = 0.375) -> float:
+        return cell(MIN_UNIF, column, arm=PS, sigma=sigma, unit=UNIT)
+
+    def best_sigma() -> float:
+        """The sweep's own CRPS-minimising sigma, so `0.375` cannot rot into a stale label."""
+        frame = table(MIN_UNIF)
+        arm = frame[(frame["arm"] == PS) & (frame["unit"] == UNIT)]
+        return float(arm.loc[arm["crps_minutes"].idxmin(), "sigma"])
+
+    C += [
+        _c("0.375", MIN_UNIF, best_sigma,
+           "the sweep's CRPS-optimal injected effect size", doc=doc),
+        _c("142.17", MIN_UNIF, lambda: ps("crps_minutes"),
+           "composition + injected player-season effect, CRPS at the sweep optimum",
+           doc=doc),
+        _c("239.45", MIN_UNIF, lambda: ps("predictive_sd"),
+           "the season-total spread the injection recovers", doc=doc),
+        _c("−2.18", MIN_UNIF, lambda: ps("crps_delta"),
+           "injected arm against the marginal head", doc=doc),
+        _c("−6.96", MIN_UNIF, lambda: ps("ci_lo"), "injected arm interval, lower", doc=doc),
+        _c("+2.85", MIN_UNIF, lambda: ps("ci_hi"), "injected arm interval, upper", doc=doc),
+        _c("0.0659", MIN_UNIF, lambda: ps("pit_ks", 0.45),
+           "best PIT KS in the sweep — better calibrated than the marginal head", doc=doc),
+    ]
+
+    # The fallback made shippable: the SAME grid on training rows, which is what removes the
+    # injection's one load-bearing caveat. Claimed from both grids, because "they agree to a
+    # step" is the claim and it goes stale if either side moves.
+    TRAIN_UNIT = "ps_sigma_on_train"
+
+    def on_train(column: str, sigma: float = 0.45) -> float:
+        return cell(MIN_UNIF, column, arm=PS, sigma=sigma, unit=TRAIN_UNIT)
+
+    def best_train_sigma() -> float:
+        frame = table(MIN_UNIF)
+        arm = frame[(frame["arm"] == PS) & (frame["unit"] == TRAIN_UNIT)]
+        return float(arm.loc[arm["crps_minutes"].idxmin(), "sigma"])
+
+    C += [
+        _c("0.450", MIN_UNIF, best_train_sigma,
+           "the injection's sigma re-estimated on TRAIN — the fallback's shippable figure",
+           doc=doc),
+        _c("117.07", MIN_UNIF, lambda: on_train("crps_minutes"),
+           "train-grid CRPS at its own optimum", doc=doc),
+        _c("1,145", MIN_UNIF, lambda: on_train("n"),
+           "training player-seasons the fallback's sigma is estimated over", doc=doc),
+        _c("142.87", MIN_UNIF, lambda: ps("crps_minutes", 0.45),
+           "validation CRPS at the train-estimated sigma", doc=doc),
+        _c("−1.49", MIN_UNIF, lambda: ps("crps_delta", 0.45),
+           "the train-estimated sigma against the marginal head", doc=doc),
+        _c("−6.14", MIN_UNIF, lambda: ps("ci_lo", 0.45),
+           "that arm's interval, lower", doc=doc),
+        _c("+3.22", MIN_UNIF, lambda: ps("ci_hi", 0.45),
+           "that arm's interval, upper", doc=doc),
+    ]
+
+    # The zero-sum dynamic: the composition sits on the identity a fixed team total forces
+    # and the marginal head does not, which is invisible in every marginal metric.
+    def couple(column: str, arm: str) -> float:
+        return cell(MIN_UNIF, column, arm=arm, unit="teammate_coupling")
+
+    C += [
+        _c("−0.0509", MIN_UNIF, lambda: couple("r_teammates", COMP),
+           "composition teammate correlation", doc=doc),
+        _c("−0.0001", MIN_UNIF, lambda: couple("r_teammates", MINS),
+           "marginal head teammate correlation — the failure", doc=doc),
+        _c("−0.0664", MIN_UNIF, lambda: couple("r_implied_by_fixed_sum", COMP),
+           "what a fixed team total forces at the measured roster size", doc=doc),
+        _c("1,022.9", MIN_UNIF, lambda: couple("team_season_sum_sd", MINS),
+           "the marginal head's spread on a physically fixed team total", doc=doc),
+        _c("16.05", MIN_UNIF, lambda: couple("roster_size", COMP),
+           "mean single-team roster size the coupling is measured over", doc=doc),
+        _c("963", MIN_UNIF, lambda: couple("n", COMP),
+           "single-team player-seasons the coupling is measured on", doc=doc),
+    ]
+    return C
+
+
 def _composition() -> list[Claim]:
     """`docs/minutes-composition-plan.md` — the team-game minutes allocation.
 
@@ -1517,17 +1746,20 @@ def _composition() -> list[Claim]:
                lambda a=arm: cell(COMP_J, "mean_joint_nll", split="val", arm=a),
                f"composition joint NLL {arm}", doc=COMP))
 
-    # The OT tail is invariant to the window by construction — `fit_ot_tail` gets
-    # 1996-97 to 2021-22 either way — so these confirm rather than change.
-    add(_c("0.0608", COMP_O, lambda: cell(COMP_O, "p_any_ot", **{"class": "params"}),
+    # The OT tail is invariant to the window by construction — the floor gets 1996-97 to
+    # 2021-22 either way — so these confirm rather than change. They are re-derived from
+    # `stan-game-length` since 2026-08-09; the values did not move, only the producer.
+    add(_c("0.0608", GL_M, lambda: cell(GL_M, "p_any_ot", variant="floor"),
            "OT tail p_any", doc=COMP))
-    add(_c("0.1408", COMP_O, lambda: cell(COMP_O, "p_more_ot", **{"class": "params"}),
+    add(_c("0.1408", GL_M, lambda: cell(GL_M, "p_more_ot", variant="floor"),
            "OT tail p_more", doc=COMP))
-    add(_c("30,626", COMP_O, lambda: cell(COMP_O, "n_games", **{"class": "params"}),
+    add(_c("30,626", GL_M, lambda: cell(GL_M, "n_fit_games", variant="floor"),
            "OT tail training games", doc=COMP))
-    add(_c("128.4", COMP_O, lambda: cell(COMP_O, "predicted", **{"class": "1OT"}),
+    add(_c("128.4", GL_PPC,
+           lambda: cell(GL_PPC, "predicted", variant="floor", **{"class": "1OT"}),
            "OT tail predicted 1OT", doc=COMP))
-    add(_c("120", COMP_O, lambda: cell(COMP_O, "observed", **{"class": "1OT"}),
+    add(_c("120", GL_PPC,
+           lambda: cell(GL_PPC, "observed", variant="floor", **{"class": "1OT"}),
            "OT tail observed 1OT", doc=COMP))
 
     # ── the retired TEST column, held for the record ──────────────────────────
@@ -1616,6 +1848,7 @@ def _comp_arm_seconds(arm: str) -> float:
     if frame is None:
         return float("nan")
     hit = frame[frame["label"].isin([f"{arm}/val", f"{arm}/test"])]
+    _note_columns("wall_clock_s")
     return float(hit["wall_clock_s"].sum())
 
 
@@ -1742,7 +1975,7 @@ def _predictions() -> list[Claim]:
         "minutes no-fit floor")
     # The per-game costing extrapolates these two, so they have to be the fits the artifact
     # actually holds. Since the lock there is only a `/val` fit per variant.
-    for variant, quoted in [("logit_own_spline", "721"), ("linear", "171")]:
+    for variant, quoted in [("logit_own_spline", "955"), ("linear", "175")]:
         add(quoted, STAN_MIN_G,
             lambda v=variant: cell(STAN_MIN_G, "wall_clock_s", label=f"{v}/val"),
             f"minutes {variant} wall clock")
@@ -1896,7 +2129,7 @@ def _predictions() -> list[Claim]:
     add("0.2806", STAN_AV_M,
         lambda: metric(STAN_AV_M, "beta_binomial", "dispersion_rho"), "MLE rho")
     add("1.0019", STAN_AV_D, lambda: cell(STAN_AV_D, "max_rhat"), "stan R-hat")
-    add("195", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
+    add("196", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
         "stan wall clock")
     add("0.2%", STAN_AV_B,
         lambda: cell(STAN_AV_B, "inflation", n_players=15) - 1.0,
@@ -3110,7 +3343,7 @@ def _established_facts() -> list[Claim]:
             f"stan {model} rho")
     add("1.0019", STAN_AV_D, lambda: cell(STAN_AV_D, "max_rhat"), "stan R-hat")
     add("2,314", STAN_AV_D, lambda: cell(STAN_AV_D, "min_ess_bulk"), "stan min ESS")
-    add("195", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
+    add("196", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
         "stan wall clock")
     board_rows = [(12, "69.9", "4.2", "0.2%"), (15, "78.0", "5.0", "0.2%"),
                   (30, "110.3", "8.8", "0.3%"), (150, "246.4", "39.1", "1.2%"),
@@ -3165,7 +3398,7 @@ def _established_facts() -> list[Claim]:
     add("713,947", STAN_MIN_D,
         lambda: cell(STAN_MIN_D, "n_player_games", metric="game_level_rho"),
         "game-level population")
-    add("1,227", STAN_MIN_G, lambda: total(STAN_MIN_G, "wall_clock_s"),
+    add("1,503", STAN_MIN_G, lambda: total(STAN_MIN_G, "wall_clock_s"),
         "minutes head wall clock")
     add("1.0054", STAN_MIN_G, lambda: max_of(STAN_MIN_G, "max_rhat"),
         "minutes head max R-hat")
@@ -3177,10 +3410,10 @@ def _established_facts() -> list[Claim]:
         lambda: (cell(STAN_MIN_M, "val_crps", variant="logit_own_spline")
                  - cell(STAN_MIN_M, "val_crps", variant="carry_forward")),
         "minutes CRPS gain over floor")
-    add("721", STAN_MIN_G,
+    add("955", STAN_MIN_G,
         lambda: cell(STAN_MIN_G, "wall_clock_s", label="logit_own_spline/val"),
         "spline wall clock")
-    add("171", STAN_MIN_G,
+    add("175", STAN_MIN_G,
         lambda: cell(STAN_MIN_G, "wall_clock_s", label="linear/val"),
         "linear wall clock")
     C += _minutes_pre_lock_claims(NOTES)
@@ -3294,11 +3527,12 @@ def _established_facts() -> list[Claim]:
                           ("0.988", "pilot star-tier ratio"),
                           ("59%", "pilot calibration cut")]:
         add(quoted, COMP_M, lambda: float("nan"), label, historical=True)
-    add("0.0608", COMP_O, lambda: cell(COMP_O, "p_any_ot", **{"class": "params"}),
+    add("0.0608", GL_M, lambda: cell(GL_M, "p_any_ot", variant="floor"),
         "OT tail p_any")
-    add("0.1408", COMP_O, lambda: cell(COMP_O, "p_more_ot", **{"class": "params"}),
+    add("0.1408", GL_M, lambda: cell(GL_M, "p_more_ot", variant="floor"),
         "OT tail p_more")
-    add("128.4", COMP_O, lambda: cell(COMP_O, "predicted", **{"class": "1OT"}),
+    add("128.4", GL_PPC,
+        lambda: cell(GL_PPC, "predicted", variant="floor", **{"class": "1OT"}),
         "OT tail predicted 1OT")
 
     # ── serial and residual correlation ───────────────────────────────────────
@@ -4013,6 +4247,21 @@ def _readme() -> list[Claim]:
                  / mean_abs_dev(COMP_P, "ratio", 1.0, variant="betabinom_ot",
                                 analysis="variance_ratio")),
         "calibration error cut by grading")
+    # The graded dispersion at 4dp as well as 3dp: the minutes section quotes it to four
+    # places to distinguish it from the 4.65x game-level figure it is NOT, so the precision
+    # is doing work and the claim has to match it.
+    add("0.1768", COMP_RHO, lambda: cell(COMP_RHO, "rho", variant=SEL, bin=1),
+        "fringe-tier dispersion, 4dp")
+    add("0.0855", COMP_RHO, lambda: cell(COMP_RHO, "rho", variant=SEL, bin=4),
+        "star-tier dispersion, 4dp")
+    # The per-team-game floor, which the composition clears on the same draws that fail the
+    # season-unit one. The pair is the whole "a head is only a model at the unit it was
+    # scored at" claim, so both halves are claimed rather than the contrast asserted.
+    add("4.6776", COMP_M, lambda: comp_m("carry_forward", "val_crps"),
+        "the composition's per-team-game no-fit floor, which it does clear")
+
+    # ── results: the two minutes heads at the season unit ─────────────────────
+    C.extend(_minutes_unification_claims(README))
 
     # ── results: substitution and season terms ────────────────────────────────
     # The README's claim used to be that the gain *replicates across splits*. Gate 0 is
@@ -4805,8 +5054,14 @@ def check_values(claims: tuple[Claim, ...] = CLAIMS,
                  root: Path = ROOT) -> tuple[list[Finding], list[Finding]]:
     """Quoted figure against artifact. Returns (mismatches, skipped).
 
-    Historical claims are reported as `superseded` rather than checked — they are in the
-    registry for the presence check, which is what stops a reversal being tidied away.
+    Two kinds of claim are presence-checked rather than value-checked, and they are
+    reported separately because they mean different things. `historical` claims are
+    *superseded* — a corrected value kept beside its correction — and they are in the
+    registry so a reversal cannot be tidied away. **Cost** claims are figures derived from
+    a `COST_COLUMNS` column: sampler wall clock does not reproduce across machines or
+    across whatever else is running, so comparing it to a stored constant fails for
+    reasons that carry no information about the model. Both still have to appear in the
+    doc.
     """
     bad, skipped = [], []
     for claim in claims:
@@ -4818,6 +5073,7 @@ def check_values(claims: tuple[Claim, ...] = CLAIMS,
             skipped.append(Finding("missing-artifact", claim.doc, claim.label,
                                    f"`{claim.artifact}` not built"))
             continue
+        _columns_read.clear()
         try:
             actual = float(claim.actual())
         except MissingColumn as exc:
@@ -4827,6 +5083,18 @@ def check_values(claims: tuple[Claim, ...] = CLAIMS,
                 f"schema moved under this claim, so it is checking nothing. Requote "
                 f"from the column that replaced it and keep the old value as "
                 f"Claim(historical=True)."))
+            continue
+        # Checked AFTER `actual()` rather than declared per claim, so the rule keys on
+        # the artifact column that was actually read. A `MissingColumn` on a cost artifact
+        # still fails loudly above: a schema change is a real defect whatever the column
+        # measures.
+        cost = touched_cost_column()
+        if cost:
+            skipped.append(Finding(
+                "cost-figure", claim.doc, claim.label,
+                f"{claim.quoted} presence-checked only — derived from "
+                f"{', '.join(sorted(cost))}, which measures the machine rather than the "
+                f"model (artifact says {actual:.6g})"))
             continue
         if actual != actual:                      # NaN — the lookup found no row
             skipped.append(Finding("no-such-row", claim.doc, claim.label,
@@ -4948,7 +5216,8 @@ def report(results: dict) -> str:
             lines.append(f"  - [{f.doc}] {f.label}: {f.detail}")
         lines.append("")
 
-    unbuilt = [f for f in results["skipped"] if f.check != "superseded"]
+    unbuilt = [f for f in results["skipped"]
+               if f.check not in ("superseded", "cost-figure")]
     if unbuilt:
         lines.append(f"Skipped (artifact not built): {len(unbuilt)}")
         for f in unbuilt[:10]:
@@ -4958,10 +5227,13 @@ def report(results: dict) -> str:
         lines.append("")
 
     superseded = [f for f in results["skipped"] if f.check == "superseded"]
+    cost = [f for f in results["skipped"] if f.check == "cost-figure"]
     checked = len(CLAIMS) - len(results["skipped"])
     lines.append("-" * 70)
     lines.append(f"figures checked:  {checked} of {len(CLAIMS)}")
     lines.append(f"superseded:       {len(superseded)} (presence-checked, not value-checked)")
+    lines.append(f"cost figures:     {len(cost)} (presence-checked — wall clock measures "
+                 f"the machine)")
     lines.append(f"disagreements:    {len(results['value-mismatch'])}")
     lines.append(f"stale claims:     {len(results['stale-claim'])}")
     return "\n".join(lines)
