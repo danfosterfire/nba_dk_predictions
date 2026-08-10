@@ -5062,4 +5062,100 @@ REGISTRY: tuple[Decision, ...] = (
         date="2026-08-09",
         tags=("split", "leakage"),
     ),
+    Decision(
+        id="dashboard-pages-not-tabs",
+        topic="problem",
+        claim="The dashboard expansion is a **`st.navigation` multipage app**, not "
+              "`st.tabs`. The user-facing word 'tab' maps to a page.",
+        because="Streamlit executes the body of *every* tab on every rerun — tabs are a "
+                "client-side affordance and the inactive content is hidden with CSS, not "
+                "skipped. Nine tabs would mean every interaction anywhere re-runs all "
+                "nine, including the one that loads the 90 MB `sim_tensor_*.npz`, and no "
+                "amount of caching fixes it because the cost is the rendering rather than "
+                "the I/O. `st.navigation` / `st.Page` runs only the selected page's "
+                "script while keeping one server process, so `cache_data` and "
+                "`cache_resource` stay shared across pages and a tensor loaded by the "
+                "draft board stays warm across navigation. This is what makes the draft "
+                "board feasible inside the same app at all.",
+        status="settled",
+        reproduce="make dashboard → dashboard/app.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "performance"),
+    ),
+    Decision(
+        id="model-cards-emitter-not-posterior-pickles",
+        topic="problem",
+        claim="The model detail pages read **flat artifacts from a new `make "
+              "model-cards`**, never `data/features/posteriors/*.pkl` directly.",
+        because="The pickles carry thinned coefficient draws and a design recipe for "
+                "twenty heads, which is exactly what the pages want — and reading them "
+                "would break the dashboard's binding rule twice over. Unpickling imports "
+                "`src.models.posteriors`, which the `ast`-based guard cannot see because "
+                "it only walks static imports, so the guard would pass while the rule "
+                "broke. And the object returned carries a fitted `StandardScaler` and the "
+                "ordered design steps — the capability to score an arbitrary frame, which "
+                "is precisely the drift the rule prevents. So an emitter stands between "
+                "them and the dashboard reads only its output. The emitter goes through "
+                "`held_out.selection_split` so no test row can reach a page, and reads "
+                "the `train` posterior window rather than `train_val`, since at "
+                "`train_val` the validation rows were in the fit and a 'validation' "
+                "scatter drawn from those coefficients is an in-sample scatter wearing "
+                "the wrong label.",
+        status="open",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        unblocks="`src/models/model_cards.py` and `make model-cards` exist, with the "
+                 "build-time recipe check `posteriors.py` already runs.",
+        tags=("dashboard", "provenance", "split"),
+    ),
+    Decision(
+        id="feature-correlation-not-pair-plots",
+        topic="problem",
+        claim="A model page's feature-relationship block is a **correlation heatmap plus "
+              "one on-demand 2-D density**, not a pair plot matrix.",
+        because="A full pairwise matrix over the 12–20 features a head is fed is 150–400 "
+                "panels — unreadable at any size that fits on a page, and an artifact "
+                "carrying every pairwise 2-D binning is large for something nobody reads. "
+                "The question the pair plot is being asked is whether anything in the "
+                "block is collinear and what the joint looks like where it matters, and "
+                "that survives the substitution: a heatmap answers the first at a glance "
+                "and a single density, precomputed for the top ~20 correlated pairs per "
+                "head, answers the second on demand. `feature_correlation_tierA.parquet` "
+                "is the precedent for the heatmap.",
+        status="open",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        unblocks="`make model-cards` emitting `model_card_feature_corr.csv` and the "
+                 "top-pair densities, then step 4's renderer drawing them.",
+        tags=("dashboard",),
+    ),
+    Decision(
+        id="dashboard-overview-page-exemption",
+        topic="problem",
+        claim="One page of prose — the **Overview** — is exempted from 'the dashboard "
+              "shows data, prose belongs in the docs', bounded at one screen, with every "
+              "*result* on it read from an artifact.",
+        because="The 2026-08-08 overhaul deleted a nine-tab walkthrough for being "
+                "documentation rendered as an app, and that reasoning stands. The "
+                "audience is what changed: the walkthrough served the project architect "
+                "and lost to `docs/`, while the Overview serves a portfolio reader who "
+                "arrives at a URL with no context and will not open a repository. No "
+                "document serves that reader, because they will not read one. The "
+                "exemption is bounded rather than granted: one screen, no decision "
+                "registry or provenance links, and typed prose may say what the project "
+                "does but may not state a result — a hero tile reads "
+                "`season_total_metrics.csv` like every other figure. That last bound is "
+                "the mechanism, since the walkthrough died of hand-typed claims drifting "
+                "from the documents that made them.",
+        status="settled",
+        reproduce="make dashboard → dashboard/app.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "provenance"),
+    ),
 )

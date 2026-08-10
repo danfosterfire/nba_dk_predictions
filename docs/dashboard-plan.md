@@ -32,6 +32,28 @@ The rule that replaces the old altitude-and-reversals pair is simpler:
   go stale. Where the dashboard interprets, the interpretation carries a machine-checkable
   anchor — see [Pinning the interpretation](#pinning-the-interpretation).
 
+### Charter amendment 2026-08-10 — one page of prose, capped and pinned
+
+The expansion below adds an **Overview** page, which is prose, which is the thing this
+charter deleted. The exemption is granted deliberately and bounded, because the audience
+changed: the walkthrough was for the project architect and lost to `docs/`; the Overview
+page is for a **portfolio reader who arrives at a URL with no context** and will not open a
+repository. That reader is not served by any document, because they will not read one.
+
+Three bounds make it a different object from the walkthrough, and they are the terms of the
+exemption:
+
+1. **One page, one screen.** If it scrolls, it has become the walkthrough again.
+2. **Every number on it is read from an artifact.** Typed prose may say *what the project
+   does*; it may not state a *result*. A hero tile showing 400.5 dk_pts of season-total MAE
+   reads `season_total_metrics.csv` like every other figure on the site. This is the
+   mechanism, not a preference — a chart of an artifact cannot disagree with the artifact,
+   and the walkthrough died of hand-typed claims drifting from the documents that made them.
+3. **No decision registry, no provenance links, no reversal log.** Those are what made the
+   walkthrough a documentation surface, and they stay in `decisions.py` and `docs/`.
+
+Registered as `dashboard-overview-page-exemption` in `dashboard/decisions.py`.
+
 What carries over unchanged: **every figure is read from an artifact a `make` target
 produced**, and **nothing in `dashboard/` imports from `src/`** (pinned by
 `test_the_dashboard_imports_nothing_from_src`). The dashboard cannot refit, re-project or
@@ -208,6 +230,315 @@ PNG proves the figure is legible, and only a browser proves the page is.
 
 ---
 
+# The expansion — from one view to nine pages
+
+**Planned 2026-08-10. Nothing below is built.** This section is the design; each numbered
+step in [The build order](#the-build-order) is meant to be handed to a fresh session on its
+own.
+
+The goal is a single surface that presents the whole project — the PCA view keeps its
+content under the name **Player fingerprints**, and eight pages join it covering the model
+layer, the non-model inputs, the tournament layer, and the live draft board.
+
+## The three findings that shape the design
+
+Established by reading the code and the artifacts on disk before writing any of this down.
+Each one changes what gets built rather than how it looks.
+
+### 1. `st.tabs` is the wrong container, and `st.navigation` is the right one
+
+**Streamlit executes the body of every tab on every rerun.** Tabs are a client-side
+affordance: the Python inside each `with tab:` block runs whether or not that tab is
+visible, and the inactive content is hidden with CSS. Nine tabs would therefore mean every
+interaction anywhere re-runs all nine, including whichever one loads the 90 MB simulation
+tensor. The page would be unusable, and no amount of caching fixes it because the cost is
+the *rendering*, not only the I/O.
+
+`st.navigation` / `st.Page` (present in the installed Streamlit 1.60) runs **only the
+selected page's script**. Pages live in one server process, so `@st.cache_data` and
+`@st.cache_resource` are shared across them — a tensor loaded by the draft board stays warm
+if the reader navigates away and back.
+
+So the deliverable is a **sidebar-navigated multipage app**, and the user-facing word "tab"
+maps to a page. This is not a cosmetic substitution: it is the only structure in which item
+5 below is feasible at all.
+
+### 2. The model pages are blocked on artifacts, not on UI
+
+This is the large piece of work in the expansion, and it is pipeline work rather than
+dashboard work.
+
+The dashboard's binding rule is that it reads artifacts and never imports `src/`. Against
+the model detail pages, here is what is actually on disk today:
+
+| what a model page needs | what exists | gap |
+|---|---|---|
+| coefficient posteriors | `stan_availability_coefficients.csv`, `stan_games_played_coefficients.csv` | **18 of 20 heads have none** |
+| diagnostics table | `stan_*_diagnostics.csv` for every head, plus the posteriors `manifest.csv` | none — reuse directly |
+| PIT / calibration | `stan_availability_pit.csv`, `stan_games_played_pit.csv`; components carry a scalar `val_pit_ks` in `stan_component_metrics.csv` | **no ECDF band for any head** |
+| predicted vs observed rows | `availability_predictions.csv`, `stan_availability_predictions.csv`, `season_total_predictions.csv`, `stan_games_played_predictions.csv` | **no component, minutes, composition or game-length rows; and every one of these is validation-only** |
+| the features fed to each head | nothing | **all of it** |
+
+The tempting shortcut is `data/features/posteriors/{train,train_val}/*.pkl`, which does
+carry thinned coefficient draws and a design recipe for twenty heads. **It must not be read
+from the dashboard.** Unpickling it imports `src.models.posteriors` — invisible to the
+`ast`-based guard, which only sees static imports, so the guard would pass while the rule
+broke — and the object it returns carries a fitted `StandardScaler` and the ordered design
+steps, which is precisely the capability to score an arbitrary frame. A dashboard holding
+that is a dashboard that can silently disagree with the fit it is describing, which is the
+one failure the rule exists to prevent.
+
+**So a new emitter stands between them**: `src/models/model_cards.py`, `make model-cards`,
+reading the posterior pickles and each head's own variant ladder and writing flat,
+long-format, dashboard-shaped artifacts. The dashboard reads those and only those. The
+contract is specified in [The model-card artifact contract](#the-model-card-artifact-contract)
+below and gets its own `docs/model-cards-plan.md` when it is built.
+
+Two rules the emitter inherits and must not be allowed to quietly break:
+
+- **It goes through `held_out.selection_split`.** The user asked for train *and* validation
+  scatters, which is exactly right and is also the whole split surface. Every emitted row
+  carries a `split` column whose only legal values are `train` and `validation`. There is no
+  test column, for the same reason the sweeps no longer emit one.
+- **It reads the `train` posterior window, not `train_val`.** At `train_val` the validation
+  rows were in the fit, and a "validation" scatter drawn from those coefficients is an
+  in-sample scatter wearing the wrong label. `posteriors.require_window` is there to refuse
+  the wrong one rather than discover it in a picture.
+
+### 3. Items 3 and 4 need almost no new pipeline work
+
+The non-model inputs page and the tournament page are the cheap half of the expansion,
+because their artifacts already exist and nothing reads them. `make dashboard-audit`'s
+orphaned-artifact check — "what has the pipeline written that nothing looks at?" — was
+already named in this doc as the right way to choose the next view, and it points here.
+
+On disk and unread: `adp_panel.parquet`, `adp_profile.csv`, `adp_match_audit.csv`,
+`residual_correlation.csv`, `serial_correlation.csv`, `bonus_calibration.csv`,
+`game_length_coverage.csv`, `draft_pool_coverage.csv`, `variance_budget.csv`, and the
+entire strategy family — `strategy_sweep.csv` (88 rows over the full axis grid),
+`strategy_paired.csv` (440), `strategy_shipped`, `strategy_realized`, `strategy_null`,
+gates C and D, `bracket_structure`, `bracket_entries`, `bracket_null`, `draft_field`,
+`draft_adp_curve`, `draft_gate_b`, `sim_season_gate_a`, plus `economics.py`'s derived
+contest arithmetic.
+
+That is the richest material in the repo and it has never been drawn.
+
+---
+
+## The pages
+
+Nine, in sidebar order. "Class" pages carry a head selector; the others do not.
+
+| # | page | source | new artifacts? |
+|---|---|---|---|
+| 1 | **Overview** | hero tiles from existing metrics CSVs | no |
+| 2 | **Player fingerprints** | today's `app.py`, moved unchanged | no |
+| 3 | **Availability** | model cards + `stan_availability_*`, `stan_games_played_*` | **yes** |
+| 4 | **Minutes** | model cards + `stan_minutes_*`, `stan_composition_*`, `minutes_unification.csv` | **yes** |
+| 5 | **Box-score components** | model cards + `stan_component_*` | **yes** |
+| 6 | **Game length** | model cards + `stan_game_length_*` | **yes** |
+| 7 | **Inputs beyond the heads** | ADP, injury capture, copula, serial correlation, bonus overdispersion | small |
+| 8 | **Tournament & strategy** | the strategy / bracket / draft families, `economics.py` | no |
+| 9 | **Draft board** | today's `draft_room.py`, as a page | no |
+
+### Pages 3–6 — the model detail views, and the head selector
+
+The user's item 2 asks for one tab per **model class** with a dropdown for the specific head
+within a class. The four classes fall out of the likelihood and the unit, not out of the
+`.stan` file — `betabinomial_glm.stan` serves availability, minutes, four conversion heads
+and overtime onset, so grouping by source would put unrelated things together:
+
+- **Availability** — `availability` (beta-binomial over games played out of team games) and
+  the games-played tenure decomposition (`gp_entry`, `gp_exit`, `gp_onset`, `gp_duration`).
+- **Minutes** — the marginal `min | available` head and the team-game composition. This page
+  has a second job the others do not: it is where `minutes_unification.csv` renders, and that
+  comparison is the repo's cleanest demonstration that *a head is only a model at the unit it
+  was scored at*. One posterior, two units, opposite verdicts.
+- **Box-score components** — the seven negative-binomial counts and four beta-binomial
+  conversions, eleven heads behind one dropdown.
+- **Game length** — overtime onset (beta-binomial) and overtime depth (beta-geometric).
+
+**Every page states its own unit, prominently.** The component heads are fitted
+season-collapsed on ~10,000 player-season rows; the composition is per team-game on ~984,000;
+game length is per game; availability is per player-season. A reader comparing an R² across
+pages without knowing that is being misled, and this repo has already paid for that lesson.
+
+Each head renders the same seven blocks, in this order, on one long scrolling page — the user
+was explicit that scrolling is fine and cramming is not:
+
+1. **What this head is** — three or four sentences and the likelihood. The one place typed
+   prose is allowed on these pages, and it describes the *specification*, never a result.
+2. **The features it was fed** — a small-multiple grid of histograms, one per feature, plus a
+   table of n / mean / sd / missing-share. Imputation flags shown as their own share.
+3. **Feature relationships** — see the scope note below; a correlation heatmap, not a full
+   pair plot.
+4. **Coefficients** — a horizontal bar of posterior means with 95% credible intervals,
+   sorted, and spline bases grouped by `term_family` so a 12-knot basis does not swamp the
+   panel.
+5. **Predictive calibration** — the observed ECDF drawn over a ribbon of posterior-predictive
+   ECDF quantiles (50 / 80 / 95%), train and validation side by side.
+6. **Predicted vs observed, and residuals** — four panels: fitted-vs-observed and
+   residual-vs-fitted, each for train and validation, drawn from the binned density with a
+   bounded subsample overlaid for texture.
+7. **Diagnostics** — R̂, ESS bulk/tail, divergences, treedepth saturation, draws, wall clock,
+   CmdStan version and git SHA, read from the existing `stan_*_diagnostics.csv` and the
+   posteriors manifest. No new artifact.
+
+**Block 3 is a correlation heatmap, not a pair plot. Settled 2026-08-10.** The original
+sketch asked for pair plots of the features. A full pairwise matrix over 12–20 features is
+150–400 panels — unreadable at any size that fits a page, and an artifact carrying every
+pairwise 2-D binning is large for something nobody reads. What the pair plot is actually
+being asked ("is anything in here collinear, and what does the joint look like where it
+matters") survives the substitution intact: a **feature correlation heatmap**, for which
+there is precedent in `feature_correlation_tierA.parquet`, plus **one on-demand 2-D
+density** for a reader-selected pair, precomputed only for the top ~20 most-correlated
+pairs per head. Registered as `feature-correlation-not-pair-plots`, at status `open` until
+the emitter writes it — the fork is decided, the block is not built.
+
+### Page 7 — Inputs beyond the heads
+
+The user's item 3. The through-line is **everything the simulator consumes that is not a
+fitted coefficient**, which is a genuinely distinct kind of input and is currently invisible:
+
+- **ADP** — the `adp_panel` and its three-dates-per-row point-in-time discipline, the
+  DK↔FantasyPros agreement from `adp_profile.csv`, the name-matching audit, and the four of
+  nine seasons that point-in-time safety costs.
+- **The capture programs on a deadline** — injury-report PDFs, the ESPN feed and the DK
+  board, drawn as a coverage calendar. This one is worth building precisely because the data
+  is *perishable*: a gap in the calendar is unrecoverable, and a picture of it is an
+  operational alarm, not a decoration. Likely needs a small emitter, since `make adp-status`
+  and `make capture-status` print rather than write.
+- **The four calibrated simulator inputs** — the residual copula as a heatmap, the block
+  variance inflation from `serial_correlation.csv`, the bonus overdispersion from
+  `bonus_calibration.csv`, and the game-level minutes dispersion. Each carries its
+  `fit_window`, and the page should show the window rather than hide it, because *which
+  window to consume is decided by what the number will be scored against* is a real project
+  finding.
+
+### Page 8 — Tournament & strategy
+
+The user's item 4, and the page the whole project builds toward. No new artifacts. Four
+blocks:
+
+1. **The contest structure** — `bracket_structure.csv` and `economics.py`: five real
+   tournaments, four elimination rounds, Round 1 a zero-consolation knockout in every one,
+   and rake as a break-even edge hurdle because that is the unit an edge compares in.
+2. **The sweep** — `strategy_sweep.csv` over ranking source, blend weight, position and
+   exposure caps, stacking, objective and entry count. The natural figure is lift versus the
+   null with confidence intervals, faceted by axis, with the break-even hurdle drawn as a
+   reference line.
+3. **Simulated versus realized** — `strategy_shipped.csv` beside `strategy_realized.csv`.
+   The two halves do different jobs and the page must say which is the tuning surface and
+   which is the honest readout.
+4. **The paired comparisons** — `strategy_paired.csv`, 440 rows of gap with intervals and a
+   `resolved` flag. A gap whose interval crosses zero is the most useful thing on the page
+   and should be styled as such rather than buried.
+
+### Page 9 — The draft board
+
+The user's item 5, and the answer is **yes, it is feasible, and it is feasible only because
+of finding 1.** As a `st.tabs` child it would be a disaster; as an `st.Page` its script does
+not run until the reader navigates to it, and `@st.cache_resource` keeps the ~40 MB reference
+field warm across navigation.
+
+Two conditions:
+
+- **`make draft-room` keeps working as a standalone launch.** Draft night is a
+  thirty-second clock and should not share a process with anything. The page file stays
+  directly runnable; the unified app imports its `render()`.
+- **The `src/` exemption stays narrowed rather than widened.** `SRC_IMPORTERS` in
+  `tests/test_dashboard.py` continues to name exactly one file, held to `src.sim`. Moving the
+  draft room into the app must not become the precedent that lets page 3 import a model.
+
+---
+
+## The model-card artifact contract
+
+Sketch, to be firmed up in `docs/model-cards-plan.md` when step 3 is built. All files
+long-format, keyed by `head`, under `outputs/predictions/`. Sizes are the reason for every
+binning decision — a 984,000-row composition scatter is not an artifact, it is a copy of the
+data.
+
+| artifact | grain | approx rows |
+|---|---|---|
+| `model_card_index.csv` | head | 20 — unit, family, variant, n_fit, label, class |
+| `model_card_coefficients.csv` | head × term | ~600 — mean, sd, q2.5/25/75/97.5, `term_family` |
+| `model_card_features.csv` | head × feature × split × bin | ~30,000 — binned counts plus per-feature n/mean/sd/missing |
+| `model_card_feature_corr.csv` | head × feature × feature | ~5,000 |
+| `model_card_ecdf.csv` | head × split × grid point | ~8,000 — observed ECDF and predictive quantile band |
+| `model_card_calibration.csv` | head × split × 2-D bin | ~4,000 — fitted vs observed density, and residual density |
+| `model_card_sample.parquet` | head × split × row | ~200,000 capped — bounded subsample carrying fitted, observed, residual |
+
+Three things the emitter must do that are easy to get wrong:
+
+- **Cap the draws and the rows before generating a posterior predictive.** The composition
+  head at full row count times a thousand draws is not affordable; 200 draws over a
+  subsample is, and the ECDF band is stable well before that.
+- **Verify the recipe the way `posteriors.py` already does.** That module reproduces each
+  head's own design matrix and predictions exactly at build time and fails the build rather
+  than writing a wrong artifact. The model cards are downstream of the same recipe and get
+  the same check, or they will drift silently.
+- **Declare the unit per head in `model_card_index.csv`** and let the page read it, rather
+  than hard-coding a unit string in the dashboard where it can go stale.
+
+---
+
+## The build order
+
+Eight steps. Each is a self-contained session with its own deliverable and its own
+verification; the ordering is a dependency ordering, not a preference.
+
+**Step 1 · The multipage shell.** Convert `app.py` into an `st.navigation` entrypoint;
+move the PCA view verbatim into `dashboard/views/fingerprints.py` behind a `render()`;
+lift the appearance toggle into shared state so it survives navigation; keep `make
+dashboard` pointing at the same entrypoint. Ships with one real page, so the shell is
+proved before anything depends on it.
+
+**Step 2 · Tournament & strategy (page 8).** Deliberately second: it is the richest page,
+needs zero new pipeline work, and it exercises the multipage shell with a genuinely
+different layout before the expensive step lands.
+
+**Step 3 · The model-card emitter.** `src/models/model_cards.py`, `make model-cards`,
+`docs/model-cards-plan.md`, and the tests. No dashboard work at all. The largest step and
+the one most worth handing a fresh session with the whole context budget.
+
+**Step 4 · The generic model renderer plus the Availability page (3).** Build the seven
+blocks once, against one class, so the renderer is proved before it is reused three times.
+
+**Step 5 · Minutes, Box-score components, Game length (pages 4–6).** Mostly configuration
+against the step-4 renderer, plus the `minutes_unification` two-unit comparison, which is
+bespoke.
+
+**Step 6 · Inputs beyond the heads (page 7).** Includes the small capture-calendar emitter.
+
+**Step 7 · The draft board as a page (9).** Plus keeping `make draft-room` standalone.
+
+**Step 8 · Overview (page 1).** Last, on purpose: its hero tiles link into the pages, so it
+cannot be written until they exist, and writing it first would make it a table of contents
+for pages that do not.
+
+## What each step owes on the way out
+
+Not negotiable, since these are the mechanisms that keep the surface from drifting into
+being documentation again:
+
+- **The three verification layers** from `dashboard/README.md`: `AppTest` in both appearance
+  modes proves the page runs, a figure rendered to PNG proves the figure is legible, a real
+  browser proves the page is. All three are runnable as of 2026-08-10 — `kaleido` and
+  `playwright` were added to `requirements.txt`, having been used ad hoc during the PCA
+  build and never installed. **Neither needs a browser download**: kaleido finds the system
+  Chrome by itself, and playwright reaches it with
+  `p.chromium.launch(channel="chrome")`, so `playwright install` and its ~150 MB of
+  bundled browsers are not required. Both were probed end to end when they were added.
+- **Tests in `tests/test_dashboard.py`**, plain `assert` with synthetic builders, exercising
+  the pure layer directly rather than through a rendered page.
+- **A `dashboard/decisions.py` entry** for every load-bearing fork, per the standing
+  instruction in `CLAUDE.md`.
+- **This doc updated in place**, and the new artifacts accounted for so `make
+  dashboard-audit`'s orphan count moves the right way.
+
+---
+
 ## Structure
 
 ```
@@ -326,8 +657,11 @@ New, in the same plain-`assert` synthetic-builder style:
 
 ## Next views
 
-Not built, and deliberately unspecified beyond a sentence each — the point of shipping one
-view is to see what the next one should be.
+**Superseded 2026-08-10 by [The expansion](#the-expansion--from-one-view-to-nine-pages)**,
+which specifies the next eight pages concretely. Two of the four sketches below were taken
+up there — posterior draws for a player-season became the model-card predictive blocks, and
+the draft board became page 9. The two that were not are kept, because they are still good
+and still unclaimed:
 
 - **The player-season trajectory.** The same fingerprint over a career, as a small-multiple
   or an animated path through the first two components. `pooled` mode is the right artifact
@@ -335,11 +669,6 @@ view is to see what the next one should be.
 - **The archetype membership vector.** `archetypes_*` is a soft membership over a continuum
   with a silhouette peaking at 0.181, so the honest picture is a stacked bar of memberships,
   never a hard label.
-- **Posterior draws for a player-season.** Once the simulator lands, the deliverable is a
-  distribution — the natural view is a density of simulated `dk_pts` with the realized
-  season marked on it.
-- **The draft board.** Model ranking against ADP, which is the plot the whole project is
-  building toward.
 
 ## Publishing
 
