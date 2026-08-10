@@ -905,7 +905,7 @@ def composition_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorAr
     fit_frame, val = windowed(pilot, window, test_seasons)
     # Whole team-game blocks, because the composition's design is per-row but its
     # simulator is per block — a probe cut mid-block would be unusable downstream.
-    probe_raw = _team_game_probe(val)
+    probe_raw = team_game_probe(val)
 
     block = None
     if team_block:
@@ -949,11 +949,15 @@ def composition_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorAr
         window=window, cfg_stan=cfg_stan, draws_kept=draws_kept, seconds=seconds)
 
 
-def _team_game_probe(val: pd.DataFrame, n: int = PROBE_ROWS) -> pd.DataFrame:
+def team_game_probe(val: pd.DataFrame, n: int = PROBE_ROWS) -> pd.DataFrame:
     """Whole team-games spanning the frame, never a partial block.
 
     `ragged_arrays` asserts that rows are contiguous team-game blocks, so a probe that
     slices through one would be rejected by the very code the artifact exists to feed.
+
+    Public because the round-trip probe is not the only bounded cut anyone takes of this
+    frame: `model_cards.predictive_frame` needs the same block-aware subsample for the same
+    reason, and a second implementation of it would be a second chance to slice a block.
     """
     starts = np.flatnonzero(val["position"].to_numpy(dtype=np.int64) == 0)
     if len(starts) == 0:

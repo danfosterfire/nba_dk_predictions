@@ -23,6 +23,11 @@ def features_dir() -> Path:
     return ROOT / load_cfg()["data"]["features_dir"]
 
 
+def predictions_dir() -> Path:
+    """Where the model and simulation layers write their measured artifacts."""
+    return ROOT / load_cfg()["evaluation"]["predictions_dir"]
+
+
 @st.cache_data(show_spinner=False)
 def read_table(path_str: str, columns: tuple[str, ...] | None = None) -> pd.DataFrame:
     path = Path(path_str)

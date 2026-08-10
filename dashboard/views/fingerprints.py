@@ -31,19 +31,6 @@ TOP_LOADINGS = 10
 NEIGHBOURS = 3
 NO_OVERLAY = "— none —"
 
-# Streamlit's metric tiles are sized for a three-tile hero row; five of them clipped
-# their own values. A static style block is the smallest fix that keeps the tiles —
-# no data reaches it, so there is nothing for the HTML escape to matter to. It is
-# injected by the view rather than by the shell because it is a fix for *this* header's
-# five-across row, and lifting it would restyle pages that have not been laid out yet.
-TILE_CSS = """
-<style>
-  [data-testid="stMetricValue"] { font-size: 1.4rem; line-height: 1.5rem; }
-  [data-testid="stMetricLabel"] p { font-size: 0.75rem; }
-  [data-testid="stMetric"] { padding: 0.2rem 0 0 0; }
-</style>
-"""
-
 
 # ── Loading ───────────────────────────────────────────────────────────────────
 
@@ -133,7 +120,9 @@ def neighbour_table(table: pd.DataFrame) -> pd.DataFrame:
 # ── Page ──────────────────────────────────────────────────────────────────────
 
 def render() -> None:
-    st.markdown(TILE_CSS, unsafe_allow_html=True)
+    # Five metric tiles across a row clip their own values at Streamlit's default type
+    # scale; this page opts into the smaller one. See `shell.TILE_CSS`.
+    shell.compact_tiles()
     st.title("Player style fingerprints")
     st.caption("Where one player-season sits on the ten largest axes of variation in "
                "the season matrix — each spoke a principal component, each radius that "

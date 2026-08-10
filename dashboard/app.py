@@ -47,8 +47,8 @@ if str(ROOT) not in sys.path:
 
 import streamlit as st
 
-from dashboard import shell
-from dashboard.views import fingerprints, placeholder
+from dashboard import model_cards, shell
+from dashboard.views import availability, fingerprints, tournament
 
 
 class View(NamedTuple):
@@ -64,22 +64,27 @@ class View(NamedTuple):
 # each arrives as one module in `dashboard/views/` and one row here, and nothing else in
 # this file moves.
 #
-# The second row is a placeholder, and it is here for a measured reason rather than for
-# looks: **Streamlit draws no navigation widget for a one-page app**, so a shell shipped
-# with only the fingerprint view would be indistinguishable from the single-page script it
-# replaced and could not be verified in a browser. It is the *next* page in the build
-# order, so step 2 replaces this row rather than adding to it. See
-# `dashboard/views/placeholder.py`.
+# **The navigation must keep at least two rows**, and that is measured rather than
+# stylistic: Streamlit draws no navigation widget at all for a one-page app, so a shell
+# that dropped back to one page would be indistinguishable in a browser from the
+# single-page script it replaced. The second row held a placeholder from the shell
+# landing on 2026-08-10 until the tournament page replaced it the same day, exactly as
+# the build order specified.
+def model_view(render: Callable[[], None], class_key: str) -> View:
+    """A model-detail page's row, titled from `model_cards.CLASSES` rather than here.
+
+    The four model pages are one renderer over one class table; taking the title, icon and
+    `url_path` from that table means adding page 4, 5 or 6 is a view module and this one
+    line, and that a page's name cannot disagree between the navigation and the page.
+    """
+    spec = model_cards.CLASSES[class_key]
+    return View(render, spec.title, spec.icon, spec.url_path)
+
+
 VIEWS: tuple[View, ...] = (
     View(fingerprints.render, "Player fingerprints", ":material/radar:", "fingerprints"),
-    View(placeholder.planned(
-        "Tournament & strategy", "step 2 of the build order",
-        "The contest structure, the strategy sweep, simulated against realized, and the "
-        "paired comparisons whose intervals cross zero.",
-        "what `make strategy-sweep` and `make bracket` have already written, plus the "
-        "contest arithmetic in `dashboard/economics.py` — all on disk today, none of it "
-        "drawn."),
-        "Tournament & strategy", ":material/trophy:", "tournament"),
+    model_view(availability.render, availability.CLASS_KEY),
+    View(tournament.render, "Tournament & strategy", ":material/trophy:", "tournament"),
 )
 
 

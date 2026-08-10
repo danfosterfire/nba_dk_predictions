@@ -553,7 +553,7 @@ with the MLE inside the 95% credible interval for 21 of 21 terms. Cost is concen
 entirely in the spline variants. Dropping the test side halved the component fit count from
 74 and cut sampler time from 305.0 to **137.4** minutes *while* raising every selection fit
 to full-length chains — which incidentally fixed the one fit that used to miss its R̂ bar.
-969 tests pass (`.venv/bin/python -m pytest tests/`).
+1,233 tests pass (`.venv/bin/python -m pytest tests/`).
 
 ---
 
@@ -603,12 +603,16 @@ src/eda/        the season-level analysis pipeline — one module per artifact
 src/models/     the Stan heads (availability, minutes, composition, components,
                 game length, season terms) plus the sklearn references they are checked
                 against, and `posteriors.py`, which persists every fitted head's thinned
-                draws and design recipe so nothing downstream has to refit
+                draws and design recipe so nothing downstream has to refit —
+                `model_cards.py` turns those into the flat tables the dashboard reads,
+                since the dashboard may not open a pickle that can score a frame
 src/stan/       four .stan sources for twenty-plus heads
 src/sim/        the simulation and drafting layer — numpy over the posterior artifacts,
                 so nothing here needs CmdStan. Today `season.py`, which writes THE tensor
-dashboard/      data visualizations over the artifacts — today the PCA player-style
-                fingerprint; reads artifacts only, never refits
+dashboard/      data visualizations over the artifacts — a multipage Streamlit shell over
+                the PCA player-style fingerprint, the model detail pages (one renderer,
+                seven blocks, a class table) and the tournament & strategy page;
+                reads artifacts only, never refits
 docs/           plan docs — predictions, availability, minutes composition, ADP,
                 simulations, EDA, provenance, dashboard, contest rules
 ```
@@ -620,7 +624,7 @@ make install          # create .venv and install requirements
 make fetch            # pull raw data from nba_api (long)
 make eda              # the full season-level EDA sweep
 make stan             # fit the availability, minutes and component heads
-make dashboard        # Streamlit walkthrough at http://localhost:8501
+make dashboard        # the Streamlit views at http://localhost:8501
 make test             # pytest
 ```
 

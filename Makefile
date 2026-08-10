@@ -12,7 +12,7 @@ PIP    := .venv/bin/pip
         variance-budget residual-correlation season-effects \
         stan stan-availability stan-minutes stan-components stan-composition \
         stan-substitution season-terms games-played stan-games-played \
-        stan-game-length posteriors minutes-unification composition-effects \
+        stan-game-length posteriors model-cards minutes-unification composition-effects \
         scoring-periods draft-pool simulate-season bracket draft-sim \
         draft-room draft-room-prep strategy-sweep final-evaluation
 
@@ -261,6 +261,36 @@ WINDOW ?= train
 
 posteriors:
 	$(PYTHON) -m src.models.posteriors --window $(WINDOW)
+
+# The dashboard-shaped view of every fitted head — one flat artifact per block of a model
+# page: the index, the coefficients, the features, their correlations, the predictive ECDF
+# ribbon, the binned calibration density and a bounded scatter sample.
+# The pages CANNOT read data/features/posteriors/*.pkl themselves: unpickling imports
+# src.models.posteriors, which the dashboard's ast-based purity guard cannot see because it
+# walks static imports only, and the object carries a fitted StandardScaler plus the ordered
+# design steps — the capability to score an arbitrary frame, which is exactly the drift the
+# rule exists to prevent. So this emitter stands between them and the dashboard reads only
+# its output.
+#
+# Reads the `train` window and nothing else, deliberately without a WINDOW knob: at
+# train_val the validation rows were IN the fit, and a "validation" histogram drawn from
+# those coefficients is an in-sample picture wearing the wrong label. Every emitted row
+# carries `split` in {train, validation}; there is no test column.
+#
+# Cheap and NO CmdStan — ~10 s over the persisted posteriors, no refit and no Stan sampler.
+# It fails the build rather than writing a wrong artifact: each head's design matrix is
+# re-derived twice, once through the persisted recipe and once through the head's own
+# variant ladder, and the two must agree to 1e-9 — and the 200-draw predictive it draws
+# through each head's OWN predict_samples must reproduce that head's reported mean to 5%,
+# which is the failure a design check structurally cannot see. See docs/model-cards-plan.md.
+#
+# There is deliberately no rebuild-one-head flag, unlike `make posteriors`: at ten seconds
+# for all twenty a partial run buys nothing and would leave the artifacts describing three
+# heads. To debug one head's check, `--check <heads>` builds and verifies without writing:
+#
+#   $(PYTHON) -m src.models.model_cards --check composition
+model-cards:
+	$(PYTHON) -m src.models.model_cards
 
 # Does the composition supersede the marginal minutes head? README.md claimed the two
 # "compose rather than compete", with the marginal head still owning the season-level mean

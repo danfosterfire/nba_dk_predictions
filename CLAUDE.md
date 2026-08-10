@@ -49,6 +49,12 @@ to the relevant docs for the task at hand. The docs are:
   completed and mostly archival at this point.
   - injuries_paper.md: Copy of a study on workload contributing to achilles 
   tendon ruptures in basketball players. Archival.
+  - model-cards-plan.md: The contract between the fitted heads and the dashboard's 
+  model detail pages — what `make model-cards` writes, and the four rules the emitter 
+  inherits (`selection_split` only, the `train` posterior window, a build-time recipe 
+  check that fails rather than writing a wrong artifact, and a predictive drawn through 
+  each head's own `predict_samples` whose mean must reproduce that head's own). Read 
+  this before adding a `model_card_*` artifact or changing a head's variant ladder.
   - minutes-composition-plan.md: Plan and notes for the production version of 
   the minutes-played model. Work completed and mostly archival at this point.
   - model-development-notes.md: Detailed notes and findings developed during

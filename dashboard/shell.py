@@ -25,6 +25,27 @@ from dashboard.theme import theme
 MODES = ("light", "dark")
 APPEARANCE = "appearance"
 
+# Streamlit's metric tiles are sized for a three-tile hero row, and clip their own values
+# past four across — caught in a browser on the fingerprint page's five-tile header, where
+# the test IDs below were read off this Streamlit's frontend bundle rather than assumed.
+#
+# It lives here rather than in a view because two pages now want it, but it is **opt-in**
+# rather than applied by the entrypoint: a page that has not been laid out yet should not
+# silently inherit a type scale chosen for somebody else's header. No data reaches the
+# block, so there is nothing for the HTML escape to matter to.
+TILE_CSS = """
+<style>
+  [data-testid="stMetricValue"] { font-size: 1.4rem; line-height: 1.5rem; }
+  [data-testid="stMetricLabel"] p { font-size: 0.75rem; }
+  [data-testid="stMetric"] { padding: 0.2rem 0 0 0; }
+</style>
+"""
+
+
+def compact_tiles() -> None:
+    """Opt into the tile type scale that fits four or more metrics across a row."""
+    st.markdown(TILE_CSS, unsafe_allow_html=True)
+
 
 def detected_mode() -> str:
     """Follow Streamlit's own theme where it exposes one."""

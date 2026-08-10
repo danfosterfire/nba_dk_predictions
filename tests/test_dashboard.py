@@ -1,13 +1,16 @@
-"""The dashboard's pure layer: palette rules, the PCA view's logic, registry, audit.
+"""The dashboard's pure layer: palette rules, both views' logic, registry, audit.
 
-`theme.py`, `charts.py`, `pca.py`, `decisions.py`, `economics.py` and `audit.py` import
-no Streamlit, which is what lets every rule below be exercised as a plain function
-rather than through a rendered page.
+`theme.py`, `charts.py`, `pca.py`, `strategy.py`, `decisions.py`, `economics.py` and
+`audit.py` import no Streamlit, which is what lets every rule below be exercised as a
+plain function rather than through a rendered page.
 
-A handful of tests read the real `data/features/pca_tierA_within_season_*` artifacts.
-Those are the ones that keep the ten typed component titles honest — a title is an
-interpretation of loadings that live on disk, so nothing but the artifact can confirm
-the anchor feature still exists and still loads the way the title claims.
+A handful of tests read the real artifacts on disk — the
+`data/features/pca_tierA_within_season_*` files and the strategy / bracket families under
+`outputs/predictions/`. Those are the ones that keep a *derived* quantity honest against
+the artifact it is derived from: a component title is an interpretation of loadings that
+live on disk, and the tournament page's "does this gap resolve" styling is derived from an
+interval that has its own `resolved` column beside it. Nothing but the artifact can
+confirm those still agree.
 """
 
 import ast
@@ -19,10 +22,12 @@ import pandas as pd
 import plotly.graph_objects as go
 import pytest
 
-from dashboard import audit, charts, decisions, economics, pca, theme
+from dashboard import (audit, charts, decisions, economics, model_cards, pca, strategy,
+                       theme)
 
 ROOT = Path(__file__).resolve().parent.parent
 FEATURES = ROOT / "data" / "features"
+PREDICTIONS = ROOT / "outputs" / "predictions"
 
 
 # ── Synthetic builders ────────────────────────────────────────────────────────
@@ -579,6 +584,493 @@ def test_translucent_converts_a_hex_fill_without_touching_the_stroke():
     assert charts._translucent("#2a78d6", 0.22) == "rgba(42,120,214,0.22)"
 
 
+# ── The tournament page's pure layer ──────────────────────────────────────────
+#
+# `dashboard/strategy.py` shapes what `make bracket` and `make strategy-sweep` wrote into
+# the frames the page draws. The synthetic builders below carry the columns the real
+# artifacts carry and nothing else; a handful of tests read the real files, and those are
+# the ones that keep a derived quantity honest against the artifact it is derived from.
+
+def _sweep(tournaments=("600k_shootaround", "20k_spin_move"),
+           seasons=("2022-23", "2023-24")) -> pd.DataFrame:
+    """A sweep frame: three axes, five arms, every column the page reads."""
+    arms = [("ranking", "model_mean", 0.10), ("ranking", "adp", -0.02),
+            ("alpha", "blend_a15", 0.17), ("alpha", "blend_a85", 0.05),
+            ("objective", "lineup_value", 0.21)]
+    hurdles = {"600k_shootaround": 0.176, "20k_spin_move": 0.1232}
+    rows = []
+    for t in tournaments:
+        for s, season in enumerate(seasons):
+            for axis, arm, lift in arms:
+                # A second season perturbs the ordering, so a test can see that arms are
+                # ranked on the mean across seasons rather than on whichever came first.
+                value = lift + (0.01 if s else 0.0)
+                rows.append({
+                    "season": season, "tournament": t, "strategy": arm, "axis": axis,
+                    "n_entries": 10, "p_advance": 1 / 6 + value,
+                    "p_advance_lo": 1 / 6 + value - 0.05,
+                    "p_advance_hi": 1 / 6 + value + 0.05,
+                    "lift_vs_null": value, "lift_lo": value - 0.05,
+                    "lift_hi": value + 0.05, "p_advance_null": 1 / 6,
+                    "roi": 2.0 + 10 * value, "roi_null": -0.1497,
+                    "break_even_hurdle": hurdles[t]})
+    return pd.DataFrame(rows)
+
+
+def _paired(tournament: str = "600k_shootaround") -> pd.DataFrame:
+    """Gaps against one baseline: two clear of zero, two straddling it, plus the self."""
+    rows = [("lineup_value", 0.10, 0.09, 0.11), ("blend_a15", 0.04, 0.01, 0.07),
+            ("blend_a30", 0.01, -0.01, 0.03), ("blend_stack4", -0.001, -0.02, 0.02),
+            ("adp", -0.06, -0.08, -0.04), ("model_mean", 0.0, 0.0, 0.0)]
+    return pd.DataFrame([
+        {"tournament": tournament, "metric": "p_advance", "baseline": "model_mean",
+         "strategy": arm, "gap": gap, "gap_lo": lo, "gap_hi": hi,
+         "p_gap_below_zero": 0.5, "resolved": not (lo <= 0 <= hi), "n_worlds": 1000}
+        for arm, gap, lo, hi in rows])
+
+
+def _advance() -> pd.DataFrame:
+    """Two tournaments' round ladders, shaped like `economics.advance_table()`."""
+    rows = []
+    for t, rates in (("600k_shootaround", [(12, 2), (12, 1), (10, 1), (49, 0)]),
+                     ("20k_spin_move", [(12, 2), (6, 2), (6, 2), (8, 0)])):
+        field = 35280.0 if t == "600k_shootaround" else 432.0
+        for rnd, (pod, adv) in enumerate(rates, start=1):
+            rows.append({"tournament": t, "round": rnd, "field_entries": field,
+                         "pod_size": pod, "n_advance": adv,
+                         "advance_rate": adv / pod, "cash_places": 0 if rnd == 1 else 9,
+                         "paid_share": 0.0, "min_cash": 0.0 if rnd == 1 else 30.0,
+                         "zero_consolation": rnd == 1})
+            if adv:
+                field = field / pod * adv
+    return pd.DataFrame(rows)
+
+
+def _econ() -> pd.DataFrame:
+    return pd.DataFrame([
+        {"tournament": "600k_shootaround", "total_entries": 35280,
+         "entry_fee_per_team": 20, "rake": 0.14966, "break_even_hurdle": 0.176,
+         "first_prize": 200000.0, "first_prize_multiple": 10000.0},
+        {"tournament": "20k_spin_move", "total_entries": 432,
+         "entry_fee_per_team": 52, "rake": 0.109687, "break_even_hurdle": 0.1232,
+         "first_prize": 5000.0, "first_prize_multiple": 96.15}])
+
+
+def _artifact(name: str) -> pd.DataFrame:
+    path = PREDICTIONS / name
+    if not path.exists():
+        pytest.skip(f"{name} absent — run `make strategy-sweep` / `make bracket`")
+    return pd.read_csv(path)
+
+
+def test_a_tournament_name_keeps_its_buy_in_tier_lowercase():
+    """`str.title()` renders it `600K Shootaround`, which reads as a unit, not a name."""
+    assert strategy.pretty_tournament("600k_shootaround") == "600k Shootaround"
+    assert strategy.pretty_tournament("15k_and_one") == "15k And One"
+
+
+def test_the_break_even_lift_is_the_hurdle_in_survival_units():
+    """The derivation, end to end: lifting the null by it returns the whole entry fee.
+
+    `1 + hurdle` is `1/(1 − rake)` by construction, so `p_null · (1 + hurdle)` is the
+    advance rate at which an entry worth `1 − rake` of its fee becomes worth all of it.
+    """
+    rake = 0.14966
+    hurdle = economics.break_even_hurdle(rake)
+    p_null = 1 / 6
+    assert strategy.break_even_lift(p_null, hurdle) == pytest.approx(p_null * hurdle)
+    assert p_null + strategy.break_even_lift(p_null, hurdle) == \
+        pytest.approx(p_null / (1 - rake))
+
+
+def test_the_break_even_lift_refuses_a_null_that_is_not_a_probability():
+    for bad in (0.0, 1.0, -0.2):
+        with pytest.raises(ValueError):
+            strategy.break_even_lift(bad, 0.176)
+    with pytest.raises(ValueError):
+        strategy.break_even_lift(1 / 6, -1.0)
+
+
+def test_payout_elasticity_reads_one_for_a_proportional_payout():
+    """The assumption the reference line makes, exercised where it is exactly true."""
+    frame = _sweep(tournaments=("600k_shootaround",))
+    survival = frame["p_advance"] / frame["p_advance_null"]
+    frame["roi"] = (1 + frame["roi_null"]) * survival - 1.0
+    out = strategy.payout_elasticity(frame)
+    assert float(out["median_elasticity"].iloc[0]) == pytest.approx(1.0)
+    assert float(out["share_above_proportional"].iloc[0]) == 0.0
+
+
+def test_payout_elasticity_reads_above_one_when_payout_compounds():
+    frame = _sweep(tournaments=("600k_shootaround",))
+    survival = frame["p_advance"] / frame["p_advance_null"]
+    frame["roi"] = (1 + frame["roi_null"]) * survival ** 3 - 1.0
+    out = strategy.payout_elasticity(frame)
+    assert float(out["median_elasticity"].iloc[0]) == pytest.approx(3.0)
+    assert float(out["share_above_proportional"].iloc[0]) == 1.0
+
+
+def test_an_arm_sitting_exactly_on_the_null_is_dropped_not_divided_by():
+    """`log(1)` in the denominator; the row has no elasticity rather than an infinite one."""
+    frame = _sweep(tournaments=("600k_shootaround",))
+    frame.loc[0, "p_advance"] = frame.loc[0, "p_advance_null"]
+    out = strategy.payout_elasticity(frame)
+    assert int(out["n_rows"].iloc[0]) == len(frame) - 1
+    assert np.isfinite(out["median_elasticity"]).all()
+
+
+def test_the_shipped_sweep_is_convex_in_survival_so_the_drawn_line_is_conservative():
+    """The measurement the page prints beside the reference line, on the real artifact.
+
+    Proportional is 1. Anything above it means the break-even lift the chart draws sits
+    *above* the lift a real break-even needs, which is the direction to err in.
+    """
+    out = strategy.payout_elasticity(_artifact(strategy.SWEEP_FILE))
+    assert (out["median_elasticity"] > 1.0).all()
+    assert (out["share_above_proportional"] == 1.0).all()
+
+
+def test_the_contest_summary_chains_the_advance_rates_into_a_final_reach():
+    summary = strategy.contest_summary(_econ(), _advance())
+    row = summary[summary["tournament"] == "600k_shootaround"].iloc[0]
+    assert row["p_reach_final"] == pytest.approx((2 / 12) * (1 / 12) * (1 / 10))
+    assert row["r1_advance_rate"] == pytest.approx(2 / 12)
+    assert bool(row["is_target"])
+    assert list(summary["entry_fee_per_team"]) == sorted(summary["entry_fee_per_team"])
+
+
+def test_the_derived_reach_agrees_with_the_brackets_own_analytic_column():
+    """Two routes to the same number: the economics chain, and what `make bracket` wrote.
+
+    The page draws the artifact's column and tiles the derived one, so a disagreement
+    would put two different survival probabilities on one screen.
+    """
+    structure = _artifact(strategy.STRUCTURE_FILE)
+    summary = strategy.contest_summary(economics.economics(),
+                                       economics.advance_table())
+    season = sorted(structure["season"].astype(str).unique())[-1]
+    final = strategy.survival_frame(structure, season)
+    final = final[final["n_advance"] == 0].set_index("tournament")["p_reach"]
+    for row in summary.itertuples():
+        assert row.p_reach_final == pytest.approx(float(final[row.tournament]))
+
+
+def test_the_survival_frame_filters_by_season_and_flags_the_swept_tiers():
+    structure = _artifact(strategy.STRUCTURE_FILE)
+    season = sorted(structure["season"].astype(str).unique())[0]
+    frame = strategy.survival_frame(structure, season)
+    assert set(frame.loc[frame["is_target"], "tournament"]) == set(strategy.TARGET_TIERS)
+    assert (frame[frame["round"] == 1]["p_reach"] == 1.0).all()
+
+
+def test_an_unknown_season_gives_an_empty_survival_frame_rather_than_raising():
+    frame = strategy.survival_frame(_artifact(strategy.STRUCTURE_FILE), "1899-00")
+    assert frame.empty and "p_reach" in frame.columns
+
+
+def test_the_round_ladder_marks_round_one_as_the_zero_consolation_cut():
+    ladder = strategy.round_ladder(_advance(), "600k_shootaround")
+    assert list(ladder["Round"]) == [1, 2, 3, 4]
+    assert bool(ladder.loc[0, "Zero consolation"])
+    assert not ladder.loc[1:, "Zero consolation"].any()
+
+
+def test_the_sweep_panel_facets_in_the_declared_reading_order():
+    panel = strategy.sweep_panel(_sweep(), "600k_shootaround")
+    seen = list(dict.fromkeys(panel["axis"]))
+    assert seen == [a for a in strategy.AXIS_ORDER if a in set(seen)]
+    assert set(panel["tournament"]) == {"600k_shootaround"}
+
+
+def test_arms_are_ordered_by_their_mean_lift_across_seasons_not_by_the_first_row():
+    frame = _sweep(tournaments=("600k_shootaround",))
+    # Make `adp` win 2022-23 outright while still losing on the mean.
+    frame.loc[(frame["strategy"] == "adp") & (frame["season"] == "2022-23"),
+              "lift_vs_null"] = 0.90
+    panel = strategy.sweep_panel(frame, "600k_shootaround")
+    ranking = [arms for axis, _, arms in strategy.facets(panel) if axis == "ranking"][0]
+    assert ranking == ["adp", "model_mean"]
+    frame.loc[frame["strategy"] == "adp", "lift_vs_null"] = -0.5
+    panel = strategy.sweep_panel(frame, "600k_shootaround")
+    ranking = [arms for axis, _, arms in strategy.facets(panel) if axis == "ranking"][0]
+    assert ranking == ["model_mean", "adp"]
+
+
+def test_the_two_tiers_get_their_own_arm_ordering():
+    """Fixed order would hide that they disagree about which `α` wins — they do."""
+    sweep = _artifact(strategy.SWEEP_FILE)
+    orders = {}
+    for tier in strategy.TARGET_TIERS:
+        panel = strategy.sweep_panel(sweep, tier)
+        orders[tier] = [arms for axis, _, arms in strategy.facets(panel)
+                        if axis == "alpha"][0]
+    assert orders[strategy.TARGET_TIERS[0]] != orders[strategy.TARGET_TIERS[1]]
+
+
+def test_facets_list_each_arm_once_in_row_order():
+    panel = strategy.sweep_panel(_sweep(), "600k_shootaround")
+    for _, label, arms in strategy.facets(panel):
+        assert label and len(arms) == len(set(arms))
+    assert sum(len(arms) for _, _, arms in strategy.facets(panel)) == 5
+
+
+def test_both_backtest_surfaces_land_on_one_panel_with_the_tuning_side_first():
+    sweep, realized = _sweep(), _sweep()
+    realized["p_advance_lo"] -= 0.3
+    realized["p_advance_hi"] += 0.3
+    panel = strategy.surfaces_panel(sweep, realized, "600k_shootaround",
+                                    ("model_mean", "adp"))
+    assert list(dict.fromkeys(panel["surface"])) == ["Simulated", "Realized"]
+    assert set(panel["strategy"]) == {"model_mean", "adp"}
+    assert (panel["width"] == panel["hi"] - panel["lo"]).all()
+
+
+def test_an_arm_missing_from_a_surface_is_skipped_rather_than_faked():
+    sweep = _sweep()
+    panel = strategy.surfaces_panel(sweep, sweep, "600k_shootaround",
+                                    ("model_mean", "never_swept"))
+    assert set(panel["strategy"]) == {"model_mean"}
+
+
+def test_the_honest_readout_has_the_wider_intervals():
+    """One number for why one surface selected the strategy and the other did not."""
+    sweep = _artifact(strategy.SWEEP_FILE)
+    realized = _artifact(strategy.REALIZED_FILE)
+    shipped = _artifact(strategy.SHIPPED_FILE)
+    tier = strategy.TARGET_TIERS[0]
+    arm = strategy.shipped_arm(shipped, tier)
+    panel = strategy.surfaces_panel(sweep, realized, tier,
+                                    (str(arm["strategy"]), "adp"))
+    assert strategy.resolution_gap(panel)["ratio"] > 1.0
+
+
+def test_a_tournament_that_shipped_nothing_returns_no_arm():
+    assert strategy.shipped_arm(_artifact(strategy.SHIPPED_FILE), "nope") is None
+
+
+def test_the_paired_panel_drops_the_self_comparison():
+    """A baseline against itself is a zero-width interval at zero — arithmetic, not a
+    result, and it would sit in the unresolved count forever."""
+    panel = strategy.paired_panel(_paired(), "600k_shootaround", "p_advance",
+                                  "model_mean")
+    assert "model_mean" not in set(panel["strategy"])
+    assert list(panel["gap"]) == sorted(panel["gap"], reverse=True)
+
+
+def test_crossing_zero_is_derived_from_the_interval_the_chart_draws():
+    """Not read from `resolved`: the styling has to follow the bar the reader sees."""
+    frame = _paired()
+    frame.loc[frame["strategy"] == "blend_a30", "resolved"] = True   # a drifted flag
+    panel = strategy.paired_panel(frame, "600k_shootaround", "p_advance", "model_mean")
+    row = panel[panel["strategy"] == "blend_a30"].iloc[0]
+    assert bool(row["crosses_zero"])
+    assert strategy.unresolved(panel) == (2, 5)
+
+
+def test_the_derived_flag_agrees_with_the_shipped_artifacts_own_resolved_column():
+    """They do agree today, and this is what says so if a future run stops agreeing."""
+    paired = _artifact(strategy.PAIRED_FILE)
+    for tournament in paired["tournament"].unique():
+        for metric in paired["metric"].unique():
+            for baseline in paired["baseline"].unique():
+                panel = strategy.paired_panel(paired, tournament, metric, baseline)
+                assert (panel["crosses_zero"] == ~panel["resolved"].astype(bool)).all()
+
+
+def test_some_gaps_do_not_resolve_which_is_the_block_s_reason_to_exist():
+    paired = _artifact(strategy.PAIRED_FILE)
+    panel = strategy.paired_panel(paired, strategy.TARGET_TIERS[0], "p_advance",
+                                  "model_mean")
+    crossing, total = strategy.unresolved(panel)
+    assert 0 < crossing < total
+
+
+# ── The tournament page's figures ─────────────────────────────────────────────
+
+def _panel():
+    frame = _sweep()
+    return strategy.sweep_panel(frame, "600k_shootaround")
+
+
+def test_five_tournaments_stay_inside_the_all_pairs_cap_by_graying_the_rest():
+    th = theme.theme("light")
+    names = ["15k_and_one", "20k_spin_move", "50k_four_pt_play", "600k_shootaround",
+             "88k_alley_oop"]
+    colors = charts._tier_colors(th, names, strategy.TARGET_TIERS)
+    assert colors[names.index("600k_shootaround")] == th["series"][0]
+    assert colors[names.index("20k_spin_move")] == th["series"][1]
+    assert [c for c in colors if c == th["muted"]] == [th["muted"]] * 3
+    assert len({c for c in colors if c != th["muted"]}) <= theme.ALL_PAIRS_CAP
+
+
+def test_the_highlighted_tiers_take_their_slot_from_the_declared_order():
+    """So the survival curve and the hurdle bars agree on which tier is which colour."""
+    th = theme.theme("light")
+    forward = charts._tier_colors(th, list(strategy.TARGET_TIERS),
+                                  strategy.TARGET_TIERS)
+    backward = charts._tier_colors(th, list(reversed(strategy.TARGET_TIERS)),
+                                   strategy.TARGET_TIERS)
+    assert forward == [th["series"][0], th["series"][1]]
+    assert backward == [th["series"][1], th["series"][0]]
+
+
+def test_the_survival_curve_is_logarithmic_and_draws_the_highlights_last():
+    """`20k_spin_move` and `88k_alley_oop` share an advance chain exactly, so a gray
+    curve drawn last would hide a highlighted one."""
+    th = theme.theme("light")
+    frame = strategy.survival_frame(_artifact(strategy.STRUCTURE_FILE), "2022-23")
+    fig = charts.fig_survival(frame, th, strategy.TARGET_TIERS,
+                              strategy.pretty_tournament)
+    assert fig.layout.yaxis.type == "log"
+    assert len(fig.data) == frame["tournament"].nunique()
+    drawn = [t.name for t in fig.data]
+    assert drawn[-2:] == [strategy.pretty_tournament(t)
+                          for t in strategy.TARGET_TIERS]
+
+
+def test_every_hurdle_bar_prints_its_own_value():
+    """Three light-mode slots fall under 3:1 on the light surface, so a bar cannot be
+    read by colour alone."""
+    th = theme.theme("light")
+    fig = charts.fig_hurdle(strategy.contest_summary(_econ(), _advance()), th,
+                            strategy.TARGET_TIERS, strategy.pretty_tournament)
+    bar = fig.data[0]
+    assert len(bar.text) == len(bar.x)
+    assert all("%" in t for t in bar.text)
+
+
+def test_the_sweep_draws_one_subplot_per_axis_with_both_reference_lines_in_each():
+    th = theme.theme("light")
+    panel = _panel()
+    facets = strategy.facets(panel)
+    fig = charts.fig_sweep(panel, facets, th, 0.0293)
+    assert len(fig.layout.shapes) == 2 * len(facets)
+    assert {s.x0 for s in fig.layout.shapes} == {0.0, 0.0293}
+    titles = [a.text for a in fig.layout.annotations]
+    for _, label, _ in facets:
+        assert label in titles
+
+
+def test_the_sweep_nudges_its_two_seasons_off_the_shared_row():
+    """Plotly offsets grouped bars and not grouped scatter, so two intervals at one
+    category would sit exactly on top of each other."""
+    th = theme.theme("light")
+    panel = _panel()
+    fig = charts.fig_sweep(panel, strategy.facets(panel), th, 0.0293)
+    rows = sorted({round(float(y), 6) for trace in fig.data for y in trace.y})
+    assert all(abs(y - round(y)) > 1e-6 for y in rows)
+    assert len({round(abs(y - round(y)), 6) for y in rows}) == 1
+
+
+def test_the_sweep_keeps_the_best_arm_on_the_top_row_of_its_facet():
+    th = theme.theme("light")
+    panel = _panel()
+    facets = strategy.facets(panel)
+    fig = charts.fig_sweep(panel, facets, th, 0.0293)
+    axes = [fig.layout[f"yaxis{'' if i == 1 else i}"] for i in range(1, len(facets) + 1)]
+    for axis, (_, _, arms) in zip(axes, facets):
+        assert list(axis.ticktext) == arms
+        assert axis.range[0] > axis.range[1]          # inverted: index 0 is the top row
+
+
+def test_the_sweep_stays_inside_the_all_pairs_cap_with_its_reference_line():
+    """Two seasons plus the break-even line is exactly three categorical slots."""
+    th = theme.theme("light")
+    panel = _panel()
+    fig = charts.fig_sweep(panel, strategy.facets(panel), th, 0.0293)
+    used = {t.marker.color for t in fig.data}
+    used |= {s.line.color for s in fig.layout.shapes} - {th["axis"]}
+    assert used <= set(th["series"][:theme.ALL_PAIRS_CAP])
+
+
+def test_a_row_position_axis_carries_no_zero_line():
+    """Row 0 is an arm, not an origin — plotly's zeroline drew a rule through the top
+    row of every panel until this was turned off."""
+    th = theme.theme("light")
+    panel = _panel()
+    sweep = charts.fig_sweep(panel, strategy.facets(panel), th, 0.0293)
+    assert sweep.layout.yaxis.zeroline is False
+    paired = charts.fig_paired(
+        strategy.paired_panel(_paired(), "600k_shootaround", "p_advance",
+                              "model_mean"), th, "model_mean", "P(top 2 of 12)")
+    assert paired.layout.yaxis.zeroline is False
+
+
+def test_the_two_surfaces_are_separated_by_a_rule_and_by_their_row_labels():
+    th = theme.theme("light")
+    sweep, realized = _sweep(), _sweep()
+    panel = strategy.surfaces_panel(sweep, realized, "600k_shootaround",
+                                    ("model_mean", "adp"))
+    fig = charts.fig_surfaces(panel, th, 1 / 6, ("model_mean", "adp"))
+    rules = [s for s in fig.layout.shapes if s.y0 == s.y1]
+    assert len(rules) == 1
+    assert [t for t in fig.layout.yaxis.ticktext if t.startswith("Simulated")]
+    assert [t for t in fig.layout.yaxis.ticktext if t.startswith("Realized")]
+    assert any(s.x0 == pytest.approx(1 / 6) for s in fig.layout.shapes)
+
+
+def test_an_unresolved_gap_is_drawn_hollow_in_its_own_slot():
+    th = theme.theme("light")
+    panel = strategy.paired_panel(_paired(), "600k_shootaround", "p_advance",
+                                  "model_mean")
+    fig = charts.fig_paired(panel, th, "model_mean", "P(top 2 of 12)")
+    by_name = {t.name: t for t in fig.data}
+    assert set(by_name) == {"resolves", "does not resolve"}
+    assert by_name["resolves"].marker.symbol == "circle"
+    assert by_name["does not resolve"].marker.symbol == "circle-open"
+    assert by_name["resolves"].marker.color == th["series"][0]
+    assert by_name["does not resolve"].marker.color == th["series"][1]
+
+
+def test_only_the_gaps_whose_interval_covers_zero_are_drawn_hollow():
+    """The redundancy that matters: the hollow marker and the straddled zero line say
+    the same thing, so neither has to be believed on its own."""
+    th = theme.theme("light")
+    panel = strategy.paired_panel(_paired(), "600k_shootaround", "p_advance",
+                                  "model_mean")
+    fig = charts.fig_paired(panel, th, "model_mean", "P(top 2 of 12)")
+    hollow = [t for t in fig.data if t.marker.symbol == "circle-open"][0]
+    for x, minus, plus in zip(hollow.x, hollow.error_x.arrayminus,
+                              hollow.error_x.array):
+        assert x - minus <= 0 <= x + plus
+
+
+def test_a_panel_with_nothing_unresolved_draws_only_the_resolved_series():
+    th = theme.theme("light")
+    frame = _paired()
+    frame.loc[frame["strategy"].isin(["blend_a30", "blend_stack4"]),
+              ["gap", "gap_lo", "gap_hi"]] = [0.2, 0.15, 0.25]
+    panel = strategy.paired_panel(frame, "600k_shootaround", "p_advance", "model_mean")
+    fig = charts.fig_paired(panel, th, "model_mean", "P(top 2 of 12)")
+    assert [t.name for t in fig.data] == ["resolves"]
+
+
+def test_every_tournament_figure_carries_an_explicit_title():
+    """A title object with a font and no text renders as the literal string "undefined"
+    in a browser, and only in a browser."""
+    th = theme.theme("light")
+    panel = _panel()
+    sweep, realized = _sweep(), _sweep()
+    figures = [
+        charts.fig_survival(
+            strategy.survival_frame(_artifact(strategy.STRUCTURE_FILE), "2022-23"),
+            th, strategy.TARGET_TIERS, strategy.pretty_tournament),
+        charts.fig_hurdle(strategy.contest_summary(_econ(), _advance()), th,
+                          strategy.TARGET_TIERS, strategy.pretty_tournament),
+        charts.fig_sweep(panel, strategy.facets(panel), th, 0.0293),
+        charts.fig_surfaces(
+            strategy.surfaces_panel(sweep, realized, "600k_shootaround",
+                                    ("model_mean", "adp")),
+            th, 1 / 6, ("model_mean", "adp")),
+        charts.fig_paired(
+            strategy.paired_panel(_paired(), "600k_shootaround", "p_advance",
+                                  "model_mean"), th, "model_mean", "P(top 2 of 12)"),
+    ]
+    for fig in figures:
+        assert fig.layout.title.text is not None
+        assert fig.layout.paper_bgcolor == th["surface"]
+
+
 # ── Wiring ────────────────────────────────────────────────────────────────────
 
 def test_the_repo_root_is_on_the_path_for_package_imports():
@@ -673,8 +1165,8 @@ def test_the_pure_layer_is_still_the_bigger_half():
     """
     pure = {p.name for p in (ROOT / "dashboard").glob("*.py")
             if p.name not in STREAMLIT_SURFACE}
-    assert {"theme.py", "charts.py", "pca.py", "decisions.py", "economics.py",
-            "audit.py"} <= pure
+    assert {"theme.py", "charts.py", "pca.py", "strategy.py", "decisions.py",
+            "economics.py", "audit.py"} <= pure
 
 
 # ── The multipage shell ───────────────────────────────────────────────────────
@@ -691,11 +1183,26 @@ def test_the_navigation_carries_at_least_two_entries():
     `Position.SIDEBAR` and the frontend renders nothing — `[data-testid="stSidebarNav"]`
     is absent from the DOM. A shell that dropped back to one page would therefore be
     indistinguishable from the single-page script it replaced, and the cross-page state in
-    `dashboard/shell.py` would have nothing to survive. So the shell ships a placeholder
-    for the next page in the build order rather than shipping alone.
+    `dashboard/shell.py` would have nothing to survive. The shell held the second row with
+    a placeholder until the tournament page took it on 2026-08-10; the constraint outlives
+    the placeholder, which is why this assertion does.
     """
     from dashboard import app
     assert len(app.VIEWS) >= 2
+
+
+def test_every_navigation_row_is_a_real_view_module():
+    """The placeholder is gone, and a new one would be a `views/placeholder.py` again.
+
+    `pages()` hands `st.Page` a bare callable, so a row whose `render` came from anywhere
+    but a view module — a closure, a lambda, a stub — would still navigate perfectly well
+    and put something on a URL that no module owns.
+    """
+    from dashboard import app
+    for view in app.VIEWS:
+        module = getattr(view.render, "__module__", "")
+        assert module.startswith("dashboard.views."), (view.title, module)
+        assert view.render.__name__ == "render", view.title
 
 
 def test_every_page_has_a_unique_url_path_and_a_callable():
@@ -1058,3 +1565,629 @@ def test_optional_reads_a_real_table(tmp_path):
     pd.DataFrame({"a": [1, 2]}).to_csv(path, index=False)
     frame = optional(path)
     assert frame is not None and list(frame["a"]) == [1, 2]
+
+
+# ── The model pages ───────────────────────────────────────────────────────────
+#
+# `dashboard/model_cards.py` reshapes the eight `make model-cards` artifacts into the seven
+# blocks `views/model_page.py` draws. The coverage rule is the one the emitter's own tests
+# follow: **one case per way this layer can be wrong silently**, because every one of those
+# renders as a perfectly good-looking page — a spline basis scattered through an
+# alphabetical grid, a discrete bar with no width, a colourbar labelling four panels that do
+# not share a scale, a diagnostics cell reading `None` where the source carries nothing.
+#
+# The handful that read `outputs/predictions/` are the artifact-contract tests: they keep
+# this module's *declarations* — which heads make a page, where each head's sampler row
+# lives — honest against the artifacts they describe, which is the same job the PCA anchor
+# tests do. They skip rather than fail without `make model-cards`.
+
+def _index(**overrides) -> pd.DataFrame:
+    """An index row shaped like the artifact, for one synthetic head."""
+    base = dict(
+        head="synthetic", label="synthetic", model_class="availability",
+        class_label="Availability", unit="player-season", family="betabinomial",
+        likelihood="beta-binomial", description="A head.", variant="base",
+        n_features=3, n_terms=5, n_fit=900, n_validation=100, n_frame_rows=900,
+        row_filter="", n_draws=1000, n_density_pairs=3, fit_window="train",
+        first_season="1997-98", last_season="2021-22", response="mean_mu",
+        dispersion="rho", max_rhat=1.001, divergences=0, converged=True,
+        coefficient_scale="standardized", recipe_design_error=0.0,
+        roundtrip_prediction_error=0.0, design_check="vacuous", verified=True,
+        response_label="games played", predictive_draws=200, n_predictive_train=900,
+        n_predictive_validation=100, predictive_rows_capped=False,
+        predictive_weighted=False, fitted_source="head_predict",
+        predictive_check="mean", predictive_bias=0.002, ecdf_band_mc=0.01,
+        ecdf_band_gated=True, player_season_sigma=0.0, git_sha="abcdef123456",
+        built_at="2026-08-10T00:00:00+00:00")
+    return pd.DataFrame([{**base, **overrides}])
+
+
+def _feature_rows(head: str = "synthetic") -> pd.DataFrame:
+    """Two splits x three features, one of them a two-basis spline, one an imputation flag."""
+    rows = []
+    specs = [("log_x__s0", "log_x", 0, "linear", [0.0, 1.0, 2.0], 0.10),
+             ("log_x__s1", "log_x", 1, "linear", [0.0, 1.0, 2.0], 0.10),
+             ("age", "age", -1, "linear", [20.0, 25.0, 30.0], 0.0),
+             ("x__miss", "missingness", -1, "discrete", [0.0, 1.0], 0.0)]
+    for feature, family, basis, kind, edges, missing in specs:
+        left = edges if kind == "discrete" else edges[:-1]
+        right = edges if kind == "discrete" else edges[1:]
+        for split, n, share in (("train", 900, missing), ("validation", 100, missing / 2)):
+            for i, (lo, hi) in enumerate(zip(left, right)):
+                rows.append({
+                    "head": head, "feature": feature, "split": split, "bin_index": i,
+                    "term_family": family, "basis_index": basis, "n": n, "n_finite": n,
+                    "mean": 1.0, "sd": 0.5, "min": float(edges[0]), "q05": 0.1,
+                    "q50": 0.5, "q95": 0.9, "max": float(edges[-1]),
+                    "missing_share": share, "bin_kind": kind, "n_bins": len(left),
+                    "bin_left": float(lo), "bin_right": float(hi),
+                    "count": 10 * (i + 1), "density": 0.5 / len(left) * (i + 1)})
+    return pd.DataFrame(rows)
+
+
+def _correlations(head: str = "synthetic", constant: str = "x__miss") -> pd.DataFrame:
+    features = ["log_x__s0", "log_x__s1", "age", "x__miss"]
+    values = {("log_x__s0", "log_x__s1"): 0.9, ("log_x__s0", "age"): 0.4,
+              ("log_x__s1", "age"): -0.2}
+    rows = []
+    for split in ("train", "validation"):
+        pairs = []
+        for i, x in enumerate(features):
+            for y in features[i + 1:]:
+                r = values.get((x, y), values.get((y, x), 0.05))
+                if split == "validation" and constant in (x, y):
+                    r = float("nan")
+                pairs.append((abs(r) if np.isfinite(r) else -1.0, x, y))
+        pairs.sort(key=lambda p: -p[0])
+        rank = {(x, y): n + 1 for n, (score, x, y) in enumerate(pairs) if score >= 0}
+        for i, x in enumerate(features):
+            for j, y in enumerate(features):
+                if x == y:
+                    r = 1.0
+                else:
+                    r = values.get((x, y), values.get((y, x), 0.05))
+                    if split == "validation" and constant in (x, y):
+                        r = float("nan")
+                position = rank.get((x, y)) or rank.get((y, x))
+                rows.append({"head": head, "split": split, "feature_x": x,
+                             "feature_y": y, "i": i, "j": j, "r": r,
+                             "abs_r": abs(r), "n": 900,
+                             "pair_rank": position or -1,
+                             "top_pair": bool(position and position <= 2)})
+    return pd.DataFrame(rows)
+
+
+def _density(head: str = "synthetic") -> pd.DataFrame:
+    rows = []
+    for split, n in (("train", 900), ("validation", 100)):
+        for i in range(3):
+            for j in range(3):
+                rows.append({"head": head, "feature_x": "log_x__s0",
+                             "feature_y": "log_x__s1", "pair_rank": 1, "split": split,
+                             "r": 0.9, "x_index": i, "y_index": j,
+                             "x_left": float(i), "x_right": float(i + 1),
+                             "y_left": float(j), "y_right": float(j + 1),
+                             "count": 10 * (i + j + 1),
+                             "density": 0.02 * (i + j + 1), "n": n})
+    return pd.DataFrame(rows)
+
+
+def _coefficients(head: str = "synthetic") -> pd.DataFrame:
+    terms = [("(intercept)", "intercept", "intercept", -1, 0.80),
+             ("log_x__s0", "log_x", "coefficient", 0, -0.10),
+             ("log_x__s1", "log_x", "coefficient", 1, -0.55),
+             ("age", "age", "coefficient", -1, 0.30),
+             ("rho", "dispersion", "dispersion", -1, 0.28)]
+    return pd.DataFrame([{
+        "head": head, "term": term, "term_family": family, "term_role": role,
+        "basis_index": basis, "n_draws": 1000, "mean": mean, "sd": 0.05,
+        "q2.5": mean - 0.1, "q25": mean - 0.05, "q50": mean, "q75": mean + 0.05,
+        "q97.5": mean + 0.1, "p_positive": 1.0 if mean > 0 else 0.0,
+        "scaler_center": 0.0, "scaler_scale": 1.0}
+        for term, family, role, basis, mean in terms])
+
+
+def _ecdf(head: str = "synthetic", offset: float = 0.0) -> pd.DataFrame:
+    rows = []
+    for split, n in (("train", 900), ("validation", 100)):
+        for k in range(10):
+            q50 = (k + 1) / 10
+            rows.append({
+                "head": head, "split": split, "grid_index": k, "value": float(k),
+                "observed": min(1.0, q50 + (offset if split == "train" else 0.0)),
+                "grid_kind": "quantile", "n_rows": n, "n_draws": 200,
+                "q2.5": q50 - 0.05, "q10": q50 - 0.04, "q25": q50 - 0.02,
+                "q50": q50, "q75": q50 + 0.02, "q90": q50 + 0.04,
+                "q97.5": q50 + 0.05})
+    return pd.DataFrame(rows)
+
+
+def _calibration(head: str = "synthetic") -> pd.DataFrame:
+    rows = []
+    for panel in ("fitted_observed", "residual_fitted"):
+        for split, n in (("train", 900), ("validation", 100)):
+            for i, (count, y) in enumerate([(90, 0.0), (10, 10.0)]):
+                rows.append({
+                    "head": head, "split": split, "panel": panel, "x_index": i,
+                    "y_index": i, "x_left": float(i), "x_right": float(i + 1),
+                    "y_left": y, "y_right": y + 1.0, "count": count,
+                    "density": count / 100.0, "n": n})
+    return pd.DataFrame(rows)
+
+
+def _sample(head: str = "synthetic") -> pd.DataFrame:
+    return pd.DataFrame([
+        {"head": head, "split": split, "row": i, "fitted": 1.0 + i,
+         "observed": 2.0 + i, "residual": 1.0}
+        for split in ("train", "validation") for i in range(5)])
+
+
+def _cards() -> dict:
+    return {"index": _index(), "coefficients": _coefficients(),
+            "features": _feature_rows(), "correlations": _correlations(),
+            "density": _density(), "ecdf": _ecdf(), "calibration": _calibration(),
+            "sample": _sample()}
+
+
+# ── Which heads make a page ───────────────────────────────────────────────────
+
+def test_a_class_lists_its_heads_in_the_declared_order_not_the_artifact_order():
+    """Entry, onset, duration, exit is how a tenure runs; no column carries that."""
+    index = pd.DataFrame({"head": ["gp_exit", "availability", "gp_onset", "gp_entry",
+                                   "gp_duration"]})
+    assert model_cards.heads_of(index, "availability") == [
+        "availability", "gp_entry", "gp_onset", "gp_duration", "gp_exit"]
+
+
+def test_a_head_the_emitter_has_not_written_is_skipped_rather_than_raising():
+    """A half-built `outputs/predictions/` draws the heads it has."""
+    index = pd.DataFrame({"head": ["availability", "gp_entry"]})
+    assert model_cards.heads_of(index, "availability") == ["availability", "gp_entry"]
+    assert model_cards.heads_of(pd.DataFrame({"head": []}), "minutes") == []
+
+
+def test_an_unknown_page_or_head_raises_by_name():
+    with pytest.raises(KeyError):
+        model_cards.model_class("nonsense")
+    with pytest.raises(KeyError, match="model-cards"):
+        model_cards.head_row(_index(), "absent")
+
+
+def test_every_declared_page_carries_a_unique_url_path_and_an_intro():
+    paths = [c.url_path for c in model_cards.CLASSES.values()]
+    assert len(paths) == len(set(paths))
+    for spec in model_cards.CLASSES.values():
+        assert spec.heads and spec.intro.strip() and spec.icon.startswith(":material/")
+
+
+# ── Block 1 ───────────────────────────────────────────────────────────────────
+
+def test_the_specification_states_the_unit_and_reads_every_field_from_the_artifact():
+    spec = model_cards.specification(_index().iloc[0])
+    fields = dict(zip(spec["Field"], spec["Value"]))
+    assert fields["Unit"] == "player-season"
+    assert fields["Response"] == "games played"
+    assert fields["Fitted seasons"] == "1997-98 → 2021-22"
+    # The row filter is a row only where the head has one, so a page does not print
+    # "Row filter: nan" for the sixteen heads that drop nothing.
+    assert "Row filter" not in set(spec["Field"])
+    filtered = model_cards.specification(_index(row_filter="fg3a > 0").iloc[0])
+    assert dict(zip(filtered["Field"], filtered["Value"]))["Row filter"] == "fg3a > 0"
+
+
+# ── Block 2 ───────────────────────────────────────────────────────────────────
+
+def test_a_spline_family_stays_together_in_the_small_multiple_order():
+    order = model_cards.feature_order(_feature_rows(), "synthetic")
+    assert order.index("log_x__s1") == order.index("log_x__s0") + 1
+
+
+def test_the_feature_table_carries_the_imputed_share_of_each_split_separately():
+    """The composition imputes 17.0% of train and 12.6% of validation; one number hides it."""
+    summary = model_cards.feature_summary(_feature_rows(), "synthetic")
+    row = summary[summary["Feature"] == "log_x__s0"].iloc[0]
+    assert row["n (Train)"] == 900 and row["n (Validation)"] == 100
+    assert row["Imputed share"] == pytest.approx(0.10)
+
+
+def test_a_discrete_feature_gets_a_drawable_bar_width():
+    """Its edges are the values themselves, so left == right — and plotly refuses a
+    zero-width or NaN bar outright, which is an exception rather than a bad picture."""
+    panel = model_cards.histogram_panel(_feature_rows(), "synthetic")
+    flag = panel[panel["feature"] == "x__miss"]
+    assert (flag["bin_width"] > 0).all()
+    assert flag["bin_width"].max() < 1.0        # under the gap, so two values stay two bars
+    assert (panel[panel["feature"] == "age"]["bin_width"] == 5.0).all()
+
+
+def test_the_histogram_panel_plots_shares_so_two_split_sizes_are_comparable():
+    panel = model_cards.histogram_panel(_feature_rows(), "synthetic")
+    assert {"density", "bin_center", "panel_index"} <= set(panel.columns)
+    assert panel["panel_index"].is_monotonic_increasing
+
+
+# ── Block 3 ───────────────────────────────────────────────────────────────────
+
+def test_the_correlation_square_is_a_reshape_in_the_design_matrix_order():
+    square = model_cards.correlation_square(_correlations(), "synthetic", "train")
+    assert list(square.index) == list(square.columns)
+    assert list(square.index) == ["log_x__s0", "log_x__s1", "age", "x__miss"]
+    assert np.allclose(np.diag(square.to_numpy()), 1.0)
+
+
+def test_a_column_constant_on_a_split_is_named_rather_than_dropped_from_the_axis():
+    """Three real features are identically constant on validation; that is a finding."""
+    assert model_cards.constant_features(_correlations(), "synthetic", "validation") == \
+        ["x__miss"]
+    assert model_cards.constant_features(_correlations(), "synthetic", "train") == []
+
+
+def test_the_pair_menu_offers_only_pairs_that_have_a_density_behind_them():
+    menu = model_cards.pair_menu(_correlations(), "synthetic")
+    assert list(menu["pair_rank"]) == [1, 2]
+    assert (menu["feature_x"] != menu["feature_y"]).all()
+    assert "r = +0.90" in model_cards.pair_label(menu.iloc[0])
+
+
+def test_the_density_panel_centres_its_cells_and_filters_to_one_split():
+    cells = model_cards.density_panel(_density(), "synthetic", "log_x__s0", "log_x__s1",
+                                      "validation")
+    assert len(cells) == 9 and set(cells["split"]) == {"validation"}
+    assert cells["x_center"].iloc[0] == pytest.approx(0.5)
+    assert int(cells["n"].iloc[0]) == 100
+
+
+# ── Block 4 ───────────────────────────────────────────────────────────────────
+
+def test_the_coefficient_panel_leaves_the_intercept_and_dispersion_out():
+    """They are not on the standardized slope scale, and the intercept would set the axis."""
+    panel = model_cards.coefficient_panel(_coefficients(), "synthetic")
+    assert set(panel["term"]) == {"log_x__s0", "log_x__s1", "age"}
+    scalars = model_cards.scalar_terms(_coefficients(), "synthetic")
+    assert set(scalars["term"]) == {"(intercept)", "rho"}
+
+
+def test_the_panel_opens_on_its_strongest_family_with_the_bases_in_order():
+    """Row 0 is the top of the figure — a panel that opens on its weakest term buries
+    the answer, which is what the first cut did until it was rendered."""
+    panel = model_cards.coefficient_panel(_coefficients(), "synthetic")
+    assert list(panel["term"]) == ["log_x__s0", "log_x__s1", "age"]
+    assert list(panel["basis_index"])[:2] == [0, 1]
+
+
+def test_collapsing_a_family_keeps_its_widest_basis_and_says_so():
+    panel = model_cards.coefficient_panel(_coefficients(), "synthetic", collapse=True)
+    assert len(panel) == 2
+    row = panel[panel["term_family"] == "log_x"].iloc[0]
+    assert row["term"] == "log_x__s1"          # |−0.55| beats |−0.10|
+    assert "widest of 2 bases" in row["label"]
+    assert panel[panel["term_family"] == "age"].iloc[0]["label"] == "age"
+
+
+def test_the_coefficient_table_twin_carries_the_interval_the_bar_was_drawn_from():
+    panel = model_cards.coefficient_panel(_coefficients(), "synthetic")
+    table = model_cards.coefficient_table(panel)
+    assert list(table["Term"]) == list(panel["label"])
+    assert np.allclose(table["2.5%"], panel["q2.5"], atol=1e-6)
+
+
+# ── Block 5 ───────────────────────────────────────────────────────────────────
+
+def test_the_ribbon_is_read_as_a_distance_with_coverage_as_the_footnote():
+    """At n ~ 10^4 every head leaves the band somewhere, so in-or-out is not the reading."""
+    distance = model_cards.band_distance(_ecdf(offset=0.03), "synthetic")
+    train = distance[distance["split"] == "train"].iloc[0]
+    validation = distance[distance["split"] == "validation"].iloc[0]
+    assert train["max_gap"] == pytest.approx(0.03)
+    assert validation["max_gap"] == pytest.approx(0.0)
+    assert train["inside_95"] == pytest.approx(1.0)     # 0.03 is inside a +/-0.05 band
+    # A curve 0.30 off a +/-0.05 band leaves it everywhere except where the ECDF saturates
+    # at 1 — which is the shape of the real thing: coverage collapses, the distance does not.
+    far = model_cards.band_distance(_ecdf(offset=0.30), "synthetic").iloc[0]
+    assert far["inside_95"] < 0.2 and far["max_gap"] == pytest.approx(0.30)
+
+
+def test_the_provenance_line_says_what_was_actually_drawn():
+    line = model_cards.predictive_provenance(_index().iloc[0])
+    assert "200 posterior draws" in line and "900 training rows" in line
+    capped = model_cards.predictive_provenance(
+        _index(predictive_rows_capped=True, predictive_weighted=True).iloc[0])
+    assert "subsample" in capped and "multiplicity" in capped
+
+
+# ── Block 6 ───────────────────────────────────────────────────────────────────
+
+def test_the_binned_summary_weights_by_the_cell_counts_it_draws():
+    """Unweighted, the two cells of the synthetic panel average to 5.0 rather than 1.0."""
+    summary = model_cards.calibration_summary(_calibration(), "synthetic")
+    row = summary[(summary["Panel"] == "Predicted against observed")
+                  & (summary["Split"] == "Train")].iloc[0]
+    assert row["Mean observed"] == pytest.approx(0.9 * 0.5 + 0.1 * 10.5)
+    assert row["n"] == 900 and row["Cells"] == 2
+
+
+def test_the_sample_overlay_is_filtered_to_its_own_split():
+    points = model_cards.sample_points(_sample(), "synthetic", "validation")
+    assert len(points) == 5 and set(points["split"]) == {"validation"}
+
+
+# ── Block 7 ───────────────────────────────────────────────────────────────────
+
+def _diagnostics(label: str = "stan_posterior") -> pd.DataFrame:
+    return pd.DataFrame([{"label": label, "max_rhat": 1.002, "min_ess_bulk": 2313.0,
+                          "min_ess_tail": 2516.0, "divergences": 0,
+                          "treedepth_saturated": 0, "n_draws": 4000,
+                          "wall_clock_s": 196.4, "converged": True,
+                          "cmdstan": "cmdstan-2.39.0"}])
+
+
+def _manifest(head: str = "synthetic") -> pd.DataFrame:
+    return pd.DataFrame([{"head": head, "n_draws_before_thinning": 4000,
+                          "fit_seconds": 324.9, "cmdstan": "cmdstan-2.39.0"}])
+
+
+def test_a_heads_diagnostics_label_is_filled_from_its_own_index_row():
+    """A head that ships a different variant follows its own row, not an edit here."""
+    row = _index(head="gp_onset", variant="duration_covariates").iloc[0]
+    assert model_cards.diagnostics_source(row) == (
+        model_cards.GAMES_PLAYED_DIAGNOSTICS, "duration_covariates/val/onset")
+    component = _index(head="fg3a_given_fga", label="fg3a|fga", model_class="components",
+                       variant="logit_own_spline").iloc[0]
+    assert model_cards.diagnostics_source(component) == (
+        model_cards.COMPONENT_DIAGNOSTICS, "fg3a|fga/logit_own_spline/val")
+
+
+def test_a_head_with_no_declared_diagnostics_source_raises_rather_than_drawing_nothing():
+    with pytest.raises(KeyError, match="DIAGNOSTICS"):
+        model_cards.diagnostics_source(_index(head="unknown", model_class="unknown")
+                                       .iloc[0])
+
+
+def test_the_two_sampler_runs_are_two_rows_and_neither_borrows_the_others_numbers():
+    # A real head name, since the label a run is looked up under is derived from the row.
+    runs = model_cards.sampler_runs(_index(head="availability").iloc[0],
+                                    _manifest("availability"), _diagnostics())
+    assert len(runs) == 2
+    persisted, selection = runs.iloc[0], runs.iloc[1]
+    # `make posteriors` records no ESS and `make stan` kept no draws. A blank in either
+    # direction has to read as absent rather than as a measurement of zero.
+    assert persisted["ESS bulk"] == model_cards.ABSENT
+    assert persisted["Treedepth hits"] == model_cards.ABSENT
+    assert selection["Git SHA"] == model_cards.ABSENT
+    assert "none kept" in selection["Draws"] and "1,000 kept" in persisted["Draws"]
+    assert persisted["Max R̂"] == "1.00100" and selection["Max R̂"] == "1.00200"
+    assert persisted["Wall clock"] == "325 s" and selection["Wall clock"] == "196 s"
+
+
+def test_a_missing_diagnostics_table_leaves_the_persisted_row_alone():
+    runs = model_cards.sampler_runs(_index(head="availability").iloc[0], None, None)
+    assert len(runs) == 1 and runs.iloc[0]["Draws"].endswith("kept")
+    assert runs.iloc[0]["CmdStan"] == model_cards.ABSENT
+
+
+def test_the_build_checks_say_which_of_them_could_have_failed():
+    """`vacuous` marks the heads where check 2 compares a frame with itself."""
+    checks = model_cards.build_checks(_index().iloc[0])
+    kinds = dict(zip(checks["Check"], checks["Kind"]))
+    assert kinds["Recipe against the head's own ladder"] == "vacuous"
+    assert dict(zip(checks["Check"], checks["Reading"]))[
+        "Drawn mean against reported mean"] == "+0.20%"
+    uncheckable = model_cards.build_checks(
+        _index(predictive_bias=float("nan"), ecdf_band_gated=False).iloc[0])
+    readings = dict(zip(uncheckable["Check"], uncheckable["Reading"]))
+    assert readings["Drawn mean against reported mean"] == "not checkable"
+    assert dict(zip(uncheckable["Check"], uncheckable["Kind"]))[
+        "Ribbon stability at the draw budget"] == "reported only"
+
+
+# ── The figures ───────────────────────────────────────────────────────────────
+
+def _model_figures(th: dict) -> list:
+    cards = _cards()
+    panel = model_cards.histogram_panel(cards["features"], "synthetic")
+    square = model_cards.correlation_square(cards["correlations"], "synthetic", "train")
+    cells = model_cards.density_panel(cards["density"], "synthetic", "log_x__s0",
+                                      "log_x__s1", "train")
+    ecdf = {model_cards.SPLIT_LABELS[s]: model_cards.ecdf_panel(cards["ecdf"],
+                                                                "synthetic", s)
+            for s in model_cards.SPLITS}
+    grids = {(p, s): model_cards.calibration_panel(cards["calibration"], "synthetic", p, s)
+             for p in model_cards.PANELS for s in model_cards.SPLITS}
+    points = {(p, s): model_cards.sample_points(cards["sample"], "synthetic", s)
+              for p in model_cards.PANELS for s in model_cards.SPLITS}
+    return [
+        charts.fig_features(panel, th, title="features"),
+        charts.fig_correlation(square, th, title="corr"),
+        charts.fig_joint(cells, th, "log_x__s0", "log_x__s1", title="joint"),
+        charts.fig_coefficients(
+            model_cards.coefficient_panel(cards["coefficients"], "synthetic"), th,
+            title="coefficients"),
+        charts.fig_ecdf(ecdf, th, "games played", title="ecdf"),
+        charts.fig_calibration(grids, points, th, model_cards.PANEL_AXES,
+                               model_cards.PANEL_LABELS, title="calibration"),
+    ]
+
+
+def test_each_feature_gets_a_filled_train_bar_and_a_stepped_validation_line():
+    """Two splits, two marks — so the comparison survives without colour."""
+    th = theme.theme("light")
+    fig = charts.fig_features(
+        model_cards.histogram_panel(_feature_rows(), "synthetic"), th)
+    bars = [t for t in fig.data if t.type == "bar"]
+    lines = [t for t in fig.data if t.type == "scatter"]
+    assert len(bars) == len(lines) == 4                    # one per feature
+    assert all(t.line.shape == "hvh" for t in lines)
+    assert sum(t.showlegend for t in fig.data) == 2        # one legend entry per split
+
+
+def test_the_correlation_heatmap_is_pinned_to_the_full_range_around_zero():
+    """Pinned rather than scaled to the data, so two heads' heatmaps mean the same thing."""
+    fig = charts.fig_correlation(
+        model_cards.correlation_square(_correlations(), "synthetic", "train"),
+        theme.theme("light"))
+    heat = fig.data[0]
+    assert (heat.zmin, heat.zmid, heat.zmax) == (-1.0, 0.0, 1.0)
+    assert heat.colorscale == tuple(tuple(step) for step in theme.theme("light")["diverging"])
+    assert fig.layout.yaxis.scaleanchor == "x"             # square cells
+
+
+def test_a_density_leaves_its_empty_cells_transparent_rather_than_at_the_ramp_floor():
+    """A zero would read as 'measured and low' instead of 'no rows landed here'."""
+    cells = model_cards.density_panel(_density(), "synthetic", "log_x__s0", "log_x__s1",
+                                      "train")
+    fig = charts.fig_joint(cells.iloc[:4], theme.theme("light"), "x", "y")
+    z = np.asarray(fig.data[0].z, dtype=float)
+    assert np.isnan(z).any() and fig.data[0].hoverongaps is False
+
+
+def test_the_coefficient_bars_take_the_two_ends_of_the_diverging_scale():
+    """A coefficient's sign is a direction on one axis, not two categorical slots."""
+    th = theme.theme("light")
+    panel = model_cards.coefficient_panel(_coefficients(), "synthetic")
+    fig = charts.fig_coefficients(panel, th)
+    colors = list(fig.data[0].marker.color)
+    assert set(colors) == {th["diverging"][0][1], th["diverging"][-1][1]}
+    assert colors[-1] == th["diverging"][-1][1]            # `age` is positive
+    # Row 0 at the top, and no zeroline on an axis whose 0 is a term rather than an origin.
+    assert fig.layout.yaxis.range == (len(panel) - 0.5, -0.5)
+    assert fig.layout.yaxis.zeroline is False
+    assert fig.layout.xaxis.zeroline is True
+    assert len(fig.layout.shapes) == len(panel)            # one interval rule per term
+
+
+def test_the_ribbon_draws_three_nested_bands_under_one_observed_curve():
+    th = theme.theme("light")
+    panels = {model_cards.SPLIT_LABELS[s]: model_cards.ecdf_panel(_ecdf(), "synthetic", s)
+              for s in model_cards.SPLITS}
+    fig = charts.fig_ecdf(panels, th, "games played")
+    names = [t.name for t in fig.data]
+    assert names.count("95% band") == names.count("50% band") == 2
+    assert names.count("observed") == 2 and names.count("median replicate") == 2
+    assert sum(t.showlegend for t in fig.data) == 5        # one legend for both subplots
+    observed = [t for t in fig.data if t.name == "observed"]
+    assert all(t.line.color == th["ink"] for t in observed)
+
+
+def test_the_four_calibration_panels_share_a_colourbar_only_because_each_is_relative():
+    """Four panels on four absolute scales under one legend would label three of them
+    wrongly — a 100-row validation panel puts far more share in a cell than a 900-row one."""
+    th = theme.theme("light")
+    cards = _cards()
+    grids = {(p, s): model_cards.calibration_panel(cards["calibration"], "synthetic", p, s)
+             for p in model_cards.PANELS for s in model_cards.SPLITS}
+    points = {(p, s): model_cards.sample_points(cards["sample"], "synthetic", s)
+              for p in model_cards.PANELS for s in model_cards.SPLITS}
+    fig = charts.fig_calibration(grids, points, th, model_cards.PANEL_AXES,
+                                 model_cards.PANEL_LABELS)
+    heatmaps = [t for t in fig.data if t.type == "heatmap"]
+    assert len(heatmaps) == 4
+    assert sum(t.showscale for t in heatmaps) == 1
+    for heat in heatmaps:
+        assert np.nanmax(np.asarray(heat.z, dtype=float)) == pytest.approx(1.0)
+        assert np.nanmax(np.asarray(heat.customdata, dtype=float)) < 1.0   # the raw share
+
+
+def test_both_splits_of_a_calibration_panel_are_drawn_on_one_axis_range():
+    """The emitter clips the density's tails into its end bins; an unclipped overlay
+    setting the axis undoes that, which squashed a 2-to-9-game density into a sliver."""
+    th = theme.theme("light")
+    cards = _cards()
+    grids = {(p, s): model_cards.calibration_panel(cards["calibration"], "synthetic", p, s)
+             for p in model_cards.PANELS for s in model_cards.SPLITS}
+    wild = pd.DataFrame([{"head": "synthetic", "split": "train", "row": 0,
+                          "fitted": 900.0, "observed": 900.0, "residual": 0.0}])
+    points = {(p, s): wild for p in model_cards.PANELS for s in model_cards.SPLITS}
+    fig = charts.fig_calibration(grids, points, th, model_cards.PANEL_AXES,
+                                 model_cards.PANEL_LABELS)
+    axes = [fig.layout[f"xaxis{'' if i == 1 else i}"].range for i in range(1, 5)]
+    assert axes[0] == axes[1] and axes[2] == axes[3]       # train against validation
+    assert max(axes[0]) < 10                               # the 900 point did not set it
+
+
+def test_every_model_figure_carries_an_explicit_title_and_the_pinned_surface():
+    """A title object with a font and no text renders as the literal string "undefined"."""
+    for mode in theme.THEMES:
+        th = theme.theme(mode)
+        for fig in _model_figures(th):
+            assert fig.layout.title.text is not None
+            assert fig.layout.paper_bgcolor == th["surface"]
+
+
+# ── The shipped artifacts ─────────────────────────────────────────────────────
+
+def _card(name: str) -> pd.DataFrame:
+    path = PREDICTIONS / name
+    if not path.exists():
+        pytest.skip(f"{path} is missing; run `{model_cards.MAKE_CARDS}`")
+    return (pd.read_parquet(path) if path.suffix == ".parquet" else pd.read_csv(path))
+
+
+def test_every_carded_head_belongs_to_exactly_one_model_page():
+    """A twenty-first head should fail a test rather than vanish from the navigation."""
+    index = _card(model_cards.INDEX_FILE)
+    declared = [h for spec in model_cards.CLASSES.values() for h in spec.heads]
+    assert len(declared) == len(set(declared)), "a head is on two pages"
+    assert set(declared) == set(index["head"])
+    for key, spec in model_cards.CLASSES.items():
+        classes = set(index[index["head"].isin(spec.heads)]["model_class"])
+        assert classes == {key}, (key, classes)
+
+
+def test_every_heads_diagnostics_row_exists_in_the_table_it_names():
+    """The label is derived per class from each head's own variant, so a refit at a
+    different arm is the failure mode — and block 7 would render empty rather than wrong."""
+    index = _card(model_cards.INDEX_FILE)
+    tables = {}
+    for _, row in index.iterrows():
+        filename, label = model_cards.diagnostics_source(row)
+        path = PREDICTIONS / filename
+        if not path.exists():
+            pytest.skip(f"{path} is missing; run `{model_cards.MAKE_STAN}`")
+        table = tables.setdefault(filename, pd.read_csv(path))
+        assert label in set(table["label"]), (row["head"], filename, label)
+
+
+def test_every_shipped_pair_menu_has_its_density_on_disk():
+    index = _card(model_cards.INDEX_FILE)
+    correlations = _card(model_cards.CORRELATION_FILE)
+    density = _card(model_cards.DENSITY_FILE)
+    for _, row in index.iterrows():
+        menu = model_cards.pair_menu(correlations, row["head"])
+        assert len(menu) == int(row["n_density_pairs"]), row["head"]
+        drawn = density[density["head"] == row["head"]]
+        assert set(zip(menu["feature_x"], menu["feature_y"])) == \
+            set(zip(drawn["feature_x"], drawn["feature_y"])), row["head"]
+
+
+def test_the_shipped_index_lets_every_availability_head_render_all_seven_blocks():
+    """One end-to-end pass over the real artifacts, block by block, without a runtime."""
+    cards = {key: _card(name) for key, name in (
+        ("index", model_cards.INDEX_FILE),
+        ("coefficients", model_cards.COEFFICIENTS_FILE),
+        ("features", model_cards.FEATURES_FILE),
+        ("correlations", model_cards.CORRELATION_FILE),
+        ("density", model_cards.DENSITY_FILE),
+        ("ecdf", model_cards.ECDF_FILE),
+        ("calibration", model_cards.CALIBRATION_FILE),
+        ("sample", model_cards.SAMPLE_FILE))}
+    th = theme.theme("light")
+    for head in model_cards.heads_of(cards["index"], "availability"):
+        row = model_cards.head_row(cards["index"], head)
+        assert str(row["unit"]).strip() and str(row["response_label"]).strip()
+        assert len(model_cards.specification(row)) >= 10
+        order = model_cards.feature_order(cards["features"], head)
+        assert len(order) == int(row["n_features"])
+        charts.fig_features(model_cards.histogram_panel(cards["features"], head, order), th)
+        charts.fig_correlation(
+            model_cards.correlation_square(cards["correlations"], head, "train"), th)
+        pair = model_cards.pair_menu(cards["correlations"], head).iloc[0]
+        charts.fig_joint(
+            model_cards.density_panel(cards["density"], head, pair["feature_x"],
+                                      pair["feature_y"], "train"), th, "x", "y")
+        panel = model_cards.coefficient_panel(cards["coefficients"], head)
+        assert len(panel) == int(row["n_features"])
+        charts.fig_coefficients(panel, th)
+        distance = model_cards.band_distance(cards["ecdf"], head)
+        assert len(distance) == 2 and (distance["max_gap"] < 0.5).all()
+        assert len(model_cards.calibration_summary(cards["calibration"], head)) == 4
+        assert len(model_cards.build_checks(row)) == 4

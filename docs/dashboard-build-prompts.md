@@ -13,10 +13,10 @@ bespoke, the other two are configuration).
 | session | step | deliverable | new pipeline work |
 |---|---|---|---|
 | 1 | 1 | ✅ **done 2026-08-10** — the `st.navigation` shell + Player fingerprints | no |
-| 2 | 2 | Tournament & strategy page | no |
-| 3 | 3a | `make model-cards` — index, coefficients, features, correlations | **yes** |
+| 2 | 2 | ✅ **done 2026-08-10** — Tournament & strategy page | no |
+| 3 | 3a | ✅ **done 2026-08-10** — `make model-cards`: index, coefficients, features, correlations | **yes** |
 | 4 | 3b | `make model-cards` — predictive ECDF, calibration, residuals | **yes** |
-| 5 | 4 | the generic model renderer + Availability page | no |
+| 5 | 4 | ✅ **done 2026-08-10** — the generic model renderer + Availability page | **one artifact** |
 | 6 | 5a | Box-score components + Game length pages | no |
 | 7 | 5b | Minutes page, incl. the two-unit comparison | no |
 | 8 | 6 | Inputs beyond the heads + the capture-calendar emitter | small |
@@ -33,8 +33,9 @@ anything downstream — sessions 5–7 cannot start until 4 finishes.
 Kept for the record. What it landed, and the one thing the prompt asked for that turned out
 to be impossible — Streamlit draws no navigation for a single-page app, so the shell ships
 a placeholder beside the one real page — are in
-[dashboard-plan.md](dashboard-plan.md#step-1-as-built--the-multipage-shell). **Session 2
-deletes that placeholder** by replacing its row in `app.VIEWS`.
+[dashboard-plan.md](dashboard-plan.md#step-1-as-built--the-multipage-shell). Session 2
+deleted that placeholder by replacing its row in `app.VIEWS`; two tests hold the two-page
+floor in its place.
 
 ```
 Implement step 1 of the dashboard expansion: the multipage shell.
@@ -62,7 +63,15 @@ Update docs/dashboard-plan.md in place and add any load-bearing decision to
 dashboard/decisions.py.
 ```
 
-## Session 2 — Tournament & strategy
+## Session 2 — Tournament & strategy ✅ done 2026-08-10
+
+Kept for the record. What it landed is in
+[dashboard-plan.md](dashboard-plan.md#step-2-as-built--tournament--strategy). The prompt's
+one under-specification is worth carrying forward into later sessions: it asked for the
+break-even hurdle as a reference line on a chart whose axis is in *survival* units, which
+needed a stated conversion (`p_null · hurdle`) and a measurement to show the conversion
+errs the safe way. **When a prompt names a reference line, check it is denominated in the
+axis it will be drawn on.**
 
 ```
 Implement step 2 of the dashboard expansion: the Tournament & strategy page (page 8).
@@ -93,7 +102,20 @@ non-adjacent series sit side by side, and no value may be reachable by colour al
 Verify with the three layers. Update the plan doc and the decision registry.
 ```
 
-## Session 3 — the model-card emitter, part A
+## Session 3 — the model-card emitter, part A ✅ done 2026-08-10
+
+Kept for the record. What it landed is `src/models/model_cards.py`, `make model-cards` and
+[model-cards-plan.md](model-cards-plan.md), which is now the contract session 4 reads.
+
+Two things worth carrying forward. **The prompt's third rule was the right rule and the
+wrong size**: "verify the design recipe the way posteriors.py already does" describes a
+400-row probe check, and the emitter's real drift surface is that it *re-derives the frames*
+— so the check grew a population anchor against the posterior's own provenance and a
+comparison against each head's own variant ladder, and the artifact records which of the two
+is load-bearing per head. **And a rule that cannot fire is still worth writing**: the split
+guard `_check_splits` is unreachable today because `selection_split` already makes a test row
+unmaterializable, and it exists because a page rendering a third split would look like a
+feature rather than a bug.
 
 ```
 Implement step 3a of the dashboard expansion: the first half of the model-card artifact
@@ -123,7 +145,20 @@ No dashboard work at all this session. Tests in the repo's plain-assert syntheti
 style. Register the decisions and update both plan docs.
 ```
 
-## Session 4 — the model-card emitter, part B
+## Session 4 — the model-card emitter, part B ✅ done 2026-08-10
+
+Kept for the record. What it landed is the other three artifacts — `model_card_ecdf.csv`,
+`model_card_calibration.csv` and `model_card_sample.parquet` — plus a fifth build-time check;
+[model-cards-plan.md](model-cards-plan.md) is the contract session 5 reads.
+
+Two things worth carrying forward. **"Check that the band is stable rather than assuming it"
+was the most useful line in the prompt**: the check turned into a statistic that falls as
+`1/sqrt(D)` across three budgets, which is what makes 200 draws a measurement rather than a
+guess — and it exposed that one head's frame (two validation cells) makes the statistic
+meaningless, so it is reported rather than gated there. **And the recipe check needed a fifth
+member for a reason worth generalizing**: the four existing checks all pass on a design matrix
+that is then drawn from on the wrong scale, so every artifact family added to this emitter
+should be asked what its own silent failure is before it is asked what it renders.
 
 ```
 Implement step 3b of the dashboard expansion: the predictive half of the model-card
@@ -153,7 +188,23 @@ hard-coding it.
 Tests, plan docs, registry.
 ```
 
-## Session 5 — the model renderer and the Availability page
+## Session 5 — the model renderer and the Availability page ✅ done 2026-08-10
+
+Kept for the record. What it landed is in
+[dashboard-plan.md](dashboard-plan.md#step-4-as-built--the-model-renderer-and-availability):
+`dashboard/views/model_page.py` (the seven blocks), `dashboard/model_cards.py` (their pure
+layer and the four-page class table), `dashboard/views/availability.py` (four lines), six
+figures and 38 tests.
+
+Two things worth carrying into sessions 6 and 7. **The prompt said "no new pipeline work"
+and one block had no artifact**: `feature-correlation-not-pair-plots` was recorded `open`
+with its unblocking condition spelled out, and step 3 shipped the `top_pair` flags without
+binning a density. A dashboard that may not compute cannot fill that in, so session 5 added
+an eighth artifact rather than drawing something else — **check the registry for an `open`
+entry naming the block you are about to draw before assuming the artifacts are there.** And
+**the renderer is now the thing to change, not to copy**: if a page needs something it does
+not do, change `model_page.py` once and re-verify Availability, exactly as the session-6
+prompt already says.
 
 ```
 Implement step 4 of the dashboard expansion: the generic model-detail renderer, proved

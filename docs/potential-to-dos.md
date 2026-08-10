@@ -189,3 +189,58 @@ rather than of injecting one — a fitted `sigma_u` draws independent `u_z` too 
 dilute identically. Stacking and handcuffing sit on one side of that trade and the
 season-unit calibration on the other, and only the strategy sweep (build item 8) can say
 which the tournament objective cares about more.
+
+---
+
+## 3. Do the three games-played binomial heads over-predict their own observable?
+
+**Compare each tenure head's own reported mean against the realized mean of what it models,
+then ask whether the gap survives composition into `SpellProcess`.** Surfaced 2026-08-10 by
+`make model-cards`, which drew these heads' predictives for the first time — nothing in the
+project had, because the tenure decomposition scores its *composite* through `predict_pmf`
+and never the parts.
+
+### The measurement, on the training frame at the `train` posterior window
+
+| head | models | head's own mean | realized | gap |
+|---|---|---|---|---|
+| `gp_onset` | absence spells started, out of at-risk games | 5.300 | 4.081 | **+29.9%** |
+| `gp_exit` | games after tenure ended, out of exit trials | 6.802 | 5.828 | **+16.7%** |
+| `gp_entry` | games before tenure began, out of entry trials | 4.506 | 4.269 | +5.6% |
+| `availability` | games played, out of team games | 54.518 | 55.247 | −1.3% |
+
+Aggregated over trials rather than rows the picture is the same — `gp_onset` puts the onset
+rate at 0.0962 against a realized 0.0741 — so it is not row-weighting.
+
+### It is the head, not the emitter, and that is already checked
+
+`model_cards.predictive_bias` compares the *drawn* predictive against the head's own
+`predict` and reads **−0.06%** for `gp_onset`; the posterior mean of `mu` agrees with the
+plug-in one to within 0.1%. So the card is faithfully reporting what the head says.
+
+### The suspect
+
+A beta-binomial with heavy dispersion on a target with a large zero mass — 64% of `gp_exit`
+rows are zero, 15% of `gp_onset` rows — does not pin its fitted mean to the empirical mean the
+way a binomial GLM with an intercept does: its score equation for the intercept is a
+digamma expression, not a residual sum. Under a `Beta(a, b)` frailty with small shapes the
+likelihood is happiest putting mass at both ends, and the *mean* of that fit can sit well
+above the mean of the data it fits.
+
+### What would settle it
+
+1. **Does it survive composition?** `SpellProcess` combines entry, exit, onset and duration
+   into a games-played pmf, and that composite is what ships and what `make games-played`
+   scores against its floor. Score the composite's mean against realized games played on the
+   same rows; if the composite is centred, the parts being individually off-centre is a
+   property of the decomposition rather than a defect in it.
+2. **Is the ECDF calibrated where the mean is not?** A U-shaped beta-binomial can miss the
+   mean and still get the distribution roughly right, which is exactly the case where CRPS
+   and PIT pass. `model_card_ecdf.csv` already carries the curve; read the deviation from
+   `q50` rather than the in-or-out verdict, per `docs/model-cards-plan.md`.
+3. **Only if both fail**: refit the onset head with the mean pinned — an offset, or a
+   quasi-likelihood — and compare CRPS on validation against the incumbent. That is a real
+   model change and needs the ladder treatment, not a patch.
+
+This is a measurement, not a defect report: the heads clear their own gates as scored today,
+and nothing above has been through validation.

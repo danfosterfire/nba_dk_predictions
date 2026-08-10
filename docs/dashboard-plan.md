@@ -234,11 +234,13 @@ PNG proves the figure is legible, and only a browser proves the page is.
 
 # The expansion — from one view to nine pages
 
-**Planned 2026-08-10. Step 1 shipped the same day; steps 2–8 are not built.** This section
-is the design; each numbered step in [The build order](#the-build-order) is meant to be
-handed to a fresh session on its own. What step 1 actually landed, and the two things it
-measured that the design did not anticipate, are in
-[Step 1, as built](#step-1-as-built--the-multipage-shell).
+**Planned 2026-08-10. Steps 1, 2 and 3 shipped the same day; the rest is not built.** This
+section is the design; each numbered step in
+[The build order](#the-build-order) is meant to be handed to a fresh session on its own.
+What the shipped steps actually landed, and the things they measured that the design did not
+anticipate, are in [Step 1, as built](#step-1-as-built--the-multipage-shell),
+[Step 2, as built](#step-2-as-built--tournament--strategy) and
+[Step 3a, as built](#step-3a-as-built--the-model-card-emitter).
 
 The goal is a single surface that presents the whole project — the PCA view keeps its
 content under the name **Player fingerprints**, and eight pages join it covering the model
@@ -269,8 +271,9 @@ maps to a page. This is not a cosmetic substitution: it is the only structure in
 
 **Built 2026-08-10 and confirmed in a browser**, with one correction the design missed:
 `st.navigation` renders *no navigation widget at all* for a single-page app, so the shell
-ships a placeholder beside the one real page. See
-[Step 1, as built](#step-1-as-built--the-multipage-shell).
+shipped a placeholder beside the one real page until step 2 replaced it the same day. The
+two-page floor is a standing constraint rather than a property of the placeholder, and a
+test carries it. See [Step 1, as built](#step-1-as-built--the-multipage-shell).
 
 ### 2. The model pages are blocked on artifacts, not on UI
 
@@ -282,11 +285,12 @@ the model detail pages, here is what is actually on disk today:
 
 | what a model page needs | what exists | gap |
 |---|---|---|
-| coefficient posteriors | `stan_availability_coefficients.csv`, `stan_games_played_coefficients.csv` | **18 of 20 heads have none** |
+| coefficient posteriors | ✅ `model_card_coefficients.csv`, all 20 heads (was: 2) | closed 2026-08-10 |
 | diagnostics table | `stan_*_diagnostics.csv` for every head, plus the posteriors `manifest.csv` | none — reuse directly |
 | PIT / calibration | `stan_availability_pit.csv`, `stan_games_played_pit.csv`; components carry a scalar `val_pit_ks` in `stan_component_metrics.csv` | **no ECDF band for any head** |
 | predicted vs observed rows | `availability_predictions.csv`, `stan_availability_predictions.csv`, `season_total_predictions.csv`, `stan_games_played_predictions.csv` | **no component, minutes, composition or game-length rows; and every one of these is validation-only** |
-| the features fed to each head | nothing | **all of it** |
+| the features fed to each head | ✅ `model_card_features.csv`, `model_card_feature_corr.csv` | closed 2026-08-10 |
+| the unit each head is fitted at | ✅ `model_card_index.csv` | closed 2026-08-10 |
 
 The tempting shortcut is `data/features/posteriors/{train,train_val}/*.pkl`, which does
 carry thinned coefficient draws and a design recipe for twenty heads. **It must not be read
@@ -299,9 +303,11 @@ one failure the rule exists to prevent.
 
 **So a new emitter stands between them**: `src/models/model_cards.py`, `make model-cards`,
 reading the posterior pickles and each head's own variant ladder and writing flat,
-long-format, dashboard-shaped artifacts. The dashboard reads those and only those. The
-contract is specified in [The model-card artifact contract](#the-model-card-artifact-contract)
-below and gets its own `docs/model-cards-plan.md` when it is built.
+long-format, dashboard-shaped artifacts. The dashboard reads those and only those.
+**All seven artifacts shipped 2026-08-10**, and step 4 added an eighth; the contract now lives in
+[docs/model-cards-plan.md](model-cards-plan.md); the sketch in
+[The model-card artifact contract](#the-model-card-artifact-contract) below is kept for what
+the shipped row counts say about the guesses.
 
 Two rules the emitter inherits and must not be allowed to quietly break:
 
@@ -342,12 +348,12 @@ Nine, in sidebar order. "Class" pages carry a head selector; the others do not.
 |---|---|---|---|
 | 1 | **Overview** | hero tiles from existing metrics CSVs | no |
 | 2 | **Player fingerprints** | ✅ `views/fingerprints.py`, moved unchanged 2026-08-10 | no |
-| 3 | **Availability** | model cards + `stan_availability_*`, `stan_games_played_*` | **yes** |
+| 3 | **Availability** | ✅ `views/availability.py` over the generic renderer, shipped 2026-08-10 | one — the joint density |
 | 4 | **Minutes** | model cards + `stan_minutes_*`, `stan_composition_*`, `minutes_unification.csv` | **yes** |
 | 5 | **Box-score components** | model cards + `stan_component_*` | **yes** |
 | 6 | **Game length** | model cards + `stan_game_length_*` | **yes** |
 | 7 | **Inputs beyond the heads** | ADP, injury capture, copula, serial correlation, bonus overdispersion | small |
-| 8 | **Tournament & strategy** | the strategy / bracket / draft families, `economics.py` | no |
+| 8 | **Tournament & strategy** | ✅ `views/tournament.py`, shipped 2026-08-10 | no |
 | 9 | **Draft board** | today's `draft_room.py`, as a page | no |
 
 ### Pages 3–6 — the model detail views, and the head selector
@@ -426,6 +432,10 @@ fitted coefficient**, which is a genuinely distinct kind of input and is current
 
 ### Page 8 — Tournament & strategy
 
+**✅ Shipped 2026-08-10.** The design below stands as written; what it cost, what it had to
+derive that the design did not anticipate, and what the three verification layers caught
+are in [Step 2, as built](#step-2-as-built--tournament--strategy).
+
 The user's item 4, and the page the whole project builds toward. No new artifacts. Four
 blocks:
 
@@ -463,32 +473,45 @@ Two conditions:
 
 ## The model-card artifact contract
 
-Sketch, to be firmed up in `docs/model-cards-plan.md` when step 3 is built. All files
-long-format, keyed by `head`, under `outputs/predictions/`. Sizes are the reason for every
-binning decision — a 984,000-row composition scatter is not an artifact, it is a copy of the
-data.
+**Superseded by [docs/model-cards-plan.md](model-cards-plan.md), 2026-08-10 — all seven
+artifacts ship.** The sketch below is kept because the shipped row counts are worth reading
+against the guesses, and because two of the three "easy to get wrong" notes under it became
+build-time gates rather than advice. All files long-format, keyed by `head`, under
+`outputs/predictions/`. Sizes are the reason for every binning decision — a 984,000-row
+composition scatter is not an artifact, it is a copy of the data.
 
-| artifact | grain | approx rows |
-|---|---|---|
-| `model_card_index.csv` | head | 20 — unit, family, variant, n_fit, label, class |
-| `model_card_coefficients.csv` | head × term | ~600 — mean, sd, q2.5/25/75/97.5, `term_family` |
-| `model_card_features.csv` | head × feature × split × bin | ~30,000 — binned counts plus per-feature n/mean/sd/missing |
-| `model_card_feature_corr.csv` | head × feature × feature | ~5,000 |
-| `model_card_ecdf.csv` | head × split × grid point | ~8,000 — observed ECDF and predictive quantile band |
-| `model_card_calibration.csv` | head × split × 2-D bin | ~4,000 — fitted vs observed density, and residual density |
-| `model_card_sample.parquet` | head × split × row | ~200,000 capped — bounded subsample carrying fitted, observed, residual |
+| artifact | grain | sketched rows | **as shipped** |
+|---|---|---|---|
+| `model_card_index.csv` | head | 20 — unit, family, variant, n_fit, label, class | ✅ **20** × 31 columns |
+| `model_card_coefficients.csv` | head × term | ~600 — mean, sd, q2.5/25/75/97.5, `term_family` | ✅ **311** (268 coefficients, 20 intercepts, 23 dispersion) |
+| `model_card_features.csv` | head × feature × split × bin | ~30,000 — binned counts plus per-feature n/mean/sd/missing | ✅ **14,892** over 92 distinct features |
+| `model_card_feature_corr.csv` | head × feature × feature | ~5,000 | ✅ **8,920** — the sketch omitted the split, and both are emitted |
+| *(unsketched)* `model_card_feature_density.parquet` | head × pair × split × 2-D bin | — | ✅ **93,608** — the sketch flagged the pairs and never binned one; added by step 4 |
+| `model_card_ecdf.csv` | head × split × grid point | ~8,000 — observed ECDF and predictive quantile band | ✅ **2,977** — the grid follows the observed quantiles, so it is denser where the curve moves and shorter overall |
+| `model_card_calibration.csv` | head × split × 2-D bin | ~4,000 — fitted vs observed density, and residual density | ✅ **28,709** — the sketch omitted the panel; two panels on a 30 × 30 grid with empty cells dropped |
+| `model_card_sample.parquet` | head × split × row | ~200,000 capped — bounded subsample carrying fitted, observed, residual | ✅ **54,375** — 2,000 per head and split, which is where a scatter stops being a scatter |
 
-Three things the emitter must do that are easy to get wrong:
+Three things the emitter must do that are easy to get wrong. All three held, and the first
+two are now gates rather than intentions:
 
 - **Cap the draws and the rows before generating a posterior predictive.** The composition
   head at full row count times a thousand draws is not affordable; 200 draws over a
-  subsample is, and the ECDF band is stable well before that.
+  subsample is, and the ECDF band is stable well before that. **Shipped at 200 draws over at
+  most 20,000 rows a split, and the stability is measured rather than assumed** — the ribbon
+  is re-read on two interleaved halves of the draws and the build fails if they disagree by
+  more than 0.02 in ECDF units. Worst gated head reads 0.0145.
 - **Verify the recipe the way `posteriors.py` already does.** That module reproduces each
   head's own design matrix and predictions exactly at build time and fails the build rather
   than writing a wrong artifact. The model cards are downstream of the same recipe and get
-  the same check, or they will drift silently.
+  the same check, or they will drift silently. **The predictive half needed a fifth check on
+  top**, because all four pass on a design matrix that is then drawn from on the wrong scale:
+  the drawn mean must reproduce the head's own reported mean, within 5%.
 - **Declare the unit per head in `model_card_index.csv`** and let the page read it, rather
-  than hard-coding a unit string in the dashboard where it can go stale.
+  than hard-coding a unit string in the dashboard where it can go stale. **`response_label`
+  is the same argument for the axis** — "games played", "minutes in one team-game",
+  "absence-spell length (games)" — since the twenty heads share no observable either.
+
+Total footprint **7.4 MB** across the seven artifacts, and **8.6 MB** across the eight that ship once step 4 added the density.
 
 ---
 
@@ -502,19 +525,29 @@ verification; the ordering is a dependency ordering, not a preference.
 `dashboard/views/fingerprints.py` behind a `render()`; lift the appearance toggle into
 shared state so it survives navigation; keep `make dashboard` pointing at the same
 entrypoint. Ships with one real page, so the shell is proved before anything depends on
-it — *and one placeholder, because Streamlit will not draw a navigation for a single page.*
-See [Step 1, as built](#step-1-as-built--the-multipage-shell).
+it — *and one placeholder, because Streamlit will not draw a navigation for a single page,*
+which step 2 then replaced. See [Step 1, as built](#step-1-as-built--the-multipage-shell).
 
-**Step 2 · Tournament & strategy (page 8).** Deliberately second: it is the richest page,
-needs zero new pipeline work, and it exercises the multipage shell with a genuinely
-different layout before the expensive step lands.
+**Step 2 · Tournament & strategy (page 8). ✅ Shipped 2026-08-10.** Deliberately second: it
+is the richest page, needs zero new pipeline work, and it exercises the multipage shell
+with a genuinely different layout before the expensive step lands. All three of those held.
+See [Step 2, as built](#step-2-as-built--tournament--strategy).
 
-**Step 3 · The model-card emitter.** `src/models/model_cards.py`, `make model-cards`,
-`docs/model-cards-plan.md`, and the tests. No dashboard work at all. The largest step and
-the one most worth handing a fresh session with the whole context budget.
+**Step 3 · The model-card emitter. ✅ Shipped 2026-08-10.**
+`src/models/model_cards.py`, `make model-cards`, `docs/model-cards-plan.md`, and 65 tests.
+No dashboard work at all. The largest step and the one most worth handing a fresh session
+with the whole context budget — which is why it was cut in two in
+`docs/dashboard-build-prompts.md`. **Step 3a landed the index, the coefficients, the
+features and the feature correlations; step 3b the predictive half** — the ECDF ribbon, the
+binned calibration density and the bounded sample — plus the fifth build-time check that
+goes with drawing anything. Seven artifacts, 7.4 MB, ten seconds, no CmdStan. See
+[Step 3a, as built](#step-3a-as-built--the-model-card-emitter).
 
-**Step 4 · The generic model renderer plus the Availability page (3).** Build the seven
-blocks once, against one class, so the renderer is proved before it is reused three times.
+**Step 4 · The generic model renderer plus the Availability page (3). ✅ Shipped
+2026-08-10.** The seven blocks once, in `dashboard/views/model_page.py` over
+`dashboard/model_cards.py`, with `views/availability.py` as four lines that name the class.
+It needed one artifact the plan had assumed was already there — the joint density block 3
+draws — see [Step 4, as built](#step-4-as-built--the-model-renderer-and-availability).
 
 **Step 5 · Minutes, Box-score components, Game length (pages 4–6).** Mostly configuration
 against the step-4 renderer, plus the `minutes_unification` two-unit comparison, which is
@@ -535,7 +568,10 @@ being documentation again:
 
 - **The three verification layers** from `dashboard/README.md`: `AppTest` in both appearance
   modes proves the page runs, a figure rendered to PNG proves the figure is legible, a real
-  browser proves the page is. All three are runnable as of 2026-08-10 — `kaleido` and
+  browser proves the page is. They apply to a step that ships a *page*; the two pipeline-only
+  steps (3a, 3b) owe a **build gate** instead, since they have no page, no figure and no
+  browser — see [Step 3a, as built](#step-3a-as-built--the-model-card-emitter).
+  All three are runnable as of 2026-08-10 — `kaleido` and
   `playwright` were added to `requirements.txt`, having been used ad hoc during the PCA
   build and never installed. **Neither needs a browser download**: kaleido finds the system
   Chrome by itself, and playwright reaches it with
@@ -591,16 +627,23 @@ have been verified in a browser at all.
 `AppTest` could not have caught this — it has no DOM — which makes it a clean example of
 the three-layer rule earning its keep rather than a formality.
 
-So the shell ships **one placeholder beside the one real page**, and it is the *next* page
-in the build order (Tournament & strategy, step 2) rather than a lorem-ipsum tab, so step 2
-replaces its row in `app.VIEWS` instead of adding to it. Two rules keep it from lying to a
-machine that is checking: it shows **no numbers**, and it names **`make` targets rather
-than artifact filenames** — `audit.py`'s orphaned-artifact check counts an artifact as read
-when any string literal in `dashboard/` names it, so a placeholder listing
-`strategy_sweep.csv` would report a file as drawn that nothing draws, and the orphan count
-is how this doc picks what to build next. Checked on the way in: the orphan count is
-unchanged at **1** and nothing is newly masked. Registered as
-`one-page-renders-no-navigation`.
+So the shell shipped **one placeholder beside the one real page**, and it was the *next*
+page in the build order (Tournament & strategy, step 2) rather than a lorem-ipsum tab, so
+step 2 replaced its row in `app.VIEWS` instead of adding to it. Two rules kept it from
+lying to a machine that is checking, and the next placeholder will need them again: it
+showed **no numbers**, and it named **`make` targets rather than artifact filenames** —
+`audit.py`'s orphaned-artifact check counts an artifact as read when any string literal in
+`dashboard/` names it, so a placeholder listing `strategy_sweep.csv` would report a file as
+drawn that nothing draws, and the orphan count is how this doc picks what to build next.
+Checked on the way in: the orphan count is unchanged at **1** and nothing is newly masked.
+Registered as `one-page-renders-no-navigation`.
+
+**`dashboard/views/placeholder.py` was deleted on 2026-08-10 when step 2 landed, and the
+constraint it stood for did not go with it.** `test_the_navigation_carries_at_least_two_
+entries` still holds the floor, and `test_every_navigation_row_is_a_real_view_module` now
+holds the other half — `pages()` hands `st.Page` a bare callable, so a row whose `render`
+came from a closure or a stub would navigate perfectly well and put something on a URL that
+no module owns.
 
 ### Verification, as run
 
@@ -628,6 +671,357 @@ steals`). No literal `"undefined"` anywhere.
 
 ---
 
+## Step 2, as built — Tournament & strategy
+
+**2026-08-10.** `dashboard/views/tournament.py` behind a `render()`, its pure layer in
+`dashboard/strategy.py`, and five figures in `charts.py`. It replaced the placeholder's row
+in `app.VIEWS` rather than adding to it, and `dashboard/views/placeholder.py` was deleted
+with it — the *constraint* the placeholder existed for outlives it and is now carried by
+`test_the_navigation_carries_at_least_two_entries` plus a new
+`test_every_navigation_row_is_a_real_view_module`.
+
+**The step's premise held exactly.** No new artifact, no pipeline run, no `src/` import,
+and the orphan count is unchanged at **1** — the strategy and bracket families were already
+accounted for by registry entries, so drawing them moved nothing. The page reads five
+files: `bracket_structure.csv` from `make bracket`, and `strategy_{sweep,paired,shipped,
+realized}.csv` from `make strategy-sweep`, plus `economics.py`'s arithmetic over the two
+captured DraftKings CSVs.
+
+### The one thing the design did not specify, and it is a units problem
+
+The plan says to draw "lift versus the null with confidence intervals, faceted by axis,
+**with the break-even hurdle as a reference line**". Those two halves are in different
+units. `select-on-p-advance-report-roi` put the sweep's headline in *survival* — lift in
+`P(top 2 of 12)` — precisely because ROI does not resolve at any affordable budget, while
+the hurdle is a *return*: +17.60% and +12.32%. Drawing +17.60% on a lift axis is a units
+error; drawing nothing leaves the page's central chart with no answer to "is this edge
+worth entering on".
+
+So the hurdle is converted, and the conversion is stated on the page rather than buried in
+the line. An exchangeable entry advances at `p_null` and is worth `1 − rake` of its fee; if
+expected payout scaled with `P(advance)`, returning the whole fee needs
+`p_null/(1 − rake) = p_null·(1 + hurdle)`, so the lift is **`p_null · hurdle`** — **+0.0293**
+at `600k_shootaround` and **+0.0205** at `20k_spin_move`.
+
+**The assumption is conservative, and that is measured rather than asserted.** The
+elasticity of the sweep's own ROI with respect to its own survival —
+`log(payout ratio) / log(survival ratio)`, both against the null the same row carries — has
+a median of **5.40** at `600k_shootaround` and **2.01** at `20k_spin_move`, and exceeds 1 on
+**all 88** swept rows. Payout compounds through four cuts into a 10,000× top prize, so a
+strategy that survives twice as often is worth far more than twice as much, and the drawn
+line therefore sits *above* the lift a real break-even needs. The page prints the elasticity
+beside the line. Registered as `hurdle-is-drawn-in-survival-units`.
+
+### What the four blocks became
+
+1. **Contest structure** — six tiles for the selected tier, then the survival curve
+   (`P(reach round r)` for an exchangeable entry, log axis, five tournaments) beside the
+   break-even hurdle bars, and a table twin carrying the round ladder and all five
+   contests. Round 1 carries its own marker line, because five of every six entries are
+   gone in a round that pays nothing.
+2. **The sweep** — 22 arms on 7 facets, two seasons as two series, sharing an x axis with
+   the two reference lines. Arms are ordered by their mean lift *inside* their own facet
+   and *per tier*, not on a fixed order: the two tiers disagree about which `α` wins, and a
+   shared order would hide it. A test pins that they still disagree.
+3. **Simulated versus realized** — both surfaces on one `P(top 2 of 12)` axis so their
+   **widths** can be compared, which is the whole point. The realized intervals are
+   **2.9×** wider at `600k_shootaround`, and that ratio is a tile.
+4. **The paired comparisons** — sorted gaps against a chosen baseline, with the unresolved
+   ones in their own slot. At the default view (`600k_shootaround`, `p_advance`, against
+   `model_mean`) that is **8 of 21**. Registered as
+   `unresolved-gaps-are-styled-not-buried`.
+
+Three decisions inside those worth recording:
+
+- **Five tournaments is two over `ALL_PAIRS_CAP`, so both block-1 figures use
+  highlight-and-gray** with the same encoding — the two swept tiers take slots 0 and 1 in
+  `TARGET_TIERS` order, the other three take `muted`. Using one encoding twice means the
+  reader learns it once, and the slot comes from the declared order rather than from row
+  order so the two charts cannot disagree. It also surfaced a real coincidence: `20k Spin
+  Move` and `88k Alley Oop` have *identical* advance chains, so their curves overlap
+  exactly and one is drawn on top of the other. That is captioned and the table twin lists
+  both, rather than being hidden by drawing order.
+- **`crosses_zero` is derived from the interval the chart draws, not read from the
+  artifact's `resolved` column.** The styling has to follow the bar the reader is looking
+  at; a flag that drifted from its own interval would put a filled marker on a gap visibly
+  straddling zero. A test asserts the two agree across every tournament × metric ×
+  baseline on the shipped artifact, so a future run that stops agreeing is caught.
+- **The tile CSS moved from the fingerprint view into `shell.TILE_CSS`, as an opt-in.**
+  Two pages now want the type scale that fits more than four metrics across a row. It is a
+  function a page *calls* rather than something the entrypoint applies, which keeps the
+  original reason intact: a page that has not been laid out yet should not inherit a scale
+  chosen for somebody else's header.
+
+### Verification, as run
+
+**`AppTest`**, both appearance modes: **5 charts, 13 tiles, 5 tables, 3 selectors, 4
+subheaders, 4 expanders, 0 exceptions, 0 missing-artifact warnings**, identical in light
+and dark. Plus the tier switch, both block-4 selectors, and a fingerprints → tournament →
+fingerprints round trip in which `appearance` holds and the fingerprint page still reports
+its own 2 charts, 6 tiles, 3 tables, 4 selectors — the check that moving the tile CSS
+changed nothing there.
+
+**Sixteen figures rendered to PNG** through kaleido and looked at: all five figures in both
+modes, and the sweep, surfaces and paired figures for both tiers. This layer caught three
+things a test would not have:
+
+- **Plotly's y zeroline drew a rule through the top row of every panel.** These charts put
+  rows on a *numeric* y axis so two series can be nudged off a shared row, which makes row
+  0 an arm rather than an origin. Pinned by `test_a_row_position_axis_carries_no_zero_line`.
+- **Two reference-line labels collided** on the sweep, since the null and the break-even
+  line are 0.029 apart. Shortened to `null` and `break-even`, with the derivation in the
+  caption.
+- **The `20k_spin_move` null sits mid-axis**, where the surfaces chart's top-anchored label
+  landed under the legend. Reference labels can now be anchored at the plot floor instead,
+  and that tier's is.
+
+A fourth was found by looking at the rendered page rather than the figure: **row heights
+were not comparable across facets.** Making a subplot taller without making its *range*
+taller just spreads its rows apart, so a one-arm facet was twice as airy as a five-arm one
+and each facet title sat on the last row of the facet above. The header room now comes out
+of the range.
+
+**The live page driven in Chrome** through Playwright — **25 checks, all passing**. The
+navigation renders with both entries and no placeholder; `/tournament` deep-links; five
+plots draw; all four block headings are present; there is no `stException` and no
+missing-artifact alert; no literal `"undefined"` anywhere, before or after an interaction;
+sidebar order is nav → Appearance → page controls (checked by *geometry*, since the nav's
+own link is titled "Tournament & strategy" and a text search for "Tournament" finds the
+navigation instead); the mode switch repaints to the pinned surfaces; switching tier
+reaches both the tiles (`$20` → `$52`) and the reference line (`+0.0293` → `+0.0205`); and
+after an in-app navigation to the fingerprint page the dark surface holds and all six
+metric tiles render at 22.4px with **no** element clipping its own value.
+
+One thing that layer taught about the *test*, not the page: an appearance check must click
+the nav link rather than `goto` the URL. A hard reload is a new session and resets the mode
+to `detected_mode()` legitimately — what `shell.py` claims to survive is an in-app
+navigation.
+
+**25 new tests** in `tests/test_dashboard.py`, all of the pure layer and the figures as
+plain functions; 143 in that file and **1,168** across the suite.
+
+---
+
+## Step 3a, as built — the model-card emitter
+
+**2026-08-10.** `src/models/model_cards.py` and `make model-cards`, writing four of the
+seven artifacts in about 5 seconds with no CmdStan and no refit. The contract is
+[docs/model-cards-plan.md](model-cards-plan.md), which is what step 4 reads; this
+section records only what the *design above* got wrong or left out. The other three
+artifacts followed the same day — see
+[Step 3b, as built](#step-3b-as-built--the-predictive-half).
+
+**No dashboard work, as specified, and the orphan count is unchanged at 1.** The four new
+artifacts are accounted for by their registry entries' `reproduce` links rather than by a
+string literal in `dashboard/`, which is the honest state: the pipeline has written them and
+no page reads them yet. That is check 3 of `make dashboard-audit` doing exactly its job —
+a deliberately deferred family is *recorded* rather than rendered.
+
+### The verification is bigger than the design asked for, and that is the finding
+
+The step was specified as "verify the recipe the way `posteriors.py` already does". That is
+the right rule at the wrong size. `posteriors.py` checks a 400-row probe because its own
+drift surface is the recipe; **the emitter re-derives the frames**, so a `build_design` that
+changed shape, a split that moved or a filter that drifted would leave the coefficients
+describing one population and the histograms describing another — and both files would look
+perfectly well-formed. So `verify` runs four checks and raises on any:
+
+1. the rebuilt fitting frame matches `provenance.n_fit_rows` and the recorded season span;
+2. the persisted recipe on the raw frame equals the head's **own variant ladder** through the
+   head's own scaler, both splits, to 1e-9;
+3. every column `recipe.features` names exists on the rebuilt frame;
+4. the artifact's own `roundtrip()`.
+
+**Check 2 is tautological for the nine heads whose recipe carries no design steps** — their
+raw frame *is* their design frame — which is why 4 is run rather than assumed redundant, and
+why `model_card_index.csv` carries `design_check` per head (`ladder` or `vacuous`). A green
+tick that cannot fail is worse than no tick. As shipped, all twenty heads pass check 2 at
+exactly 0.0.
+
+### Three things the contract sketch did not say
+
+- **`n_fit` and `n_frame_rows` differ on four heads, and neither is wrong.**
+  `StanConversion.fit` drops rows with no attempts *internally*, so `fg3m_given_fg3a` fits
+  7,695 of the 8,630 rows `posteriors/train/manifest.csv` reports. Both ship, with a
+  `row_filter` column naming the filter, because a reader comparing the two files would
+  otherwise find an unexplained discrepancy.
+- **The correlation artifact carries a `split` column**, which the sketched grain omitted.
+  It costs 4,460 rows and it earned them immediately: three features are **identically
+  constant on the validation split** — two leftmost spline bases with no validation row in
+  their knot span, and `ftm_pct_lag1__miss`, since nothing was imputed there — which is
+  visible as an empty row in the heatmap and invisible in any training-frame-only view.
+- **The feature histograms are the head's design columns, and `missing_share` has to walk
+  back to find the column it came from.** `logit_fg3m_pct_lag1__s3` is a spline over a logit
+  over `fg3m_pct_lag1`, and only the last of those three names is what the head flagged.
+  Reading the flag off the feature's own name would report a flat zero for every spline basis
+  in the project, which renders as a perfectly good-looking page.
+
+### Verification, as run
+
+**The three layers from `dashboard/README.md` do not apply** — there is no page, no figure
+and no browser in this step, and running `AppTest` would have proved only that the pages
+built in earlier sessions still work. What stands in their place is the build gate above,
+which is stronger in the one direction that matters here: it is the only step so far whose
+`make` target *fails* rather than reports.
+
+**34 tests** in `tests/test_model_cards.py`, plain `assert` with synthetic builders, on real
+`PosteriorArtifact`s with injected draws. The coverage rule is **one case per way this module
+can be wrong silently**, because every one of those renders as a good-looking picture: a
+histogram on the wrong edges, a missing-share resolving to zero because the flag sits under a
+third name, a correlation reporting 0 for a constant column, a split label outside the
+vocabulary, a spline basis drawn as six unrelated bars. The two checks that fail *loudly* —
+the population anchor and the design tolerance — get one test each for the raise. Five read
+the shipped artifacts to keep a derived quantity honest against the artifact it came from,
+and skip rather than fail without `make posteriors`.
+
+## Step 3b, as built — the predictive half
+
+**2026-08-10.** The remaining three artifacts, from one 200-draw predictive per head per
+split. Seven artifacts now, 7.4 MB, ten seconds, still no CmdStan. Again no dashboard work,
+and the orphan count is again unchanged. Three things worth carrying into step 4.
+
+**The draw budget is a measurement, not a setting.** The prompt asked for ~200 draws *and*
+for the band to be checked at that budget rather than assumed stable there, which turned out
+to be the more useful half of the instruction. `band_stability` re-reads the 95% ribbon on two
+interleaved halves of the draws; the statistic falls as `1/sqrt(D)` across 100 / 200 / 400,
+which is the confirmation that it is measuring Monte Carlo error and not misfit, and at the
+shipped 200 the worst gated head sits at **0.0145** — roughly 0.007 on the shipped ribbon,
+under the resolution these panels draw at. 400 draws would buy a third of a pixel for double
+the cost. One head is reported rather than gated: `game_length_ot` has two validation cells,
+so its ECDF takes three values and a half-sample gap of 0.5 is arithmetic.
+
+**A fifth check was needed, and the four existing ones could not have caught what it
+catches.** All four of `verify`'s checks pass on a design matrix that is then drawn from on
+the wrong scale — a missing exposure, a trials column that moved, a link applied twice — so
+`predictive_bias` compares the drawn mean against the head's own reported mean. Worst is
++1.20%. Three heads cannot take that check as stated and say so in the index rather than
+appearing to pass it: the composition reports `eta`, a step's linear predictor, and the two
+beta-geometrics report `mu`, which is `P(T = 1)` and not a mean — so those two are checked on
+`P(T = 1)` instead, which is a sharper reading of the same parameter.
+
+**Block 5 needs to be drawn as a distance, not as a verdict.** At n ≈ 10⁴ the
+posterior-predictive ribbon is ±1–2 ECDF points and every head in the project falls outside
+it somewhere — the observed curve is inside the 95% band at 22% of grid points for
+`availability` and 7% for the composition. That is what a PPC does at this sample size. The
+reading the page should render is the vertical distance from `q50` (0.037 for availability,
+0.055 for minutes, 0.051 for the composition), not in-or-out.
+
+**31 more tests**, 65 in the file. The new ones follow the same rule and add the failure modes
+this half introduces: a collapsed cell frame drawn one row per cell rather than per spell, a
+band pooled across draws instead of read per draw, a calibration grid collapsed by one
+outlier, a residual panel that is a second copy of the observed one. One of them builds a real
+`StanCount` and asserts `draw_predictive` returns byte-identical output to the head's own
+`predict_samples`, because "no second implementation of any head's predictive" is this half's
+load-bearing rule and a docstring cannot hold it.
+
+---
+
+## Step 4, as built — the model renderer and Availability
+
+**2026-08-10.** `dashboard/views/model_page.py` is the seven blocks; `dashboard/model_cards.py`
+is their pure layer; `dashboard/views/availability.py` is four lines that name a class. Six
+new figures in `charts.py`, 38 new tests, and one new artifact the plan had not costed.
+
+**The step's premise held: pages 4–6 are configuration.** `model_cards.CLASSES` already
+carries all four pages' title, icon, `url_path`, head order and specification intro, and
+`app.model_view()` builds a navigation row from that table, so sessions 6 and 7 add a view
+module of four lines and one row. What is *not* declared there is the unit — that is read per
+head from `model_card_index.csv`, because the five availability heads are not all at one unit
+(`gp_duration` is per absence spell) and a page that stated one unit at the top would be
+wrong about one of its own heads. Registered as
+`model-pages-are-one-renderer-and-a-class-table`.
+
+### The one thing the plan assumed was already there
+
+**Block 3 had no artifact.** `feature-correlation-not-pair-plots` was recorded at status
+`open` with the unblocking condition written out — "the emitter binning a 2-D density for
+each `top_pair`" — and step 3 shipped the flags without the densities. The dashboard cannot
+compute a joint from marginals, so the block was undrawable, and this session added the
+eighth artifact rather than substituting something the heatmap already says.
+`model_card_feature_density.parquet` is 93,608 cells over 720 panels for 536 KB; the contract
+is in [model-cards-plan.md](model-cards-plan.md#model_card_feature_densityparquet--the-joint-behind-the-heatmap).
+
+Two decisions inside it. The pair menu is ranked on the **training** split and both panels are
+drawn for it, so flipping the split changes the picture and not the menu. And it ships as
+**parquet**, which is the second exception to this family being CSVs and for the opposite
+reason to the first: the sample is three float columns where a CSV would widen every
+`float32`, and the density is two long feature names restated on every cell where dictionary
+encoding is the measured difference between 10.5 MB and 0.55 MB. As a CSV the block would
+have cost more than the other seven artifacts together. Registered as
+`model-card-density-is-parquet-not-csv`.
+
+### What each block became
+
+1. **What this head is** — five tiles led by the **unit**, the head's own `description`, and
+   the specification as a table. Typed prose is confined to this block and to
+   `ModelClass.intro`, and describes the specification only.
+2. **The features it was fed** — one histogram per design column on the edge set both splits
+   share, train as filled bars and validation as a step line, plus the n / mean / sd /
+   imputed-share table. Two marks as well as two colours, so the comparison survives the
+   relief rule. 19 columns for availability, and the widest head in the project (the
+   composition, 25) comes out as seven rows of a tall figure rather than a crammed one.
+3. **Feature relationships** — the correlation heatmap pinned to [−1, +1] around zero so two
+   heads' heatmaps mean the same thing, beside one joint density for a pair the reader picks.
+4. **Coefficients** — posterior means with 95% intervals, sorted, families kept together with
+   their bases in order, and a collapse toggle for the nine heads that carry a six-column
+   basis. The **intercept and dispersion are tiled rather than drawn**: they are not on the
+   standardized slope scale the bars share, and the intercept would set the axis.
+5. **Predictive calibration** — the ribbon, with the **largest distance from the median
+   replicate tiled** and coverage demoted to a footnote, exactly as 3b's finding requires.
+6. **Predicted against observed** — four panels of binned density with the bounded sample
+   over them.
+7. **Diagnostics** — two rows, `make posteriors` and `make stan`, each naming itself, with an
+   em dash wherever a source carries nothing; then the four build-time checks with
+   `design_check` beside them. Registered as `two-sampler-runs-are-two-rows`.
+
+### Verification, as run
+
+**`AppTest`**, both appearance modes, all five heads: **6 charts, 10 tiles, 8 tables, 4
+selectors, 7 subheaders, 6 expanders, 0 exceptions, 0 missing-artifact warnings**, identical
+in light and dark and identical across the five heads. Plus both block-3 controls, and a
+fingerprints → availability → tournament round trip in which `appearance` holds and the other
+two pages still report their own counts.
+
+**Thirty figures rendered to PNG** through kaleido and looked at — every figure in both modes
+for two heads, plus the composition's 25-feature grid and `ast` collapsed and expanded, which
+is the spline path the availability class cannot exercise and pages 5 and 6 depend on. Three
+things this layer caught that a test would not have:
+
+- **The coefficient panel opened on its weakest term.** Sorting ascending put the strongest
+  family at the bottom of a figure whose row 0 is the top.
+- **One colourbar was labelling four panels that do not share a scale.** A 751-row validation
+  panel puts an order of magnitude more share into each cell than an 8,232-row training one,
+  so the four panels are now each scaled to their own densest cell under a colourbar that
+  says so, with the raw share still in the hover.
+- **The scatter overlay was undoing the emitter's tail clipping.** `gp_duration`'s density
+  spans 2 to 9 games and one 62-game spell in the overlay stretched the axis until the
+  density was a sliver. Both splits of a panel now share one range, taken from the grid.
+  Registered as `calibration-panels-are-scaled-to-their-own-densest-cell`.
+
+**The live page driven in Chrome** through Playwright — **27 checks, all passing**: the
+navigation carries three entries in declared order, `/availability` deep-links, six plots
+draw, all seven block headings are present, no `stException` and no missing-artifact alert,
+no literal `"undefined"` before or after an interaction, sidebar order is nav → Appearance →
+page controls by geometry, no metric tile clips its own value, the head selector reaches a
+head at a different unit, the mode switch repaints to the pinned surfaces, the pair selector
+redraws the density, and dark holds across an in-app navigation in both directions.
+
+A fourth thing was found by reading the rendered page rather than a figure, and it is the
+same class of problem step 2 hit: **three tables were truncating the column that carried
+their content.** The specification table's `Note`, and both diagnostics tables, were cut off
+mid-sentence. The specification table went full width, the two sentences explaining the
+sampler rows moved into the caption, and the diagnostics columns were renamed short enough
+that every one of them — including the git SHA — fits without a horizontal scroll.
+
+**38 new tests** in `tests/test_dashboard.py`, 181 in that file and **1,280** across the
+suite. Two of them are artifact-contract tests rather than unit tests, and they are the ones
+that will catch a session-6 or session-7 mistake before a browser does: every carded head
+belongs to exactly one declared page, and every head's diagnostics label resolves to a real
+row in the real `stan_*_diagnostics.csv` — the failure mode there is a block that renders
+*empty* rather than wrong.
+
+---
+
 ## Structure
 
 ```
@@ -635,15 +1029,24 @@ dashboard/
   README.md       # the rules a new view has to follow
   __init__.py
   app.py          # the entrypoint — st.navigation, and VIEWS, the sidebar
-  shell.py        # cross-page state: the appearance mode and current_theme()
+  shell.py        # cross-page state: the appearance mode, current_theme(), the
+                  #   opt-in metric-tile type scale
   views/
     fingerprints.py   # the PCA fingerprint page — controls, layout, render()
-    placeholder.py    # a page the build order has specified and not yet built
+    availability.py   # page 3 — four lines that name a model class
+    model_page.py     # the seven-block model detail page, once, for all four classes
+    tournament.py     # the contest, the sweep, both backtests, the paired gaps
   pca.py          # the fingerprint view's pure layer — orientation, SD scaling,
                   #   loadings, neighbours
-  charts.py       # fig_radar / fig_loadings
+  strategy.py     # the tournament view's pure layer — the contest summary, the
+                  #   hurdle-in-survival-units conversion, the sweep facets, the
+                  #   two surfaces, the paired gaps
+  model_cards.py  # the model pages' pure layer — the class table, the seven blocks
+                  #   as frames, and where each head's sampler row lives
+  charts.py       # fig_radar / fig_loadings, the five tournament figures, and the
+                  #   six model-page figures
   theme.py        # SERIES, THEMES, ALL_PAIRS_CAP, theme(), apply_theme(), ordinal_colors()
-  artifacts.py    # load_cfg, features_dir, read_table, optional
+  artifacts.py    # load_cfg, features_dir, predictions_dir, read_table, optional
   decisions.py    # NOT the dashboard — the project decision registry (see below)
   economics.py    # NOT the dashboard — contest arithmetic for the drafting layer
   audit.py        # NOT the dashboard — make dashboard-audit
@@ -759,10 +1162,47 @@ constructed inside `app.pages()`, so the navigation registry is testable without
   `StreamlitAPIException` raised at nav-build time, i.e. in a browser.
 - **The first page is the real one**, since `pages()` makes index 0 the default and `/`
   must not serve a placeholder.
+- **Every navigation row is a real view module** — added with step 2, when the placeholder
+  went. `pages()` hands `st.Page` a bare callable, so a closure or a stub would navigate
+  fine and own a URL no module does.
 - **The shell offers exactly the modes the palette defines**, `shell.MODES` against
   `theme.THEMES` — a mode with no palette entry is a `KeyError` inside `theme()`.
 - **The Streamlit-purity guard became a denylist**, plus a test that every name on it still
   exists, since a denylist naming a deleted file silently stops guarding a real one.
+
+Added with the tournament page on 2026-08-10 — 25 tests over `dashboard/strategy.py` and
+the five new figures. Most use synthetic builders; the handful that read the real
+`outputs/predictions/` artifacts are the ones keeping a *derived* quantity honest against
+the artifact it is derived from, which is the same job the PCA anchor tests do:
+
+- **The hurdle conversion, end to end.** `p_null + break_even_lift(p_null, hurdle)` equals
+  `p_null/(1 − rake)` exactly, so the reference line is the definition rather than a
+  coefficient. A null outside `(0, 1)` and a hurdle at or below −1 raise.
+- **The elasticity that makes it conservative.** Reads exactly 1 on a synthetic
+  proportional payout and exactly 3 on a cubed one; an arm sitting *on* the null is dropped
+  rather than dividing by `log(1)`; and on the shipped sweep it is above 1 on every row of
+  both tiers, which is the measurement the page prints.
+- **Two routes to the same survival.** The economics chain's `p_reach_final` matches
+  `bracket_structure.csv`'s own `p_reach_analytic` for every tournament — the page tiles
+  one and draws the other, so a disagreement would put two numbers for one quantity on one
+  screen.
+- **Arm ordering is per tier and on the mean.** A synthetic arm that wins one season
+  outright but loses on the mean stays below; and on the real sweep the two tiers' `α`
+  orderings still differ, which is why the order is not fixed.
+- **`crosses_zero` is the interval, not the flag.** A deliberately drifted `resolved`
+  column does not change the styling, and on the shipped artifact the derived flag agrees
+  with `resolved` across every tournament × metric × baseline.
+- **The palette rules, as arithmetic.** Five tournaments use at most `ALL_PAIRS_CAP`
+  categorical slots with the rest at `muted`; a target's slot comes from `TARGET_TIERS`
+  order rather than row order, so the two block-1 figures cannot disagree; the sweep's two
+  seasons plus its break-even line are exactly three slots; and every hurdle bar prints its
+  own value.
+- **The figures' geometry.** One subplot per facet with both reference lines in each; the
+  best arm on the top row; the two seasons nudged off their shared row by an equal
+  offset; no zeroline on a row-position axis; a rule between the two backtest surfaces; a
+  hollow marker only where the interval actually covers zero; and no series at all for
+  "does not resolve" when nothing does. Every figure carries an explicit title, the
+  `"undefined"` guard.
 
 ---
 
