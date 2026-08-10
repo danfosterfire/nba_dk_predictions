@@ -119,11 +119,16 @@ def specification_block(row: pd.Series) -> None:
                  column_config={"Note": st.column_config.TextColumn(width="large")})
 
     left, right = st.columns(2, gap="large")
+    # `last_season` is absent on a head that is not fitted over seasons at all — the
+    # game-length depth head is fitted on four depth cells — and an f-string over a missing
+    # CSV cell prints the literal `nan`, which is the same class of defect as `undefined`.
+    last = mc.text(row["last_season"], "")
     left.caption(
         f"**The response is `{row['response_label']}`,** and the head's own selected arm "
         f"is `{row['variant']}` — chosen on the validation split by its own variant "
-        f"ladder, never on the test seasons, which end after `{row['last_season']}` and "
-        f"are not materialized anywhere in this file.")
+        f"ladder, never on the test seasons"
+        + (f", which end after `{last}` and are" if last else ", which are")
+        + " not materialized anywhere in this file.")
     right.caption(
         f"Coefficients are on the **{row['coefficient_scale']} design scale**: every "
         f"column is centred and scaled before fitting, which is what makes block 4 a "
@@ -144,10 +149,11 @@ def features_block(cards: dict, head: str, th: dict) -> None:
 
     summary = mc.feature_summary(features, head)
     panel = mc.histogram_panel(features, head, order)
-    imputed = mc.imputed_features(summary)
+    imputed = mc.imputed_shares(summary)
 
     st.caption(
-        f"**{len(order)} design columns**, taken from the head's own variant ladder "
+        f"**{len(order)} design column{'s' if len(order) != 1 else ''}**, taken from the "
+        f"head's own variant ladder "
         f"post-transform and pre-standardization — a spline basis and an imputation flag "
         f"are features here because they are what the head was actually fed. Train and "
         f"validation share one edge set per column, computed on the pooled values, and "
@@ -163,11 +169,9 @@ def features_block(cards: dict, head: str, th: dict) -> None:
         st.plotly_chart(grid, width="stretch", key=f"features-{head}",
                         config={"displayModeBar": False})
 
-    if len(imputed):
+    if imputed:
         st.caption(
-            "**Imputed shares, as their own rows:** "
-            + ", ".join(f"`{r.Feature}` {r._asdict()['Imputed share']:.2%}"
-                        for r in imputed.head(6).itertuples())
+            "**Imputed shares, as their own rows:** " + imputed
             + ". An imputation flag is never itself missing — its *mean* is the share "
               "being asked about — and a spline basis inherits the share of the raw "
               "column it descends from rather than reporting zero.")
@@ -186,6 +190,13 @@ def relationships_block(cards: dict, head: str, th: dict) -> None:
     square = mc.correlation_square(correlations, head, "train")
     if square.empty:
         st.info("This head has no feature block, so there is nothing to correlate.")
+        return
+    if len(square) < 2:
+        # A correlation needs a pair. The game-length onset head's whole design is one
+        # season term, and drawing its 1 × 1 square would put a heatmap of a single r = 1
+        # cell on the page — worse than nothing, because it looks like a measurement.
+        st.info(f"This head has one design column — `{square.index[0]}` — so there is no "
+                f"pair to correlate and no joint to draw. The block needs two.")
         return
 
     left, right = st.columns([1, 1], gap="large")
@@ -412,8 +423,16 @@ def render(class_key: str, extra: dict | None = None) -> None:
     """One model page: a head selector, then the same seven blocks for whichever is picked.
 
     `extra` maps a block number to a callable taking `(cards, row, theme)`, for a page that
-    owns something the other three do not — the minutes page's two-unit comparison is the
-    one the plan names. It is rendered after the numbered block it is keyed on.
+    owns something the other three do not — the box-score page's no-fit floor, the game
+    length page's per-class predictive check, and the minutes page's two-unit comparison.
+    It is rendered after the numbered block it is keyed on.
+
+    **The seven blocks are numbered and a page's own block is named**, which is the whole
+    distinction: the numbers are the contract every model page keeps, so inserting a page's
+    own material into the sequence would mean block 5 was a different block on two pages. A
+    named block also goes where its question is asked rather than at the end — both of the
+    two that exist today are keyed on block 1, because "what did this head buy over doing
+    nothing" is the first thing to know about a head and not the eighth.
     """
     extra = extra or {}
     spec = mc.model_class(class_key)
@@ -449,8 +468,7 @@ def render(class_key: str, extra: dict | None = None) -> None:
     st.caption(spec.intro)
     st.markdown(
         f"### {row['label']} · fitted per **{row['unit']}**"
-        f"  \n`{row['family']}` · {int(row['n_fit']):,} rows · "
-        f"{row['first_season']} → {row['last_season']}")
+        f"  \n`{row['family']}` · {int(row['n_fit']):,} rows · {mc.season_span(row)}")
 
     blocks = (
         (1, "What this head is", None,

@@ -1,9 +1,10 @@
 # The dashboard
 
-Data visualizations over the artifacts the pipeline wrote. Three views today — the PCA
-player-style fingerprint, the Availability model detail page, and the tournament & strategy
-page — inside a multipage shell that six more pages plug into. Run it with `make dashboard`;
-the plan is `docs/dashboard-plan.md`.
+Data visualizations over the artifacts the pipeline wrote. Six views today — the PCA
+player-style fingerprint, all four model detail pages (Availability, Minutes, Box-score
+components, Game length) and the tournament & strategy page — inside a multipage shell that
+three more pages plug into. Run it with `make dashboard`; the plan is
+`docs/dashboard-plan.md`.
 
 **The dashboard shows data. Prose about the project belongs in `docs/`.** The nine-tab
 project walkthrough that used to live here was documentation rendered as an app, and every
@@ -45,6 +46,11 @@ dashboard/
   views/
     fingerprints.py   the PCA fingerprint page — controls, layout, render()
     availability.py   page 3 — four lines that name a model class
+    minutes.py        page 4 — the class, plus three named blocks: one posterior at
+                      two units, the injected player-season effect, and the zero-sum
+                      team constraint no marginal panel can see
+    components.py     page 5 — the class, plus this page's own no-fit-floor block
+    game_length.py    page 6 — the class, plus both heads read in games
     model_page.py     the seven-block model detail page, written once and shared by
                       the four model classes (pages 3-6)
     tournament.py     the contest structure, the strategy sweep, simulated against
@@ -57,10 +63,11 @@ dashboard/
                   converted into survival units, the sweep facets, the two backtest
                   surfaces, the paired gaps
   model_cards.py  the model pages' pure layer — the class table (which heads make a
-                  page, in which order), the seven blocks as frames, and where each
-                  head's `make stan` diagnostics row lives
-  charts.py       fig_radar / fig_loadings, the five tournament figures, and the six
-                  model-page figures
+                  page, in which order), the seven blocks as frames, where each
+                  head's `make stan` diagnostics row lives, and the blocks a single
+                  page owns
+  charts.py       fig_radar / fig_loadings, the five tournament figures, the six
+                  model-page figures, and the six a single page owns
   theme.py        SERIES, THEMES, ALL_PAIRS_CAP, theme(), apply_theme(), ordinal_colors()
   artifacts.py    load_cfg, features_dir, predictions_dir, read_table, optional
   decisions.py    ─┐
@@ -100,7 +107,12 @@ carrying its title, icon and `url_path`. **The four model detail pages are one r
 a class table**: `views/model_page.py` draws the seven blocks for whichever class it is
 handed, `model_cards.CLASSES` carries each page's title, icon, `url_path`, head order and
 specification intro, and `app.model_view()` builds the navigation row from that table — so
-pages 4-6 are a four-line view module and one row, not a second renderer. The first row is the default page, i.e. what `/`
+pages 4-6 are a four-line view module and one row, not a second renderer. **A page's own
+block is *named* rather than numbered** and arrives through `render(class_key, extra={n:
+fn})`, keyed on the numbered block it follows — the numbers are the contract every model page
+keeps, so page-specific material may not be inserted into the sequence. A page may key
+**several**: the minutes page has three, at blocks 1, 5 and 6, because each of its questions
+is asked at a different point on the page. The first row is the default page, i.e. what `/`
 serves. **`st.navigation` renders nothing at all for a single-page app** — measured, not
 assumed — so the shell keeps at least two rows, and two tests hold that: one on the row
 count, one asserting every row's `render` comes from a module under `views/`. A
@@ -209,6 +221,38 @@ running page:
   panel puts an order of magnitude more into each cell than an 8,232-row training one — so
   each panel is scaled to its own densest cell and the colourbar says so, with the raw share
   in the hover. Only visible by rendering the figure.
+- **A `go.Scatter` of 20 points or fewer gets `lines+markers` — in plotly's *own* default
+  colorway.** The mode is inferred from the point count and the marker colour from the
+  default palette, so a short posterior-predictive ribbon drew stray cyan and red dots on a
+  page whose whole premise is a validated palette. Every `go.Scatter` here sets `mode`
+  explicitly, and a test pins it.
+- **A value printed outside its own bar is laid out by plotly.js, so nothing in the trace
+  says whether it fits.** `textposition="outside"` renders the label hard against the plot
+  edge on the longest bar; `cliponaxis=False` plus an axis range with room for it is the fix,
+  and only a rendered PNG can confirm it. How much room is enough depends on the *label*, so
+  `_bar_text_range` takes it as an argument — a `+10.5%` and a `200.28 minutes` do not need
+  the same margin.
+- **A reference line's label and the legend live in the same strip, and whether they collide
+  depends on the data.** The legend sits above the plot area at `y=1.02`; a `_reference_line`
+  label anchored at the top of the paper sits at the line's own x, so it lands on the legend
+  exactly when zero happens to fall under one — invisible in the trace, and not fixable by
+  moving the label to the floor, where it lands on the bottom row's interval instead. Where
+  the axis title already names the reference (`fig_paired`'s reads "gap … against
+  `<baseline>`"), the line is drawn **bare**: `_reference_line` takes an empty label for it.
+- **An annotation's opaque chip cuts whatever it is drawn over.** `bgcolor` is what keeps a
+  label readable where a data line crosses it, and it is also what erases a section of that
+  line. Put the label where the curve is not — for a CRPS curve with an interior minimum,
+  that is the end where it is highest.
+- **`str()` of a missing CSV cell is the four letters `nan`**, which are truthy, print on the
+  page and look like a value — the same class of defect as the `undefined` a plotly title
+  with no text renders as, and equally invisible to a test that only checks the field is
+  present. `model_cards.text()` and `season_span()` return an em dash instead, and the
+  browser layer checks for `nan` alongside `undefined`.
+- **`DataFrame.itertuples` renames any column whose name is not an identifier.** `Imputed
+  share` arrives in the namedtuple as `_10`, so reading it back by name raises — on the heads
+  that actually imputed something and only those.
+- **`st.dataframe` renders to a canvas**, so its cell text is not in the DOM at all. A
+  browser check can read a caption or a metric tile and cannot read a table.
 - **`st.dataframe` truncates the column that carries the content**, quietly and with no
   ellipsis in the DOM. A `column_config` width is a hint rather than a guarantee, and a wide
   table simply loses its right-hand columns off the edge. The fix that works is fewer and

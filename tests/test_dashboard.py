@@ -1775,6 +1775,23 @@ def test_the_specification_states_the_unit_and_reads_every_field_from_the_artifa
     assert dict(zip(filtered["Field"], filtered["Value"]))["Row filter"] == "fg3a > 0"
 
 
+def test_an_absent_field_reads_as_a_dash_rather_than_as_the_string_nan():
+    """A missing CSV cell reads back as a float `nan` whose `str()` is four letters that
+    print on the page and look like a value. The game-length depth head is fitted on depth
+    cells and has no season span at all, which is the first row where one reached a
+    caption — the same class of defect as a plotly title rendering as `undefined`."""
+    row = _index(head="game_length_depth", first_season=float("nan"),
+                 last_season=float("nan"), dispersion="").iloc[0]
+    assert model_cards.season_span(row) == "—"
+    spec = dict(zip(model_cards.specification(row)["Field"],
+                    model_cards.specification(row)["Value"]))
+    assert spec["Fitted seasons"] == "—" and spec["Dispersion"] == "—"
+    assert "nan" not in " ".join(model_cards.specification(row)["Value"])
+    # A head that does have seasons still prints them, and a one-sided span still reads.
+    assert model_cards.season_span(_index().iloc[0]) == "1997-98 → 2021-22"
+    assert model_cards.text(float("nan")) == "—" and model_cards.text("base") == "base"
+
+
 # ── Block 2 ───────────────────────────────────────────────────────────────────
 
 def test_a_spline_family_stays_together_in_the_small_multiple_order():
@@ -1798,6 +1815,16 @@ def test_a_discrete_feature_gets_a_drawable_bar_width():
     assert (flag["bin_width"] > 0).all()
     assert flag["bin_width"].max() < 1.0        # under the gap, so two values stay two bars
     assert (panel[panel["feature"] == "age"]["bin_width"] == 5.0).all()
+
+
+def test_the_imputed_shares_line_survives_a_column_name_with_a_space_in_it():
+    """`itertuples` renames any column that is not an identifier, so `Imputed share`
+    arrives as `_10` and reading it back by name raises — on the heads that imputed
+    something and only those, which is why nine heads and a whole page rendered fine."""
+    summary = model_cards.feature_summary(_feature_rows(), "synthetic")
+    assert model_cards.imputed_shares(summary) == "`log_x__s0` 10.00%, `log_x__s1` 10.00%"
+    clean = summary.assign(**{"Imputed share": 0.0})
+    assert model_cards.imputed_shares(clean) == ""
 
 
 def test_the_histogram_panel_plots_shares_so_two_split_sizes_are_comparable():
@@ -2191,3 +2218,772 @@ def test_the_shipped_index_lets_every_availability_head_render_all_seven_blocks(
         assert len(distance) == 2 and (distance["max_gap"] < 0.5).all()
         assert len(model_cards.calibration_summary(cards["calibration"], head)) == 4
         assert len(model_cards.build_checks(row)) == 4
+
+
+# ── The box-score page's own block · against the no-fit floor ─────────────────
+#
+# Pages 5 and 6 are the generic renderer plus one named block each, so what is new to test
+# is that block: the ladder each head was selected from, its floor, and — on page 5 — the
+# claim about *what each head is a rate of*, which is an interpretation and therefore
+# carries an anchor the way `pca.COMPONENTS` does.
+
+def _component_metrics(head: str = "ftm|fta", floor_r2: float = 0.34,
+                       shipped_r2: float = 0.32) -> pd.DataFrame:
+    """One head's four-arm ladder, floor first. Defaults to the head that fails its floor."""
+    arms = [("carry_forward", 0, floor_r2, True, False),
+            ("linear", 9, shipped_r2 - 0.02, shipped_r2 - 0.02 > floor_r2, False),
+            ("logit_own", 9, shipped_r2 - 0.01, shipped_r2 - 0.01 > floor_r2, False),
+            ("logit_own_spline", 14, shipped_r2, shipped_r2 > floor_r2, True)]
+    return pd.DataFrame([{
+        "head": head, "kind": "conversion", "variant": variant, "n_features": n,
+        "val_r2": r2, "val_mae": 0.06, "val_nll": 3.05, "val_crps": 3.7,
+        "val_pit_ks": 0.03, "val_dispersion": 0.01, "selected": selected,
+        "beats_floor": beats}
+        for variant, n, r2, beats, selected in arms])
+
+
+def _component_index() -> pd.DataFrame:
+    """Two carded component heads — one that clears its floor and one that does not."""
+    return pd.concat([
+        _index(head="fga", label="fga", model_class="components",
+               variant="log_own_spline"),
+        _index(head="ftm_given_fta", label="ftm|fta", model_class="components",
+               variant="logit_own_spline")], ignore_index=True)
+
+
+def test_every_component_head_declares_what_its_rate_is_a_rate_of():
+    """Eleven heads, three roles, and the page states which — a count is not a share."""
+    declared = model_cards.CLASSES["components"].heads
+    assert set(declared) == set(model_cards.COMPONENT_BASIS)
+    roles = {model_cards.component_basis(h).role for h in declared}
+    assert roles == {model_cards.ROLE_COUNT, model_cards.ROLE_SHARE,
+                     model_cards.ROLE_CONVERSION}
+    # Exactly one share head, and it is not one of the three conversions.
+    shares = [h for h in declared
+              if model_cards.component_basis(h).role == model_cards.ROLE_SHARE]
+    assert shares == [model_cards.SHARE_HEAD]
+
+
+def test_an_undeclared_head_raises_rather_than_being_described_as_nothing():
+    with pytest.raises(KeyError, match="declared basis"):
+        model_cards.component_basis("minutes")
+
+
+def test_the_share_head_is_named_a_share_and_the_shooting_percentage_head_is_not():
+    """The whole point of the block: `fg3a|fga` is `fg3a / fga`, and the column that
+    carries it is called `logit_fg3a_pct_lag1`, which looks exactly like a 3P% and is not
+    one. A reader who takes the name at face value has the head's rationale backwards."""
+    share = model_cards.basis_note(model_cards.SHARE_HEAD)
+    assert "not a shooting percentage" in share
+    assert "fg3a / fga" in share and "fg3m / fg3a" in share
+    # Both column names appear, so the two quantities are separable on the page itself.
+    assert "logit_fg3a_pct_lag1" in share and "logit_fg3m_pct_lag1" in share
+    percentage = model_cards.basis_note(model_cards.SHOOTING_PCT_HEAD)
+    assert "conversion" in percentage and "share of attempts" not in percentage
+
+
+def test_the_ladder_puts_the_floor_first_and_blanks_its_own_beats_floor_flag():
+    """`carry_forward`'s `beats_floor` is `True` in the artifact and means nothing — it is
+    the floor. Rendered as a tick it would read as a fifth arm that cleared."""
+    ladder = model_cards.floor_ladder(_component_metrics(), "ftm|fta")
+    assert ladder.iloc[0]["Arm"].startswith(model_cards.COMPONENT_FLOOR)
+    assert pd.isna(ladder.iloc[0]["Clears the floor"])
+    assert ladder["Shipped"].sum() == 1
+    # Below the floor row, the arms run best R² first.
+    assert list(ladder["R²"][1:]) == sorted(ladder["R²"][1:], reverse=True)
+
+
+def test_a_head_with_no_ladder_row_yields_an_empty_frame_rather_than_raising():
+    assert model_cards.floor_ladder(_component_metrics(), "reb").empty
+
+
+def test_the_board_carries_the_margin_over_each_heads_own_floor():
+    metrics = pd.concat([_component_metrics("fga", floor_r2=0.95, shipped_r2=0.958),
+                         _component_metrics("ftm|fta")], ignore_index=True)
+    board = model_cards.floor_board(metrics, _component_index())
+    assert list(board["head"]) == ["fga", "ftm_given_fta"]   # declared page order
+    margins = dict(zip(board["head"], board["margin"]))
+    assert margins["fga"] == pytest.approx(0.008)
+    assert margins["ftm_given_fta"] == pytest.approx(-0.02)
+    assert list(board["clears"]) == [True, False]
+
+
+def test_the_board_skips_a_head_whose_ladder_is_not_on_disk_rather_than_raising():
+    board = model_cards.floor_board(_component_metrics("ftm|fta"), _component_index())
+    assert list(board["head"]) == ["ftm_given_fta"]
+
+
+def test_the_margin_bars_put_the_head_that_fails_its_floor_across_the_zero_line():
+    """Position carries the finding, because colour may not: the palette's relief rule.
+    Two more routes ride along — the bar is outlined, and it prints its own value."""
+    th = theme.theme("light")
+    metrics = pd.concat([_component_metrics("fga", floor_r2=0.95, shipped_r2=0.958),
+                         _component_metrics("ftm|fta")], ignore_index=True)
+    board = model_cards.floor_board(metrics, _component_index())
+    fig = charts.fig_floor_margin(board, th, highlight="fga")
+    bar = fig.data[0]
+    assert list(bar.y) == [0, 1]
+    assert list(fig.layout.yaxis.ticktext) == ["fga", "ftm|fta"]
+    assert bar.x[0] > 0 > bar.x[1]                            # sorted, failing head last
+    assert fig.layout.xaxis.zeroline is True
+    assert list(bar.marker.line.color) == [th["surface"], th["ink"]]
+    assert list(bar.text) == ["+0.0080", "-0.0200"]
+    assert bar.textposition == "outside"
+
+
+def test_the_open_head_is_the_only_coloured_bar_on_the_board():
+    """Eleven bars is well past `ALL_PAIRS_CAP`, so this is highlight-and-gray and the
+    highlight is the head the reader currently has open."""
+    th = theme.theme("dark")
+    metrics = pd.concat([_component_metrics("fga", floor_r2=0.95, shipped_r2=0.958),
+                         _component_metrics("ftm|fta")], ignore_index=True)
+    board = model_cards.floor_board(metrics, _component_index())
+    fig = charts.fig_floor_margin(board, th, highlight="ftm_given_fta")
+    assert list(fig.data[0].marker.color) == [th["muted"], th["series"][0]]
+
+
+# ── The game length page's own block · in games ───────────────────────────────
+
+def _ppc(variant: str = "season_trend") -> pd.DataFrame:
+    rows = []
+    for arm, scale in (("floor", 1.06), (variant, 0.98)):
+        for class_label, observed in (("regulation", 2322), ("1OT", 120), ("2OT", 18),
+                                      ("3OT+", 0)):
+            predicted = (2460 - 138 * scale if class_label == "regulation"
+                         else observed * scale + 0.5)
+            rows.append({"variant": arm, "class": class_label, "observed": observed,
+                         "predicted": predicted, "n_games": 2460,
+                         "abs_error": abs(predicted - observed)})
+    return pd.DataFrame(rows)
+
+
+def _depth_ladder() -> pd.DataFrame:
+    rows = []
+    for split, n in (("train", 1861), ("val", 138)):
+        for depth, label, observed in ((1, "1OT", 120.0), (2, "2OT", 18.0),
+                                       (3, "3OT", 0.0), (4, "4OT+", 0.0)):
+            rows.append({"split": split, "depth": depth, "label": label, "n_ot_games": n,
+                         "observed": observed, "geometric": observed + 1.0,
+                         "beta_geometric": observed + 1.5,
+                         "geometric_abs_error": 1.0, "beta_geometric_abs_error": 1.5})
+        rows.append({"split": split, "depth": 0, "label": "nats/OT game", "n_ot_games": n,
+                     "observed": float("nan"), "geometric": -0.407,
+                     "beta_geometric": -0.411, "geometric_abs_error": float("nan"),
+                     "beta_geometric_abs_error": float("nan")})
+    return pd.DataFrame(rows)
+
+
+def test_the_onset_block_reads_the_head_at_the_unit_it_is_consumed_at():
+    """Its validation ECDF is two grid points — two season cells — so block 5 cannot say
+    whether the head is right. Games can, and the ladder already writes them."""
+    row = _index(head="game_length_ot", model_class="game_length",
+                 variant="season_trend").iloc[0]
+    panel = model_cards.class_counts(row, _ppc(), _depth_ladder())
+    assert set(panel["series"]) == {"observed", "no-fit floor", "season_trend"}
+    assert list(dict.fromkeys(panel["class_label"])) == list(model_cards.ONSET_CLASSES)
+
+
+def test_regulation_is_carried_in_the_table_and_left_off_the_figure():
+    """It is `n_games` minus the other three by construction, for every arm alike, so
+    drawing it is a 2,300-long bar that flattens the classes the arms differ on."""
+    row = _index(head="game_length_ot", model_class="game_length",
+                 variant="season_trend").iloc[0]
+    panel = model_cards.class_counts(row, _ppc(), _depth_ladder())
+    assert not panel[panel["class_label"] == "regulation"]["drawn"].any()
+    assert panel[panel["class_label"] != "regulation"]["drawn"].all()
+    assert "regulation" in set(model_cards.class_table(panel)["Class"])
+
+
+def test_the_depth_block_drops_the_row_that_is_a_likelihood_rather_than_a_depth():
+    """`depth == 0` carries nats per overtime game and no observed count; drawn as a class
+    it is an empty bar labelled `nats/OT game`."""
+    row = _index(head="game_length_depth", model_class="game_length").iloc[0]
+    panel = model_cards.class_counts(row, _ppc(), _depth_ladder())
+    assert "nats/OT game" not in set(panel["class_label"])
+    assert list(dict.fromkeys(panel["class_label"])) == ["1OT", "2OT", "3OT", "4OT+"]
+    nats = model_cards.depth_likelihood(_depth_ladder())
+    assert float(nats["geometric"]) == pytest.approx(-0.407)
+    assert int(nats["n_ot_games"]) == 138
+
+
+def test_the_class_block_reads_the_validation_split_of_both_ladders():
+    """`make stan-game-length` writes `val`, not the cards' `validation` — two files, two
+    vocabularies, and reading the training rows here would score the fit on its own data."""
+    row = _index(head="game_length_depth", model_class="game_length").iloc[0]
+    ladder = _depth_ladder()
+    assert model_cards.depth_counts(ladder, "val")["count"].iloc[0] == 120.0
+    train_only = ladder[ladder["split"] == "train"]
+    assert model_cards.class_counts(row, _ppc(), train_only, "val").empty
+
+
+def test_the_class_table_twin_reads_in_the_same_order_as_its_figure():
+    """`pivot` sorts alphabetically, which put the fitted arm before the floor in the
+    table and after it in the legend — two orders for one comparison."""
+    row = _index(head="game_length_depth", model_class="game_length").iloc[0]
+    panel = model_cards.class_counts(row, _ppc(), _depth_ladder())
+    table = model_cards.class_table(panel)
+    assert list(table.columns)[1:] == list(dict.fromkeys(panel["series"]))
+    assert list(table["Class"]) == list(dict.fromkeys(panel["class_label"]))
+
+
+def test_the_observed_counts_are_an_outlined_bar_and_the_two_arms_are_filled():
+    """Observed is the target, not a third model, so it is a different *mark* as well as a
+    different colour — ink is what block 5's ribbon uses for its observed curve. A solid
+    ink bar was the first cut and read as the largest quantity on the chart."""
+    th = theme.theme("light")
+    row = _index(head="game_length_ot", model_class="game_length",
+                 variant="season_trend").iloc[0]
+    panel = model_cards.class_counts(row, _ppc(), _depth_ladder())
+    fig = charts.fig_class_counts(panel[panel["drawn"]], th)
+    by_name = {trace.name: trace for trace in fig.data}
+    assert by_name["observed"].marker.color == "rgba(0,0,0,0)"
+    assert by_name["observed"].marker.line.color == th["ink"]
+    assert by_name["no-fit floor"].marker.color == th["series"][0]
+    assert by_name["season_trend"].marker.color == th["series"][1]
+    assert all(t.marker.line.width == 0 for t in fig.data if t.name != "observed")
+    assert len(fig.data) <= theme.ALL_PAIRS_CAP
+    assert all(list(trace.text) for trace in fig.data)        # every bar prints its value
+    assert fig.layout.barmode == "group"
+
+
+# ── What the two smallest heads in the project forced on the shared renderer ──
+#
+# Pages 5 and 6 changed `model_page.py` and `charts.py` rather than forking a renderer, so
+# these three pin what changed. All three were caught by rendering the figure, and none of
+# them is reachable from the availability page: two need a head with one design column and
+# the third needs a grid short enough for plotly to guess at the mark.
+
+def test_a_short_ribbon_declares_its_mark_so_plotly_cannot_pick_its_own_colours():
+    """Plotly infers `lines+markers` for a trace of 20 points or fewer, and infers the
+    marker colour from its own default colorway — so the onset head's two-point validation
+    grid drew stray cyan and red dots that are in no palette this project validated."""
+    th = theme.theme("light")
+    short = _ecdf().groupby("split", group_keys=False).head(2)
+    panels = {model_cards.SPLIT_LABELS[s]: model_cards.ecdf_panel(short, "synthetic", s)
+              for s in model_cards.SPLITS}
+    fig = charts.fig_ecdf(panels, th, "overtime games in the cell")
+    assert all(len(trace.x) <= 4 for trace in fig.data)        # the short-grid regime
+    assert all(trace.mode == "lines" for trace in fig.data)
+    palette = set(th["series"]) | {th["ink"], charts._translucent(th["series"][0], 0.14),
+                                   charts._translucent(th["series"][0], 0.20),
+                                   charts._translucent(th["series"][0], 0.26)}
+    drawn = {trace.line.color for trace in fig.data if trace.line.color}
+    assert drawn <= palette
+
+
+def test_a_feature_grid_never_lays_out_more_columns_than_it_has_features():
+    """One design column in a four-wide grid is one histogram and three empty cells."""
+    th = theme.theme("light")
+    lone = _feature_rows()
+    lone = lone[lone["feature"] == "age"]
+    fig = charts.fig_features(model_cards.histogram_panel(lone, "synthetic"), th)
+    assert fig.layout.xaxis.domain == (0.0, 1.0)               # full width, not a quarter
+    # And a single-row grid leaves the legend room, which a taller one gets for free.
+    assert fig.layout.margin.t > 48
+    wide = charts.fig_features(model_cards.histogram_panel(_feature_rows(), "synthetic"),
+                               th)
+    assert wide.layout.xaxis.domain[1] < 0.5                   # four across, as before
+
+
+# ── A lone design column is not a constant one ────────────────────────────────
+
+def test_a_single_feature_head_reports_no_constant_column():
+    """The game-length onset head's whole design is one season term. Its off-diagonal is
+    empty by arithmetic, and reporting that as "correlates with nothing" states a fact
+    about the column count as though it were a fact about the data."""
+    lone = pd.DataFrame([{"head": "game_length_ot", "split": split,
+                          "feature_x": "season_start_year",
+                          "feature_y": "season_start_year", "i": 0, "j": 0, "r": 1.0,
+                          "abs_r": 1.0, "n": 26, "pair_rank": -1, "top_pair": False}
+                         for split in ("train", "validation")])
+    assert model_cards.correlation_square(lone, "game_length_ot", "train").shape == (1, 1)
+    assert model_cards.constant_features(lone, "game_length_ot", "validation") == []
+    assert model_cards.pair_menu(lone, "game_length_ot").empty
+    # And the real thing a constant column looks like still reports.
+    assert model_cards.constant_features(_correlations(), "synthetic", "validation") == \
+        ["x__miss"]
+
+
+# ── The shipped artifacts, for pages 5 and 6 ──────────────────────────────────
+
+def test_every_component_basis_is_anchored_to_a_real_design_family():
+    """The interpretation this page makes — "this head is a share, that one is a shooting
+    percentage" — is tied to the column the head was actually fed, so a refit that renames
+    or drops it fails here rather than mislabelling the page."""
+    features = _card(model_cards.FEATURES_FILE)
+    for head, basis in model_cards.COMPONENT_BASIS.items():
+        families = set(features[features["head"] == head]["term_family"])
+        assert basis.own_family in families, (head, basis.own_family, sorted(families))
+    # The two that are confusable are on two different heads, which is the whole claim.
+    assert (model_cards.COMPONENT_BASIS[model_cards.SHARE_HEAD].own_family
+            != model_cards.COMPONENT_BASIS[model_cards.SHOOTING_PCT_HEAD].own_family)
+
+
+def test_the_shipped_component_ladder_still_has_one_head_below_its_floor():
+    """`ftm|fta` failing its floor is quoted in `README.md` and drawn on the page. If a
+    refit ever fixes it, the caption that says so has to move with it."""
+    metrics = _card(model_cards.COMPONENT_METRICS_FILE)
+    board = model_cards.floor_board(metrics, _card(model_cards.INDEX_FILE))
+    assert len(board) == len(model_cards.CLASSES["components"].heads)
+    failing = list(board[~board["clears"]]["head"])
+    assert failing == ["ftm_given_fta"]
+    assert board.loc[board["head"] == "ftm_given_fta", "margin"].iloc[0] < 0
+    # And every clearing head's margin agrees in sign with the artifact's own flag.
+    assert (board[board["clears"]]["margin"] > 0).all()
+
+
+def test_the_shipped_game_length_ladder_draws_both_heads_at_the_games_unit():
+    index = _card(model_cards.INDEX_FILE)
+    ppc = _card(model_cards.GAME_LENGTH_PPC_FILE)
+    depth = _card(model_cards.GAME_LENGTH_DEPTH_FILE)
+    th = theme.theme("light")
+    for head in model_cards.heads_of(index, "game_length"):
+        row = model_cards.head_row(index, head)
+        panel = model_cards.class_counts(row, ppc, depth)
+        assert not panel.empty and panel["series"].nunique() == 3
+        assert len(model_cards.class_table(panel)) >= 4
+        charts.fig_class_counts(panel[panel["drawn"]], th)
+    # The onset arm the page draws is the one the card says shipped, not a hard-coded name.
+    variant = str(model_cards.head_row(index, "game_length_ot")["variant"])
+    assert variant in set(ppc["variant"])
+
+
+def test_the_shipped_index_lets_every_component_and_game_length_head_render():
+    """The same end-to-end pass the availability page gets, over the two new pages —
+    including the heads with one design column and with none at all."""
+    cards = {key: _card(name) for key, name in (
+        ("index", model_cards.INDEX_FILE),
+        ("coefficients", model_cards.COEFFICIENTS_FILE),
+        ("features", model_cards.FEATURES_FILE),
+        ("correlations", model_cards.CORRELATION_FILE),
+        ("ecdf", model_cards.ECDF_FILE),
+        ("calibration", model_cards.CALIBRATION_FILE),
+        ("sample", model_cards.SAMPLE_FILE))}
+    th = theme.theme("light")
+    widths = {}
+    for class_key in ("components", "game_length"):
+        for head in model_cards.heads_of(cards["index"], class_key):
+            row = model_cards.head_row(cards["index"], head)
+            assert str(row["unit"]).strip() and str(row["response_label"]).strip()
+            order = model_cards.feature_order(cards["features"], head)
+            widths[head] = len(order)
+            assert len(order) == int(row["n_features"])
+            if order:
+                charts.fig_features(
+                    model_cards.histogram_panel(cards["features"], head, order), th)
+            square = model_cards.correlation_square(cards["correlations"], head, "train")
+            if len(square) >= 2:
+                charts.fig_correlation(square, th)
+            panel = model_cards.coefficient_panel(cards["coefficients"], head)
+            if not panel.empty:
+                charts.fig_coefficients(panel, th)
+            charts.fig_ecdf(
+                {model_cards.SPLIT_LABELS[s]: model_cards.ecdf_panel(cards["ecdf"], head, s)
+                 for s in model_cards.SPLITS}, th, str(row["response_label"]))
+            assert len(model_cards.build_checks(row)) == 4
+    # The two degenerate widths pages 5 and 6 are the first to exercise: one column, and
+    # none. Both reach the renderer's own branches rather than a figure builder.
+    assert widths["game_length_ot"] == 1 and widths["game_length_depth"] == 0
+
+
+# ── The minutes page's own blocks · one posterior, two units ──────────────────
+#
+# Page 4 is the first model page whose own blocks are *comparisons* rather than readings of
+# the open head, and every way that can go silently wrong is a case below: an arm mapped to
+# the wrong head, a gap flipped in one of its two directions but not the other, two CRPS in
+# different units drawn on one axis, and a sigma the page types rather than reads.
+
+def _unification() -> pd.DataFrame:
+    """A `minutes_unification.csv` shaped like the artifact — every unit it carries.
+
+    The numbers are the shipped ones rounded, because the frame's *shape* is what these
+    tests exercise and a reader comparing a case to the page should see the same story:
+    the composition loses at the season unit, ties once the effect is injected, and sits on
+    the teammate coupling the marginal head misses.
+    """
+    rows = []
+    season = [("minutes_head", 144.35, 200.12, 0.8829, -14.09, 0.0735, 302.75, 742),
+              ("composition_sum", 170.06, 200.28, 0.8848, 2.41, 0.3341, 64.65, 742),
+              ("carry_forward", 161.29, 213.65, 0.8532, 24.14, 0.1242, 330.84, 742),
+              ("composition_sum_all_rows", 149.72, 175.97, 0.9156, 0.0, 0.3575, 55.86,
+               1111)]
+    for arm, crps, mae, r2, bias, ks, sd, n in season:
+        rows.append({"arm": arm, "unit": "season_total", "n": n, "crps_minutes": crps,
+                     "mae_minutes": mae, "r2_minutes": r2, "bias_minutes": bias,
+                     "pit_ks": ks, "predictive_sd": sd})
+    rows.append({"arm": "composition_minus_minutes", "unit": "paired_bootstrap", "n": 742,
+                 "crps_delta": 25.70, "ci_lo": 18.96, "ci_hi": 33.25,
+                 "crps_delta_shared_target": 25.72, "n_bootstrap": 2000,
+                 "sd_ratio_minutes_over_composition": 4.68, "verdict": "loses"})
+    rows.append({"arm": "season_effect_headroom", "unit": "variance_decomposition",
+                 "n": 1111, "resid_sd": 243.50, "share_of_resid_var_reachable": 0.0})
+    sweep = [(0.0, 170.06, 25.70, 18.96, 33.25, 0.3341, 64.65, "loses"),
+             (0.3, 143.46, -0.89, -5.97, 4.68, 0.1237, 197.65, "ties"),
+             (0.375, 142.17, -2.18, -6.96, 2.85, 0.0808, 239.45, "ties"),
+             (0.45, 142.87, -1.49, -6.14, 3.22, 0.0659, 280.87, "ties"),
+             (0.6, 148.92, 4.57, 0.15, 9.18, 0.1251, 359.57, "loses")]
+    for sigma, crps, delta, lo, hi, ks, sd, verdict in sweep:
+        rows.append({"arm": "composition_sum_plus_player_season_effect",
+                     "unit": "ps_effect_sweep", "n": 742, "sigma": sigma,
+                     "crps_minutes": crps, "crps_delta": delta, "ci_lo": lo, "ci_hi": hi,
+                     "pit_ks": ks, "predictive_sd": sd, "verdict": verdict,
+                     "sigma_source": "injected_grid"})
+    for sigma, crps, ks, sd in ((0.0, 139.89, 0.3401, 54.06), (0.3, 119.51, 0.1832, 144.75),
+                                (0.375, 117.45, 0.1443, 174.21),
+                                (0.45, 117.07, 0.1112, 203.38),
+                                (0.6, 119.55, 0.1103, 258.61)):
+        rows.append({"arm": "composition_sum_plus_player_season_effect",
+                     "unit": "ps_sigma_on_train", "n": 1145, "sigma": sigma,
+                     "crps_minutes": crps, "pit_ks": ks, "predictive_sd": sd,
+                     "sigma_source": "train_grid", "seasons": "2020-21, 2021-22"})
+    for arm, r, forced, sd, roster, n in (
+            ("composition_sum", -0.0509, -0.0664, 79.0, 16.05, 963),
+            ("minutes_head", -0.0001, -0.1060, 1022.9, 10.43, 626)):
+        rows.append({"arm": arm, "unit": "teammate_coupling", "n": n, "r_teammates": r,
+                     "r_implied_by_fixed_sum": forced, "team_season_sum_sd": sd,
+                     "roster_size": roster})
+    return pd.DataFrame(rows)
+
+
+def _composition_ladder() -> pd.DataFrame:
+    """The composition's own `make stan-composition` ladder, floor and comparator too."""
+    return pd.DataFrame([
+        {"variant": "carry_forward", "n_features": 0, "val_crps": 4.6776,
+         "val_r2": 0.4442, "val_team_sum_abs": 0.0, "selected": False, "beats_floor": True},
+        {"variant": "betabinom", "n_features": 23, "val_crps": 4.5417, "val_r2": 0.4699,
+         "val_team_sum_abs": 0.0, "selected": False, "beats_floor": True},
+        {"variant": "betabinom_ot_graded", "n_features": 25, "val_crps": 4.4945,
+         "val_r2": 0.4741, "val_team_sum_abs": 0.0, "selected": True, "beats_floor": True},
+        {"variant": "independent_comparator", "n_features": -1, "val_crps": 4.7842,
+         "val_r2": 0.4024, "val_team_sum_abs": 33.89, "selected": False,
+         "beats_floor": False}])
+
+
+def _minutes_index() -> pd.DataFrame:
+    """Two index rows shaped like the artifact, at the two units the page contrasts."""
+    return pd.concat([
+        _index(head="composition", label="minutes composition", model_class="minutes",
+               unit="player-game inside a team-game", player_season_sigma=0.45),
+        _index(head="minutes", label="min|available", model_class="minutes",
+               unit="player-season", player_season_sigma=0.0)], ignore_index=True)
+
+
+def test_the_two_units_are_drawn_against_their_own_floors_not_a_shared_one():
+    """4.5 CRPS minutes per player-game and 170 per season cannot share an axis, so the
+    figure plots the ratio to each unit's own floor — and the whole finding is that the
+    same head lands on opposite sides of zero in the two panels."""
+    board = model_cards.unit_board(_unification(), _composition_ladder(),
+                                   _minutes_index())
+    assert len(board) == 4
+    composition = board[board["head"] == "composition"].set_index("unit")
+    marginal = board[board["head"] == "minutes"].set_index("unit")
+    assert composition.loc["fitted", "improvement"] > 0
+    assert composition.loc["season", "improvement"] < 0
+    assert marginal.loc["fitted", "improvement"] < 0
+    assert marginal.loc["season", "improvement"] > 0
+    # Each row is against the floor of its own unit, not of the other one.
+    assert composition.loc["fitted", "floor_crps"] == 4.6776
+    assert composition.loc["season", "floor_crps"] == 161.29
+    assert (board["clears"] == (board["crps"] < board["floor_crps"])).all()
+
+
+def test_the_marginal_head_is_read_from_the_comparator_arm_at_the_composition_unit():
+    """The two heads meet at the per-game unit only because the composition's own ladder
+    refits the marginal head as its control. Mapping that arm to the wrong head would put
+    the composition's own number on both rows and the reversal would vanish."""
+    board = model_cards.unit_board(_unification(), _composition_ladder(),
+                                   _minutes_index())
+    fitted = board[board["unit"] == "fitted"].set_index("head")
+    assert fitted.loc["minutes", "arm"] == model_cards.COMPARATOR_ARM
+    assert fitted.loc["composition", "arm"] == "betabinom_ot_graded"
+    season = board[board["unit"] == "season"].set_index("head")
+    assert season.loc["composition", "arm"] == model_cards.ARM_COMPOSITION
+    assert season.loc["minutes", "arm"] == model_cards.ARM_MARGINAL
+
+
+def test_the_unit_labels_are_read_from_the_index_rather_than_typed():
+    index = _minutes_index()
+    board = model_cards.unit_board(_unification(), _composition_ladder(), index)
+    assert set(board[board["unit"] == "fitted"]["unit_label"]) == {
+        "player-game inside a team-game"}
+    assert set(board[board["unit"] == "season"]["unit_label"]) == {
+        "player-season, summed"}
+    assert set(board["label"]) == {"minutes composition", "min|available"}
+
+
+def test_a_missing_ladder_leaves_the_season_half_of_the_board_alone():
+    """A half-built `outputs/predictions/` draws the half it has rather than raising."""
+    board = model_cards.unit_board(_unification(), None, _minutes_index())
+    assert set(board["unit"]) == {"season"} and len(board) == 2
+    assert model_cards.unit_board(None, None, _minutes_index()).empty
+    assert model_cards.unit_table(pd.DataFrame()).empty
+
+
+def test_the_paired_gap_flips_its_interval_ends_with_its_sign():
+    """The artifact stores one direction and the page has a head selector, so the gap is
+    re-oriented — and an interval whose ends are negated without being swapped would be
+    backwards in exactly one of the two branches."""
+    unification = _unification()
+    forward = model_cards.season_gap(unification, model_cards.HEAD_COMPOSITION)
+    reversed_ = model_cards.season_gap(unification, model_cards.HEAD_MARGINAL)
+    assert forward["crps_delta"] == pytest.approx(25.70)
+    assert reversed_["crps_delta"] == pytest.approx(-25.70)
+    assert reversed_["ci_lo"] < reversed_["crps_delta"] < reversed_["ci_hi"]
+    assert reversed_["ci_lo"] == pytest.approx(-forward["ci_hi"])
+    assert reversed_["ci_hi"] == pytest.approx(-forward["ci_lo"])
+    assert model_cards.season_gap(None) is None
+
+
+def test_the_spread_panel_separates_where_the_predictive_sits_from_how_wide_it_is():
+    """Drawing only the means would say the two heads are the same model, and drawing only
+    the spread would not say that the fit is a tie. The block's claim needs both."""
+    panel = model_cards.spread_panel(_unification(), _minutes_index())
+    groups = dict(panel.groupby("metric")["group"].first())
+    assert groups["mae_minutes"] == model_cards.GROUP_MEAN
+    assert groups["predictive_sd"] == model_cards.GROUP_SPREAD
+    wide = panel.pivot(index="metric", columns="head", values="value")
+    assert wide.loc["mae_minutes"].max() / wide.loc["mae_minutes"].min() < 1.01
+    assert (wide.loc["predictive_sd", "minutes"]
+            / wide.loc["predictive_sd", "composition"]) > 4
+    # The residual sd rides only on the panel that has a target value to be read against.
+    reference = panel.set_index("metric")["reference"]
+    assert reference.loc["predictive_sd"].notna().all()
+    assert reference.drop("predictive_sd").isna().all()
+
+
+def test_the_sweep_merges_two_grids_on_sigma_rather_than_stacking_them():
+    """The grids score disjoint rows, so their CRPS levels are not comparable — merging on
+    sigma is what lets the figure give them separate panels and still read one optimum
+    against the other."""
+    sweep = model_cards.sigma_sweep(_unification())
+    assert list(sweep["sigma"]) == sorted(sweep["sigma"])
+    assert sweep["val_n"].dropna().unique().tolist() == [742]
+    assert sweep["train_n"].dropna().unique().tolist() == [1145]
+    val_best = float(sweep.loc[sweep["val_crps"].idxmin(), "sigma"])
+    train_best = float(sweep.loc[sweep["train_crps"].idxmin(), "sigma"])
+    assert val_best == 0.375 and train_best == 0.45
+    # Both optima are interior, which is what makes either one a measurement.
+    for column in ("val_crps", "train_crps"):
+        best = sweep[column].idxmin()
+        assert 0 < best < len(sweep) - 1
+    assert model_cards.sigma_sweep(None).empty
+
+
+def test_a_tie_in_the_sweep_is_an_interval_that_straddles_zero():
+    """The page draws the gaps through the tournament page's own paired builder, whose
+    `crosses_zero` is the hollow marker. That flag has to agree with the verdict the
+    artifact recorded, or the figure and the table would say different things."""
+    sweep = model_cards.sigma_sweep(_unification())
+    gaps = model_cards.sigma_gaps(sweep, shipped=0.45)
+    assert list(gaps["crosses_zero"]) == [v == "ties" for v in gaps["verdict"]]
+    assert ((gaps["gap_lo"] <= gaps["gap"]) & (gaps["gap"] <= gaps["gap_hi"])).all()
+    shipped = gaps[gaps["sigma"] == 0.45].iloc[0]
+    assert "shipped" in shipped["strategy"] and bool(shipped["crosses_zero"])
+    assert "un-injected" in gaps[gaps["sigma"] == 0.0].iloc[0]["strategy"]
+    assert model_cards.sigma_gaps(pd.DataFrame()).empty
+
+
+def test_the_shipped_sigma_is_read_from_the_composition_card_not_typed():
+    """`player_season_sigma` is what `make posteriors` recorded and what
+    `rehydrate_composition` applies, so a page that typed 0.450 would keep printing it
+    after the shipped value moved."""
+    index = _minutes_index()
+    assert model_cards.shipped_sigma(index) == 0.45
+    assert model_cards.sigma_label(0.45, 0.45).endswith("shipped")
+    assert model_cards.sigma_label(0.375, 0.45) == "σ = 0.375"
+    moved = index.copy()
+    moved.loc[moved["head"] == "composition", "player_season_sigma"] = 0.3
+    assert model_cards.shipped_sigma(moved) == 0.3
+    assert model_cards.shipped_sigma(pd.DataFrame({"head": []})) is None
+    row = model_cards.sigma_row(model_cards.sigma_sweep(_unification()), 0.45)
+    assert row is not None and float(row["val_pit_ks"]) == pytest.approx(0.0659)
+    assert model_cards.sigma_row(model_cards.sigma_sweep(_unification()), 0.9) is None
+
+
+def test_each_head_is_coupled_against_its_own_roster_size_not_a_shared_line():
+    """−1/(K−1) is arithmetic, and K differs between the heads because the marginal head's
+    prior-minutes filter drops real teammates. One shared reference line would be wrong for
+    one of the two rows."""
+    panel = model_cards.teammate_coupling(_unification(), _minutes_index())
+    assert len(panel) == 2 and panel["forced"].nunique() == 2
+    for _, row in panel.iterrows():
+        assert row["forced"] == pytest.approx(-1.0 / (row["roster"] - 1), abs=1e-3)
+    composition = panel[panel["head"] == "composition"].iloc[0]
+    marginal = panel[panel["head"] == "minutes"].iloc[0]
+    # The composition sits on its constraint; the marginal head reads independence.
+    assert abs(composition["measured"] - composition["forced"]) < 0.02
+    assert abs(marginal["measured"]) < abs(marginal["forced"]) / 10
+    assert marginal["team_sd"] > 10 * composition["team_sd"]
+    assert len(model_cards.coupling_table(panel)) == 2
+
+
+def test_a_season_reading_goes_through_the_arm_map_and_survives_a_missing_column():
+    unification = _unification()
+    assert model_cards.season_reading(unification, "minutes", "crps_minutes") == 144.35
+    assert model_cards.season_reading(unification, "composition", "pit_ks") == 0.3341
+    assert model_cards.season_reading(unification, "minutes", "absent") is None
+    assert model_cards.season_reading(None, "minutes", "crps_minutes") is None
+    coverage = model_cards.coverage_row(unification)
+    assert coverage is not None and int(coverage["n"]) == 1111
+
+
+# ── The minutes page's four figures ───────────────────────────────────────────
+
+def test_the_two_units_take_a_facet_each_so_neither_crps_sets_the_others_axis():
+    board = model_cards.unit_board(_unification(), _composition_ladder(),
+                                   _minutes_index())
+    fig = charts.fig_unit_verdict(board, theme.theme("light"), model_cards.MINUTES_SLOTS)
+    bars = [t for t in fig.data if t.type == "bar"]
+    assert len(bars) == 2 and all(len(t.x) == 2 for t in bars)
+    assert {t.xaxis for t in bars} == {"x", "x2"}
+    # The zero line is the floor, so it is drawn at reference weight rather than as a
+    # gridline — the one encoding of the verdict that survives the relief rule.
+    assert all(axis.zerolinewidth == 2 for axis in
+               (fig.layout.xaxis, fig.layout.xaxis2))
+    assert all("%" in t for trace in bars for t in trace.text)
+
+
+def test_each_head_keeps_one_palette_slot_across_every_figure_on_the_page():
+    """Three of the four are comparisons *between* the heads, so a colour that followed the
+    selector would mean two different things on one screen."""
+    th = theme.theme("light")
+    unification, index = _unification(), _minutes_index()
+    composition, marginal = th["series"][0], th["series"][1]
+    verdict = charts.fig_unit_verdict(
+        model_cards.unit_board(unification, _composition_ladder(), index), th,
+        model_cards.MINUTES_SLOTS)
+    spread = charts.fig_metric_facets(
+        model_cards.spread_panel(unification, index), th, model_cards.MINUTES_SLOTS)
+    coupling = charts.fig_coupling(
+        model_cards.teammate_coupling(unification, index), th, model_cards.MINUTES_SLOTS)
+    for fig in (verdict, spread):
+        for trace in [t for t in fig.data if t.type == "bar"]:
+            assert list(trace.marker.color) == [composition, marginal]
+    measured = [t for t in coupling.data if t.mode == "markers"][-1]
+    assert list(measured.marker.color) == [composition, marginal]
+    # Two series is inside the all-pairs cap, which is why nothing here is grayed.
+    assert len(model_cards.MINUTES_SLOTS) <= theme.ALL_PAIRS_CAP
+
+
+def test_a_metric_facet_gets_its_own_axis_range_and_only_one_carries_a_reference():
+    panel = model_cards.spread_panel(_unification(), _minutes_index())
+    fig = charts.fig_metric_facets(panel, theme.theme("light"),
+                                   model_cards.MINUTES_SLOTS)
+    axes = [fig.layout[name].range for name in ("xaxis", "xaxis2", "xaxis3", "xaxis4")]
+    assert all(r is not None for r in axes)
+    assert len({tuple(r) for r in axes}) == 4
+    references = [s for s in fig.layout.shapes if s.type == "line"]
+    assert len(references) == 1
+    assert float(references[0].x0) == pytest.approx(243.50)
+    assert any("residual sd" in (a.text or "") for a in fig.layout.annotations)
+
+
+def test_the_two_sigma_grids_never_share_a_y_axis():
+    """Their CRPS levels are on disjoint rows. One shared axis would invite exactly the
+    comparison the two panels exist to forbid."""
+    sweep = model_cards.sigma_sweep(_unification())
+    fig = charts.fig_sigma_grids(sweep, theme.theme("light"), marginal_crps=144.35)
+    curves = [t for t in fig.data if t.mode == "lines+markers"]
+    assert len(curves) == 2
+    assert {t.yaxis for t in curves} == {"y", "y2"}
+    # Two axes, and neither is *linked* to the other — `shared_yaxes` would set `matches`
+    # and put two disjoint row sets' CRPS on one scale, which is the whole hazard.
+    assert fig.layout.yaxis2.matches is None
+    left, right = (min(t.y) for t in curves), (max(t.y) for t in curves)
+    assert max(right) - min(left) > 20   # the two levels really are far apart
+    titles = [a.text for a in fig.layout.annotations]
+    assert any("742" in t for t in titles) and any("1,145" in t for t in titles)
+    # The marginal head's level is drawn once, on the split it was scored on.
+    lines = [s for s in fig.layout.shapes if s.type == "line"]
+    assert len(lines) == 1 and float(lines[0].y0) == pytest.approx(144.35)
+
+
+def test_the_coupling_figure_draws_the_gap_rather_than_two_rival_series():
+    panel = model_cards.teammate_coupling(_unification(), _minutes_index())
+    fig = charts.fig_coupling(panel, theme.theme("light"), model_cards.MINUTES_SLOTS)
+    dumbbells = [t for t in fig.data if t.mode == "lines"]
+    assert len(dumbbells) == len(panel)
+    for trace, (_, row) in zip(dumbbells, panel.iterrows()):
+        assert list(trace.x) == [row["forced"], row["measured"]]
+        assert trace.y[0] == trace.y[1]          # one row, not two series
+    forced = [t for t in fig.data if t.mode == "markers"][0]
+    assert forced.marker.color == "rgba(0,0,0,0)"   # the reference is hollow, like a PPC
+    assert forced.marker.line.color == theme.theme("light")["ink"]
+
+
+def test_a_bare_reference_line_draws_no_annotation():
+    """`fig_paired`'s baseline label used to sit at the top of the paper, where it collided
+    with the legend on any frame whose zero landed under one — visible on the minutes page's
+    sigma sweep and latent on the tournament page. The axis title already names it."""
+    sweep = model_cards.sigma_sweep(_unification())
+    gaps = model_cards.sigma_gaps(sweep, shipped=0.45)
+    fig = charts.fig_paired(gaps, theme.theme("light"), baseline="the marginal head",
+                            unit="season-total CRPS minutes")
+    assert "the marginal head" in fig.layout.xaxis.title.text
+    assert not [a for a in fig.layout.annotations if "baseline" in (a.text or "")]
+    assert [s for s in fig.layout.shapes if s.type == "line" and s.x0 == 0]
+
+
+# ── The shipped artifacts, for page 4 ─────────────────────────────────────────
+
+def test_the_shipped_unification_still_reverses_across_the_two_units():
+    """The page's whole claim, held against the real artifacts: one posterior clears its
+    floor at one unit and fails at the other, and the rival head does the reverse. If a
+    refit ever changes that, the page's captions have to move with it."""
+    board = model_cards.unit_board(_card(model_cards.MINUTES_UNIFICATION_FILE),
+                                   _card(model_cards.COMPOSITION_METRICS_FILE),
+                                   _card(model_cards.INDEX_FILE))
+    assert len(board) == 4
+    verdicts = {(r["head"], r["unit"]): bool(r["clears"]) for _, r in board.iterrows()}
+    assert verdicts == {("composition", "fitted"): True,
+                        ("composition", "season"): False,
+                        ("minutes", "fitted"): False,
+                        ("minutes", "season"): True}
+    # Both units name a head this page actually carries, so neither row can go unlabelled.
+    assert set(board["head"]) == set(model_cards.CLASSES["minutes"].heads)
+
+
+def test_the_shipped_sigma_is_the_train_grids_own_optimum():
+    """The load-bearing property of the shipped 0.450: it is read off the *training* rows,
+    not the ones it is scored against. A refit that moved the train optimum without moving
+    `player_season_sigma` would leave the page claiming a σ nothing selected."""
+    sweep = model_cards.sigma_sweep(_card(model_cards.MINUTES_UNIFICATION_FILE))
+    shipped = model_cards.shipped_sigma(_card(model_cards.INDEX_FILE))
+    assert shipped is not None
+    assert float(sweep.loc[sweep["train_crps"].idxmin(), "sigma"]) == pytest.approx(shipped)
+    assert model_cards.sigma_row(sweep, shipped) is not None
+    # And at that σ the gap against the marginal head is a tie, which is the claim tiled.
+    row = model_cards.sigma_row(sweep, shipped)
+    assert float(row["val_ci_lo"]) < 0 < float(row["val_ci_hi"])
+
+
+def test_the_shipped_index_lets_both_minutes_heads_render_all_seven_blocks():
+    cards = {key: _card(name) for key, name in (
+        ("index", model_cards.INDEX_FILE),
+        ("coefficients", model_cards.COEFFICIENTS_FILE),
+        ("features", model_cards.FEATURES_FILE),
+        ("correlations", model_cards.CORRELATION_FILE),
+        ("ecdf", model_cards.ECDF_FILE),
+        ("calibration", model_cards.CALIBRATION_FILE),
+        ("sample", model_cards.SAMPLE_FILE))}
+    th = theme.theme("light")
+    for head in model_cards.heads_of(cards["index"], "minutes"):
+        row = model_cards.head_row(cards["index"], head)
+        assert str(row["unit"]).strip() and str(row["response_label"]).strip()
+        order = model_cards.feature_order(cards["features"], head)
+        assert len(order) == int(row["n_features"])
+        charts.fig_features(
+            model_cards.histogram_panel(cards["features"], head, order), th)
+        charts.fig_correlation(
+            model_cards.correlation_square(cards["correlations"], head, "train"), th)
+        charts.fig_coefficients(
+            model_cards.coefficient_panel(cards["coefficients"], head), th)
+        charts.fig_ecdf(
+            {model_cards.SPLIT_LABELS[s]: model_cards.ecdf_panel(cards["ecdf"], head, s)
+             for s in model_cards.SPLITS}, th, str(row["response_label"]))
+        assert len(model_cards.build_checks(row)) == 4
+    # The composition is the widest head in the project and the reason block 2 has a limit.
+    assert len(model_cards.feature_order(cards["features"], "composition")) == 25
+    # Its dispersion is role-graded, which is why block 4 tiles four of them and not one.
+    scalars = model_cards.scalar_terms(cards["coefficients"], "composition")
+    assert int((scalars["term_role"] == "dispersion").sum()) == 4

@@ -267,17 +267,28 @@ def _tier_colors(th: dict, tournaments, targets: tuple[str, ...]) -> list[str]:
 def _reference_line(fig: go.Figure, x: float, th: dict, label: str,
                     color: str | None = None, faceted: bool = False,
                     at_floor: bool = False) -> None:
-    """A labelled vertical reference. Solid, because `theme.py` bans dashes outright.
+    """A vertical reference, labelled unless the axis already says what it is.
+
+    Solid, because `theme.py` bans dashes outright.
 
     `faceted` spans every subplot of a `make_subplots` figure; the label is added once, at
     the top of the paper, rather than once per facet. `at_floor` drops the label inside
     the plot instead, which is what a line near the middle of the x range needs — the
     legend sits on the top edge and a label there collides with whichever entry happens to
     be under it. Caught in a rendered PNG, on the tier whose null lands mid-axis.
+
+    **An empty `label` draws the line and no annotation**, which is the other half of that
+    same problem: neither placement is safe in general, because whether the label lands on
+    the legend or on a data interval depends on *where zero falls on the x axis*, and
+    nothing in the trace can see that. A caller whose axis title already names the reference
+    — `fig_paired`'s is literally "gap … against `<baseline>`" — has nothing to lose by
+    dropping the second copy, and gains a placement that cannot collide.
     """
     placement = dict(row="all", col=1) if faceted else {}
     fig.add_vline(x=x, line=dict(color=color or th["axis"], width=1), layer="below",
                   **placement)
+    if not label:
+        return
     fig.add_annotation(x=x, y=0.0 if at_floor else 1.0, yref="paper", text=label,
                        showarrow=False, xanchor="left",
                        yanchor="bottom", xshift=4, yshift=3 if at_floor else 0,
@@ -492,7 +503,11 @@ def fig_paired(panel: pd.DataFrame, th: dict, baseline: str, unit: str,
                      showgrid=False, zeroline=False)
     fig.update_xaxes(title=f"gap in {unit} against {baseline}", tickformat=".2f")
     fig = apply_theme(fig, th, height=int(len(arms) * row_height) + 110)
-    _reference_line(fig, 0.0, th, f"{baseline} — the baseline")
+    # Bare, because the axis title already reads "gap … against <baseline>" and so zero can
+    # only be the baseline. It used to carry a label at the top of the paper, which collided
+    # with the legend on any frame where zero happened to land under it — visible on the
+    # minutes page's sigma sweep, latent here, and unreachable from the trace either way.
+    _reference_line(fig, 0.0, th, "")
     return fig
 
 
@@ -565,6 +580,10 @@ def fig_features(panel: pd.DataFrame, th: dict, columns: int = HIST_COLUMNS,
     colour, which is the relief rule the palette obliges.
     """
     features = list(dict.fromkeys(panel["feature"]))
+    # Never more columns than features. The composition's 25 columns are what this grid was
+    # laid out for; the game-length onset head has **one**, and a four-wide grid drew it in
+    # the leftmost quarter with three empty cells beside it.
+    columns = max(1, min(columns, len(features)))
     rows = max(1, math.ceil(len(features) / columns))
     # Spacing in *fractions*, so a taller grid needs a smaller one to leave the same gap in
     # pixels — but not so small that a subplot title lands on the tick labels of the row
@@ -605,7 +624,12 @@ def fig_features(panel: pd.DataFrame, th: dict, columns: int = HIST_COLUMNS,
                      rangemode="tozero")
     fig.update_layout(title=title, bargap=0.02, barmode="overlay",
                       hovermode="closest")
-    return apply_theme(fig, th, height=rows * HIST_ROW_HEIGHT + 90)
+    fig = apply_theme(fig, th, height=rows * HIST_ROW_HEIGHT + 90)
+    if rows == 1:
+        # A single-row grid puts its subplot title where the shared legend already sits.
+        # Taller grids have the legend clear of the first row's title by construction.
+        fig.update_layout(margin=dict(l=8, r=8, t=76, b=8))
+    return fig
 
 
 def fig_correlation(square: pd.DataFrame, th: dict, title: str = "",
@@ -766,9 +790,14 @@ def fig_ecdf(panels: dict, th: dict, value_label: str, title: str = "",
         part = panels[name]
         first = col == 1
         for alpha, ((low, high), label) in zip((0.14, 0.20, 0.26), _ECDF_BANDS):
+            # `mode` is explicit because plotly infers `lines+markers` for a trace with 20
+            # points or fewer, and infers the marker colour from its *own* default
+            # colorway — so a head whose grid is short draws stray cyan and red dots that
+            # are in no palette this project validated. The onset head's validation grid is
+            # two points, which is the first place in the repo that threshold is crossed.
             fig.add_trace(go.Scatter(
                 x=list(part["value"]) + list(part["value"])[::-1],
-                y=list(part[high]) + list(part[low])[::-1],
+                y=list(part[high]) + list(part[low])[::-1], mode="lines",
                 fill="toself", fillcolor=_translucent(ribbon, alpha),
                 line=dict(width=0), hoverinfo="skip", name=f"{label} band",
                 legendgroup=label, showlegend=first), row=1, col=col)
@@ -886,3 +915,380 @@ def fig_calibration(cells: dict, points: dict, th: dict, axis_labels: dict,
         annotation.font = dict(family=FONT, size=12, color=th["ink2"])
     fig.update_layout(title=title)
     return apply_theme(fig, th, height, legend=False)
+
+
+# ── The two figures a model page owns for itself ──────────────────────────────
+#
+# Everything above is a *class* figure — one builder over any head. These two are not: they
+# draw the ladder a head was selected from, which lives beside the model cards in each
+# class's own `make stan` metrics table, and the two classes that carry a page-specific block
+# so far shape that ladder differently. Both obey the same two rules as everything else:
+# every bar prints its own value, and the view ships a table twin.
+
+#: A bar's own value, printed outside it. The relief rule in its most literal form — three
+#: light-mode slots fall under 3:1 on the light surface, so no bar's height may be the only
+#: route to its number.
+BAR_TEXT_SIZE = 11
+#: Room past the longest bar for the label that sits outside it. Without it the widest bar's
+#: own value renders hard against the plot edge — caught by rendering the figure, since the
+#: text is laid out by plotly.js and no assertion about the trace can see where it lands.
+BAR_TEXT_ROOM = 0.14
+
+
+def _bar_text_range(values, floor_at_zero: bool = True,
+                    room: float = BAR_TEXT_ROOM) -> list[float]:
+    """An axis range with room at each end for a value printed outside its bar.
+
+    `room` is a parameter rather than the constant because the label's *length* decides how
+    much is enough and only the caller knows it: `+0.0334` and `200.28 minutes` do not need
+    the same margin, and neither is measurable from the trace.
+    """
+    lo, hi = float(min(values)), float(max(values))
+    span = (hi - lo) or (abs(hi) or 1.0)
+    return [min(0.0, lo) - (0.0 if floor_at_zero and lo >= 0 else span * room),
+            hi + span * room]
+
+
+def fig_floor_margin(board: pd.DataFrame, th: dict, highlight: str = "",
+                     title: str = "", row_height: int = 30) -> go.Figure:
+    """Every head on a page against its own no-fit floor, as the margin between them.
+
+    `board` is `model_cards.floor_board()`. **The zero line is the floor**, so a head that
+    did not clear it is on the other side of it — position, not colour, carries the finding,
+    which is the only encoding that survives the palette's relief rule. Two more routes to
+    the same fact ride along: a non-clearing bar is outlined in the ink colour, and every bar
+    prints its own margin.
+
+    Colour is highlight-and-gray rather than a scale: eleven bars is well past
+    `ALL_PAIRS_CAP`, and the one distinction worth making is which head the reader currently
+    has open, so `highlight` takes slot 0 and the rest take `muted`.
+    """
+    panel = board.sort_values("margin", ascending=False).reset_index(drop=True)
+    rows = list(range(len(panel)))
+    clears = panel["clears"].to_numpy(dtype=bool)
+    fig = go.Figure(go.Bar(
+        x=panel["margin"], y=rows, orientation="h", showlegend=False,
+        marker=dict(
+            color=[th["series"][0] if head == highlight else th["muted"]
+                   for head in panel["head"]],
+            line=dict(color=[th["surface"] if ok else th["ink"] for ok in clears],
+                      width=[1 if ok else 2 for ok in clears])),
+        text=[f"{m:+.4f}" for m in panel["margin"]], textposition="outside",
+        textfont=dict(size=BAR_TEXT_SIZE, color=th["ink2"]), cliponaxis=False,
+        customdata=list(zip(panel["floor_r2"], panel["shipped_r2"], panel["variant"])),
+        hovertemplate="floor R² %{customdata[0]:.4f}<br>shipped R² %{customdata[1]:.4f}"
+                      "<br>margin %{x:+.4f}<extra>%{customdata[2]}</extra>"))
+    fig.update_xaxes(title="validation R² above the head's own no-fit floor",
+                     range=_bar_text_range(panel["margin"], floor_at_zero=False))
+    fig.update_yaxes(tickmode="array", tickvals=rows, ticktext=list(panel["label"]),
+                     showgrid=False, zeroline=False, range=[len(panel) - 0.5, -0.5])
+    fig.update_layout(title=title, bargap=0.35)
+    fig = apply_theme(fig, th, height=max(240, len(panel) * row_height + 120),
+                      legend=False)
+    # After `apply_theme`, which sets the hairline zeroline every other chart wants. Here
+    # the zero line *is* the floor and a bar's side of it is the finding, so it is drawn at
+    # the weight of a reference line rather than of a gridline.
+    fig.update_xaxes(zeroline=True, zerolinewidth=2, zerolinecolor=th["ink2"])
+    return fig
+
+
+def fig_class_counts(panel: pd.DataFrame, th: dict, value_label: str = "games",
+                     title: str = "", row_height: int = 30) -> go.Figure:
+    """Observed counts against a fitted arm's and its floor's, per outcome class.
+
+    `panel` is `model_cards.class_counts()`, already filtered to the classes worth drawing.
+    **The observed is not a third model, it is the target**, so it is drawn as an outlined
+    bar in the ink colour — a different *mark* as well as a different colour, the same
+    relief the feature grid gets from bars against a step line — and the two arms fill
+    toward it in slots 0 and 1. Ink for the observed is the encoding block 5's ribbon
+    already uses, so a reader who scrolled past it has learned this once. A solid ink bar
+    was the first cut and read as the largest quantity on the chart rather than as the
+    reference the other two are measured against.
+    """
+    classes = list(dict.fromkeys(panel["class_label"]))
+    series = list(dict.fromkeys(panel["series"]))
+    position = {name: i for i, name in enumerate(classes)}
+    colors = {name: th["series"][i] for i, name in enumerate(
+        [s for s in series if s != "observed"])}
+
+    fig = go.Figure()
+    for name in series:
+        part = panel[panel["series"] == name]
+        observed = name == "observed"
+        fig.add_trace(go.Bar(
+            x=part["count"], y=[position[c] for c in part["class_label"]],
+            orientation="h", name=name,
+            marker=dict(color="rgba(0,0,0,0)" if observed else colors[name],
+                        line=dict(color=th["ink"] if observed else colors[name],
+                                  width=2 if observed else 0)),
+            text=[f"{v:,.1f}" for v in part["count"]], textposition="outside",
+            textfont=dict(size=BAR_TEXT_SIZE, color=th["ink2"]), cliponaxis=False,
+            hovertemplate="%{x:,.2f} " + value_label + "<extra>" + name + "</extra>"))
+
+    fig.update_xaxes(title=value_label, range=_bar_text_range(panel["count"]))
+    fig.update_yaxes(tickmode="array", tickvals=list(position.values()), ticktext=classes,
+                     showgrid=False, zeroline=False, range=[len(classes) - 0.5, -0.5])
+    fig.update_layout(title=title, barmode="group", bargap=0.3, bargroupgap=0.08)
+    return apply_theme(fig, th,
+                       height=max(260, len(classes) * len(series) * row_height + 130))
+
+
+# ── The four figures the minutes page owns ────────────────────────────────────
+#
+# The other three model pages compare a head against a floor. This one compares **two heads
+# at two units**, which changes what the colour has to do: on pages 5 and 6 a slot marks the
+# head the reader has open among many, and here every figure has exactly two series that are
+# both the point. So the head→slot map is fixed for the whole page (`MINUTES_SLOTS`) and
+# nothing on it is highlight-and-gray — two series is well inside `ALL_PAIRS_CAP`, the
+# reader learns the pairing once, and the tiles rather than the palette say which head is
+# open.
+#
+# The zero line means something different in each: the unit's own no-fit floor in the first,
+# no bias in the second, the marginal head in the third (drawn by `fig_paired`, reused), and
+# independence in the fourth. Each one is labelled, because "zero" is not self-describing
+# when it is a different reference four times on one page.
+
+#: Room past the longest bar on the two figures whose printed value is a formatted number
+#: rather than a bare coefficient. Wider than `BAR_TEXT_ROOM` because "200.28" and "+10.5%"
+#: are two to three times the width of "+0.03", and plotly.js lays the text out itself.
+WIDE_BAR_TEXT_ROOM = 0.30
+#: The same, for a bar printing a signed percentage — six characters rather than a
+#: formatted count, so a third of the extra room is enough and the rest is dead axis.
+PERCENT_BAR_TEXT_ROOM = 0.18
+
+
+def _head_colors(th: dict, heads, slots: dict) -> list[str]:
+    """The fixed per-head slot every figure on the minutes page shares."""
+    return [th["series"][slots.get(head, len(slots))] for head in heads]
+
+
+def fig_unit_verdict(board: pd.DataFrame, th: dict, slots: dict, title: str = "",
+                     row_height: int = 44) -> go.Figure:
+    """One posterior at two units, each against the no-fit floor **of that unit**.
+
+    `board` is `model_cards.unit_board()`. The two units cannot share a CRPS axis — 4.5
+    minutes per player-game against 170 per season — so the axis is the *ratio* to each
+    unit's own floor, which is dimensionless and therefore comparable. That is not a
+    convenience: the floor is what every head in this project is quoted against, so "the
+    zero line is the floor" already means something on this dashboard, and the finding is
+    that the same head sits on opposite sides of it in the two panels.
+
+    Position carries the verdict and colour carries only which head is which, so the
+    reversal survives the palette's relief rule intact. Every bar prints its own value.
+    """
+    units = list(dict.fromkeys(board["unit_label"]))
+    fig = make_subplots(rows=len(units), cols=1, shared_xaxes=True,
+                        vertical_spacing=0.16,
+                        subplot_titles=[f"scored per {unit}" for unit in units])
+    for note in fig.layout.annotations:
+        note.update(font=dict(color=th["ink"], size=13), x=0, xanchor="left")
+
+    for r, unit in enumerate(units, start=1):
+        part = board[board["unit_label"] == unit]
+        rows = list(range(len(part)))
+        fig.add_trace(go.Bar(
+            x=part["improvement"], y=rows, orientation="h", showlegend=False,
+            marker=dict(color=_head_colors(th, part["head"], slots),
+                        line=dict(color=th["surface"], width=1)),
+            text=[f"{v:+.1%}" for v in part["improvement"]], textposition="outside",
+            textfont=dict(size=BAR_TEXT_SIZE, color=th["ink2"]), cliponaxis=False,
+            customdata=list(zip(part["crps"], part["floor_crps"], part["arm"])),
+            hovertemplate="CRPS %{customdata[0]:.4f} against a floor of "
+                          "%{customdata[1]:.4f}<br>%{x:+.2%} against the floor"
+                          "<extra>%{customdata[2]}</extra>"), row=r, col=1)
+        fig.update_yaxes(tickmode="array", tickvals=rows, ticktext=list(part["label"]),
+                         showgrid=False, zeroline=False,
+                         range=[len(part) - 0.5, -0.5], row=r, col=1)
+
+    fig.update_xaxes(title="", showticklabels=False)
+    fig.update_xaxes(title="CRPS against that unit's own no-fit floor", tickformat="+.0%",
+                     showticklabels=True, row=len(units), col=1)
+    fig = apply_theme(fig, th, height=max(300, len(board) * row_height + 150),
+                      legend=False)
+    fig.update_xaxes(range=_bar_text_range(board["improvement"], floor_at_zero=False,
+                                           room=PERCENT_BAR_TEXT_ROOM))
+    # After `apply_theme`, like `fig_floor_margin`: here the zero line *is* the floor and a
+    # bar's side of it is the whole finding, so it is drawn at reference weight. It carries
+    # no annotation of its own — the axis title already says what zero is, and a label at
+    # the top of the paper would land on a facet header that starts at the same edge.
+    fig.update_xaxes(zeroline=True, zerolinewidth=2, zerolinecolor=th["ink2"])
+    fig.update_layout(title=title, bargap=0.4, margin=dict(l=8, r=8, t=60, b=8))
+    return fig
+
+
+def fig_metric_facets(panel: pd.DataFrame, th: dict, slots: dict, columns: int = 2,
+                      title: str = "", row_height: int = 150) -> go.Figure:
+    """The same two heads read four ways, one metric per facet on its own axis.
+
+    `panel` is `model_cards.spread_panel()`. Every facet has its own x range because the
+    four metrics are in three different units — minutes, minutes, and a KS statistic — and a
+    shared axis would either flatten the small one or blow out the large one. What is shared
+    is the pair of rows, so a reader reads *down* the facets to see the same two heads
+    change places.
+
+    A facet whose frame carries a `reference` draws it as a labelled line: the predictive-sd
+    panel is the only one with a target value, and without it a reader cannot tell whether
+    64.65 is too narrow or 302.75 too wide.
+    """
+    metrics = list(dict.fromkeys(panel["metric_label"]))
+    columns = max(1, min(columns, len(metrics)))
+    rows = max(1, math.ceil(len(metrics) / columns))
+    fig = make_subplots(rows=rows, cols=columns, subplot_titles=metrics,
+                        vertical_spacing=min(0.18, 0.55 / max(rows, 1)),
+                        horizontal_spacing=0.16)
+    for note in fig.layout.annotations:
+        note.update(font=dict(color=th["ink"], size=13))
+
+    for index, metric in enumerate(metrics):
+        row, col = divmod(index, columns)
+        row, col = row + 1, col + 1
+        part = panel[panel["metric_label"] == metric]
+        positions = list(range(len(part)))
+        fig.add_trace(go.Bar(
+            x=part["value"], y=positions, orientation="h", showlegend=False,
+            marker=dict(color=_head_colors(th, part["head"], slots),
+                        line=dict(color=th["surface"], width=1)),
+            text=list(part["text"]), textposition="outside",
+            textfont=dict(size=BAR_TEXT_SIZE, color=th["ink2"]), cliponaxis=False,
+            customdata=list(part["label"]),
+            hovertemplate="%{customdata}<br>" + metric + " %{x:,.4f}<extra></extra>"),
+            row=row, col=col)
+
+        values = list(part["value"]) + [0.0]
+        reference = part["reference"].dropna()
+        if len(reference):
+            target = float(reference.iloc[0])
+            values.append(target)
+            fig.add_vline(x=target, line=dict(color=th["ink2"], width=1), layer="below",
+                          row=row, col=col)
+            # Above the top bar rather than beside the line: the y axis is reversed, so the
+            # free strip a facet has is the one between its own top edge and row 0.
+            fig.add_annotation(x=target, y=-0.85, text=f"{target:,.1f} — residual sd",
+                               showarrow=False, xanchor="right", yanchor="top",
+                               xshift=-4, font=dict(color=th["ink2"], size=10),
+                               bgcolor=th["surface"], borderpad=2, row=row, col=col)
+        fig.update_xaxes(range=_bar_text_range(values, room=WIDE_BAR_TEXT_ROOM),
+                         row=row, col=col)
+        fig.update_yaxes(tickmode="array", tickvals=positions,
+                         ticktext=list(part["label"]), showgrid=False, zeroline=False,
+                         range=[len(part) - 0.5, -0.9], row=row, col=col)
+
+    fig.update_layout(title=title, bargap=0.45)
+    fig = apply_theme(fig, th, height=rows * row_height + 90, legend=False)
+    fig.update_layout(margin=dict(l=8, r=8, t=60, b=8))
+    return fig
+
+
+def fig_sigma_grids(sweep: pd.DataFrame, th: dict, marginal_crps: float | None = None,
+                    height: int = 380) -> go.Figure:
+    """The injected effect's CRPS against sigma, on the two grids that were run.
+
+    `sweep` is `model_cards.sigma_sweep()`. Two panels rather than two series on one axis,
+    and that is the whole care this figure needs: the grids score **disjoint rows** — 742
+    validation player-seasons against 1,145 training ones — so their CRPS *levels* are not
+    comparable and only the location of each minimum is. Two series on a shared axis would
+    invite exactly the comparison the panels forbid.
+
+    Each panel marks its own optimum, and the shipped sigma is deliberately **not** marked
+    here: an enlarged marker already means "the optimum on this grid", and a second mark on
+    one figure meaning something else is worse than a caption. The gap chart above it names
+    the shipped row instead.
+
+    The validation panel also carries the marginal head's CRPS as a reference line, which is
+    the level the injection has to reach; the train panel has no such line, because the
+    marginal head was never scored on those rows.
+    """
+    panels = (("val_crps", "val_n", 1, marginal_crps, "validation"),
+              ("train_crps", "train_n", 2, None, "train"))
+    # The row count goes into the facet header, and it is built before the subplots rather
+    # than patched into `layout.annotations` afterwards — every `add_annotation` below
+    # appends to that same tuple, so an index into it is only stable by accident.
+    titles = []
+    for column, count, _, _, name in panels:
+        rows = sweep.loc[sweep[column].notna(), count].dropna()
+        titles.append(f"{name} · {int(rows.iloc[0]):,} player-seasons" if len(rows)
+                      else name)
+    fig = make_subplots(rows=1, cols=2, shared_xaxes=True, horizontal_spacing=0.10,
+                        subplot_titles=titles)
+    for column, count, col, reference, _ in panels:
+        part = sweep[sweep[column].notna()]
+        if part.empty:
+            continue
+        best = part.loc[part[column].idxmin()]
+        color = th["series"][0] if col == 1 else th["series"][1]
+        fig.add_trace(go.Scatter(
+            x=part["sigma"], y=part[column], mode="lines+markers", showlegend=False,
+            line=dict(color=color, width=2),
+            marker=dict(size=[DOT + 5 if abs(s - float(best["sigma"])) < 1e-9 else DOT
+                              for s in part["sigma"]], color=color,
+                        line=dict(color=th["surface"], width=1)),
+            hovertemplate="σ = %{x:.3f}<br>CRPS %{y:.2f}<extra></extra>"), row=1, col=col)
+        fig.add_annotation(x=float(best["sigma"]), y=float(best[column]),
+                           text=f"σ = {float(best['sigma']):.3f}", showarrow=False,
+                           yanchor="top", yshift=-12,
+                           font=dict(color=th["ink"], size=11), bgcolor=th["surface"],
+                           borderpad=2, row=1, col=col)
+        if reference is not None:
+            fig.add_hline(y=float(reference), line=dict(color=th["ink2"], width=1),
+                          layer="below", row=1, col=col)
+            # At the left end, where the curve is at its highest and the strip under the
+            # line is empty. Against the right end the label's own opaque chip cut the
+            # curve in half, which a rendered PNG shows and a trace assertion cannot.
+            fig.add_annotation(x=float(part["sigma"].min()), y=float(reference),
+                               text="the marginal head", showarrow=False, xanchor="left",
+                               yanchor="bottom", yshift=3,
+                               font=dict(color=th["ink2"], size=10),
+                               bgcolor=th["surface"], borderpad=2, row=1, col=col)
+
+    for note in fig.layout.annotations[:2]:
+        note.update(font=dict(color=th["ink"], size=13))
+    fig.update_xaxes(title="injected per-player-season effect σ")
+    fig.update_yaxes(title="CRPS (season minutes)")
+    return apply_theme(fig, th, height, legend=False)
+
+
+def fig_coupling(panel: pd.DataFrame, th: dict, slots: dict, title: str = "",
+                 height: int = 300) -> go.Figure:
+    """Each head's teammate correlation against the one a fixed team total forces on it.
+
+    `panel` is `model_cards.teammate_coupling()`. Drawn as a **dumbbell**, one row per head,
+    because the quantity is the gap: the reference is not a rival series, it is what the
+    physics of a fixed pot requires at that head's own roster size, and it differs between
+    the two rows for the ordinary reason that they cover different numbers of teammates.
+
+    The measured value is a filled dot in the head's own slot and the forced value is a
+    hollow one in the ink colour — the same "this is the reference, not a third model"
+    encoding the game-length page uses for an observed count, and the same hollow marker the
+    tournament page uses for a value that is not a measurement to be beaten.
+    """
+    rows = list(range(len(panel)))
+    fig = go.Figure()
+    for row, (_, part) in zip(rows, panel.iterrows()):
+        fig.add_trace(go.Scatter(
+            x=[part["forced"], part["measured"]], y=[row, row], mode="lines",
+            showlegend=False, hoverinfo="skip",
+            line=dict(color=th["axis"], width=2)))
+    fig.add_trace(go.Scatter(
+        x=panel["forced"], y=rows, mode="markers", name="forced by a fixed team total",
+        marker=dict(size=DOT + 2, color="rgba(0,0,0,0)", symbol="circle",
+                    line=dict(color=th["ink"], width=2)),
+        customdata=list(panel["roster"]),
+        hovertemplate="−1/(K−1) at K = %{customdata:.2f} is %{x:+.4f}"
+                      "<extra>forced</extra>"))
+    fig.add_trace(go.Scatter(
+        x=panel["measured"], y=rows, mode="markers", name="what the head puts there",
+        marker=dict(size=DOT + 2, color=_head_colors(th, panel["head"], slots),
+                    line=dict(color=th["surface"], width=1)),
+        customdata=list(panel["label"]),
+        hovertemplate="%{customdata}<br>mean pairwise r %{x:+.4f}<extra>measured</extra>"))
+
+    values = list(panel["measured"]) + list(panel["forced"])
+    fig.update_xaxes(title="mean pairwise correlation between two teammates' season minutes",
+                     range=_bar_text_range(values, floor_at_zero=False,
+                                           room=WIDE_BAR_TEXT_ROOM))
+    fig.update_yaxes(tickmode="array", tickvals=rows, ticktext=list(panel["label"]),
+                     showgrid=False, zeroline=False, range=[len(panel) - 0.5, -0.5])
+    fig.update_layout(title=title)
+    fig = apply_theme(fig, th, height)
+    _reference_line(fig, 0.0, th, "independent draws", at_floor=True)
+    return fig

@@ -532,6 +532,12 @@ built from.
 
 ### What the gate found ✅ `make minutes-unification`, 2026-08-09
 
+> **Rendered since 2026-08-10** on the dashboard's Minutes page (`make dashboard`,
+> `/minutes`), which draws this table, the sigma sweep below it and the teammate-coupling
+> table as three named blocks — the two-unit reversal as a ratio to each unit's own no-fit
+> floor, since 4.4945 CRPS minutes per player-game and 170.06 per season cannot share an
+> axis. See [dashboard-plan.md](dashboard-plan.md#step-5b-as-built--the-minutes-page).
+
 **The composition loses, so both heads ship — and every part of the reasoning above about
 *why* was wrong.** Scored at the season unit on the **742** validation player-seasons both
 heads cover, at the `train` fit window, 1,000 posterior draws each:

@@ -5581,4 +5581,256 @@ REGISTRY: tuple[Decision, ...] = (
         date="2026-08-10",
         tags=("dashboard", "drafting"),
     ),
+    Decision(
+        id="a-pages-own-block-is-named-not-numbered",
+        topic="problem",
+        claim="The seven model-page blocks are **numbered and shared**; a block only one "
+              "page owns is **named**, and sits at the question it extends rather than at "
+              "the end.",
+        because="`model_page.render(class_key, extra=...)` keys a page's own block on the "
+                "numbered block it follows. Inserting it into the sequence instead would "
+                "mean block 5 was a different block on two of the four pages, which is the "
+                "one property the shared numbering buys. Both blocks that exist today are "
+                "keyed on block 1 — the box-score page's no-fit floor and the game-length "
+                "page's per-class check — because 'what did this head buy over doing "
+                "nothing' is the first thing to know about a head and not the eighth. "
+                "Pages 5 and 6 also confirmed the step-4 premise that a model page is "
+                "configuration: `views/components.py` and `views/game_length.py` name a "
+                "class and add one callable each, and `model_cards.CLASSES` already "
+                "carried their title, icon, `url_path`, head order and intro.",
+        status="built",
+        reproduce="make model-cards → outputs/predictions/model_card_index.csv",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard",),
+    ),
+    Decision(
+        id="every-component-head-is-drawn-against-its-floor",
+        topic="components",
+        claim="The box-score page draws **every head's margin over its own no-fit floor**, "
+              "with `ftm|fta`'s negative margin on the chart rather than omitted.",
+        because="A component head's whole claim is that fitting bought something over the "
+                "player's prior per-36 rate carried forward, and this repo's own headline "
+                "for the rate side is that the floor scores validation R² 0.81-0.95 on the "
+                "counts. A fitted score with no reference point is unreadable. On the "
+                "shipped Stan ladder ten heads clear their floor and `ftm|fta` does not "
+                "(-0.0190 R²), which is a finding — an empirical-Bayes shrink of a prior "
+                "free-throw percentage is already close to optimal for a quantity that is "
+                "nearly pure player skill. The zero line is the floor, so position carries "
+                "it; a non-clearing bar is also outlined and prints its own value, because "
+                "no value on this surface may be reachable by colour alone. R² is each "
+                "head's own on its own response, so a bar's height reads as how much the "
+                "fit added and never as one head beating another. Read from "
+                "`stan_component_metrics.csv` rather than from the model cards, which "
+                "describe the arm that shipped and carry no record of what it beat.",
+        status="built",
+        reproduce="make stan-components → outputs/predictions/stan_component_metrics.csv",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "components"),
+    ),
+    Decision(
+        id="the-share-head-is-anchored-to-its-own-column",
+        topic="components",
+        claim="Each box-score head declares whether it is a **count, an attempt share or a "
+              "conversion**, anchored to the design column carrying its own prior-season "
+              "rate — and `fg3a|fga`'s page says in words that it is not a shooting "
+              "percentage.",
+        because="`fg3a | fga` models `fg3a / fga`, the three-point share of a player's shot "
+                "diet, and its own prior-season term is named `logit_fg3a_pct_lag1` — where "
+                "`_pct_` is `fg3a / fga` and **not** `fg3m / fg3a`. Three-point shooting "
+                "percentage is a different quantity on a different head "
+                "(`logit_fg3m_pct_lag1`), and block 4 puts the first of those names at the "
+                "top of the panel as the head's strongest term. That is exactly the "
+                "confusion `stan_components.conversion_variants` takes an explicit `own=` "
+                "parameter to prevent in the fitting code, and a page reprinting the column "
+                "name without saying which ratio it is hands it back on the way out. The "
+                "claim is an interpretation, so it carries a machine-checkable anchor in "
+                "the sense `pca.orient()` uses: a test asserts every declared "
+                "`own_family` is a real `term_family` on that head in "
+                "`model_card_features.csv`, so a refit that renames the column fails rather "
+                "than mislabels.",
+        status="built",
+        reproduce="make model-cards → outputs/predictions/model_card_features.csv",
+        source="docs/shot-attempt-basis-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "components"),
+    ),
+    Decision(
+        id="game-length-is-read-at-the-games-unit",
+        topic="components",
+        claim="The game-length page's own block reads both heads **in games** — observed "
+              "against the fitted arm and its floor, per game class — because block 5's "
+              "ribbon cannot say anything about them.",
+        because="The onset head is fitted on 26 season cells and the depth head on 4 depth "
+                "cells, so each has a **two-point** validation ECDF. A posterior-predictive "
+                "ribbon over two grid points is an arithmetic shape, not a calibration "
+                "reading, and the page says so with the grid count read from the artifact. "
+                "`make stan-game-length` already writes the readout that works: a "
+                "predictive count per game class for every arm of the ladder including its "
+                "no-fit floor. `regulation` is `n_games` minus the other three by "
+                "construction for every arm alike, so it is carried in the table and left "
+                "off the figure, where it is a 2,300-long bar that flattens the three "
+                "classes the arms differ on. The observed is an outlined bar rather than a "
+                "third filled series: it is the target the two arms are measured against, "
+                "and ink is what block 5 already uses for an observed curve.",
+        status="built",
+        reproduce="make stan-game-length → outputs/predictions/stan_game_length_ppc.csv, "
+                  "outputs/predictions/stan_game_length_depth.csv",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "components"),
+    ),
+    Decision(
+        id="the-smallest-heads-fixed-the-shared-renderer",
+        topic="problem",
+        claim="Pages 5 and 6 changed `model_page.py` and `charts.py` **once** rather than "
+              "forking a renderer, and the five defects they exposed were all latent on the "
+              "pages already shipped.",
+        because="The two game-length heads are the smallest in the project — one design "
+                "column and none — and the box-score heads are the first to impute "
+                "anything, so between them they reached branches the availability page "
+                "cannot. Each fix is in the shared layer and Availability was re-verified "
+                "after all five: a lone design column reported as 'correlates with nothing' "
+                "when its off-diagonal is empty by arithmetic; a 1 x 1 correlation heatmap "
+                "drawn as though it were a measurement; `DataFrame.itertuples` renaming "
+                "`Imputed share` to `_10` so block 2 raised a `KeyError` on any head that "
+                "imputed something; plotly inferring `lines+markers` **and its own default "
+                "colorway** for a ribbon of 20 points or fewer, putting stray cyan and red "
+                "dots on a validated palette; and a four-column feature grid drawing one "
+                "histogram in its leftmost quarter. A sixth was a missing value rather than "
+                "a layout: the depth head has no season span, and an f-string over an "
+                "absent CSV cell printed the literal `nan`, which is the same class of "
+                "defect as the `undefined` a plotly title with no text renders as.",
+        status="built",
+        reproduce="make dashboard → dashboard/views/model_page.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard",),
+    ),
+    Decision(
+        id="two-units-share-an-axis-only-through-their-floors",
+        topic="minutes",
+        claim="The minutes page draws the two-unit reversal on one axis by plotting each "
+              "arm's CRPS **as a ratio to the no-fit floor of its own unit**, never the "
+              "CRPS itself.",
+        because="The page exists to show that one posterior clears its floor at the "
+                "per-player-game unit and fails at the season unit while the marginal head "
+                "does the reverse — and the two CRPS are 4.4945 minutes and 170.06, which "
+                "cannot share an axis. The floor is the reference every head in this "
+                "project is already quoted against, so normalizing by it is not a "
+                "convenience: the zero line *is* the floor, position carries the verdict, "
+                "and the ratio is dimensionless. The shipped readings are +3.9% and -5.4% "
+                "for the composition against -2.3% and +10.5% for the marginal head. The "
+                "two heads meet at both units without anything being refitted: at the "
+                "season unit `make minutes-unification` rehydrates both around their "
+                "persisted posteriors, and at the per-game unit the marginal head is the "
+                "`independent_comparator` arm the composition's own ladder refits as its "
+                "control.",
+        status="built",
+        reproduce="make minutes-unification → outputs/predictions/minutes_unification.csv",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "minutes"),
+    ),
+    Decision(
+        id="three-named-blocks-go-where-their-questions-are",
+        topic="problem",
+        claim="A model page may key **several** named blocks, one per numbered block whose "
+              "question it extends — the minutes page has three, at blocks 1, 5 and 6.",
+        because="Pages 5 and 6 settled that a page's own block is named rather than "
+                "numbered and both keyed theirs on block 1, which left open whether the "
+                "hook was 'the page's extra material' or 'the block that answers this "
+                "question'. It is the second. The two-unit verdict follows block 1 because "
+                "which unit a head is a model at is the first thing to know about it; the "
+                "injected player-season effect follows block 5 because what fails at the "
+                "season unit is calibration and sigma is what moves the PIT KS; and the "
+                "zero-sum team constraint follows block 6 because block 6 is four panels of "
+                "*marginal* residuals and no marginal metric can see whether a head carries "
+                "it. Putting all three under block 1 would have answered two questions "
+                "before they were asked.",
+        status="built",
+        reproduce="make dashboard → dashboard/views/minutes.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard",),
+    ),
+    Decision(
+        id="a-comparison-page-fixes-its-colours",
+        topic="problem",
+        claim="Where a page's figures compare two heads rather than mark one among many, "
+              "each head keeps **one fixed palette slot for the whole page** and the tiles "
+              "rather than the colour say which head the selector has open.",
+        because="Pages 5 and 6 use highlight-and-gray, where slot 0 marks the open head "
+                "among eleven bars. Three of the minutes page's four figures have exactly "
+                "two series and both are the point, so a slot that followed the selector "
+                "would mean two different things on one screen. Two series is well inside "
+                "`ALL_PAIRS_CAP`, so nothing is lost. What follows the selector instead is "
+                "the tile row, which reads the open head's own side of each comparison in "
+                "its own direction — and that is where the sign errors live, since flipping "
+                "a paired gap means swapping the interval's ends as well as negating them, "
+                "which is wrong in exactly one of the two branches and looks fine in the "
+                "other.",
+        status="built",
+        reproduce="make dashboard → dashboard/charts.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "palette"),
+    ),
+    Decision(
+        id="a-reference-line-the-axis-already-names-is-drawn-bare",
+        topic="problem",
+        claim="A reference line whose meaning the axis title already carries is drawn "
+              "**without a label**, because neither placement available to one is safe in "
+              "general.",
+        because="`_reference_line` can put its label at the top of the paper or at the "
+                "floor, and both are at the line's own x — so the top collides with the "
+                "legend exactly when zero falls under a legend entry, and the floor collides "
+                "with the bottom row's interval. Which one happens is a property of the "
+                "*data*, invisible in the trace and only findable by rendering: it was "
+                "visible on the minutes page's sigma sweep and latent on the tournament "
+                "page, which has used the same builder since it shipped. `fig_paired`'s x "
+                "title reads 'gap ... against <baseline>', so the label was a duplicate and "
+                "dropping it removes the collision surface rather than moving it. The "
+                "tournament page was re-rendered to confirm the only change there is one "
+                "fewer annotation.",
+        status="built",
+        reproduce="make dashboard → dashboard/charts.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "palette"),
+    ),
+    Decision(
+        id="the-shipped-sigma-is-read-from-the-card-not-typed",
+        topic="minutes",
+        claim="The minutes page reads the injected effect's shipped sigma from "
+              "`player_season_sigma` on the composition's own model card, and a test holds "
+              "that it is still the **train** grid's optimum.",
+        because="0.450 is load-bearing precisely because of where it came from: the "
+                "validation grid's optimum is 0.375, and a sigma read off the split it is "
+                "later scored against would be tuned. The two grids score disjoint rows — "
+                "742 validation player-seasons against 1,145 training ones — both optima are "
+                "interior, and they differ by one grid step, which is the evidence the "
+                "figure was not moved by the evaluation data. `make posteriors` records the "
+                "value and `minutes_unification.rehydrate_composition` applies it, so a page "
+                "that typed 0.450 would keep printing it after the shipped value moved, and "
+                "a refit that moved the train optimum without moving the persisted value "
+                "would leave the page claiming a sigma nothing selected. Both failures are "
+                "now a failing test rather than a stale page.",
+        status="built",
+        reproduce="make model-cards → outputs/predictions/model_card_index.csv",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "minutes"),
+    ),
 )

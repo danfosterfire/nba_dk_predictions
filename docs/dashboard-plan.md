@@ -349,9 +349,9 @@ Nine, in sidebar order. "Class" pages carry a head selector; the others do not.
 | 1 | **Overview** | hero tiles from existing metrics CSVs | no |
 | 2 | **Player fingerprints** | ✅ `views/fingerprints.py`, moved unchanged 2026-08-10 | no |
 | 3 | **Availability** | ✅ `views/availability.py` over the generic renderer, shipped 2026-08-10 | one — the joint density |
-| 4 | **Minutes** | model cards + `stan_minutes_*`, `stan_composition_*`, `minutes_unification.csv` | **yes** |
-| 5 | **Box-score components** | model cards + `stan_component_*` | **yes** |
-| 6 | **Game length** | model cards + `stan_game_length_*` | **yes** |
+| 4 | **Minutes** | ✅ `views/minutes.py` over the generic renderer plus `minutes_unification.csv`, shipped 2026-08-10 | no — step 3 had already written them |
+| 5 | **Box-score components** | ✅ `views/components.py` over the generic renderer, shipped 2026-08-10 | no |
+| 6 | **Game length** | ✅ `views/game_length.py` over the generic renderer, shipped 2026-08-10 | no |
 | 7 | **Inputs beyond the heads** | ADP, injury capture, copula, serial correlation, bonus overdispersion | small |
 | 8 | **Tournament & strategy** | ✅ `views/tournament.py`, shipped 2026-08-10 | no |
 | 9 | **Draft board** | today's `draft_room.py`, as a page | no |
@@ -549,9 +549,13 @@ goes with drawing anything. Seven artifacts, 7.4 MB, ten seconds, no CmdStan. Se
 It needed one artifact the plan had assumed was already there — the joint density block 3
 draws — see [Step 4, as built](#step-4-as-built--the-model-renderer-and-availability).
 
-**Step 5 · Minutes, Box-score components, Game length (pages 4–6).** Mostly configuration
-against the step-4 renderer, plus the `minutes_unification` two-unit comparison, which is
-bespoke.
+**Step 5 · Minutes, Box-score components, Game length (pages 4–6). ✅ Shipped 2026-08-10.**
+Mostly configuration against the step-4 renderer, plus the `minutes_unification` two-unit
+comparison, which is bespoke. The "mostly configuration" premise held for all three — each
+is a view module that names a class plus its own named blocks — and the bespoke half needed
+**three** named blocks rather than one, four new figures and no new artifact. See
+[Step 5a, as built](#step-5a-as-built--box-score-components-and-game-length) and
+[Step 5b, as built](#step-5b-as-built--the-minutes-page).
 
 **Step 6 · Inputs beyond the heads (page 7).** Includes the small capture-calendar emitter.
 
@@ -1022,6 +1026,299 @@ row in the real `stan_*_diagnostics.csv` — the failure mode there is a block t
 
 ---
 
+## Step 5a, as built — Box-score components and Game length
+
+**2026-08-10.** `dashboard/views/components.py` and `dashboard/views/game_length.py`, two
+rows in `app.VIEWS`, two figures in `charts.py`, and 24 new tests. **No new artifact and no
+pipeline run** — the orphan count is unchanged at **1**.
+
+**Step 4's premise held all the way.** A model page really is a view module that names a
+class: `model_cards.CLASSES` already carried both pages' title, icon, `url_path`, head order
+and intro, so `app.model_view()` took each in one line and nothing else in `app.py` moved.
+What each page adds is one callable.
+
+### A page's own block is named, not numbered
+
+The renderer's `extra` hook was built in step 4 for the minutes page and is used here first.
+Both pages key theirs on **block 1**, and both are called *Against the no-fit floor*.
+
+The rule the two of them settle is that **the seven blocks are numbered because they are
+shared, and a page's own block is named**. Inserting page-specific material into the sequence
+would mean block 5 was a different block on two of the four pages, which is the one property
+the numbering buys. A named block also goes where its question is asked: "what did this head
+buy over doing nothing" is the first thing to know about a component head, not the eighth.
+Registered as `a-pages-own-block-is-named-not-numbered`.
+
+### Page 5 · the floor is the point, and one head is below it
+
+Every head in this project is quoted against a no-fit floor, so a fitted score with no
+reference point on the page is unreadable. The block reads `stan_component_metrics.csv` —
+the head's own variant ladder, in which the floor is a row — rather than the model cards,
+which describe the arm that shipped and carry no record of what it beat.
+
+Four tiles for the open head, then its own five-row ladder, then **every head's margin over
+its own floor** as one chart with the open head highlighted. On the shipped Stan ladder ten
+heads clear and **`ftm|fta` does not, at −0.0190 R²**. It is drawn, not omitted: an
+empirical-Bayes shrink of a prior free-throw percentage is already close to optimal for a
+quantity that is nearly pure player skill, which is a finding about the target rather than a
+defect in the head. The zero line *is* the floor, so position carries the verdict; a
+non-clearing bar is also outlined and every bar prints its own margin, because no value here
+may be reachable by colour alone. The caption states that R² is each head's own on its own
+response, so a bar reads as *how much the fit added* and never as one head beating another.
+
+> These are the **Stan** ladder's margins and they are not the `+0.0013 to +0.0334` in
+> `README.md`, which is `make component-rates`' sklearn probe over the count heads only. Two
+> instruments, two artifacts; the page draws the one that describes the heads that shipped.
+
+Registered as `every-component-head-is-drawn-against-its-floor`.
+
+### Page 5 · the share head says what it is a share of
+
+`fg3a | fga` models `fg3a / fga` — the three-point share of a player's shot diet — and its
+own prior-season term is named **`logit_fg3a_pct_lag1`**, where `_pct_` is `fg3a / fga` and
+*not* `fg3m / fg3a`. Block 4 puts that name at the top of the panel as the head's strongest
+term, so the page was about to hand a reader a shooting-percentage label for an attempt mix.
+That is precisely what `stan_components.conversion_variants` takes an explicit `own=`
+parameter to prevent in the fitting code.
+
+So `model_cards.COMPONENT_BASIS` declares each head's role — count, attempt share,
+conversion — with the ratio written as arithmetic and **anchored** to the design column
+carrying its own rate, in the sense `pca.orient()` uses the word: a test asserts every
+declared `own_family` is a real `term_family` for that head in `model_card_features.csv`, so
+a refit that renames the column fails instead of mislabelling. Every head prints a one-line
+basis note in block 1; the share head prints the long form naming both columns and the head
+the other one lives on. Registered as `the-share-head-is-anchored-to-its-own-column`.
+
+### Page 6 · a two-point ECDF is not a calibration reading
+
+The onset head is fitted on **26 season cells** and the depth head on **4 depth cells** — the
+two smallest heads in the project — so each has a **two-point validation ECDF**. Block 5
+renders it without complaint and it is an arithmetic shape: a filled triangle between two
+points. The page says so, with the grid count read from the artifact rather than typed.
+
+What stands in for it is the unit the heads are actually consumed at, which
+`make stan-game-length` already writes: a predictive **count per game class** for every arm
+of the ladder including its no-fit floor. `regulation` is `n_games` minus the other three by
+construction for every arm alike, so it is carried in the table twin and left off the figure,
+where it is a 2,300-long bar that flattens the three classes the arms differ on. The
+observed is drawn as an **outlined** bar rather than a third filled series — it is the target
+the two arms are measured against, and ink is what block 5 already uses for an observed
+curve. For the depth head the block also tiles nats per overtime game for the geometric and
+the beta-geometric, which are a wash on 138 validation games; the frailty earns its keep on
+the absence-spell head that shares the Stan source, not here. Registered as
+`game-length-is-read-at-the-games-unit`.
+
+### Verification, as run
+
+**`AppTest`**, both appearance modes, **all thirteen heads on the two new pages and all five
+on Availability again**. Components: **7 charts, 14 tiles, 10 tables, 4–5 selectors, 8
+subheaders, 6–7 expanders, 0 exceptions, 0 missing-artifact warnings**, identical in light
+and dark and identical across the eleven heads except for the collapse toggle, which the four
+heads with no spline basis correctly do not draw. Game length: **5 charts** for onset and
+**3** for depth, the difference being the blocks that degrade rather than draw. Availability
+is unchanged at its step-4 counts — 6 charts, 10 tiles, 8 tables, 4 selectors, 7 subheaders,
+6 expanders — and a five-page round trip holds `appearance` while fingerprints and tournament
+still report their own counts.
+
+**Fourteen figures rendered to PNG** through kaleido and looked at. This layer earned its
+keep four times over, and every fix is in the shared layer:
+
+- **Plotly drew a ribbon's markers in its own default colorway.** `go.Scatter` infers
+  `lines+markers` for a trace of 20 points or fewer *and* infers the marker colour from the
+  default palette, so the onset head's two-point band came out with stray cyan and red dots
+  on a surface whose whole point is a validated palette. `mode` is now explicit.
+- **A one-column feature grid still laid out four columns**, drawing its single histogram in
+  the leftmost quarter with three empty cells beside it, and a single-row grid put its
+  subplot title under the shared legend.
+- **A value printed outside its own bar rendered against the plot edge.** Both new figures
+  now take an axis range with room for the label, which is not assertable from the trace:
+  the text is laid out by plotly.js.
+- **A solid ink bar for the observed read as the largest quantity on the chart** rather than
+  as the reference the two arms are measured against.
+
+**The live pages driven in Chrome** through Playwright — **52 checks, all passing**: five
+navigation rows in declared order, `/components` deep-links, seven plots and all eight
+headings on the components page, five and three on game length, no `stException`, no
+missing-artifact warning, no literal `"undefined"` **and no literal `nan`** anywhere before
+or after an interaction, no metric tile clipping its own value, sidebar order by geometry, the
+mode switch repainting to the pinned surfaces and holding across an in-app navigation, the
+head selector reaching the share head and the failing head and moving both the tiles and the
+prose, and Availability and Tournament still drawing their own six and five plots.
+
+A fifth and sixth defect came from **reading** the rendered page rather than a figure, which
+is the same lesson steps 2 and 4 recorded:
+
+- **Block 2 raised on every head that imputed anything.** `DataFrame.itertuples` renames a
+  column whose name is not an identifier, so `Imputed share` arrives as `_10` and reading it
+  back by name is a `KeyError`. Nine heads and the whole availability page render fine
+  because nothing in them was imputed; `ftm|fta` and `fg3m|fg3a` are the first that were.
+  The formatting moved into `model_cards.imputed_shares` so a test can hold it.
+- **The depth head printed the literal `nan`.** It is fitted on depth cells and has no season
+  span at all, and an f-string over an absent CSV cell prints four letters that look like a
+  value — the same class of defect as the `undefined` a plotly title with no text renders as.
+  `model_cards.text()` and `season_span()` now return an em dash, and the browser layer
+  checks for `nan` alongside `undefined` from here on.
+
+All six are recorded together as `the-smallest-heads-fixed-the-shared-renderer`, because what
+they have in common is the argument for not forking a renderer: **the two smallest heads in
+the project and the first heads to impute anything reached branches the shipped pages could
+not, and every fix landed on the shipped pages too.**
+
+**24 new tests**, 205 in `tests/test_dashboard.py` and **1,304** across the suite.
+
+---
+
+## Step 5b, as built — the Minutes page
+
+**2026-08-10.** `dashboard/views/minutes.py`, one row in `app.VIEWS`, four figures in
+`charts.py`, ~500 lines of pure layer in `model_cards.py`, and 20 new tests. **No new
+artifact and no pipeline run**; the orphan count is unchanged at **1**.
+
+Step 4's premise held for the fourth and last time — `model_cards.CLASSES` already carried
+this page's title, icon, `url_path`, head order and intro — but this is the page the build
+order called *bespoke*, and the bespoke half is bigger than the configuration half. The
+seven numbered blocks are the same seven; what the page adds is three named blocks, drawn
+from `minutes_unification.csv` and the composition's own `make stan-composition` ladder.
+
+### A page's own block is named — and a page may have three
+
+Pages 5 and 6 settled that a page's own block is named rather than numbered and is keyed on
+the numbered block whose question it extends. Both keyed theirs on block 1. This page uses
+**three keys**, and the reason is worth keeping: each of its three questions is asked at a
+different point on the page, and burying all three under block 1 would have put the answer
+before two of the questions.
+
+- **Under block 1 · "Two units, two verdicts."** Which unit a head is a model at is the
+  first thing to know about either minutes head, exactly as "what did this head buy over
+  doing nothing" is on the box-score page.
+- **Under block 5 · "The missing parameter."** What fails at the season unit is
+  *calibration*, and the injected effect is what moves the PIT KS. It follows the block that
+  draws the ribbon.
+- **Under block 6 · "What no marginal panel can see."** Block 6 is four panels of marginal
+  residuals, and the zero-sum team constraint is precisely the thing no marginal metric can
+  see. The block follows them and says so in its title.
+
+Registered as `three-named-blocks-go-where-their-questions-are`.
+
+### The two units are made commensurable by the floor they already had
+
+The page's reason to exist is that **one posterior gives opposite verdicts at two units**,
+and the obstacle to drawing it is that the two CRPS are 4.4945 minutes per player-game and
+170.06 per player-season. They cannot share an axis.
+
+What makes them comparable is the reference each already carries: every head in this project
+is quoted against a **no-fit floor**, so the axis is the *ratio* to the floor of that unit
+and the zero line is the floor — the encoding page 5 already uses. On the shipped artifacts
+the composition reads **+3.9%** against its per-game floor and **−5.4%** against the season
+one, and the marginal head reads **−2.3%** and **+10.5%**. Two panels, four bars, and the
+reversal is the picture rather than a sentence under a table.
+
+The second thing that made this drawable is that **the two heads meet at both units in
+artifacts where nothing was fitted twice**: at the season unit `make minutes-unification`
+rehydrates both around their persisted posteriors, and at the per-game unit the marginal
+head is already there as `independent_comparator`, the control the composition's own ladder
+refits. `model_cards.unit_board` owns that arm→head map so the view never has to know it.
+Registered as `two-units-share-an-axis-only-through-their-floors`.
+
+### The means are the control and the spread is the finding
+
+Drawing only MAE would say the two heads are the same model; drawing only the predictive sd
+would leave a reader wondering whether the composition is simply worse. So the block draws
+**four readings in a 2 × 2**, split by what each is a statement about — `MAE` and `bias` for
+where the predictive sits, `predictive sd` and `PIT KS` for how wide it is. The top row is a
+tie (200.28 against 200.12, and the composition is the *less biased* at +2.41 against
+−14.09); the bottom row separates them **4.68×** (64.65 against 302.75).
+
+The sd panel is the only one with a target value, so it is the only one carrying a reference
+line: the head's own **residual sd, 243.50**. Without it a reader cannot tell whether 64.65
+is too narrow or 302.75 too wide, which is the entire diagnosis. Every other panel is drawn
+bare rather than given a decorative zero.
+
+### Every figure on this page is a comparison, so nothing is highlight-and-gray
+
+Pages 5 and 6 use highlight-and-gray, where a slot marks the head the reader has open among
+eleven. Three of this page's four figures have exactly **two** series and both are the
+point, so a colour that followed the selector would mean two different things on one screen.
+Each head therefore keeps one fixed slot for the whole page (`model_cards.MINUTES_SLOTS`,
+two slots — well inside `ALL_PAIRS_CAP`), and what follows the selector is the **tiles**,
+which read the open head's own side of each comparison in the open head's own direction.
+That last part is where the sign errors live: `season_gap` flips the interval's *ends* along
+with the gap, because negating both without swapping them is wrong in exactly one of the two
+branches and looks fine in the other. Registered as `a-comparison-page-fixes-its-colours`.
+
+### The σ block, and the one number the page refuses to type
+
+The injected per-player-season effect is drawn twice, because it answers two questions. The
+**gaps against the marginal head** go through `fig_paired` — the tournament page's own
+builder, unchanged — because "an interval straddling zero is a tie" is the same idea that
+page already carries three redundant ways, and a second encoding for one idea is worse than
+either. And the **two σ grids** get a panel each, never a shared y axis: they score disjoint
+rows (742 validation player-seasons against 1,145 training ones), so their CRPS *levels* are
+not comparable and only the location of each optimum is. Both optima are interior and one
+grid step apart, which is the whole reason the shipped σ owes the evaluation rows nothing.
+
+The shipped σ itself is read from `player_season_sigma` on the composition's own card, not
+typed — and a test holds the load-bearing property that it **is the train grid's optimum**,
+so a refit that moved the grid without moving the persisted value fails rather than leaving
+the page claiming a σ nothing selected.
+
+### Verification, as run
+
+**`AppTest`**, both appearance modes, both heads: **11 charts, 20–23 tiles, 11 tables, 2
+selectors + 2 radios, 10 subheaders (seven numbered, three named), 9 expanders, 0
+exceptions, 0 missing-artifact warnings**, identical in light and dark. The two tile counts
+differ by exactly the three extra scalar terms the composition carries — its dispersion is
+role-graded, so block 4 tiles `rho[1]…rho[4]` rather than one `rho` — and the collapse
+toggle appears only on the marginal head, which is the one with a spline basis. The four
+already-shipped pages still report their step-4 and step-5a counts, and `appearance` holds
+across a five-page round trip.
+
+**Ten figures rendered to PNG** through kaleido, in both modes, and looked at. Two defects,
+and **the more serious one was in the shared builder**:
+
+- **`fig_paired`'s baseline label collided with the legend.** Both live in the strip above
+  the plot, so whether they overlap depends on *where zero falls on the x axis* — nothing in
+  the trace can see it, and neither placement `_reference_line` offers is safe in general
+  (at the top it hits the legend, at the floor it hits the bottom row's interval). The fix is
+  that the label was redundant: the axis title already reads "gap … against `<baseline>`", so
+  the line is now drawn bare. `_reference_line` takes an empty label for it, the tournament
+  page was re-rendered to confirm the only change there is one fewer duplicate, and a test
+  pins it.
+- **A reference label's own opaque chip cut the curve it labelled in half.** The marginal
+  head's CRPS line on the σ grid was labelled at the right end, where the validation curve
+  turns back up through it. It moved to the left end, where the curve is at its highest and
+  the strip under the line is empty.
+
+Two smaller things the render settled rather than caught: the verdict figure's axis room is
+a **percentage**-width constant rather than the wide one the count-labelled bars need, and
+the shipped σ is deliberately *not* marked on the grid figure, because an enlarged marker
+there already means "the optimum on this grid" and a second mark meaning something else is
+worse than a caption.
+
+**The live page driven in Chrome** through Playwright — **45 checks, all passing**: six
+navigation rows in declared order, `/minutes` deep-links, eleven plots draw, all ten block
+headings are present, no `stException`, no missing-artifact alert, no literal `"undefined"`
+and no literal `nan` before or after an interaction, every one of the fifteen numbers the
+three named blocks exist to show is on the page, no metric tile clips its own value, sidebar
+order is nav → Appearance → page controls by geometry, the head selector reaches the
+composition at its own unit and the two-unit block still draws for it, the mode switch
+repaints to the pinned dark surface and holds across an in-app navigation in both
+directions, and Tournament and Availability still draw their own five and six plots.
+
+A third defect came from **reading** the rendered page rather than asserting it, which is now
+four sessions in a row: **the σ block's tiles are all readings of the composition** — shipped
+σ, the gap, the predictive sd, the PIT KS — and they render identically whichever head the
+selector has open, so with `min|available` open a skimmer could read "Predictive sd 280.87"
+as the marginal head's. The caption now says the block is the composition's throughout and
+the two ambiguous tiles are labelled `· injected`.
+
+**20 new tests**, 225 in `tests/test_dashboard.py` and **1,324** across the suite. Three of
+them are artifact-contract tests: the reversal across the two units still holds on the real
+artifacts, the shipped σ is still the train grid's optimum, and both minutes heads still
+render all seven blocks.
+
+---
+
 ## Structure
 
 ```
@@ -1034,6 +1331,10 @@ dashboard/
   views/
     fingerprints.py   # the PCA fingerprint page — controls, layout, render()
     availability.py   # page 3 — four lines that name a model class
+    minutes.py        # page 4 — the class, plus three named blocks: one posterior at
+                      #   two units, the injected effect, and the zero-sum constraint
+    components.py     # page 5 — the class, plus the eleven heads against their floor
+    game_length.py    # page 6 — the class, plus both heads read in games
     model_page.py     # the seven-block model detail page, once, for all four classes
     tournament.py     # the contest, the sweep, both backtests, the paired gaps
   pca.py          # the fingerprint view's pure layer — orientation, SD scaling,
@@ -1042,9 +1343,12 @@ dashboard/
                   #   hurdle-in-survival-units conversion, the sweep facets, the
                   #   two surfaces, the paired gaps
   model_cards.py  # the model pages' pure layer — the class table, the seven blocks
-                  #   as frames, and where each head's sampler row lives
-  charts.py       # fig_radar / fig_loadings, the five tournament figures, and the
-                  #   six model-page figures
+                  #   as frames, where each head's sampler row lives, and the
+                  #   page-specific blocks (the component floor board, the game-length
+                  #   class counts, and the minutes page's two-unit board, spread
+                  #   panel, sigma sweep and teammate coupling)
+  charts.py       # fig_radar / fig_loadings, the five tournament figures, the six
+                  #   model-page figures, and the six a single page owns
   theme.py        # SERIES, THEMES, ALL_PAIRS_CAP, theme(), apply_theme(), ordinal_colors()
   artifacts.py    # load_cfg, features_dir, predictions_dir, read_table, optional
   decisions.py    # NOT the dashboard — the project decision registry (see below)

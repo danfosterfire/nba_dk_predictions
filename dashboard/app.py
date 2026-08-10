@@ -48,7 +48,8 @@ if str(ROOT) not in sys.path:
 import streamlit as st
 
 from dashboard import model_cards, shell
-from dashboard.views import availability, fingerprints, tournament
+from dashboard.views import (availability, components, fingerprints, game_length,
+                             minutes, tournament)
 
 
 class View(NamedTuple):
@@ -84,6 +85,9 @@ def model_view(render: Callable[[], None], class_key: str) -> View:
 VIEWS: tuple[View, ...] = (
     View(fingerprints.render, "Player fingerprints", ":material/radar:", "fingerprints"),
     model_view(availability.render, availability.CLASS_KEY),
+    model_view(minutes.render, minutes.CLASS_KEY),
+    model_view(components.render, components.CLASS_KEY),
+    model_view(game_length.render, game_length.CLASS_KEY),
     View(tournament.render, "Tournament & strategy", ":material/trophy:", "tournament"),
 )
 

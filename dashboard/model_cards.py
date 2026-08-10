@@ -33,6 +33,21 @@ ladder and threw the draws away. Same specification, different chains, and a pag
 stacked them in one row would be claiming they were one run. `sampler_runs` returns two
 rows and names both.
 
+**What each head is a rate of.** `COMPONENT_BASIS` declares, per box-score head, whether it
+is a count, an attempt *share* or a conversion, and anchors that claim to the design column
+carrying its own prior-season rate. The share head's column is `logit_fg3a_pct_lag1`, whose
+`_pct_` is `fg3a / fga` and not `fg3m / fg3a` — the confusion
+`stan_components.conversion_variants` takes an explicit `own=` parameter to prevent in the
+fitting code, and one a page that reprinted the column name without saying which ratio it is
+would reintroduce on the way out. A test holds each anchor against the shipped artifact.
+
+**Which arm of which artifact is which head.** The minutes page compares two heads at two
+units, and neither unit's artifact names them the way the cards do: at the season unit they
+are `composition_sum` and `minutes_head` in `minutes_unification.csv`, and at the
+composition's own fitted unit the marginal head appears as `independent_comparator`, the
+control `make stan-composition` refits inside its own run. `unit_board` carries that map, so
+the page never has to know it.
+
 ## The one reading this module insists on
 
 **Block 5 is a distance, not a verdict.** At n ≈ 10⁴ a posterior-predictive ribbon is one to
@@ -68,6 +83,31 @@ POSTERIOR_WINDOW = "train"
 MAKE_CARDS = "make model-cards"
 MAKE_POSTERIORS = "make posteriors"
 MAKE_STAN = "make stan"
+
+#: The two variant ladders a model page reads *beside* its cards, because the cards
+#: describe the head that shipped and say nothing about what it was chosen over. Both are
+#: written by `make stan` and both carry a mandatory no-fit floor as a row of the ladder.
+COMPONENT_METRICS_FILE = "stan_component_metrics.csv"
+GAME_LENGTH_METRICS_FILE = "stan_game_length_metrics.csv"
+GAME_LENGTH_PPC_FILE = "stan_game_length_ppc.csv"
+GAME_LENGTH_DEPTH_FILE = "stan_game_length_depth.csv"
+COMPOSITION_METRICS_FILE = "stan_composition_metrics.csv"
+
+#: The minutes page reads one more artifact than the other three, and it is not a ladder:
+#: `make minutes-unification` scores **both** minutes heads at the season unit off their
+#: persisted posteriors, so it is the only file in the project where the two are read
+#: against each other at a unit neither was fitted at.
+MINUTES_UNIFICATION_FILE = "minutes_unification.csv"
+
+MAKE_STAN_COMPONENTS = "make stan-components"
+MAKE_STAN_GAME_LENGTH = "make stan-game-length"
+MAKE_STAN_COMPOSITION = "make stan-composition"
+MAKE_MINUTES_UNIFICATION = "make minutes-unification"
+
+#: What the no-fit floor is called in each ladder. Different words, one idea: the arm that
+#: does no fitting at all, which every head in this project is quoted against.
+COMPONENT_FLOOR = "carry_forward"
+GAME_LENGTH_FLOOR = "floor"
 
 #: The closed split vocabulary, mirroring the emitter's. There is no test column: the cards
 #: are carved by `held_out.selection_split`, which never materializes a held-out row.
@@ -177,6 +217,31 @@ def head_row(index: pd.DataFrame, head: str) -> pd.Series:
 
 # ── Block 1 · what this head is ───────────────────────────────────────────────
 
+def text(value, fallback: str = "—") -> str:
+    """A cell's own text, or a dash — never the string `nan`.
+
+    A missing CSV cell reads back as a float `nan` whose `str()` is `"nan"`, which is
+    truthy, prints as four letters on the page and looks like a value. The game-length
+    depth head is the first head in the project with no season span at all — it is fitted
+    on depth cells rather than on seasons — so it is the first row where an absent field
+    reached a caption, and `nan` on a page is the same class of defect as `undefined`.
+    """
+    if value is None:
+        return fallback
+    if isinstance(value, float) and not np.isfinite(value):
+        return fallback
+    rendered = str(value).strip()
+    return fallback if rendered in ("", "nan", "None", "NaT", "<NA>") else rendered
+
+
+def season_span(row: pd.Series, fallback: str = "—") -> str:
+    """`first → last`, or a dash for a head that is not fitted over seasons at all."""
+    first, last = text(row["first_season"], ""), text(row["last_season"], "")
+    if not first and not last:
+        return fallback
+    return f"{first or fallback} → {last or fallback}"
+
+
 def specification(row: pd.Series) -> pd.DataFrame:
     """The head's declared specification as a two-column table, in reading order.
 
@@ -184,29 +249,28 @@ def specification(row: pd.Series) -> pd.DataFrame:
     thing every model page must state prominently and the one thing most tempting to type
     into a view, where it goes stale on the next refit at a different grain.
     """
-    seasons = f"{row['first_season']} → {row['last_season']}"
     fields = [
-        ("Unit", str(row["unit"]), "One row of this head's fit"),
-        ("Likelihood", str(row["likelihood"]), "The observation model"),
-        ("Response", str(row["response_label"]),
+        ("Unit", text(row["unit"]), "One row of this head's fit"),
+        ("Likelihood", text(row["likelihood"]), "The observation model"),
+        ("Response", text(row["response_label"]),
          "What its predictive is a distribution over"),
-        ("Selected variant", str(row["variant"]),
+        ("Selected variant", text(row["variant"]),
          "The arm its own ladder selected, on validation"),
-        ("Dispersion", str(row["dispersion"]) or "—",
+        ("Dispersion", text(row["dispersion"]),
          "The second parameter of a two-parameter likelihood"),
         ("Fitting rows", f"{int(row['n_fit']):,}", "Rows the head actually fitted"),
         ("Validation rows", f"{int(row['n_validation']):,}",
          "Held back from the fit, and the only split selection may read"),
-        ("Fitted seasons", seasons if str(row["first_season"]) else "—",
+        ("Fitted seasons", season_span(row),
          "Target seasons in the fit. The test split begins after the last of them"),
         ("Posterior draws", f"{int(row['n_draws']):,}",
-         "Thinned draws persisted by `make posteriors`"),
-        ("Coefficient scale", str(row["coefficient_scale"]),
+         f"Thinned draws persisted by {MAKE_POSTERIORS}"),
+        ("Coefficient scale", text(row["coefficient_scale"]),
          "Every design column is standardized before fitting"),
     ]
-    if str(row.get("row_filter", "")) not in ("", "nan"):
-        fields.append(("Row filter", str(row["row_filter"]),
-                       "Rows the head drops internally, so `n_fit` is below the frame"))
+    if text(row.get("row_filter"), ""):
+        fields.append(("Row filter", text(row["row_filter"]),
+                       "Rows the head drops internally, so n_fit is below the frame"))
     return pd.DataFrame(fields, columns=["Field", "Value", "Note"])
 
 
@@ -304,6 +368,26 @@ def imputed_features(summary: pd.DataFrame) -> pd.DataFrame:
         "Imputed share", ascending=False)
 
 
+#: How many imputed features block 2 names inline before the table takes over.
+IMPUTED_NAMED = 6
+
+
+def imputed_shares(summary: pd.DataFrame, limit: int = IMPUTED_NAMED) -> str:
+    """The imputed features as `` `name` 4.11% ``, strongest first — or an empty string.
+
+    Formatted here rather than in the view because `DataFrame.itertuples` **renames any
+    column whose name is not an identifier**: `Imputed share` arrives in the namedtuple as
+    `_10`, so reading it back by its own name is a `KeyError` — one raised only on a head
+    that actually imputed something, which is why nine heads and the whole availability
+    page rendered it fine and `ftm|fta` did not.
+    """
+    imputed = imputed_features(summary)
+    if imputed.empty:
+        return ""
+    return ", ".join(f"`{row['Feature']}` {row['Imputed share']:.2%}"
+                     for _, row in imputed.head(limit).iterrows())
+
+
 # ── Block 3 · feature relationships ───────────────────────────────────────────
 
 def correlation_square(correlations: pd.DataFrame, head: str,
@@ -330,9 +414,15 @@ def constant_features(correlations: pd.DataFrame, head: str, split: str) -> list
     `DataFrame.corr` leaves a constant column as NaN rather than as a spurious zero, so an
     all-NaN off-diagonal row *is* the finding: no validation row sits in that spline basis's
     knot span, or nothing was imputed there.
+
+    **Below two columns there is no finding to have.** A lone design column has an empty
+    off-diagonal by arithmetic rather than by measurement, and reporting it as "correlates
+    with nothing" would put a claim about the data on the page that is really a claim about
+    the column count — which is what the game-length onset head, whose whole design is one
+    season term, did on the first cut of page 6.
     """
     square = correlation_square(correlations, head, split)
-    if square.empty:
+    if len(square) < 2:
         return []
     off_diagonal = square.where(~np.eye(len(square), dtype=bool))
     return [str(name) for name, row in off_diagonal.iterrows() if row.isna().all()]
@@ -679,6 +769,712 @@ def build_checks(row: pd.Series) -> pd.DataFrame:
          "a band read off too few draws to be stable"),
     ]
     return pd.DataFrame(checks, columns=["Check", "Reading", "Kind", "What it catches"])
+
+
+# ── Page 5's own block · the eleven heads against their no-fit floor ──────────
+#
+# **A page's own block is named rather than numbered.** The seven numbered blocks are the
+# contract every model page keeps; this is the one thing the box-score page owes that the
+# other three do not, and it sits under block 1 because "did this head need to exist" is the
+# first question about a component head rather than the seventh.
+#
+# It reads `stan_component_metrics.csv` — the head's own variant ladder — and not the model
+# cards, because the cards describe the arm that shipped and carry no record of what it was
+# chosen over. The floor is a row of that ladder.
+
+ROLE_COUNT = "count"
+ROLE_SHARE = "attempt share"
+ROLE_CONVERSION = "conversion"
+
+
+@dataclass(frozen=True)
+class ComponentBasis:
+    """What one box-score head is a rate *of* — declared, and anchored to a design column.
+
+    Eleven heads, three roles, and one of them is routinely misread. `fg3a | fga` is a
+    **share of attempts** — how much of a player's shot diet is threes — and not a shooting
+    percentage; the two are different quantities on different heads. The column names make
+    that easy to get wrong rather than easy to get right, because the share head's own
+    prior-season term is `logit_fg3a_pct_lag1`, where `_pct_` means `fg3a / fga`. Three-point
+    *shooting* percentage is `fg3m / fg3a` and lives on `fg3m | fg3a` as
+    `logit_fg3m_pct_lag1`.
+
+    That is the confusion `stan_components.conversion_variants` takes an explicit `own=`
+    parameter to prevent in the fitting code, and a page that reprints the design column
+    without saying which ratio it is would reintroduce it on the way out.
+
+    So `own_family` is an **anchor** in the sense `pca.COMPONENTS` uses the word: the claim
+    the page makes about a head is tied to a column the artifact has to carry, and
+    `test_every_component_basis_is_anchored_to_a_real_design_family` fails if a refit renames
+    it. Interpretation is allowed here; unpinned interpretation is not.
+    """
+
+    role: str
+    #: What the head is a rate of, as arithmetic — the unambiguous form of the sentence.
+    ratio: str
+    #: The `term_family` its own prior-season rate arrives as, on the head's design frame.
+    own_family: str
+
+
+COMPONENT_BASIS: dict[str, ComponentBasis] = {
+    "fga": ComponentBasis(ROLE_COUNT, "fga per minute", "log_fga_p36_lag1"),
+    "fg3a_given_fga": ComponentBasis(ROLE_SHARE, "fg3a / fga", "logit_fg3a_pct_lag1"),
+    "fg2m_given_fg2a": ComponentBasis(ROLE_CONVERSION, "fg2m / fg2a",
+                                      "logit_fg2m_pct_lag1"),
+    "fg3m_given_fg3a": ComponentBasis(ROLE_CONVERSION, "fg3m / fg3a",
+                                      "logit_fg3m_pct_lag1"),
+    "fta": ComponentBasis(ROLE_COUNT, "fta per minute", "log_fta_p36_lag1"),
+    "ftm_given_fta": ComponentBasis(ROLE_CONVERSION, "ftm / fta", "logit_ftm_pct_lag1"),
+    "reb": ComponentBasis(ROLE_COUNT, "reb per minute", "log_reb_p36_lag1"),
+    "ast": ComponentBasis(ROLE_COUNT, "ast per minute", "log_ast_p36_lag1"),
+    "stl": ComponentBasis(ROLE_COUNT, "stl per minute", "log_stl_p36_lag1"),
+    "blk": ComponentBasis(ROLE_COUNT, "blk per minute", "log_blk_p36_lag1"),
+    "tov": ComponentBasis(ROLE_COUNT, "tov per minute", "log_tov_p36_lag1"),
+}
+
+#: The share head, named once so the page and its test agree on which head is the odd one.
+SHARE_HEAD = "fg3a_given_fga"
+#: The head carrying the quantity the share head is mistaken for.
+SHOOTING_PCT_HEAD = "fg3m_given_fg3a"
+
+
+def component_basis(head: str) -> ComponentBasis:
+    if head not in COMPONENT_BASIS:
+        raise KeyError(f"{head!r} has no declared basis; every head on the box-score page "
+                       f"states what it is a rate of. Declared: "
+                       f"{sorted(COMPONENT_BASIS)}")
+    return COMPONENT_BASIS[head]
+
+
+def basis_note(head: str) -> str:
+    """One paragraph saying what this head's rate is a rate of, and what it is not.
+
+    Specification prose only, which is what a model page allows — no result appears here.
+    The share head gets the long form because it is the one a reader mis-reads, and because
+    the mis-reading is invisible: `logit_fg3a_pct_lag1` looks exactly like a shooting
+    percentage and is not one.
+    """
+    basis = component_basis(head)
+    if basis.role == ROLE_COUNT:
+        return (f"**A count on a minutes exposure.** The head fits `{basis.ratio}` and "
+                f"multiplies by the minutes it is given, so the season total is a "
+                f"consequence of the rate and the availability rather than a quantity of "
+                f"its own. Its own prior-season term is `{basis.own_family}` — the same "
+                f"rate a season earlier, per 36 — put in on the **log** scale, so the head "
+                f"fits a scale on the player's own rate rather than a curvature over it.")
+    if basis.role == ROLE_SHARE:
+        return (
+            f"**This head is a share of attempts, not a shooting percentage.** It models "
+            f"`{basis.ratio}` — how much of a player's shot diet is threes — as successes "
+            f"out of his total field-goal attempts. Its own prior-season term is "
+            f"`{basis.own_family}`, and the `_pct_` in that name is **`{basis.ratio}`**. "
+            f"Three-point *shooting* percentage is "
+            f"`{component_basis(SHOOTING_PCT_HEAD).ratio}`, a different quantity that lives "
+            f"on the `{SHOOTING_PCT_HEAD.replace('_given_', '|')}` head as "
+            f"`{component_basis(SHOOTING_PCT_HEAD).own_family}`. Reading one for the other "
+            f"is the failure `conversion_variants` takes an explicit `own=` parameter to "
+            f"prevent in the fitting code, and it is why `fg2a` is **derived** "
+            f"(`fga − fg3a`) rather than fitted: a three substitutes for a two by "
+            f"construction, so the mix is a share of the count and not a second count.")
+    return (f"**A conversion** — `{basis.ratio}`, makes out of that player's own attempts, "
+            f"so the trials are a quantity another head on this page produces. Its own "
+            f"prior-season term is `{basis.own_family}`, a percentage on the logit scale.")
+
+
+def metrics_key(row: pd.Series) -> str:
+    """The name a head goes by in its `make stan` ladder — `fg3a|fga`, not the head id."""
+    return str(row["label"])
+
+
+def floor_ladder(metrics: pd.DataFrame, label: str) -> pd.DataFrame:
+    """One head's whole variant ladder, floor first, with the selected arm marked.
+
+    The floor's own `beats_floor` is `True` in the artifact and means nothing — it is the
+    floor — so it is blanked here rather than rendered as a tick the reader would compare
+    against the real ones.
+    """
+    part = metrics[metrics["head"] == label]
+    if part.empty:
+        return pd.DataFrame(columns=["Arm", "Features", "R²", "MAE", "CRPS", "PIT KS",
+                                     "Shipped", "Clears the floor"])
+    floor_first = part.assign(
+        _order=(part["variant"] != COMPONENT_FLOOR).astype(int)).sort_values(
+        ["_order", "val_r2"], ascending=[True, False])
+    return pd.DataFrame({
+        "Arm": floor_first["variant"].where(floor_first["variant"] != COMPONENT_FLOOR,
+                                            f"{COMPONENT_FLOOR} · the no-fit floor"),
+        "Features": floor_first["n_features"].astype(int),
+        "R²": floor_first["val_r2"].round(4),
+        "MAE": floor_first["val_mae"].round(4),
+        "CRPS": floor_first["val_crps"].round(4),
+        "PIT KS": floor_first["val_pit_ks"].round(4),
+        "Shipped": floor_first["selected"],
+        "Clears the floor": floor_first["beats_floor"].where(
+            floor_first["variant"] != COMPONENT_FLOOR, pd.NA),
+    }).reset_index(drop=True)
+
+
+def floor_board(metrics: pd.DataFrame, index: pd.DataFrame,
+                class_key: str = "components") -> pd.DataFrame:
+    """Every head on the page against its own no-fit floor, in page order.
+
+    One row per head: the floor's validation R², the shipped arm's, and the margin between
+    them. **The margin is the point of the frame**, because a component head's whole claim
+    is that fitting bought something over a prior per-36 rate carried forward — and one head
+    on this page has a negative one, which is a finding rather than a defect to hide.
+
+    R² is each head's own, on its own response, so a *height* here reads as "how much the
+    fit added" and never as "this head is better than that one": a count head's R² is over a
+    season total and a conversion head's is over a rate.
+    """
+    rows = []
+    for head in heads_of(index, class_key):
+        row = head_row(index, head)
+        label = metrics_key(row)
+        part = metrics[metrics["head"] == label]
+        floor = part[part["variant"] == COMPONENT_FLOOR]
+        shipped = part[part["selected"]]
+        if floor.empty or shipped.empty:
+            continue
+        floor_r2 = float(floor["val_r2"].iloc[0])
+        shipped_r2 = float(shipped["val_r2"].iloc[0])
+        rows.append({
+            "head": head, "label": label,
+            "role": component_basis(head).role, "ratio": component_basis(head).ratio,
+            "variant": str(shipped["variant"].iloc[0]),
+            "floor_r2": floor_r2, "shipped_r2": shipped_r2,
+            "margin": shipped_r2 - floor_r2,
+            "clears": bool(shipped["beats_floor"].iloc[0]),
+        })
+    return pd.DataFrame(rows)
+
+
+def floor_table(board: pd.DataFrame) -> pd.DataFrame:
+    """The board figure's table twin — every drawn bar, with the numbers behind it."""
+    if board.empty:
+        return board
+    return pd.DataFrame({
+        "Head": board["label"], "Role": board["role"], "Models": board["ratio"],
+        "Shipped arm": board["variant"],
+        "No-fit floor R²": board["floor_r2"].round(4),
+        "Shipped R²": board["shipped_r2"].round(4),
+        "Margin": board["margin"].round(4),
+        "Clears the floor": board["clears"],
+    })
+
+
+# ── Page 6's own block · game length against its no-fit floor ─────────────────
+#
+# Same idea, different ladder, and here it is repairing a real gap rather than adding a
+# headline: the onset head is fitted on 26 season cells and its **validation ECDF is two
+# grid points**, so block 5's ribbon cannot say whether the head is right. What can is the
+# unit the head is actually consumed at — games — which `make stan-game-length` already
+# writes as a posterior-predictive count per game class.
+
+#: The onset ladder's four game classes, in order. `regulation` is `n_games` minus the other
+#: three by construction, for the floor and for every fitted arm alike, so it is carried in
+#: the table and left off the figure: drawn, it is a 2,322-long bar that flattens the three
+#: classes the arms actually differ on.
+ONSET_CLASSES = ("regulation", "1OT", "2OT", "3OT+")
+
+#: How the two game-length heads name their own floor and their own fit. The depth head's
+#: floor is a plain geometric — a constant continuation hazard — and its arm is the
+#: beta-geometric that integrates a Beta frailty out of that hazard.
+SERIES_OBSERVED = "observed"
+
+
+def onset_counts(ppc: pd.DataFrame, variant: str) -> pd.DataFrame:
+    """Observed against predicted games per class, for the floor and one fitted arm."""
+    part = ppc[ppc["variant"].isin([GAME_LENGTH_FLOOR, variant])]
+    if part.empty:
+        return pd.DataFrame(columns=["class_label", "series", "count", "drawn"])
+    rows = []
+    for class_label in ONSET_CLASSES:
+        cell = part[part["class"] == class_label]
+        if cell.empty:
+            continue
+        drawn = class_label != "regulation"
+        rows.append({"class_label": class_label, "series": SERIES_OBSERVED,
+                     "count": float(cell["observed"].iloc[0]), "drawn": drawn})
+        for arm, name in ((GAME_LENGTH_FLOOR, "no-fit floor"), (variant, variant)):
+            arm_cell = cell[cell["variant"] == arm]
+            if arm_cell.empty:
+                continue
+            rows.append({"class_label": class_label, "series": name,
+                         "count": float(arm_cell["predicted"].iloc[0]), "drawn": drawn})
+    return pd.DataFrame(rows)
+
+
+def depth_counts(depth: pd.DataFrame, split: str = "val") -> pd.DataFrame:
+    """Observed against the geometric and the beta-geometric, per overtime depth.
+
+    `depth == 0` is not a depth: it is the artifact's per-OT-game log-likelihood row, which
+    carries no `observed` count and would be drawn as an empty class. It is dropped here and
+    read separately by `depth_likelihood`.
+    """
+    part = depth[(depth["split"] == split) & (depth["depth"] > 0)]
+    if part.empty:
+        return pd.DataFrame(columns=["class_label", "series", "count", "drawn"])
+    rows = []
+    for _, cell in part.sort_values("depth").iterrows():
+        for series, column in ((SERIES_OBSERVED, "observed"),
+                               ("geometric · the no-fit floor", "geometric"),
+                               ("beta-geometric", "beta_geometric")):
+            rows.append({"class_label": str(cell["label"]), "series": series,
+                         "count": float(cell[column]), "drawn": True})
+    return pd.DataFrame(rows)
+
+
+def depth_likelihood(depth: pd.DataFrame, split: str = "val") -> pd.Series | None:
+    """The `depth == 0` row — nats per overtime game for both arms, or `None`."""
+    part = depth[(depth["split"] == split) & (depth["depth"] == 0)]
+    return part.iloc[0] if len(part) else None
+
+
+def class_counts(row: pd.Series, ppc: pd.DataFrame | None,
+                 depth: pd.DataFrame | None, split: str = "val") -> pd.DataFrame:
+    """Whichever of the two game-length ladders belongs to this head."""
+    if str(row["head"]) == "game_length_depth":
+        return (depth_counts(depth, split) if depth is not None
+                else pd.DataFrame(columns=["class_label", "series", "count", "drawn"]))
+    return (onset_counts(ppc, str(row["variant"])) if ppc is not None
+            else pd.DataFrame(columns=["class_label", "series", "count", "drawn"]))
+
+
+def class_table(panel: pd.DataFrame) -> pd.DataFrame:
+    """The class figure's table twin — every class including the ones left off the figure."""
+    if panel.empty:
+        return panel
+    wide = panel.pivot(index="class_label", columns="series", values="count")
+    # `pivot` sorts both axes alphabetically, which would put the fitted arm before the
+    # floor in the table and after it in the figure's legend. Both axes are restored to the
+    # panel's own order, so the twin reads in the same order as the thing it is a twin of.
+    rows = list(dict.fromkeys(panel["class_label"]))
+    columns = list(dict.fromkeys(panel["series"]))
+    return (wide.reindex(index=rows, columns=columns).round(2)
+            .rename_axis(index=None, columns=None)
+            .reset_index().rename(columns={"index": "Class"}))
+
+
+# ── Page 4's own blocks · one posterior, two units, and the constraint ────────
+#
+# Three named blocks rather than one, each keyed on the numbered block whose question it
+# extends. The two-unit verdict follows block 1, because "which unit is this a model at" is
+# the first thing to know about either minutes head. The injected player-season effect
+# follows block 5, because what fails at the season unit is *calibration* and sigma is what
+# moves the PIT KS. And the teammate coupling follows block 6, because it is precisely the
+# thing four panels of marginal residuals cannot show: no marginal metric can see whether a
+# head carries the zero-sum team constraint.
+#
+# None of it comes from the model cards. A card describes one head at its own fitted unit;
+# every claim here is a comparison *between* two heads or *across* two units, which is what
+# `minutes_unification.csv` and the composition's own `make stan-composition` ladder carry.
+
+HEAD_COMPOSITION = "composition"
+HEAD_MARGINAL = "minutes"
+
+#: `minutes_unification.csv` is several analyses in one long table, keyed by `unit`. The
+#: name is the analysis rather than a measurement grain — `paired_bootstrap` and
+#: `ps_effect_sweep` are both readings at the season unit — so a lookup that filters on the
+#: arm alone is ambiguous. `src/docs_audit.py` learned that the hard way: the injected arm
+#: carries the same name on the validation grid and the train grid.
+UNIT_SEASON = "season_total"
+UNIT_PAIRED = "paired_bootstrap"
+UNIT_SWEEP = "ps_effect_sweep"
+UNIT_TRAIN_SWEEP = "ps_sigma_on_train"
+UNIT_COUPLING = "teammate_coupling"
+UNIT_HEADROOM = "variance_decomposition"
+
+ARM_COMPOSITION = "composition_sum"
+ARM_MARGINAL = "minutes_head"
+ARM_ALL_ROWS = "composition_sum_all_rows"
+ARM_PAIRED = "composition_minus_minutes"
+ARM_INJECTED = "composition_sum_plus_player_season_effect"
+ARM_HEADROOM = "season_effect_headroom"
+
+#: What the marginal head is called inside the composition's own ladder. `make
+#: stan-composition` refits it as the control its per-game headline is measured against, so
+#: the two heads meet at *both* units in an artifact where nothing was fitted twice.
+COMPARATOR_ARM = "independent_comparator"
+
+#: Both minutes ladders and the unification artifact name their no-fit arm the same thing
+#: the component ladder does — a prior-season quantity carried forward with nothing fitted.
+MINUTES_FLOOR = COMPONENT_FLOOR
+
+#: The per-unit slot each head takes in every figure on the minutes page. Fixed rather than
+#: following the head selector: three of this page's four figures are comparisons *between*
+#: the two heads, so a colour that moved with the selector would mean two different things
+#: on one screen. The reader learns it once and the tiles say which head is open.
+MINUTES_SLOTS = {HEAD_COMPOSITION: 0, HEAD_MARGINAL: 1}
+
+
+def head_label(index: pd.DataFrame | None, head: str, fallback: str = "") -> str:
+    """A head's own `label` from the index, or the fallback — never a `KeyError` here.
+
+    The two-unit block draws whether or not both cards are on disk, because its point is a
+    comparison and a half-built `outputs/predictions/` should still show the half it has.
+    """
+    if index is None or index.empty:
+        return fallback
+    row = index[index["head"] == head]
+    return str(row["label"].iloc[0]) if len(row) else fallback
+
+
+def unit_board(unification: pd.DataFrame | None, ladder: pd.DataFrame | None,
+               index: pd.DataFrame | None) -> pd.DataFrame:
+    """Both minutes heads at both units, each against **that unit's own** no-fit floor.
+
+    The frame this page exists for. One posterior scored at two units gives opposite
+    verdicts, and the only way to draw that as one picture is to make the two units
+    commensurable — so `improvement` is the CRPS gain over the floor *of that unit*, a
+    ratio, rather than the CRPS itself, which is 4.5 minutes at one unit and 170 at the
+    other and cannot share an axis.
+
+    The floor is not a normalization of convenience: every head in this project is quoted
+    against one, and here it is what makes the reversal a *verdict* rather than a change of
+    scale. The composition clears its per-game floor and fails the season one; the marginal
+    head does the reverse.
+    """
+    columns = ["unit", "unit_label", "head", "label", "arm", "crps", "floor_crps",
+               "improvement", "clears", "n"]
+    rows: list[dict] = []
+
+    if ladder is not None and not ladder.empty:
+        floor = ladder[ladder["variant"] == MINUTES_FLOOR]
+        shipped = ladder[ladder["selected"].astype(bool)]
+        comparator = ladder[ladder["variant"] == COMPARATOR_ARM]
+        unit_label = _unit_of(index, HEAD_COMPOSITION, "player-game")
+        if not (floor.empty or shipped.empty or comparator.empty):
+            for head, part in ((HEAD_COMPOSITION, shipped), (HEAD_MARGINAL, comparator)):
+                rows.append({
+                    "unit": "fitted", "unit_label": unit_label, "head": head,
+                    "arm": str(part["variant"].iloc[0]),
+                    "crps": float(part["val_crps"].iloc[0]),
+                    "floor_crps": float(floor["val_crps"].iloc[0]), "n": pd.NA})
+
+    if unification is not None and not unification.empty:
+        season = unification[unification["unit"] == UNIT_SEASON]
+        floor = season[season["arm"] == MINUTES_FLOOR]
+        unit_label = _unit_of(index, HEAD_MARGINAL, "player-season")
+        if not floor.empty:
+            for head, arm in ((HEAD_COMPOSITION, ARM_COMPOSITION),
+                              (HEAD_MARGINAL, ARM_MARGINAL)):
+                part = season[season["arm"] == arm]
+                if part.empty:
+                    continue
+                rows.append({
+                    "unit": "season", "unit_label": f"{unit_label}, summed", "head": head,
+                    "arm": arm, "crps": float(part["crps_minutes"].iloc[0]),
+                    "floor_crps": float(floor["crps_minutes"].iloc[0]),
+                    "n": int(part["n"].iloc[0])})
+
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    board = pd.DataFrame(rows)
+    board["label"] = [head_label(index, head, head) for head in board["head"]]
+    board["improvement"] = (board["floor_crps"] - board["crps"]) / board["floor_crps"]
+    board["clears"] = board["crps"] < board["floor_crps"]
+    return board[columns]
+
+
+def _unit_of(index: pd.DataFrame | None, head: str, fallback: str) -> str:
+    """A head's declared unit, read from the index rather than typed into the view."""
+    if index is None or index.empty:
+        return fallback
+    row = index[index["head"] == head]
+    return text(row["unit"].iloc[0], fallback) if len(row) else fallback
+
+
+def unit_table(board: pd.DataFrame) -> pd.DataFrame:
+    """The verdict figure's table twin — the CRPS the ratio was computed from."""
+    if board.empty:
+        return board
+    return pd.DataFrame({
+        "Scored per": board["unit_label"], "Head": board["label"],
+        "Arm": board["arm"], "CRPS": board["crps"].round(4),
+        "No-fit floor": board["floor_crps"].round(4),
+        "Against the floor": board["improvement"].round(4),
+        "Clears it": board["clears"],
+        "Rows": board["n"],
+    })
+
+
+def season_reading(unification: pd.DataFrame | None, head: str,
+                   column: str) -> float | None:
+    """One head's own value of one season-unit column, or `None` if it is not there.
+
+    The single accessor for the two places a *rival's* number is needed rather than the open
+    head's: the reference line under the sigma grid, and the calibration figure the injected
+    arm is tiled against. Going through one function means the arm→head map is applied once.
+    """
+    if unification is None or unification.empty:
+        return None
+    arm = {HEAD_COMPOSITION: ARM_COMPOSITION, HEAD_MARGINAL: ARM_MARGINAL}.get(head)
+    part = unification[(unification["unit"] == UNIT_SEASON) & (unification["arm"] == arm)]
+    if part.empty or column not in part:
+        return None
+    value = float(part[column].iloc[0])
+    return value if np.isfinite(value) else None
+
+
+def season_gap(unification: pd.DataFrame | None,
+               head: str = HEAD_COMPOSITION) -> pd.Series | None:
+    """The paired bootstrap at the season unit, oriented for whichever head is open.
+
+    The artifact stores one direction — composition minus marginal — and a page with a head
+    selector has to be able to say "your head is 25.70 CRPS minutes *worse*" and "your head
+    is 25.70 better" off the same row. Flipping the sign means flipping the interval's ends
+    too, which is the kind of thing that is wrong in exactly one of the two branches.
+    """
+    if unification is None or unification.empty:
+        return None
+    part = unification[(unification["arm"] == ARM_PAIRED)
+                       & (unification["unit"] == UNIT_PAIRED)]
+    if part.empty:
+        return None
+    row = part.iloc[0].copy()
+    if head == HEAD_MARGINAL:
+        row["crps_delta"] = -float(row["crps_delta"])
+        row["crps_delta_shared_target"] = -float(row["crps_delta_shared_target"])
+        row["ci_lo"], row["ci_hi"] = -float(row["ci_hi"]), -float(row["ci_lo"])
+    return row
+
+
+#: What each metric of the season-unit comparison is a statement *about*. Declared rather
+#: than derived: that MAE and bias describe where a predictive sits and that its sd and PIT
+#: KS describe how wide it is are definitions, not readings. Splitting them is the block's
+#: whole argument — the two heads tie on the first pair and separate 4.68x on the second.
+GROUP_MEAN = "Where the predictive sits"
+GROUP_SPREAD = "How wide it is"
+
+SPREAD_METRICS: tuple[tuple[str, str, str, str], ...] = (
+    ("mae_minutes", "MAE (minutes)", GROUP_MEAN, ",.2f"),
+    ("bias_minutes", "Bias (minutes)", GROUP_MEAN, "+,.2f"),
+    ("predictive_sd", "Predictive sd (minutes)", GROUP_SPREAD, ",.2f"),
+    ("pit_ks", "PIT KS", GROUP_SPREAD, ".4f"),
+)
+
+
+def spread_panel(unification: pd.DataFrame | None,
+                 index: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Four readings of the same 742 season totals, two per head, in one long frame.
+
+    **The means are the control and the spread is the finding.** A page that drew only MAE
+    would say the two heads are the same model; a page that drew only the predictive sd
+    would leave a reader wondering whether the composition is simply worse. Both, side by
+    side, are the actual result: it fits as well and it is 4.68x too narrow.
+
+    `reference` carries the head's own residual sd onto the sd panel — the spread a
+    calibrated season-total predictive has to cover — and is empty on the other three,
+    where there is no target value to draw.
+    """
+    columns = ["metric", "metric_label", "group", "head", "label", "value", "text",
+               "reference"]
+    if unification is None or unification.empty:
+        return pd.DataFrame(columns=columns)
+    season = unification[unification["unit"] == UNIT_SEASON]
+    headroom = unification[(unification["unit"] == UNIT_HEADROOM)
+                           & (unification["arm"] == ARM_HEADROOM)]
+    residual = float(headroom["resid_sd"].iloc[0]) if len(headroom) else np.nan
+
+    rows = []
+    for metric, label, group, spec in SPREAD_METRICS:
+        for head, arm in ((HEAD_COMPOSITION, ARM_COMPOSITION),
+                          (HEAD_MARGINAL, ARM_MARGINAL)):
+            part = season[season["arm"] == arm]
+            if part.empty or metric not in part:
+                continue
+            value = float(part[metric].iloc[0])
+            rows.append({
+                "metric": metric, "metric_label": label, "group": group, "head": head,
+                "label": head_label(index, head, arm), "value": value,
+                "text": format(value, spec),
+                "reference": residual if metric == "predictive_sd" else np.nan})
+    return pd.DataFrame(rows, columns=columns)
+
+
+def coverage_row(unification: pd.DataFrame | None) -> pd.Series | None:
+    """The composition's wider validation set — a coverage advantage, not a win.
+
+    Reported as its own row in the artifact and as its own line on the page, because the
+    369 extra player-seasons are rookies and low-minute players who are *easier* to predict:
+    folding them into the comparison would flatter the composition on rows the other head
+    never sees.
+    """
+    if unification is None or unification.empty:
+        return None
+    part = unification[(unification["arm"] == ARM_ALL_ROWS)
+                       & (unification["unit"] == UNIT_SEASON)]
+    return part.iloc[0] if len(part) else None
+
+
+def sigma_sweep(unification: pd.DataFrame | None) -> pd.DataFrame:
+    """The injected player-season effect's two grids, merged on sigma.
+
+    Same arithmetic, same code path, **disjoint rows**: the validation grid scores the 742
+    gate player-seasons and the train grid the last two *training* seasons. Merged rather
+    than stacked because the reading is a per-sigma comparison — two optima one grid step
+    apart on rows that share nothing is what says the effect size was not moved by the
+    evaluation data.
+
+    The two CRPS columns are levels on different row sets and are **not** comparable to each
+    other; only the location of each minimum is. The figure gives them separate panels for
+    that reason.
+    """
+    columns = ["sigma", "val_crps", "val_delta", "val_ci_lo", "val_ci_hi", "val_pit_ks",
+               "val_sd", "val_n", "verdict", "train_crps", "train_pit_ks", "train_sd",
+               "train_n", "train_seasons"]
+    if unification is None or unification.empty:
+        return pd.DataFrame(columns=columns)
+    injected = unification[unification["arm"] == ARM_INJECTED]
+    validation = injected[injected["unit"] == UNIT_SWEEP]
+    train = injected[injected["unit"] == UNIT_TRAIN_SWEEP]
+    if validation.empty and train.empty:
+        return pd.DataFrame(columns=columns)
+
+    left = validation[["sigma", "crps_minutes", "crps_delta", "ci_lo", "ci_hi", "pit_ks",
+                       "predictive_sd", "n", "verdict"]].rename(columns={
+        "crps_minutes": "val_crps", "crps_delta": "val_delta", "ci_lo": "val_ci_lo",
+        "ci_hi": "val_ci_hi", "pit_ks": "val_pit_ks", "predictive_sd": "val_sd",
+        "n": "val_n"})
+    right = train[["sigma", "crps_minutes", "pit_ks", "predictive_sd", "n",
+                   "seasons"]].rename(columns={
+        "crps_minutes": "train_crps", "pit_ks": "train_pit_ks",
+        "predictive_sd": "train_sd", "n": "train_n", "seasons": "train_seasons"})
+    out = left.merge(right, on="sigma", how="outer").sort_values("sigma")
+    return out.reindex(columns=columns).reset_index(drop=True)
+
+
+def shipped_sigma(index: pd.DataFrame | None) -> float | None:
+    """The sigma the composition's persisted posterior already carries, from its own card.
+
+    Read from the artifact rather than typed, and it is not decoration: `make posteriors`
+    records `player_season_sigma` per head and `minutes_unification.rehydrate_composition`
+    applies it, so a consumer gets the effect by loading the head. A page that typed 0.450
+    would keep printing it after the shipped value moved.
+    """
+    if index is None or index.empty or "player_season_sigma" not in index:
+        return None
+    row = index[index["head"] == HEAD_COMPOSITION]
+    if row.empty:
+        return None
+    value = float(row["player_season_sigma"].iloc[0])
+    return value if np.isfinite(value) else None
+
+
+#: How close a grid sigma has to be to the shipped one to be labelled as it. The grid is
+#: written at three decimals and the index at two, so an equality test on floats is the one
+#: way this label can silently stop appearing.
+SIGMA_TOLERANCE = 1e-6
+
+
+def sigma_label(sigma: float, shipped: float | None = None) -> str:
+    """`sigma = 0.450 · shipped`, with the un-injected arm named rather than left bare."""
+    label = f"σ = {float(sigma):.3f}"
+    if abs(float(sigma)) < SIGMA_TOLERANCE:
+        return f"{label} · the un-injected head"
+    if shipped is not None and abs(float(sigma) - float(shipped)) < SIGMA_TOLERANCE:
+        return f"{label} · shipped"
+    return label
+
+
+def sigma_gaps(sweep: pd.DataFrame, shipped: float | None = None) -> pd.DataFrame:
+    """The validation grid as paired gaps against the marginal head, shaped for `fig_paired`.
+
+    Deliberately the same frame shape the tournament page's paired block uses, and drawn by
+    the same builder: **an interval that straddles zero is a tie**, and this dashboard
+    already has one triply-redundant encoding for that — a hollow marker, a heavier rule and
+    a visible crossing of the reference line. Two encodings for one idea would be worse than
+    either.
+    """
+    columns = ["sigma", "strategy", "gap", "gap_lo", "gap_hi", "crosses_zero", "verdict"]
+    if sweep.empty or "val_delta" not in sweep:
+        return pd.DataFrame(columns=columns)
+    part = sweep[sweep["val_delta"].notna()]
+    if part.empty:
+        return pd.DataFrame(columns=columns)
+    return pd.DataFrame({
+        "sigma": part["sigma"].astype(float),
+        "strategy": [sigma_label(s, shipped) for s in part["sigma"]],
+        "gap": part["val_delta"].astype(float),
+        "gap_lo": part["val_ci_lo"].astype(float),
+        "gap_hi": part["val_ci_hi"].astype(float),
+        "crosses_zero": (part["val_ci_lo"] < 0) & (part["val_ci_hi"] > 0),
+        "verdict": part["verdict"],
+    }).reset_index(drop=True)
+
+
+def sigma_row(sweep: pd.DataFrame, sigma: float | None) -> pd.Series | None:
+    """One grid row by sigma, within the same tolerance the label uses."""
+    if sweep.empty or sigma is None:
+        return None
+    match = sweep[(sweep["sigma"] - float(sigma)).abs() < SIGMA_TOLERANCE]
+    return match.iloc[0] if len(match) else None
+
+
+def sigma_table(sweep: pd.DataFrame, shipped: float | None = None) -> pd.DataFrame:
+    """Both grids side by side — the twin for a figure that draws them in two panels."""
+    if sweep.empty:
+        return sweep
+    return pd.DataFrame({
+        "Effect size": [sigma_label(s, shipped) for s in sweep["sigma"]],
+        "Validation CRPS": sweep["val_crps"].round(2),
+        "Gap vs the marginal head": sweep["val_delta"].round(2),
+        "95% interval": [
+            "—" if not np.isfinite(lo) else f"[{lo:+.2f}, {hi:+.2f}]"
+            for lo, hi in zip(sweep["val_ci_lo"], sweep["val_ci_hi"])],
+        "Verdict": sweep["verdict"],
+        "Validation PIT KS": sweep["val_pit_ks"].round(4),
+        "Predictive sd": sweep["val_sd"].round(2),
+        "Train CRPS": sweep["train_crps"].round(2),
+        "Train PIT KS": sweep["train_pit_ks"].round(4),
+    })
+
+
+def teammate_coupling(unification: pd.DataFrame | None,
+                      index: pd.DataFrame | None = None) -> pd.DataFrame:
+    """What each head says about two teammates' season minutes, against what physics forces.
+
+    A team's season minutes are a fixed pot, so a fixed sum over K players forces a mean
+    pairwise correlation of **−1/(K−1)**. That is arithmetic, not a fit — and the artifact
+    carries it per head at that head's *own* measured roster size, which differs because the
+    marginal head's `>= 200 prior minutes` filter drops real teammates. Drawing one shared
+    reference line would therefore be wrong for one of the two rows.
+
+    `forced` is the reference and `measured` is the reading, which is why the figure draws
+    them as one row rather than as two series: the quantity is the **gap** between them.
+    """
+    columns = ["head", "label", "measured", "forced", "team_sd", "roster", "n"]
+    if unification is None or unification.empty:
+        return pd.DataFrame(columns=columns)
+    part = unification[unification["unit"] == UNIT_COUPLING]
+    rows = []
+    for head, arm in ((HEAD_COMPOSITION, ARM_COMPOSITION), (HEAD_MARGINAL, ARM_MARGINAL)):
+        cell = part[part["arm"] == arm]
+        if cell.empty:
+            continue
+        cell = cell.iloc[0]
+        rows.append({"head": head, "label": head_label(index, head, arm),
+                     "measured": float(cell["r_teammates"]),
+                     "forced": float(cell["r_implied_by_fixed_sum"]),
+                     "team_sd": float(cell["team_season_sum_sd"]),
+                     "roster": float(cell["roster_size"]),
+                     "n": int(cell["n"])})
+    return pd.DataFrame(rows, columns=columns)
+
+
+def coupling_table(panel: pd.DataFrame) -> pd.DataFrame:
+    """The coupling figure's table twin, including the two columns it does not draw."""
+    if panel.empty:
+        return panel
+    return pd.DataFrame({
+        "Head": panel["label"],
+        "Mean pairwise r between teammates": panel["measured"].round(4),
+        "Forced by a fixed team total": panel["forced"].round(4),
+        "Roster size it was measured at": panel["roster"].round(2),
+        "Predictive sd of the team's season total (minutes)": panel["team_sd"].round(1),
+        "Player-seasons": panel["n"],
+    })
 
 
 def predictive_provenance(row: pd.Series) -> str:

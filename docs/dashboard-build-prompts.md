@@ -15,10 +15,10 @@ bespoke, the other two are configuration).
 | 1 | 1 | ✅ **done 2026-08-10** — the `st.navigation` shell + Player fingerprints | no |
 | 2 | 2 | ✅ **done 2026-08-10** — Tournament & strategy page | no |
 | 3 | 3a | ✅ **done 2026-08-10** — `make model-cards`: index, coefficients, features, correlations | **yes** |
-| 4 | 3b | `make model-cards` — predictive ECDF, calibration, residuals | **yes** |
+| 4 | 3b | ✅ **done 2026-08-10** — `make model-cards`: predictive ECDF, calibration, residuals | **yes** |
 | 5 | 4 | ✅ **done 2026-08-10** — the generic model renderer + Availability page | **one artifact** |
-| 6 | 5a | Box-score components + Game length pages | no |
-| 7 | 5b | Minutes page, incl. the two-unit comparison | no |
+| 6 | 5a | ✅ **done 2026-08-10** — Box-score components + Game length pages | no |
+| 7 | 5b | ✅ **done 2026-08-10** — Minutes page, incl. the two-unit comparison | no |
 | 8 | 6 | Inputs beyond the heads + the capture-calendar emitter | small |
 | 9 | 7 | Draft board as a page | no |
 | 10 | 8 | Overview | no |
@@ -232,7 +232,20 @@ Build the renderer so sessions 6 and 7 are configuration rather than a rewrite. 
 all three layers, and test the pure layer directly.
 ```
 
-## Session 6 — Box-score components and Game length
+## Session 6 — Box-score components and Game length ✅ done 2026-08-10
+
+Kept for the record. What it landed is in
+[dashboard-plan.md](dashboard-plan.md#step-5a-as-built--box-score-components-and-game-length):
+`dashboard/views/components.py`, `dashboard/views/game_length.py`, two figures, two rows in
+`app.VIEWS`, 24 tests, and no new artifact.
+
+Two things worth carrying into session 7. **The `extra` hook is the mechanism for a page's
+own block, and it is keyed on the numbered block it follows** — the minutes page's two-unit
+comparison is the third use of it, and the rule the first two settled is that the seven
+blocks stay numbered and a page's own block is named. And **the renderer is now the thing to
+change**: six defects surfaced on pages 5 and 6 and every one of them was latent on the pages
+already shipped, so a fix belongs in `model_page.py` / `charts.py` / `model_cards.py` with
+Availability re-verified, never in a page.
 
 ```
 Implement the first half of step 5: the Box-score components and Game length pages (5 and
@@ -259,7 +272,21 @@ Availability page too rather than forking a second renderer.
 Verify with the three layers. Update the plan doc and registry.
 ```
 
-## Session 7 — the Minutes page
+## Session 7 — the Minutes page ✅ done 2026-08-10
+
+Kept for the record. What it landed is in
+[dashboard-plan.md](dashboard-plan.md#step-5b-as-built--the-minutes-page):
+`dashboard/views/minutes.py` with **three** named blocks, four figures, 20 tests, and no new
+artifact.
+
+Two things worth carrying into sessions 8–10. **The prompt named four things to show and the
+right structure was three blocks, not one** — the `extra` hook is keyed on the numbered block
+whose *question* a page's own block extends, so material that answers three different
+questions belongs at three keys rather than stacked under block 1. And **"draw it as a
+comparison" needed a shared axis that did not exist**: the two units' CRPS are 4.49 and 170,
+so the figure plots the ratio to the floor *of each unit*, which works only because every
+head in this project already carries a floor. A prompt that asks for two things to be
+compared should be read as asking what makes them commensurable.
 
 ```
 Implement the second half of step 5: the Minutes page (page 4).
