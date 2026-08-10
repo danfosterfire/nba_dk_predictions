@@ -12,7 +12,7 @@ bespoke, the other two are configuration).
 
 | session | step | deliverable | new pipeline work |
 |---|---|---|---|
-| 1 | 1 | the `st.navigation` shell + Player fingerprints | no |
+| 1 | 1 | ✅ **done 2026-08-10** — the `st.navigation` shell + Player fingerprints | no |
 | 2 | 2 | Tournament & strategy page | no |
 | 3 | 3a | `make model-cards` — index, coefficients, features, correlations | **yes** |
 | 4 | 3b | `make model-cards` — predictive ECDF, calibration, residuals | **yes** |
@@ -28,7 +28,13 @@ anything downstream — sessions 5–7 cannot start until 4 finishes.
 
 ---
 
-## Session 1 — the multipage shell
+## Session 1 — the multipage shell ✅ done 2026-08-10
+
+Kept for the record. What it landed, and the one thing the prompt asked for that turned out
+to be impossible — Streamlit draws no navigation for a single-page app, so the shell ships
+a placeholder beside the one real page — are in
+[dashboard-plan.md](dashboard-plan.md#step-1-as-built--the-multipage-shell). **Session 2
+deletes that placeholder** by replacing its row in `app.VIEWS`.
 
 ```
 Implement step 1 of the dashboard expansion: the multipage shell.
@@ -74,10 +80,15 @@ the tuning surface and which is the honest readout; and the paired comparisons f
 strategy_paired.csv, where a gap whose interval crosses zero is the most useful thing on
 the page and should be styled as such rather than buried.
 
+The shell already has a placeholder row for this page in app.VIEWS — replace that row with
+the real view rather than adding a second one, and delete dashboard/views/placeholder.py
+once nothing references it.
+
 Constraints: read artifacts only, no src/ import, pure logic in its own module with no
-Streamlit import so it is testable directly. Follow dashboard/theme.py unmodified —
-ALL_PAIRS_CAP is 3 for any chart where non-adjacent series sit side by side, and no value
-may be reachable by colour alone.
+Streamlit import so it is testable directly. Put the page in dashboard/views/ behind a
+render() and take the palette from shell.current_theme(), never by reading a mode
+yourself. Follow dashboard/theme.py unmodified — ALL_PAIRS_CAP is 3 for any chart where
+non-adjacent series sit side by side, and no value may be reachable by colour alone.
 
 Verify with the three layers. Update the plan doc and the decision registry.
 ```

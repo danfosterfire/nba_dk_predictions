@@ -5076,9 +5076,12 @@ REGISTRY: tuple[Decision, ...] = (
                 "script while keeping one server process, so `cache_data` and "
                 "`cache_resource` stay shared across pages and a tensor loaded by the "
                 "draft board stays warm across navigation. This is what makes the draft "
-                "board feasible inside the same app at all.",
+                "board feasible inside the same app at all. **The shell landed "
+                "2026-08-10** as step 1 of the build order: `dashboard/app.py` is the "
+                "`st.navigation` entrypoint and each page is one module in "
+                "`dashboard/views/` behind a `render()`.",
         status="settled",
-        reproduce="make dashboard → dashboard/app.py",
+        reproduce="make dashboard → dashboard/app.py, dashboard/views/fingerprints.py",
         source="docs/dashboard-plan.md",
         reviewed="2026-08-10",
         date="2026-08-10",
@@ -5153,6 +5156,61 @@ REGISTRY: tuple[Decision, ...] = (
                 "from the documents that made them.",
         status="settled",
         reproduce="make dashboard → dashboard/app.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "provenance"),
+    ),
+    Decision(
+        id="appearance-lives-in-the-shell",
+        topic="problem",
+        claim="The light/dark appearance switch is rendered by the **entrypoint**, from "
+              "`dashboard/shell.py`, not by any page — and a view reads it rather than "
+              "declaring it.",
+        because="Streamlit clears `st.session_state` for widgets the current page did not "
+                "render, and the entrypoint's body runs on every rerun while a "
+                "`render()` runs only when its page is selected. A mode switch declared "
+                "inside a view would therefore be torn down the moment the reader "
+                "navigated away, and the next page would come up in whatever "
+                "`detected_mode()` returned. That is not a hypothetical: driven under "
+                "`AppTest`, a round trip to a second page and back resets the "
+                "fingerprint view's own `component` key from `pc8` to `pc1` while "
+                "`appearance` holds — same session, same navigation, opposite outcomes, "
+                "which is the demonstration and the reason at once. It matters here "
+                "rather than being cosmetic because `theme.py`'s palettes are *selected* "
+                "per mode rather than flipped, so a reader who picked dark on one page "
+                "and got light on the next would be reading two different validated "
+                "palettes in one session.",
+        status="built",
+        reproduce="make dashboard → dashboard/shell.py, dashboard/app.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard",),
+    ),
+    Decision(
+        id="one-page-renders-no-navigation",
+        topic="problem",
+        claim="The shell ships **one placeholder page beside the one real page**, because "
+              "Streamlit draws no navigation widget at all for a single-page app.",
+        because="Measured in a browser rather than assumed: with one `st.Page`, "
+                "`st.navigation(position='sidebar')` still sends `Position.SIDEBAR` and "
+                "the frontend renders nothing — `[data-testid=\"stSidebarNav\"]` is absent "
+                "from the DOM, while two pages render it with both entries. So a shell "
+                "shipped alone would be indistinguishable from the single-page script it "
+                "replaced, and neither the navigation nor the cross-page state in "
+                "[[appearance-lives-in-the-shell]] could be verified in a browser at all. "
+                "The placeholder is the *next* page in the build order rather than a "
+                "lorem-ipsum tab, so step 2 replaces its row in `app.VIEWS` instead of "
+                "adding to it. It shows no numbers, and it names `make` targets rather "
+                "than artifact filenames — `audit.py`'s orphaned-artifact check counts an "
+                "artifact as read when any string literal in `dashboard/` names it, so a "
+                "placeholder listing `strategy_sweep.csv` would report a file as drawn "
+                "that nothing draws, and the orphan count is how the plan picks what to "
+                "build next. Checked on the way in: the orphan count is unchanged at 1 "
+                "and nothing is newly masked.",
+        status="built",
+        reproduce="make dashboard → dashboard/views/placeholder.py, dashboard/app.py",
         source="docs/dashboard-plan.md",
         reviewed="2026-08-10",
         date="2026-08-10",

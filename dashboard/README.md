@@ -1,8 +1,8 @@
 # The dashboard
 
 Data visualizations over the artifacts the pipeline wrote. One view today — the PCA
-player-style fingerprint. Run it with `make dashboard`; the plan is
-`docs/dashboard-plan.md`.
+player-style fingerprint — inside a multipage shell that seven more pages plug into. Run
+it with `make dashboard`; the plan is `docs/dashboard-plan.md`.
 
 **The dashboard shows data. Prose about the project belongs in `docs/`.** The nine-tab
 project walkthrough that used to live here was documentation rendered as an app, and every
@@ -38,10 +38,15 @@ interpretation carries a machine-checkable anchor so it cannot silently invert. 
 ```
 dashboard/
   README.md       this file
-  app.py          the PCA fingerprint view: page, controls, layout
-  draft_room.py   the live draft room — `make draft-room`. A separate page, not a tab of
+  app.py          the entrypoint — st.navigation over the pages, and VIEWS, the sidebar
+  shell.py        cross-page state: the appearance mode and current_theme()
+  views/
+    fingerprints.py   the PCA fingerprint page — controls, layout, render()
+    placeholder.py    a page the build order has specified and not yet built
+  draft_room.py   the live draft room — `make draft-room`. Its own app, not a page of
                   app.py, and the one file that imports src/ (see above)
-  pca.py          its pure layer — orientation, SD scaling, loadings, neighbours
+  pca.py          the fingerprint view's pure layer — orientation, SD scaling, loadings,
+                  neighbours
   charts.py       fig_radar / fig_loadings
   theme.py        SERIES, THEMES, ALL_PAIRS_CAP, theme(), apply_theme(), ordinal_colors()
   artifacts.py    load_cfg, features_dir, read_table, optional
@@ -50,10 +55,38 @@ dashboard/
   audit.py        ─┘
 ```
 
-`app.py` and `artifacts.py` are the only modules that import Streamlit. Everything else is
-pure, which is what lets `tests/test_dashboard.py` exercise the palette rules, the component
-spec, the scaling, the neighbour metric and both figures as plain functions rather than
-through a rendered page.
+`app.py`, `shell.py`, `artifacts.py`, `draft_room.py` and everything under `views/` are the
+Streamlit surface; **everything else is pure**, which is what lets
+`tests/test_dashboard.py` exercise the palette rules, the component spec, the scaling, the
+neighbour metric and both figures as plain functions rather than through a rendered page.
+That is a denylist rather than an allowlist, so a new module is pure by default and
+`test_pure_modules_do_not_import_streamlit` fails until it is either kept pure or named.
+
+## The shell
+
+`st.navigation` rather than `st.tabs`, and the reason is structural: **Streamlit executes
+the body of every tab on every rerun**, so nine tabs would re-run all nine on every
+interaction, including whichever one loads the 90 MB simulation tensor. `st.navigation`
+runs only the selected page's script, in one server process, so `@st.cache_data` and
+`@st.cache_resource` stay shared and a tensor loaded by one page is still warm after a
+navigation. See `docs/dashboard-plan.md`, finding 1.
+
+Two consequences worth knowing before adding a page:
+
+- **The entrypoint runs on every rerun; a `render()` runs only when its page is
+  selected.** Anything that must survive navigation goes in `shell.py` and is rendered by
+  `app.py` — today the appearance mode, which a page reads through
+  `shell.current_theme()`. A widget a page declares is torn down when the reader leaves
+  it: driven under `AppTest`, a round trip resets the fingerprint view's own `component`
+  key from `pc8` to `pc1` while `appearance` holds.
+- **Sidebar order follows that ownership**: the navigation, then the shell's controls,
+  then whatever the page writes to `st.sidebar` for itself.
+
+A page is one module in `views/` exposing `render() -> None`, plus one row in `app.VIEWS`
+carrying its title, icon and `url_path`. The first row is the default page, i.e. what `/`
+serves. **`st.navigation` renders nothing at all for a single-page app** — measured, not
+assumed — so the shell keeps at least two rows; `views/placeholder.py` fills the gap with
+the next page in the build order.
 
 ### Three files that are not the dashboard
 
@@ -98,7 +131,9 @@ inherited from Streamlit's chrome, so the measured contrast figures apply as doc
    is missing instead of raising.
 3. Build figures in `charts.py` and hand them to `st.plotly_chart` — a figure builder takes
    the theme dict and returns a `go.Figure`, so it stays testable.
-4. Verify in three layers, because each one sees what the one above it cannot.
+4. Put the page in `views/<name>.py` behind `render()`, add its row to `app.VIEWS`, and
+   take the palette from `shell.current_theme()` rather than reading a mode yourself.
+5. Verify in three layers, because each one sees what the one above it cannot.
    **`AppTest`** in both appearance modes proves the page runs. **A figure rendered to PNG**
    proves the figure is legible — it caught a loadings panel that silently dropped the
    negative half of an axis. **The live page in a real browser** proves the page is, and
@@ -106,10 +141,10 @@ inherited from Streamlit's chrome, so the measured contrast figures apply as doc
    the literal string "undefined", metric tiles clipping their own values, and a click
    handler that never fired.
 
-## Two things plotly and Streamlit do that cost a day
+## Four things plotly and Streamlit do that cost a day
 
-Recorded because neither is discoverable from the docs and both were found by looking at
-the running page:
+Recorded because none is discoverable from the docs and all were found by looking at the
+running page:
 
 - **Streamlit reports no selection for a click on a `polar` trace.** `on_select="rerun",
   selection_mode="points"` returns `[]` for every click on a `Scatterpolar` and a full
@@ -117,3 +152,13 @@ the running page:
   axes with its grid as shapes; see the header comment in `charts.py`.
 - **A title object with a font and no text renders as "undefined".** Only in a browser —
   kaleido draws nothing — so `apply_theme` sets `title.text` explicitly.
+- **`st.navigation` renders no navigation widget for a one-page app.** The Python side
+  still sends `Position.SIDEBAR`; the frontend simply draws nothing, so
+  `[data-testid="stSidebarNav"]` is absent from the DOM. `AppTest` cannot see this — it
+  has no DOM — which is why the shell was verified in a browser before it was believed.
+- **Widget state does not survive navigation.** Streamlit clears `st.session_state` for
+  widgets the current page did not render, so anything global belongs in `shell.py`, where
+  the entrypoint renders it on every rerun. Handy for the browser layer: plotly writes
+  `paper_bgcolor` onto the `.main-svg` element's inline style, not onto its `rect.bg`
+  (which sits at `fill-opacity: 0`), so the pinned surfaces are readable as
+  `background: rgb(252, 252, 251)` and `background: rgb(26, 26, 25)`.

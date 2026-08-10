@@ -640,13 +640,86 @@ def test_the_one_exempt_page_reaches_no_further_than_the_simulation_layer():
                 f"{name} imports {module}, outside the exempt {allowed}"
 
 
+# The Streamlit surface, exhaustively. Everything else in the package stays testable
+# without a runtime, and this is written as a denylist over the whole tree rather than an
+# allowlist of pure modules so that a new file is pure *by default* — the expansion in
+# `docs/dashboard-plan.md` adds eight more pages, and the failure mode worth guarding is a
+# view's logic being written into the view instead of into a pure sibling.
+STREAMLIT_SURFACE = {"app.py", "shell.py", "artifacts.py", "draft_room.py"}
+VIEWS_DIR = "views"
+
+
 def test_pure_modules_do_not_import_streamlit():
-    """Everything but `app.py` and `artifacts.py` stays testable without a runtime."""
-    for name in ("theme.py", "charts.py", "pca.py", "decisions.py", "economics.py",
-                 "audit.py"):
-        path = ROOT / "dashboard" / name
-        assert path.exists(), name
-        assert "streamlit" not in path.read_text(), f"{name} must stay Streamlit-free"
+    """Only the entrypoint, the shell, the I/O layer and the pages touch Streamlit."""
+    for path in sorted((ROOT / "dashboard").rglob("*.py")):
+        if path.name in STREAMLIT_SURFACE or path.parent.name == VIEWS_DIR:
+            continue
+        assert "streamlit" not in path.read_text(), \
+            f"{path.relative_to(ROOT)} must stay Streamlit-free"
+
+
+def test_every_named_streamlit_surface_still_exists():
+    """A denylist that names a deleted file silently stops guarding a real one."""
+    for name in STREAMLIT_SURFACE:
+        assert (ROOT / "dashboard" / name).exists(), name
+
+
+def test_the_pure_layer_is_still_the_bigger_half():
+    """The view holds layout; the logic it draws lives in a module a test can call.
+
+    Not a style rule — `dashboard/pca.py` is 400-odd lines of orientation, scaling,
+    neighbours and click resolution, all of it exercised directly above, and none of it
+    reachable if it had been written inside `render()`.
+    """
+    pure = {p.name for p in (ROOT / "dashboard").glob("*.py")
+            if p.name not in STREAMLIT_SURFACE}
+    assert {"theme.py", "charts.py", "pca.py", "decisions.py", "economics.py",
+            "audit.py"} <= pure
+
+
+# ── The multipage shell ───────────────────────────────────────────────────────
+#
+# `app.VIEWS` is a plain tuple built without touching Streamlit — `st.Page` is only
+# constructed inside `app.pages()` — so the navigation registry is testable as data.
+# What a rendered page does is covered by the three verification layers in
+# `dashboard/README.md`, not here.
+
+def test_the_navigation_carries_at_least_two_entries():
+    """Measured, not stylistic: Streamlit draws no navigation for a one-page app.
+
+    With a single `st.Page`, `st.navigation(position="sidebar")` still sends
+    `Position.SIDEBAR` and the frontend renders nothing — `[data-testid="stSidebarNav"]`
+    is absent from the DOM. A shell that dropped back to one page would therefore be
+    indistinguishable from the single-page script it replaced, and the cross-page state in
+    `dashboard/shell.py` would have nothing to survive. So the shell ships a placeholder
+    for the next page in the build order rather than shipping alone.
+    """
+    from dashboard import app
+    assert len(app.VIEWS) >= 2
+
+
+def test_every_page_has_a_unique_url_path_and_a_callable():
+    """Duplicate paths are a `StreamlitAPIException` at nav-build time, i.e. in a browser."""
+    from dashboard import app
+    paths = [v.url_path for v in app.VIEWS]
+    assert len(paths) == len(set(paths)), paths
+    for view in app.VIEWS:
+        assert callable(view.render), view.title
+        assert view.title.strip() and view.icon.strip(), view
+        assert "/" not in view.url_path and view.url_path == view.url_path.strip("/")
+
+
+def test_the_first_page_is_the_real_one():
+    """`pages()` makes index 0 the default, so `/` must not serve a placeholder."""
+    from dashboard import app
+    from dashboard.views import fingerprints
+    assert app.VIEWS[0].render is fingerprints.render
+
+
+def test_the_shell_offers_exactly_the_modes_the_palette_defines():
+    """A mode the palette has no entry for is a `KeyError` inside `theme()`."""
+    from dashboard import shell
+    assert set(shell.MODES) == set(theme.THEMES)
 
 
 # ── The registry ──────────────────────────────────────────────────────────────

@@ -63,8 +63,10 @@ re-cluster anything; if a number is not in an artifact, it does not go on the pa
 
 ## View 1 · The PCA player-style fingerprint
 
-**Shipped 2026-08-08.** `dashboard/app.py`, with its pure layer in `dashboard/pca.py` and
-its two figures in `dashboard/charts.py`.
+**Shipped 2026-08-08.** `dashboard/views/fingerprints.py`, with its pure layer in
+`dashboard/pca.py` and its two figures in `dashboard/charts.py`. It was the whole of
+`app.py` until 2026-08-10, when [step 1](#step-1-as-built--the-multipage-shell) moved it
+into the multipage shell unchanged; `app.py` is now the `st.navigation` entrypoint.
 
 ### The question
 
@@ -232,9 +234,11 @@ PNG proves the figure is legible, and only a browser proves the page is.
 
 # The expansion — from one view to nine pages
 
-**Planned 2026-08-10. Nothing below is built.** This section is the design; each numbered
-step in [The build order](#the-build-order) is meant to be handed to a fresh session on its
-own.
+**Planned 2026-08-10. Step 1 shipped the same day; steps 2–8 are not built.** This section
+is the design; each numbered step in [The build order](#the-build-order) is meant to be
+handed to a fresh session on its own. What step 1 actually landed, and the two things it
+measured that the design did not anticipate, are in
+[Step 1, as built](#step-1-as-built--the-multipage-shell).
 
 The goal is a single surface that presents the whole project — the PCA view keeps its
 content under the name **Player fingerprints**, and eight pages join it covering the model
@@ -262,6 +266,11 @@ if the reader navigates away and back.
 So the deliverable is a **sidebar-navigated multipage app**, and the user-facing word "tab"
 maps to a page. This is not a cosmetic substitution: it is the only structure in which item
 5 below is feasible at all.
+
+**Built 2026-08-10 and confirmed in a browser**, with one correction the design missed:
+`st.navigation` renders *no navigation widget at all* for a single-page app, so the shell
+ships a placeholder beside the one real page. See
+[Step 1, as built](#step-1-as-built--the-multipage-shell).
 
 ### 2. The model pages are blocked on artifacts, not on UI
 
@@ -332,7 +341,7 @@ Nine, in sidebar order. "Class" pages carry a head selector; the others do not.
 | # | page | source | new artifacts? |
 |---|---|---|---|
 | 1 | **Overview** | hero tiles from existing metrics CSVs | no |
-| 2 | **Player fingerprints** | today's `app.py`, moved unchanged | no |
+| 2 | **Player fingerprints** | ✅ `views/fingerprints.py`, moved unchanged 2026-08-10 | no |
 | 3 | **Availability** | model cards + `stan_availability_*`, `stan_games_played_*` | **yes** |
 | 4 | **Minutes** | model cards + `stan_minutes_*`, `stan_composition_*`, `minutes_unification.csv` | **yes** |
 | 5 | **Box-score components** | model cards + `stan_component_*` | **yes** |
@@ -488,11 +497,13 @@ Three things the emitter must do that are easy to get wrong:
 Eight steps. Each is a self-contained session with its own deliverable and its own
 verification; the ordering is a dependency ordering, not a preference.
 
-**Step 1 · The multipage shell.** Convert `app.py` into an `st.navigation` entrypoint;
-move the PCA view verbatim into `dashboard/views/fingerprints.py` behind a `render()`;
-lift the appearance toggle into shared state so it survives navigation; keep `make
-dashboard` pointing at the same entrypoint. Ships with one real page, so the shell is
-proved before anything depends on it.
+**Step 1 · The multipage shell. ✅ Shipped 2026-08-10.** Convert `app.py` into an
+`st.navigation` entrypoint; move the PCA view verbatim into
+`dashboard/views/fingerprints.py` behind a `render()`; lift the appearance toggle into
+shared state so it survives navigation; keep `make dashboard` pointing at the same
+entrypoint. Ships with one real page, so the shell is proved before anything depends on
+it — *and one placeholder, because Streamlit will not draw a navigation for a single page.*
+See [Step 1, as built](#step-1-as-built--the-multipage-shell).
 
 **Step 2 · Tournament & strategy (page 8).** Deliberately second: it is the richest page,
 needs zero new pipeline work, and it exercises the multipage shell with a genuinely
@@ -539,14 +550,97 @@ being documentation again:
 
 ---
 
+## Step 1, as built — the multipage shell
+
+**2026-08-10.** `make dashboard` and `make draft-room` are unchanged, `SRC_IMPORTERS` still
+names exactly one file, and `dashboard/pca.py` still imports no Streamlit. The PCA view
+moved verbatim: `AppTest` reports the same 2 charts, 6 tiles, 3 tables and 4 selectors it
+did before the move.
+
+### What the shell owns
+
+`app.py` is now the entrypoint and holds three things: `st.set_page_config`, the
+`VIEWS` tuple that is the sidebar, and `pages()`, which turns each row into an `st.Page`
+with the first as default. A page is a `render()` in `dashboard/views/`; a row carries its
+title, icon and a pinned `url_path`, so a deep link outlives a retitling.
+
+The appearance mode moved into `dashboard/shell.py`, rendered by the entrypoint and read by
+a view through `shell.current_theme()`. **This is forced rather than tidy.** The
+entrypoint's body runs on every rerun while a `render()` runs only when its page is
+selected, and Streamlit clears `st.session_state` for widgets the current page did not
+render — so a mode switch declared inside a view is destroyed the moment the reader
+navigates away. Driven under `AppTest`, a round trip to the second page and back resets the
+fingerprint view's own `component` key from `pc8` to `pc1` while `appearance` holds. Same
+session, same navigation, opposite outcomes; that contrast is both the demonstration and
+the reason. Registered as `appearance-lives-in-the-shell`.
+
+Sidebar order follows ownership: the navigation, then the shell's controls, then whatever
+the page writes for itself — measured in the DOM rather than assumed, since all three land
+in one column.
+
+### The one thing the design got wrong
+
+The step was specified to "ship with one real page, so the shell is proved before anything
+depends on it". **That is not possible: Streamlit draws no navigation widget at all for a
+single-page app.** The Python side still sends `Position.SIDEBAR`; the frontend renders
+nothing, and `[data-testid="stSidebarNav"]` is simply absent from the DOM. A shell shipped
+alone would therefore have been byte-for-byte indistinguishable to a reader from the
+single-page script it replaced, and neither the navigation nor the cross-page state could
+have been verified in a browser at all.
+
+`AppTest` could not have caught this — it has no DOM — which makes it a clean example of
+the three-layer rule earning its keep rather than a formality.
+
+So the shell ships **one placeholder beside the one real page**, and it is the *next* page
+in the build order (Tournament & strategy, step 2) rather than a lorem-ipsum tab, so step 2
+replaces its row in `app.VIEWS` instead of adding to it. Two rules keep it from lying to a
+machine that is checking: it shows **no numbers**, and it names **`make` targets rather
+than artifact filenames** — `audit.py`'s orphaned-artifact check counts an artifact as read
+when any string literal in `dashboard/` names it, so a placeholder listing
+`strategy_sweep.csv` would report a file as drawn that nothing draws, and the orphan count
+is how this doc picks what to build next. Checked on the way in: the orphan count is
+unchanged at **1** and nothing is newly masked. Registered as
+`one-page-renders-no-navigation`.
+
+### Verification, as run
+
+All three layers from `dashboard/README.md`, and the third is again the one that earned its
+keep.
+
+**`AppTest`**, both appearance modes, both pages: 2 charts, 6 tiles, 3 tables, 4 selectors,
+0 exceptions, 0 missing-artifact warnings on the fingerprint page, and 0 charts on the
+other — which is the assertion that the unselected page's script did *not* run. Plus the
+page-switch round trip described above.
+
+**Six figures rendered to PNG** through kaleido and looked at, built from the view's new
+home: the radar in both modes, with and without a neighbour overlay, and a loadings panel.
+The balanced-loadings rule still holds (PC1 draws five positive and five negative bars),
+the selected spoke is still ringed, and pinned components still draw as open markers.
+
+**The live page driven in Chrome** through Playwright. It confirmed the navigation renders
+with both entries in declared order, that sidebar ordering is nav → Appearance → page
+controls, that switching mode repaints the plots to the pinned surfaces (`#fcfcfb` →
+`#1a1a19`, read off `.main-svg`'s inline style — plotly does not put `paper_bgcolor` on
+`rect.bg`, which sits at `fill-opacity: 0`), that the appearance survives a navigation to
+the placeholder and back, that `/tournament` deep-links, and that clicking spoke 8 still
+drives the component panel (`PC1 · Paint big, not shooter` → `PC8 · Mid-range big who
+steals`). No literal `"undefined"` anywhere.
+
+---
+
 ## Structure
 
 ```
 dashboard/
   README.md       # the rules a new view has to follow
   __init__.py
-  app.py          # the PCA fingerprint view: page, controls, layout
-  pca.py          # its pure layer — orientation, SD scaling, loadings, neighbours
+  app.py          # the entrypoint — st.navigation, and VIEWS, the sidebar
+  shell.py        # cross-page state: the appearance mode and current_theme()
+  views/
+    fingerprints.py   # the PCA fingerprint page — controls, layout, render()
+    placeholder.py    # a page the build order has specified and not yet built
+  pca.py          # the fingerprint view's pure layer — orientation, SD scaling,
+                  #   loadings, neighbours
   charts.py       # fig_radar / fig_loadings
   theme.py        # SERIES, THEMES, ALL_PAIRS_CAP, theme(), apply_theme(), ordinal_colors()
   artifacts.py    # load_cfg, features_dir, read_table, optional
@@ -555,9 +649,12 @@ dashboard/
   audit.py        # NOT the dashboard — make dashboard-audit
 ```
 
-`app.py` and `artifacts.py` are the only modules that import Streamlit. Everything else is
-pure, which is what lets `tests/test_dashboard.py` exercise the palette rules, the component
-spec, the scaling, the neighbour metric and both figures as plain functions.
+`app.py`, `shell.py`, `artifacts.py`, `draft_room.py` and everything under `views/` are the
+Streamlit surface; everything else is pure, which is what lets `tests/test_dashboard.py`
+exercise the palette rules, the component spec, the scaling, the neighbour metric and both
+figures as plain functions. That guard is now a **denylist over the whole package** rather
+than an allowlist of six filenames, so each of the seven pages still to come is pure by
+default and has to be named before it can import Streamlit.
 
 ### Three files that stayed, and are not the dashboard
 
@@ -652,6 +749,20 @@ New, in the same plain-`assert` synthetic-builder style:
 - **The artifact contract.** Every component's anchor is a real feature in the shipped
   loadings, every component names two real player-seasons, and the shipped decomposition
   still points the labelled way.
+
+Added with the shell on 2026-08-10, exercising `app.VIEWS` as data — `st.Page` is only
+constructed inside `app.pages()`, so the navigation registry is testable without a runtime:
+
+- **The navigation carries at least two entries**, with the measured reason in the
+  docstring, so a future edit back to one page fails rather than silently rendering no nav.
+- **Every page has a unique `url_path` and a callable**; a duplicate path is a
+  `StreamlitAPIException` raised at nav-build time, i.e. in a browser.
+- **The first page is the real one**, since `pages()` makes index 0 the default and `/`
+  must not serve a placeholder.
+- **The shell offers exactly the modes the palette defines**, `shell.MODES` against
+  `theme.THEMES` — a mode with no palette entry is a `KeyError` inside `theme()`.
+- **The Streamlit-purity guard became a denylist**, plus a test that every name on it still
+  exists, since a denylist naming a deleted file silently stops guarding a real one.
 
 ---
 
