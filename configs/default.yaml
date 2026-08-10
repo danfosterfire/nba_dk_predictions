@@ -448,6 +448,27 @@ sim:
   n_sims_draft: 500
   pod_size: 12
 
+  # ── The live draft room — `make draft-room` ───────────────────────────────
+  draft_room:
+    # Twelve-seat pods of the fitted field, drafted and scored ONCE per season and cached
+    # to data/features/draft_room_field_<season>.npz. This is the population `q` — the
+    # probability a pod-mate outscores us — is read from, so it decides the resolution of
+    # every EV the room prints. 100 pods (1,200 entries) reproduce `20k_spin_move`'s
+    # symmetric-field null to -0.03% and cost ~13 s to build; `600k_shootaround` reads
+    # -17% because two thirds of its EV sits in a 49-seat final table that 0.139% of
+    # entries reach, and that does not converge at any affordable size — 300 pods buys
+    # -7.7% for 43 s and does NOT make the ranking more stable. See
+    # `draft_room_stability.csv`.
+    field_drafts: 100
+    # Which of the three registered objectives the table is ordered by. `bracket_ev` is
+    # the decision-5 objective and the default; `p_advance` is P(top 2 of 12), the one
+    # figure here that reproduces its analytic value exactly and the statistic
+    # docs/simulations-plan.md says the strategy sweep selects on.
+    objective: bracket_ev
+    # Our seat in the twelve-entry pod, zero-indexed. DK randomizes it once the lobby
+    # fills, so this is set in the page rather than trusted from here.
+    seat: 0
+
   field:
     # docs/adp-plan.md binds this: never the raw consensus. A Yahoo/ESPN consensus
     # correlates with the one real DK board at rho 0.870 but with a 21.9-pick mean absolute

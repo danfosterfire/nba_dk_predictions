@@ -4330,15 +4330,188 @@ REGISTRY: tuple[Decision, ...] = (
                 "also prices something scoring rounds independently cannot: the round-2 "
                 "to round-4 field is not an ADP field, it is the population that already "
                 "cleared a 2-of-12 cut, so an independent-field model would systematically "
-                "overstate continuation value.",
-        status="settled",
-        reproduce="make dashboard → dashboard/economics.py, "
-                  "data/raw/dk_best_ball_tournament_prize_structure.csv",
-        unblocks="src/sim/bracket.py and src/sim/strategy.py",
+                "overstate continuation value. **Measured in the draft room 2026-08-09 "
+                "and pricing all five captured structures turns the caveat into a "
+                "pattern**: the EV error tracks the ratio of the final table's size to "
+                "the population reaching it, so `88k_alley_oop` and `20k_spin_move` "
+                "reproduce the symmetric null exactly (-0.0%) while `15k_and_one`, "
+                "`50k_four_pt_play` and `600k_shootaround` read -2.7%, -4.2% and -17.2%. "
+                "The EV is trustworthy where the money is spread and untrustworthy where "
+                "it is concentrated. P(top 2 of 12) is exact in all five, because Round 1 "
+                "is a 2-of-12 cut in every one. On the ranking side, across two "
+                "independently drafted "
+                "fields the bracket-EV ranking keeps its top pick on 87.5% of board "
+                "states, with a rank correlation of 0.8771 and a top-3 overlap of 0.750 "
+                "on `600k_shootaround`, while P(top 2 of 12) keeps it on 100% at 0.9979 "
+                "and 1.000. Both statistics ship in the room; the EV is the objective and "
+                "P(advance) is the one that resolves.",
+        status="built",
+        reproduce="make draft-room-prep → outputs/predictions/draft_room_stability.csv, "
+                  "outputs/predictions/draft_room_null.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-09",
         date="2026-08-08",
         tags=("methodology", "strategy"),
+    ),
+    Decision(
+        id="best-seven-is-one-matroid-exchange",
+        topic="drafting",
+        claim="A candidate's weekly-lineup lift is **one exchange**, not a re-solve: "
+              "`max(0, score − threshold[mask])` against a threshold computed once per "
+              "(period, sim). Exact, not approximate.",
+        because="`docs/simulations-plan.md` named a partial sort as one of the two levers "
+                "that make Gate E fit, and this is the exact form of it. `bracket."
+                "best_lineup` is matroid greedy, and for a matroid the max-weight basis "
+                "of `S + c` is either the old basis or a single exchange out of it — so "
+                "with the basis in hand a candidate costs one subtraction over "
+                "`[candidate, period, sim]` rather than a 16-step greedy over a "
+                "`[candidate, period, sim, 17]` gather. **Which player he displaces is "
+                "decided by Hall's condition, not by score**: the man he replaces must "
+                "relieve every tight constraint at once, so displacing the lineup's "
+                "lowest scorer outright is the plausible wrong answer — it lets a fifth "
+                "guard evict a centre. Pinned against `best_lineup` itself on "
+                "single-position and dual-eligible rosters, because a wrong threshold "
+                "still returns a ranked table.",
+        status="built",
+        reproduce="make draft-room-prep → outputs/predictions/draft_room_gate_e.csv, "
+                  "src/sim/draft_room.py",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("performance", "correctness"),
+    ),
+    Decision(
+        id="gate-e-passes-with-headroom",
+        topic="drafting",
+        claim="**Gate E passes with 5x of headroom**: 112 ms mean and 200 ms worst over "
+              "the full remaining pool at `n_sims = 500`, against a 1,000 ms bar. The "
+              "draft room is a recommender, not a ranking exporter.",
+        because="A 30-second fast-draft clock has to hold a recompute, a human reading "
+                "the table and a click, and the plan named the fallback if it could not: "
+                "export a static ranking plus exclusion list in DK's pre-draft-rankings "
+                "format. `make draft-sim` measured the earlier marginal-lineup-value "
+                "recompute at 0.76 s mean and 1.5 s max, over the bar — so the two levers "
+                "were required rather than optional. Both shipped: `n_sims = 500` in-draft "
+                "because the decision is a ranking of candidates rather than an estimate "
+                "of a level, and `best-seven-is-one-matroid-exchange`. The fallback stays "
+                "built (`draft.export_ranking`) and is now genuinely a fallback.",
+        status="built",
+        reproduce="make draft-room-prep → outputs/predictions/draft_room_gate_e.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("performance", "gate"),
+    ),
+    Decision(
+        id="a-pick-is-priced-inside-a-completed-roster",
+        topic="drafting",
+        claim="Every candidate is scored inside a **completed** roster — what we hold, "
+              "him, and the best available at each pick we have left — and the "
+              "completion fills the 2 G / 2 F / 1 C slate before taking best available.",
+        because="A payout is a step function of *place*, and place is a property of a "
+                "finished sixteen. Scored as the roster stands at pick 3, our entry sits "
+                "so far below a field of complete rosters that P(top 2 of 12) is zero for "
+                "every candidate and the ranking has no resolution at all. **The slate "
+                "order is not cosmetic**: the completion is the baseline every candidate "
+                "is measured against, so deferring the centre to the last forced pick "
+                "leaves a replacement-level centre in the base and prices every centre on "
+                "the board against that scrub — measured on 2022-23's opening pick, it "
+                "put five centres in the top seven and dropped Dončić to eighth. Filling "
+                "the slate first is `bracket.top_roster`'s existing convention. The cost "
+                "is one stated assumption: a candidate the completion already claims "
+                "prices at the same roster as every other such candidate, because taking "
+                "him now buys the sixteen we were going to have plus the spare — so they "
+                "tie, and `rank_cushion` breaks it.",
+        status="built",
+        reproduce="make draft-room-prep → outputs/predictions/draft_room_picks.csv, "
+                  "src/sim/draft_room.py",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("methodology", "strategy"),
+    ),
+    Decision(
+        id="injury-notes-are-shown-and-never-scored",
+        topic="drafting",
+        claim="The draft room displays both injury feeds beside the recommendation and "
+              "**never inside it** — the notes reach a human, not a value.",
+        because="This is the first thing in the project to show a drafter something the "
+                "model has not seen: nothing consumes either feed today, so the "
+                "availability head knows how much a player missed *last* season and "
+                "cannot know he had surgery in June. That gap is the reason to show it "
+                "and the reason to quarantine it. The feeds describe **today**, so on a "
+                "backtest board today's status IS the resolved outcome, and folding "
+                "either into a ranking is the leak `point-in-time-discipline` forbids — "
+                "one no split guard could catch, because the guards sit on frames rather "
+                "than on displayed text. A test pins the columns out of both the ranking "
+                "and the pick log. Three build findings: the NBA report is game-day and "
+                "its last report naming anybody is 2026-06-13, 57 days stale against "
+                "ESPN's 2026-08-03 snapshot of 148 players (67 on a validation board), so "
+                "the two are shown separately with their dates rather than blended; "
+                "neither feed carries a player id, so the name join gets uniqueness on "
+                "**both** sides as its second guard and refuses ambiguous keys rather "
+                "than guessing, since a wrong note costs a pick and shows up nowhere; and "
+                "a capture describing another season is flagged above the table, tested "
+                "by calendar-year overlap rather than by a month rule, which is what "
+                "`adp-freeze-rule` records getting wrong.",
+        status="built",
+        reproduce="make draft-room → src/sim/draft_room.py, dashboard/draft_room.py",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("product", "leakage"),
+    ),
+    Decision(
+        id="the-pick-log-is-autosaved-with-the-advice-attached",
+        topic="drafting",
+        claim="The draft room writes its pick log **after every pick**, and each row "
+              "carries what the room advised at the moment that pick was made.",
+        because="A draft is the one artifact in this project that cannot be regenerated — "
+                "every other figure is a `make` target away, and a pod is played once. "
+                "Autosaving beats a button that has to be remembered with eight seconds "
+                "on the clock, and 192 rows of CSV is microseconds. The advice columns "
+                "are the half that cannot be reconstructed afterwards: re-ranking from a "
+                "finished log would score each pick against a board state that did not "
+                "exist when it was made. On our own rows `cost_vs_best` is what "
+                "overriding the model cost by the model's own reckoning, which is the "
+                "only honest record of whether a human under a 30-second clock helps or "
+                "hurts; on an opponent's row the same columns price what the field took "
+                "against what our board wanted, so they are kept and `followed` is null "
+                "there rather than `False`. This is the capture "
+                "`real-pick-logs-are-the-missing-field-calibration` asks for, with the "
+                "board attached by construction. `outputs/` is gitignored like "
+                "`data/raw/`, so the log wants the same backup the DK boards do.",
+        status="built",
+        reproduce="make draft-room → src/sim/draft_room.py, dashboard/draft_room.py",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("capture", "product"),
+    ),
+    Decision(
+        id="draft-room-imports-src-sim",
+        topic="drafting",
+        claim="`dashboard/draft_room.py` is the **one** file in the dashboard package "
+              "allowed to import from `src/`, and the exemption is bounded at `src.sim` "
+              "by a test rather than waived.",
+        because="`dashboard/README.md`'s rule exists so a view cannot refit, re-project or "
+                "re-cluster — so what is rendered cannot drift from what was fitted. The "
+                "draft room is not a view; it drives a live decision, and what it needs "
+                "is `bracket.best_lineup` and `draft.legal_mask`. The alternative to "
+                "importing them is reimplementing the matroid that seats a weekly lineup "
+                "and the rules that decide which players are legal — which is the drift "
+                "the rule was written to prevent, arriving through the other door, and "
+                "`CLAUDE.md`'s 'never reimplement what exists' forbids it directly. So "
+                "`SRC_IMPORTERS` names the single file and a second test holds it to "
+                "`src.sim`, the numpy layer over the artifacts that imports no CmdStan: "
+                "an exempt page still cannot fit anything. Everything it computes lives "
+                "in `src/sim/draft_room.py`; the page is the surface.",
+        status="settled",
+        reproduce="make test → tests/test_dashboard.py, dashboard/README.md",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("architecture", "conventions"),
     ),
     Decision(
         id="dk-position-eligibility-from-rosters",

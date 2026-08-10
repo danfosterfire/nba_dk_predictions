@@ -1291,7 +1291,14 @@ make bracket ✅      src/sim/bracket.py            best 7 of 16 by slot per per
                                                    -> outputs/predictions/bracket_{structure,
                                                       null,entries}.csv
 make strategy-sweep  src/sim/strategy.py           the sweep -> outputs/predictions/strategy_*.csv
-make draft-room      dashboard/draft_room.py       the live recommender
+
+make draft-room-prep ✅ src/sim/draft_room.py      the engine: the cached reference field,
+                                                   the null check and Gate E
+                                                   -> data/features/draft_room_field_<season>.npz
+                                                      + outputs/predictions/draft_room_{gate_e,
+                                                      null,stability,picks}.csv
+make draft-room ✅   dashboard/draft_room.py       the page. One click per pick; loads the
+                                                   artifact above rather than rebuilding it
 ```
 
 `src/sim/` is a new package, parallel to `src/models/` and `src/eda/`, because these are
@@ -1941,6 +1948,210 @@ Reading the DK draft page directly — via the browser extension or a pasted pic
 exploring for 8-hour slow drafts, where the clock is not the constraint. It is explicitly not
 on the critical path and should not gate the draft room shipping.
 
+### What was built, and what Gate E found ✅ 2026-08-09
+
+`dashboard/draft_room.py` is the page and `src/sim/draft_room.py` is everything that computes
+anything; `make draft-room` runs the first and `make draft-room-prep` runs the second.
+**Gate E passes with five times the headroom the plan budgeted for: 112 ms mean, 185 ms p95
+and 200 ms worst over the full remaining pool of 359 priceable players at `n_sims = 500`,
+against a 1,000 ms bar.** The fallback — a static ranking plus exclusion list in DK's
+pre-draft-rankings format — stays built as `draft.export_ranking` and is now genuinely a
+fallback rather than a likely outcome.
+
+**Both levers the plan named were required, and the second is exact rather than a partial
+sort.** `make draft-sim` had measured the marginal-lineup-value recompute at 0.76 s mean and
+1.5 s max — over the bar before the bracket EV was added on top. `n_sims = 500` is the first
+lever and unchanged. The second is sharper than "a partial sort": `bracket.best_lineup` is
+matroid greedy, and for a matroid the max-weight basis of `S + c` is either the old basis or
+a single exchange out of it, so with the basis computed once per (period, sim) a candidate's
+lift is
+
+```
+lift = max(0, score(c) − threshold[mask(c)])
+```
+
+one subtraction over `[candidate, period, sim]` instead of a 16-step greedy over a
+`[candidate, period, sim, 17]` gather. **Which player he displaces is Hall's condition, not
+the lowest score** — the man he replaces must relieve every tight constraint at once, and
+displacing the lineup's cheapest starter outright would let a fifth guard evict a centre.
+`tests/test_draft_room.py` pins the identity against `best_lineup` itself over 400 random
+rosters, on single-position and dual-eligible masks both, because a wrong threshold still
+returns a ranked table.
+
+#### The objective, and the two things it needed that the plan did not name
+
+Decision 5's payout-weighted bracket EV needs a *field* and a *finished roster*, and neither
+falls out of the tensor.
+
+- **The field is drafted, once, and cached.** 100 twelve-seat pods of `src/sim/draft.py`'s
+  fitted field, scored on the same tensor and the same sims as our own entry, written to
+  `data/features/draft_room_field_<season>.npz`. It costs ~13 s to build and under a second
+  to reload, which is why launching a room is a second rather than a minute. Rounds 2–4 face
+  the **survivor** population, obtained by reweighting that same field by its own advance
+  probability rather than by dealing it — `bracket.py`'s argument that an independent field
+  overstates continuation value, reached analytically because a recompute cannot deal 35,280
+  entries inside a 30-second clock.
+- **A pick is priced inside a *completed* roster** — what we hold, the candidate, and the
+  best available at each pick we have left. Scored as the roster stands at pick 3 our entry
+  is so far below a field of complete rosters that P(top 2 of 12) is zero for every
+  candidate and the ranking has no resolution at all. The completion **fills the 2 G / 2 F /
+  1 C slate before taking best available**, which is `bracket.top_roster`'s convention and
+  is load-bearing rather than tidy: the completion is the baseline every candidate is
+  measured against, and deferring the centre to the last forced pick left a
+  replacement-level centre in the base and priced every centre on the board against it. On
+  2022-23's opening pick that put **five centres in the top seven and dropped Dončić to
+  eighth**; filling the slate first returns the board to Jokić, Giannis, Dončić, Embiid,
+  Tatum.
+
+**The symmetric-field null is what caught the one real error in the arithmetic.** Running
+the field's own entries through the same path a candidate goes through must reproduce
+`bracket.symmetric_null` exactly — `P(advance round 1) = n_advance / pod_size`, and
+`E[payout] = total_prizes / total_entries`. The first version read P(advance) 44% high in
+round 3, because the naive survival function is a **right-endpoint Riemann sum** of
+`∫(1−q)^(P−1) dq` and biases every round's advance rate by about `1 / (2 n_eff)`. With the
+midpoint plotting position — ties split down the middle, which is also what the rules'
+cascade does — the reach probabilities come back exact to **2e-8** at every round.
+
+#### 🔴 The EV level does not converge, and the ranking inherits it
+
+**All five captured structures are priced, and running the null on all of them turns one
+caveat into a pattern.** The room loads a reference for every tournament rather than only
+the two being entered — all five run a 12-entry Round-1 pod, so the draft is identical and
+a reference is a reweighting of a field already drafted and scored. The EV error then
+tracks one thing:
+
+| tournament | E[payout], analytic | from the room's field | error | effective entries by round |
+|---|---|---|---|---|
+| `88k_alley_oop` | $407.4074 | **$407.4048** | **−0.0%** | 1,200 / 304 / 122 / 47 |
+| `20k_spin_move` | $46.2963 | **$46.2838** | **−0.03%** | 1,200 / 304 / 122 / 47 |
+| `15k_and_one` | $0.8503 | $0.8278 | −2.7% | 1,200 / 304 / 45 / 10 |
+| `50k_four_pt_play` | $3.4041 | $3.2624 | −4.2% | 1,200 / 304 / 62 / 13 |
+| `600k_shootaround` | $17.0068 | **$14.0892** | **−17.2%** | 1,200 / 304 / 38 / **6** |
+
+The ordering is the ratio of the final table's size to the population that reaches it. The
+two structures with shallow cuts (2/6 → 2/6) into a small final table reproduce the null
+**exactly**; the ones that funnel a whole field into a 42-, 49- or 68-seat table do not,
+and `600k_shootaround` is worst because two thirds of its EV sits in a 49-seat table reached
+by 0.139% of entries and topped by a 10,000× prize — six effective entries to resolve it.
+**So the EV is trustworthy where the money is spread and untrustworthy where it is
+concentrated**, which is a sharper statement than "the EV is a level with a known bias" and
+it is only visible because all five are priced.
+
+**Tripling the field does not fix the worst case and does not stabilize its ranking**:
+300 pods buy −7.7% for 43 s of build time and the rank correlation across two fields
+*falls* from 0.86 to 0.78. This is `600k_shootaround`'s ROI is not estimable at any
+affordable simulation budget, arriving in the in-draft objective.
+
+P(top 2 of 12) is **0.166667 against 0.166667 in all five**, which is the other half of the
+same point: Round 1 is a 2-of-12 cut in every captured structure, so the statistic that
+resolves is also the statistic that does not depend on which tournament you are pricing.
+
+What that costs the recommendation is measured rather than assumed, by redrawing the field
+from a second seed and re-ranking the same board states:
+
+| objective | keeps its top pick | top-3 overlap | top-5 overlap | rank correlation |
+|---|---|---|---|---|
+| `bracket_ev` (`600k_shootaround`) | **87.5%** | **0.750** | 0.950 | **0.8771** |
+| `bracket_ev` (`20k_spin_move`) | 87.5% | 1.000 | 0.975 | 0.9915 |
+| `p_advance` | **100%** | **1.000** | **1.000** | **0.9979** |
+| `lineup_value` | 100% | 1.000 | 1.000 | 1.0000 |
+
+So the EV ships as the objective, because that is decision 5 and it is the money question —
+and `p_advance` ships beside it on every row, because it is the statistic that resolves and
+the one `select-on-p-advance-report-roi` already says the sweep selects on.
+
+**Which of the two you read is a real choice rather than a formality, and it is larger than
+this doc assumed.** Measured over eight board states per season, the two objectives name the
+same top pick on **50% to 88%** of them, with a top-3 overlap of **0.33 to 0.62** and a rank
+correlation of **0.43 to 0.66**. They are not two views of one quantity: `p_advance` is the
+*sign* of the return and is blind to everything above the cut, while the EV is the *size* and
+carries the 10,000× top prize that is most of `600k_shootaround`'s money. A
+P(advance)-maximal roster is a chalk roster, and chalk is the wrong shape for the tournament
+whose whole prize is in the tail. The practical reading, until Gate C prices the model error:
+take `p_advance` when the EV lead is inside the field noise, and let the EV break ties among
+candidates whose P(advance) is level. **The bracket-EV
+pick differs from the marginal-lineup-value pick on 25% to 50% of the sixteen rounds**,
+which is the answer to whether substituting the objective was worth doing at all.
+
+#### The pick log is the one artifact in this project that cannot be regenerated
+
+Added 2026-08-09, after the room shipped. Every other figure here is a `make` target away;
+a pod is played once and the order the board came off in is gone the moment the tab
+closes. So the room writes `outputs/draft_logs/draft_log_<season>_<session>.csv` **after
+every pick** rather than on a button — a live draft is exactly where a closed tab costs
+something unrecoverable, and 192 rows of CSV is microseconds — with a download button
+beside it. Note that `outputs/` is gitignored, as `data/raw/` is: the log lands with the DK
+boards and the injury snapshots in the set of captures that are not backfillable and not
+versioned, and it wants the same backup they do.
+
+It records the snake — `board_index` replays the whole draft through `replay`, and the
+board columns join to `draft_pool.parquet` without a name match — plus, on each row, **what
+the room advised at the moment the pick was made**. That is the part that cannot be
+reconstructed afterwards: re-ranking from a finished log would score each pick against a
+board state that did not exist when it was made. On our own rows `cost_vs_best` is
+therefore what overriding the model cost by the model's own reckoning, and twenty real
+drafts of it is the only honest record of whether a human under a 30-second clock helps or
+hurts. On an opponent's row the same columns price what the field took against what our
+board wanted, which is the disagreement the whole strategy rests on — so they are kept, and
+`followed` is null there rather than `False`.
+
+This is the same capture `🎯 Real pick logs are the calibration this layer is missing` asks
+for, with the board attached by construction rather than remembered separately.
+
+#### Injury notes are on the page, and deliberately nowhere near the ranking
+
+Added 2026-08-09. **The room is the first thing in this project to show a drafter something
+the model has not seen.** Nothing in the pipeline consumes either injury feed today:
+`src/data/injuries.py` writes the ESPN log and no module reads it, and
+`src/data/injury_reports.py`'s only consumer is `src/eda/report_calibration.py`, which
+measures `P(play | designation)` as a study rather than as a feature. So the availability
+head knows how much a player missed *last* season and cannot know he had surgery in June —
+which `docs/availability-plan.md` already names as the one genuinely new input, blocked
+until the daily capture spans an offseason boundary.
+
+That gap is the reason to show it and also the reason to keep it out of the value path. The
+feeds describe **today**, so on a backtest board today's status *is* the resolved outcome,
+and folding either into a ranking would be the leak `point-in-time-discipline` forbids — one
+no split guard could see, because the guards sit on frames rather than on displayed text. So
+the notes are attached to rows for a human to read, `evaluate` never receives them, and a
+test pins that the columns stay out of both the ranking and the pick log.
+
+Three things the build had to get right:
+
+- **The two feeds answer different questions and are not blended.** The NBA report is
+  published about an hour before a game, so between June and October it carries no player
+  rows at all — its last report naming anybody is **2026-06-13**, 57 days before the
+  snapshot beside it. ESPN is the feed that is alive in the offseason, which is when a
+  best-ball draft happens: **148 players as of 2026-08-03**, 67 of them on a validation
+  board. Both are shown with their capture date and age, because a merged status would hide
+  which one said it.
+- **Neither feed carries a player id**, so this is one of the name joins
+  `docs/model-development-notes.md` allows, and it gets the second guard that rule demands:
+  uniqueness on *both* sides. A key naming two board rows, or two rows inside one feed, is
+  reported as `ambiguous` and attached to nobody. Attaching a wrong note is worse than
+  attaching none — a drafter who passes on a healthy star because the room labelled him Out
+  has lost the pick, and no downstream number would ever show it. Team is deliberately not
+  used as a third field: the feeds print `"Brooklyn Nets"` where the board prints `"BKN"`,
+  and inventing a thirty-row lookup to disambiguate a case that does not currently occur
+  (0 ambiguous on both validation boards) is how a join acquires a silent failure mode.
+- **A feed describing another season is flagged as one.** On a 2023-24 practice board an
+  August 2026 snapshot is not stale, it is about a different season, and the page says so
+  above the recommendation. The test is crude on purpose — a season label spans two calendar
+  years and a capture outside both is elsewhere — because `adp-freeze-rule` records what
+  happened the last time this project inferred a season from a month.
+
+The badge goes **on the button** rather than in a column beside it, since the button is
+what the eye is already on; the panel under the table carries the full text, because "Out,
+right Achilles, back ~April" and "Day-To-Day, sore calf" are the same badge and not remotely
+the same pick.
+
+**One caveat has to be read before any EV level is believed, and it is not this layer's to
+fix.** The field drafts off ADP while our board is the model's own projection, so a
+best-available roster reaches round 4 far more often than an ADP entry — `make bracket`'s
+benchmark entry already reads `p_advance = 1.0` in all five tournaments. Every EV the room
+prints inherits that. It is exactly what Gate C's error injection exists to price, and until
+item 8 runs, **the room's EV is a ranking device and not money.** The page says so on screen.
+
 ---
 
 ## Data the layer needs, and where it comes from
@@ -2076,7 +2287,7 @@ Every gate is judged on validation or on simulated truth. None reads the test sp
 | **B** ✅ ⚠️ | simulated drafts reproduce the **observed ADP curve** — mean absolute rank gap under the 17.0-pick recalibration error, so the field model is no worse than the market proxy it consumes | The field model's only real calibration target. Failing it means the opponent model is not a field. **Run 2026-08-09**: passes wide, pooled **5.922** picks on the fit region and **9.082** over every ADP'd player. The caveat is the fit rather than the gate — a **constant** rank noise is not identified by a mean-ADP target at all (the whole sd 0–30 grid spans **0.110** / **0.117** picks and the two seasons disagree about its optimum inside that band), while a rank-dependent shape is, with both validation seasons landing on **sd = 4.00** independently. What separates the shipped arm from a zero-noise field is not the 0.044-pick margin but `field_diversity`: at sd = 0 two drafts share **100%** of a seat's roster |
 | **C** | the **error-injected** simulated world reproduces the model's measured out-of-sample miss: availability CRPS ≈ 10.006 games, component R² in 0.81–0.95, season-total MAE ≈ 400.5 dk_pts | Without this the sweep cannot price ADP, exposure caps, or any other hedge against model error |
 | **D** | the sweep selects **materially different** rosters for the two tiers | If the $20 and $52 strategies converge, either the objective is not doing its job or the tier difference is smaller than the economics imply. Either way it needs to be known before entering |
-| **E** | in-draft recompute **under 1.0 s** at `n_sims = 500` on the full remaining pool | The 30-second clock. Failing it drops the draft room to ranking-submission mode |
+| **E** ✅ | in-draft recompute **under 1.0 s** at `n_sims = 500` on the full remaining pool | The 30-second clock. Failing it drops the draft room to ranking-submission mode. **Run 2026-08-09**: passes with 5× of headroom — **112 ms mean, 185 ms p95, 200 ms max** over 359 candidates, against 1,000 ms. Both levers the plan named were needed and both are exact rather than approximate: `n_sims = 500`, and best-7-by-slot as **one matroid exchange** per candidate. The same page also reproduces the symmetric-field null's P(advance) to **2e-8** |
 | **F** | measured edge, expressed as **lift in P(top 2 of 12)** over an ADP-drafted entry, is reported with a bootstrap interval against the break-even hurdle (+17.60% / +12.32%) | Not a pass/fail on the edge itself — a requirement that the number is quoted in comparable units with its uncertainty, rather than as a point estimate |
 
 ---
@@ -2099,6 +2310,14 @@ sim:
 
   n_sims_draft: 500              # in-draft; a ranking, not a level
   pod_size: 12
+
+  draft_room:
+    field_drafts: 100            # 12-seat pods in the cached reference field. 100 gives
+                                 # `20k_spin_move`'s null to -0.03%; `600k_shootaround`
+                                 # reads -17% and does NOT converge — 300 pods buy -7.7%
+                                 # and make the RANKING less stable, not more
+    objective: bracket_ev        # or `p_advance` / `lineup_value`; all three ship
+    seat: 0                      # DK randomizes it, so the page owns it in practice
 
   field:
     adp_source: dk_recalibrated  # docs/adp-plan.md: never the raw consensus
@@ -2188,6 +2407,21 @@ Plain `assert` with synthetic builders, no fixtures or classes, mirroring
   two producers of one contract is how a simulator ends up drawing from something subtly
   different from what was fitted. `tests/test_stan_composition.py` pins the *absence* of
   `fit_ot_tail`, because the failure there is reintroduction.
+- **the draft room** ✅ `tests/test_draft_room.py` — 22 tests, no tensor and no field draft.
+  Three are load-bearing and the rest are guards. **The exchange identity** is checked
+  against `bracket.best_lineup` itself over 400 random rosters, single-position and
+  dual-eligible both, since the whole latency argument rests on it being exact rather than
+  close — and a wrong threshold still returns a ranked table. **The symmetric-field null** is
+  reproduced on a hand-built two-round tournament whose answer is arithmetic, which catches a
+  wrong survivor reweighting, a wrong plotting position and a payout indexed off by one at
+  once. **The plotting position** is pinned directly, because it is the one term that moves no
+  shape and every level. Plus: a base roster that cannot seat seven raises instead of pricing
+  against six; `survival` reads each sim against its own field, since pooling would let a
+  high-scoring sim's field beat a low-scoring sim's entry; the completion fills the slate
+  first and never names a player already gone; one click advances the snake and `replay`
+  rebuilds the state from the log; and an unpriceable player is excluded rather than valued
+  at zero. `tests/test_dashboard.py` pins the import exemption in both directions — one named
+  file, bounded at `src.sim`.
 
 ---
 
@@ -2214,10 +2448,19 @@ Plain `assert` with synthetic builders, no fixtures or classes, mirroring
   in passing. The consequence today is that the bracket's field ranks by the **simulator's own
   projection** rather than by market ADP, which makes it stronger and more correlated than a
   real pod.
-- **Gate E is not free.** The reactive recompute measures roughly **0.76 s mean and 1.5 s max**
-  at `n_sims = 500` over the full remaining pool, against a 1,000 ms bar. The two levers the plan
-  named — a partial sort for best-7-by-slot, and not re-ranking the deep tail every pick — are
-  required rather than optional.
+- ~~**Gate E is not free.**~~ ✅ **Closed 2026-08-09.** The marginal-lineup-value recompute
+  did measure 0.76 s mean and 1.5 s max, over the bar before the bracket EV went on top. The
+  first lever named — best-7-by-slot without a re-solve — turned out to be available in an
+  **exact** form rather than as a partial sort, and it alone is worth the whole margin: Gate
+  E now reads **112 ms mean and 200 ms max**. The second lever, not re-ranking the deep tail,
+  was **not needed and is not implemented**, so the room ranks every legal priceable player
+  on every pick. That is the better outcome — a screen would have been a heuristic over an
+  objective whose top few candidates are already inside its own field noise.
+- 🔴 **The draft room's EV level is optimistic for the same reason the bracket's benchmark
+  entry is.** The reference field drafts off ADP while the room's board is the model's own
+  projection, so a best-available roster reaches round 4 far more often than an ADP entry
+  does. Gate C's error injection is what prices it; until item 8 runs, the room's EV is a
+  ranking device rather than money, and the page says so on screen.
 - **The DK ADP capture deadline is live** — an early-to-mid October 2026 board is the second
   anchor the recalibration needs, and it cannot be backfilled. See `docs/adp-plan.md`.
 - **No-redraft risk is not in the ranking.** A Round-1 pick who is traded or suffers a
@@ -2292,8 +2535,9 @@ Ordered so the **live-draft path closes at item 7**. Items 2, 3 and 3b depend on
 run in any order alongside item 1. **Item 3c must follow 3b** — both were expected to edit
 `stan_composition`, though 3c in the event did not — and both must land before item 4, which
 imports whatever they settle. **Item 3d follows 3c** and does edit that head, so nothing else
-may be in flight on it. Items 1, 2, 3, 3b, 3c, 4, 5 and 6 are done; **item 7 is next**, and
-it closes the live-draft path.
+may be in flight on it. Items 1, 2, 3, 3b, 3c, 4, 5, 6 and 7 are done — **the live-draft path
+is closed and a draft can be run today**; **item 8 is next**, and it is what makes the numbers
+the room prints mean money rather than only rank.
 
 **Item 3d's capability landed 2026-08-09 and its full-window commitment did not** — the
 distinction is spelled out under item 3d itself. Item 4 is **not** blocked by that: it
@@ -2735,7 +2979,25 @@ through.
 > recalibration error. Fit `rank_noise_sd` to that target rather than choosing it. Let field
 > composition vary by tournament tier even though nothing calibrates that yet.
 
-### 7. `dashboard/draft_room.py` — the live recommender, and Gate E 🎯 live-draft ready
+### 7. `dashboard/draft_room.py` — the live recommender, and Gate E ✅ built 2026-08-09
+
+**Gate E passes at 112 ms mean / 200 ms max against a 1,000 ms bar, so a live draft is
+possible** — see "What was built, and what Gate E found" above. Four things carry into item 8.
+Best-7-by-slot is **one matroid exchange** and it is exact, which is a tool the sweep can use
+too. The in-draft objective now *is* payout-weighted bracket EV, so `recommend`'s `value` seam
+is filled. **The EV level does not converge on `600k_shootaround`** — −17% against the
+symmetric null at the shipped field size, and tripling the field makes the *ranking* less
+stable rather than more — while P(top 2 of 12) is exact and reproduces across fields, which is
+the same split `select-on-p-advance-report-roi` already predicted. And a pick can only be
+priced inside a **completed** roster, which is a plug-in the sweep will have to make a
+decision about rather than inherit.
+
+One deviation from the conventions, taken deliberately and registered as
+`draft-room-imports-src-sim`: the page imports `src.sim`, which `dashboard/README.md`
+otherwise forbids. The rule exists so a view cannot refit; the alternative here was
+reimplementing `bracket.best_lineup` and `draft.legal_mask`, which is the drift the rule
+prevents arriving the other way round. The invariant is narrowed by a test rather than
+waived — one named file, bounded at `src.sim`.
 
 > Read `docs/simulations-plan.md` ("The live draft room"). Build a Streamlit page separate from
 > the walkthrough app: load the precomputed sim tensor and draft pool, show the board, take

@@ -14,7 +14,7 @@ PIP    := .venv/bin/pip
         stan-substitution season-terms games-played stan-games-played \
         stan-game-length posteriors minutes-unification composition-effects \
         scoring-periods draft-pool simulate-season bracket draft-sim \
-        final-evaluation
+        draft-room draft-room-prep final-evaluation
 
 venv:
 	/opt/homebrew/bin/python3.14 -m venv .venv
@@ -366,6 +366,30 @@ bracket:
 # it against the curve the field consumed, against the recalibration's own 17.0-pick error.
 draft-sim:
 	$(PYTHON) -m src.sim.draft
+
+# The live draft room. `draft-room-prep` is the offline half: it drafts and scores each
+# season's reference field ONCE into data/features/draft_room_field_<season>.npz — the
+# population the recommender's `q` is read from — checks it against the symmetric-field
+# null, and measures GATE E, which is the 1.0 s per-recompute bar a 30-second fast-draft
+# clock implies. `draft-room` is the page, and it loads that artifact rather than
+# rebuilding it, so launching a room is a second rather than a minute.
+#
+# Two things make the recompute fit, and both are in docs/simulations-plan.md: n_sims
+# drops to 500 in-draft because the decision is a RANKING of candidates rather than an
+# estimate of a level, and best-7-by-slot is ONE matroid exchange per candidate rather
+# than a re-solve — exact, not approximate, and pinned against bracket.best_lineup.
+#
+# The objective is decision 5's: payout-weighted EV over all four rounds, with the
+# survivor population of rounds 2-4 obtained by reweighting the same field rather than by
+# dealing it. Read draft_room_null.csv before trusting an EV level and
+# draft_room_stability.csv before trusting a close call between two candidates.
+draft-room-prep:
+	$(PYTHON) -m src.sim.draft_room
+
+# Module invocation for the same reason `dashboard` uses it: the venv's console scripts
+# carry an absolute shebang and do not survive the repo being renamed.
+draft-room:
+	$(PYTHON) -m streamlit run dashboard/draft_room.py
 
 # Does any head need a season term, and which kind? A trend covariate and a year-level
 # random effect for every head, plus the season x role interaction the availability era

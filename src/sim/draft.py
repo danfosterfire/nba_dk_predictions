@@ -746,11 +746,11 @@ def recommend(state: DraftState, board_frame: pd.DataFrame, seat: int,
     out = board_frame.iloc[candidates][["player_id", "player_name", "team", "position",
                                         "adp_dk_scale", "board_rank"]].copy()
     out["value"] = value
-    out["rank_cushion"] = _rank_cushion(state, candidates, seat)
+    out["rank_cushion"] = rank_cushion(state, candidates, seat)
     return out.sort_values("value", ascending=False).head(top).reset_index(drop=True)
 
 
-def _rank_cushion(state: DraftState, candidates: np.ndarray, seat: int) -> np.ndarray:
+def rank_cushion(state: DraftState, candidates: np.ndarray, seat: int) -> np.ndarray:
     """Board places between a candidate and the last pick before this seat is back up.
 
     Negative means the field is expected to have taken him; positive is cushion. Expressed

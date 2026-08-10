@@ -586,6 +586,29 @@ def test_the_repo_root_is_on_the_path_for_package_imports():
     assert str(ROOT) == str(artifacts.ROOT)
 
 
+# `draft_room.py` is the one page that reaches into `src/`, and the exemption is narrow
+# on purpose — see the module's own docstring and `dashboard/README.md`. It is a live
+# decision tool rather than a view, and what it needs is `bracket.best_lineup` and
+# `draft.legal_mask`; the alternative to importing them is a second copy of the matroid
+# that seats a weekly lineup and a second opinion about which players are legal, which is
+# the drift this rule exists to prevent arriving through the other door.
+SRC_IMPORTERS = {"draft_room.py": "src.sim"}
+
+
+def _src_imports(path) -> list[str]:
+    tree = ast.parse(path.read_text(), filename=str(path))
+    found = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names = [a.name for a in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            names = [node.module or ""]
+        else:
+            continue
+        found += [n for n in names if n == "src" or n.startswith("src.")]
+    return found
+
+
 def test_the_dashboard_imports_nothing_from_src():
     """The invariant: it reads artifacts and nothing else.
 
@@ -594,18 +617,27 @@ def test_the_dashboard_imports_nothing_from_src():
     """
     offenders = []
     for path in sorted((ROOT / "dashboard").rglob("*.py")):
-        tree = ast.parse(path.read_text(), filename=str(path))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                names = [a.name for a in node.names]
-            elif isinstance(node, ast.ImportFrom):
-                names = [node.module or ""]
-            else:
-                continue
-            for name in names:
-                if name == "src" or name.startswith("src."):
-                    offenders.append(f"{path.relative_to(ROOT)}: {name}")
+        if path.name in SRC_IMPORTERS:
+            continue
+        offenders += [f"{path.relative_to(ROOT)}: {name}" for name in _src_imports(path)]
     assert offenders == []
+
+
+def test_the_one_exempt_page_reaches_no_further_than_the_simulation_layer():
+    """The exemption is a boundary, not a hole.
+
+    `src.sim` is numpy over the artifacts the pipeline wrote and imports no CmdStan, so a
+    page built on it still cannot refit anything. An import of `src.models` or `src.data`
+    would be a page that could, which is the thing the rule forbids.
+    """
+    for name, allowed in SRC_IMPORTERS.items():
+        path = ROOT / "dashboard" / name
+        assert path.exists(), name
+        imports = _src_imports(path)
+        assert imports, f"{name} is listed as exempt but imports nothing from src/"
+        for module in imports:
+            assert module == allowed or module.startswith(f"{allowed}."), \
+                f"{name} imports {module}, outside the exempt {allowed}"
 
 
 def test_pure_modules_do_not_import_streamlit():
