@@ -3876,24 +3876,112 @@ REGISTRY: tuple[Decision, ...] = (
         claim="Strategy tuning runs on **simulated truth with the model's measured "
               "out-of-sample error injected**. An uninjected simulated backtest cannot "
               "price ADP, exposure caps, or any other hedge against model error.",
-        because="A season drawn from the model's own posterior is a world where the model "
-                "is perfectly calibrated by construction, so ADP can only add noise and "
-                "the sweep drives alpha to zero for reasons that have nothing to do with "
-                "whether the market knows something. The same failure hits every "
-                "error-hedging strategy. So the truth draw is perturbed to reproduce the "
-                "measured miss — availability CRPS 10.006 games, component R2 0.81-0.95 "
-                "against the no-fit floors, season-total MAE 400.5 dk_pts — before "
-                "anything is scored against it. An uninjected sweep is not a conservative "
-                "version of this; it answers a different question and its alpha is not "
-                "transportable. Realized 2022-23 / 2023-24 remains the honest readout, at "
-                "N = 2 seasons.",
-        status="settled",
-        reproduce="make stan-components → outputs/predictions/stan_component_metrics.csv",
-        unblocks="Gate C in docs/simulations-plan.md",
+        because="A world drawn from the model's own posterior leaves the model an "
+                "unbiased, efficient predictor of it and the market a strictly noisier "
+                "view of the same thing, so the sweep drives alpha to zero for reasons "
+                "that have nothing to do with whether the market knows something. The "
+                "same failure hits every error-hedging strategy. The conclusion held when "
+                "it was built on 2026-08-09; the stated mechanism did not — see "
+                "`uninjected-world-is-not-too-easy`. What the injection actually does is "
+                "ROTATE the error onto the market-visible direction at fixed magnitude, "
+                "with the scale solved from the season-total MAE bar (400.46) and the "
+                "market weight solved from the realized market-minus-model Spearman gap. "
+                "Both land exactly. Realized 2022-23 / 2023-24 remains the honest readout, "
+                "at N = 2 seasons, and its edge is not distinguishable from zero.",
+        status="built",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_gate_c.csv, "
+                  "outputs/predictions/strategy_injection.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-09",
         date="2026-08-08",
         tags=("methodology",),
+    ),
+    Decision(
+        id="uninjected-world-is-not-too-easy",
+        topic="simulations",
+        claim="~~The uninjected simulated world is too easy, so the model looks better "
+              "there than it is.~~ **The magnitude of the model's miss is already right; "
+              "what is wrong is the market's standing against it.**",
+        because="Gate C's premise was a claim about magnitude and had never been measured. "
+                "Measured on 2026-08-09, the uninjected world reproduces the model's "
+                "out-of-sample miss on two of four rows and is HARDER than reality on the "
+                "other two: season-total MAE 414.97 / 398.96 against a bar of 400.46, "
+                "availability CRPS 10.0935 / 9.9387 against 10.0057, season-total R2 0.552 "
+                "/ 0.599 against 0.7073. That is what a head which shrinks hard delivers — "
+                "its predictive spread is about the size of its real error — and Gate A "
+                "had half-said it, with the simulator's season-total CRPS beating the "
+                "incumbent's against realized data. The real defect is that the simulated "
+                "error is orthogonal to everything: on realized validation seasons the "
+                "market's Spearman against season totals is ABOVE the model's by +0.052 "
+                "and +0.016, while in the model's own posterior world the model leads by "
+                "-0.111 and -0.118. Adding noise cannot fix that; noise is what the model "
+                "already has too much of relative to the market.",
+        status="withdrawn",
+        replaced_by="market-skill-gap-is-the-injection-target",
+        caught_by="make strategy-sweep — `magnitude_check`, the measurement the premise "
+                  "rested on and nobody had taken",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_gate_c.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("methodology", "strategy"),
+    ),
+    Decision(
+        id="market-skill-gap-is-the-injection-target",
+        topic="simulations",
+        claim="The error injection is calibrated to the **market-minus-model Spearman "
+              "gap**, not to the magnitude of the model's miss alone.",
+        because="A blend weight is priced against the two rankers' RELATIVE skill, and "
+                "that is the one thing a posterior-drawn world gets backwards. So the "
+                "injection solves two parameters rather than plugging any in: `g` holds "
+                "the season-total MAE on 400.46 and `rho` puts the simulated skill gap on "
+                "the realized +0.0521 / +0.0160. Both land exactly. `rho` comes back "
+                "0.4292 / 0.3999, and an INDEPENDENT route — the correlation between the "
+                "market's disagreement and the model's realized residual, sharing no "
+                "arithmetic with the first — reads 0.3083 / 0.3360, so the market sees "
+                "9.5-11.3% of the variance of the model's miss. Two Gate C rows are not "
+                "met and both are conservative: season-total R2 0.543 / 0.573 against "
+                "0.7073 and per-game rate R2 0.528 / 0.581 against the count heads' "
+                "0.81-0.95 floor band, i.e. the injected world is harder to rank in than "
+                "reality. The 0.81-0.95 band is the COUNT heads' carry-forward floor; read "
+                "off the selected rows of the same file it becomes [0.13, 0.96], which no "
+                "world could fail, and a test pins which rows it comes from.",
+        status="measured",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_gate_c.csv, "
+                  "outputs/predictions/strategy_injection.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("methodology", "market", "strategy"),
+    ),
+    Decision(
+        id="sweep-runs-on-the-priceable-board",
+        topic="simulations",
+        claim="The strategy sweep restricts the draft board to the **347-359 players the "
+              "tensor can price**, symmetrically for our entries and for the field.",
+        because="`make simulate-season` scores 386 of 539 rostered players and pads the "
+                "rest with ZEROS so a draft can still run into them. A model-ranked "
+                "strategy never takes one; measured on every run by drafting thirty pods on "
+                "the unrestricted board, the ADP field takes 1.2556 and 1.1861 per "
+                "sixteen-man entry across the two validation seasons and 73.06% / 74.72% of "
+                "its entries hold at least one, each a roster spot scoring nothing all "
+                "season. That is a coverage hole in the tensor arriving as a "
+                "handicap on one side of the comparison, and it was worth more than every "
+                "strategy axis combined: in a reduced-budget diagnostic before the fix a "
+                "PURE-ADP entry of our own read P(top 2 of 12) = 0.285 against an exact "
+                "0.1667, and model_mean read 0.43. "
+                "`make bracket` sees the same thing from the other end, where "
+                "the best-available benchmark reads p_advance = 1.0 in all five "
+                "tournaments. The cost is stated rather than hidden — who is on the board "
+                "at pick k changes, by 101 of 448 rows in 2022-23 and 16 of the 196 the "
+                "market prices — and the right fix is upstream, by pricing those players.",
+        status="settled",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_injection.csv, "
+                  "outputs/predictions/strategy_null.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("methodology", "strategy"),
     ),
     Decision(
         id="scoring-periods-are-nba-weeks",
@@ -4113,14 +4201,16 @@ REGISTRY: tuple[Decision, ...] = (
                 "10,000x entry, so above its round-2 floor it rewards correlated upside "
                 "and differentiation from the field; P(reach round 4) at random is "
                 "0.139%. Its rake hurdle is also 43% higher (+17.60% against +12.32%). "
-                "Confirming the sweep actually selects different rosters for the two is "
-                "Gate D.",
+                "Confirming the sweep actually selects different rosters for the two was "
+                "Gate D, and on 2026-08-09 it FAILED — see `tiers-share-one-board`. The "
+                "two stakes still ship, because the structures and the rake differ; what "
+                "does not differ is the roster, so it is one board entered twice.",
         status="settled",
         reproduce="make dashboard → dashboard/economics.py, "
                   "data/raw/dk_best_ball_tournament_metadata.csv, "
                   "data/raw/dk_best_ball_tournament_prize_structure.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-09",
         date="2026-08-08",
         tags=("economics", "strategy"),
     ),
@@ -4139,13 +4229,17 @@ REGISTRY: tuple[Decision, ...] = (
                 "itself goes through `selection_split` and never materializes the test "
                 "rows. Prose already failed once here: the games-played head's Gate D was "
                 "specified with test figures as its bars and settled which model ships, "
-                "on a margin a paired bootstrap could not distinguish from zero.",
+                "on a margin a paired bootstrap could not distinguish from zero. Half of "
+                "this landed on 2026-08-09: `make strategy-sweep` runs through "
+                "`selection_split`, is pinned by a test that raises before it loads any "
+                "artifact, and wrote the frozen strategy to "
+                "`outputs/predictions/strategy_shipped.csv`. The test-side runner is build "
+                "item 10 and has not been run.",
         status="settled",
-        reproduce="make final-evaluation → src/models/held_out.py, "
-                  "src/final_evaluation.py",
-        unblocks="src/sim/strategy.py and its final-evaluation counterpart",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_shipped.csv",
+        unblocks="build item 10, the one-shot test-split risk readout",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-09",
         date="2026-08-08",
         tags=("methodology", "split"),
     ),
@@ -4351,6 +4445,154 @@ REGISTRY: tuple[Decision, ...] = (
         source="docs/simulations-plan.md",
         reviewed="2026-08-09",
         date="2026-08-08",
+        tags=("methodology", "strategy"),
+    ),
+    Decision(
+        id="tiers-share-one-board",
+        topic="drafting",
+        claim="**Gate D fails: the $20 and $52 tiers do not select materially different "
+              "rosters**, so one board serves both.",
+        because="In all six comparisons the cross-tier roster overlap sits inside the "
+                "within-tier band — 0.480 against 0.517 / 0.396 for the shipped arm in "
+                "2022-23 — and both tiers select the same strategy. That holds under a "
+                "tier-BLIND ranking, where the board key knows nothing about which payout "
+                "table it is drafting into and Gate D could only fail, AND under a "
+                "`bracket_ev` objective that prices each candidate against that "
+                "tournament's own pods, advance counts and cash bands (0.713 against 0.704 "
+                "/ 0.792). The mechanism is Round 1: both tournaments cut 2 of 12 in the "
+                "only zero-consolation round, so 83% of paths end identically and "
+                "everything the economics say about the tail — a 10,000x top prize against "
+                "a flat final table — moves the objective very little. "
+                "`two-strategies-two-tiers` said comparing the tiers is itself a result; "
+                "this is the result, and its practical consequence for October is one "
+                "board rather than two.",
+        status="measured",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_gate_d.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("economics", "strategy"),
+    ),
+    Decision(
+        id="alpha-has-a-sign-but-not-a-location",
+        topic="drafting",
+        claim="**Blending the market in pays and is resolved; which `alpha` is not.** The "
+              "shipped strategy is marginal-lineup-value ranking blended 30% into the "
+              "DK-recalibrated ADP rank.",
+        because="Paired on the simulated season — which is what makes anything resolve, "
+                "since unpaired intervals cover the whole table — every blend arm is at or "
+                "above the pure model and pure ADP loses decisively (-0.0576 and -0.0987 "
+                "of lift in P(top 2 of 12)). The blend is worth a further +0.0338 [+0.0237, "
+                "+0.0446] on top of the best in-draft objective, so it adds to the "
+                "positional pricing rather than substituting for it. But 600k_shootaround "
+                "peaks at alpha = 0.15 and 20k_spin_move at 0.70, with 0.30 and 0.50 "
+                "unresolved against zero at 600k: the axis has a sign and not a location. "
+                "That is Gate B's `rank_noise_sd` finding one layer up, and for the same "
+                "reason — a flat objective near its optimum. The per-round direction "
+                "`docs/adp-plan.md` predicts (lean on the market in the deep rounds, where "
+                "disagreement is 30.8 picks against 5.1) beats its own reverse control by "
+                "+0.0340 [+0.0266, +0.0423] at 20k and by an unresolved +0.0050 at 600k — "
+                "right where it resolves, never wrong.",
+        status="measured",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_paired.csv, "
+                  "outputs/predictions/strategy_shipped.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("market", "strategy"),
+    ),
+    Decision(
+        id="stacking-is-a-measured-loss",
+        topic="drafting",
+        claim="**Same-team stacking costs and buys nothing.** It does not ship.",
+        because="Against its own uncapped twin, a 12-pick stacking bonus costs -0.0179 "
+                "[-0.0244, -0.0119] and -0.0431 [-0.0507, -0.0358] of lift in "
+                "P(top 2 of 12) across the two tiers, and buys +0.0077 [-0.0039, +0.0181] "
+                "and -0.0401 of P(at least one entry advances). A 4-pick bonus is smaller "
+                "and the same sign. That is the direction the zero-sum minutes constraint "
+                "implies: a team's season minutes are a fixed pot, so teammates' totals are "
+                "anti-correlated at a measured mean pairwise r = -0.0509, and the shared "
+                "upside a stack buys (overtimes, blowouts) does not pay for it. The axis "
+                "was flagged as possibly mispriced with the WRONG SIGN under an "
+                "independent-minutes model; the composition head carries the sign, and the "
+                "answer is that the strategy is a loss rather than a hedge.",
+        status="null",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_paired.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("strategy",),
+    ),
+    Decision(
+        id="exposure-caps-trade-lift-for-breadth",
+        topic="drafting",
+        claim="**An exposure cap is a real trade with a measured price on both sides**, and "
+              "it cannot be selected by the criterion the sweep selects on.",
+        because="Against its own uncapped twin, a 40% cap costs -0.0461 [-0.0538, -0.0385] "
+                "of per-entry lift in P(top 2 of 12) and buys +0.0236 [+0.0142, +0.0332] of "
+                "P(at least one of the portfolio's entries advances). Neither dominates. "
+                "The two statistics are not two views of one quantity: ten entries holding "
+                "the same sixteen players have the SAME P(advance) as one entry and a much "
+                "lower P(any), which is `1 - prod(1 - p)` computed inside a simulated season "
+                "and not recoverable from per-entry means. Since "
+                "`select-on-p-advance-report-roi` selects on the per-entry figure, the cap "
+                "can only ever show up there as a cost — so the portfolio statistic is "
+                "reported beside it rather than instead of it, and the decision to ship "
+                "without a cap is a decision rather than an omission.",
+        status="measured",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_paired.csv, "
+                  "outputs/predictions/strategy_sweep.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("strategy",),
+    ),
+    Decision(
+        id="ev-and-survival-disagree-at-the-top-tier",
+        topic="drafting",
+        claim="At `600k_shootaround` the payout-weighted EV objective is the **worst** "
+              "resolved arm on P(top 2 of 12) and the **best** on ROI.",
+        because="`bracket_ev` reads -0.0225 [-0.0339, -0.0111] of lift against the model "
+                "baseline while returning ROI +61.8 against the shipped arm's +21.5. The "
+                "two criteria genuinely disagree, and the tournament is the one whose money "
+                "is in the tail: a P(advance)-maximal roster is a chalk roster, which the "
+                "draft room measured independently. `select-on-p-advance-report-roi` "
+                "settles which one selects — the lift, because it resolves and the ROI does "
+                "not — so the disagreement is recorded rather than smoothed. It is also the "
+                "sharpest argument for reading the lift and not the ROI level: at the "
+                "shipped field size the symmetric-field null's E[payout] is -15.0% for this "
+                "tournament and -0.0% for `20k_spin_move`.",
+        status="measured",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_paired.csv, "
+                  "outputs/predictions/strategy_sweep.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
+        tags=("economics", "strategy"),
+    ),
+    Decision(
+        id="realized-edge-is-not-distinguishable-from-zero",
+        topic="drafting",
+        claim="On the two realized validation seasons the shipped strategy's edge is "
+              "**+0.235 / +0.019** and **+0.172 / -0.026** in lift, i.e. not "
+              "distinguishable from zero.",
+        because="N = 2 seasons of correlated pods is the ceiling on the honest estimate and "
+                "the readout does not pretend otherwise — its intervals resample the FIELD "
+                "and the entries, because a season cannot be resampled and there are two of "
+                "them. 2022-23 is a good season in both tiers and 2023-24 is a wash in "
+                "which an ADP-drafted entry beat the shipped one (0.2545 against 0.1855, "
+                "and 0.2045 against 0.1412). The readout's job is to catch a strategy "
+                "broken in a way the simulated world cannot see, and nothing here is "
+                "broken; it is not a selector and it changed nothing. The simulated lift "
+                "(+0.211 / +0.199) is separately an UPPER bound, because the error "
+                "injection acts on the season-level rate and leaves the model's knowledge "
+                "of the distribution's shape exact.",
+        status="measured",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_realized.csv, "
+                  "outputs/predictions/strategy_shipped.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-09",
+        date="2026-08-09",
         tags=("methodology", "strategy"),
     ),
     Decision(

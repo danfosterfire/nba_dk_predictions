@@ -469,6 +469,30 @@ sim:
     # fills, so this is set in the page rather than trusted from here.
     seat: 0
 
+  # ── The strategy sweep — `make strategy-sweep` ────────────────────────────
+  strategy:
+    # Simulated worlds each strategy is scored on. Our entries and the field share them,
+    # so every comparison is PAIRED and resolves far faster than the count suggests.
+    n_sims: 500
+    # Twelve-seat pods in the reference field, drafted once per season on the injected
+    # world and reused across the whole table. The same caveat draft_room records: the
+    # advance rate is exact at this size and 600k_shootaround's EV level is not.
+    field_drafts: 100
+    # GATE C. Disabling the injection changes the question being asked, so there is no
+    # switch here — what the injection does is CALIBRATED rather than chosen, from two
+    # measurements taken on realized validation seasons:
+    #   * the season-total MAE bar (400.46, season_total_metrics.csv) fixes the scale;
+    #   * the MARKET SKILL GAP — spearman(ADP, realized) minus spearman(model, realized) —
+    #     fixes how much of the error the market can see.
+    # The second is the one the plan did not name and it is the one that matters. The
+    # uninjected world already reproduces the model's measured miss in MAGNITUDE (419.6
+    # against 400.5 on 2022-23); what it gets backwards is the two rankers' relative
+    # standing, leading by +0.11 Spearman where reality has the market ahead by +0.06.
+    # A blend weight priced in that world is priced against a market that is a strictly
+    # noisier copy of the model, which is exactly what Gate C exists to prevent.
+    error_injection:
+      targets: [season_total_mae, market_skill_gap]
+
   field:
     # docs/adp-plan.md binds this: never the raw consensus. A Yahoo/ESPN consensus
     # correlates with the one real DK board at rho 0.870 but with a 21.9-pick mean absolute

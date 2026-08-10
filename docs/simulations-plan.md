@@ -1290,7 +1290,13 @@ make bracket ✅      src/sim/bracket.py            best 7 of 16 by slot per per
                                                    number from dashboard/economics.py
                                                    -> outputs/predictions/bracket_{structure,
                                                       null,entries}.csv
-make strategy-sweep  src/sim/strategy.py           the sweep -> outputs/predictions/strategy_*.csv
+make strategy-sweep ✅ src/sim/strategy.py         the sweep: Gate C's error injection,
+                                                   22 strategies x 2 tiers x 2 seasons,
+                                                   paired on the simulated season, plus
+                                                   the realized readout
+                                                   -> outputs/predictions/strategy_{gate_c,
+                                                      injection,null,sweep,paired,gate_d,
+                                                      realized,shipped}.csv
 
 make draft-room-prep ✅ src/sim/draft_room.py      the engine: the cached reference field,
                                                    the null check and Gate E
@@ -1858,6 +1864,227 @@ drafts centers 11.9 picks earlier because category-league ADP discounts them for
 expect `α` to want to vary by round, since disagreement is 5.1 picks in rounds 1–2 against 30.8
 in rounds 9+ — which is where 9 of the 16 roster spots are filled.
 
+### What was built, and what Gates C and D found — 2026-08-09
+
+`src/sim/strategy.py`, `make strategy-sweep`. **22 strategies × 2 tiers × 2 validation
+seasons at 500 simulated worlds each, in 4.8 minutes of numpy.** Gate C passes on the two
+targets it can hit and misses two rows in a stated direction; Gate D **fails, and that is the
+result** — the two tiers do not select materially different rosters, under a tier-blind
+ranking or a tier-aware objective.
+
+#### 🔴 Gate C's premise was half wrong, and fixing it changed what gets injected
+
+The plan's argument is that a world drawn from the model's own posterior is one where the
+model is calibrated by construction, so ADP can only add noise and `α → 0` for reasons that
+have nothing to do with the market. **The conclusion is right and the stated mechanism is
+not.** The mechanism is a claim about *magnitude* — that the simulated world is too easy —
+and it had never been measured. Measured, it does not hold:
+
+| | 2022-23 | 2023-24 | bar | artifact |
+|---|---|---|---|---|
+| season-total MAE, **uninjected** | **414.97** | **398.96** | 400.46 | `season_total_metrics.csv` |
+| availability CRPS, **uninjected** | **10.0935** | **9.9387** | 10.0057 | `stan_games_played_metrics.csv` |
+| season-total R², uninjected | 0.5520 | 0.5994 | 0.7073 | `season_total_metrics.csv` |
+| dk_pts-per-game R², uninjected | 0.7018 | 0.7374 | 0.81–0.95 | `stan_component_metrics.csv` |
+
+The uninjected world already reproduces the model's measured out-of-sample miss on two of
+the four rows and is **harder** than reality on the other two. That is what a head which
+shrinks hard is supposed to deliver — its predictive spread is about the size of its real
+error — and Gate A had half-said it already, with the simulator's season-total CRPS coming in
+*better* than the incumbent's against realized data.
+
+**What the uninjected world gets wrong is not the size of the error but the standing of the
+two rankers.** On the priced players of the validation seasons, Spearman against realized
+season totals reads model **0.7044 / 0.7090** against market **0.7564 / 0.7250** — the market
+is *ahead* by **+0.052** and **+0.016**. In a world drawn from the model's posterior the model
+leads by **−0.111** and **−0.118**, because there it is the unbiased efficient predictor and
+ADP is a strictly noisier view of the same thing. That is a swing of **0.16 to 0.13 Spearman
+points**, and no amount of extra *noise* closes it: noise is what the model already has too
+much of relative to the market.
+
+So the injection **rotates** the error onto the market-visible direction at fixed magnitude
+rather than adding error on top of it, and it has two solved parameters rather than plugged-in
+ones: `g` holds the season-total MAE on its bar and `ρ` puts the simulated skill gap on the
+realized one. Both land exactly (MAE **400.4586** against 400.4586; gap **+0.0521** and
+**+0.0160** against +0.0521 and +0.0160).
+
+**`ρ` has an independent second route and the two agree.** Solved from the skill gap it is
+**0.4292 / 0.3999**; measured directly as `corr(market disagreement, model residual)` on
+realized data it is **0.3083 / 0.3360**, i.e. the market sees **9.5% / 11.3%** of the
+variance of the model's miss. The two share no arithmetic — one is a difference of rank
+correlations, the other a correlation between a disagreement and a residual — so agreement
+inside 0.1 is evidence rather than bookkeeping.
+
+**Two Gate C rows are not met, both in the conservative direction**, and they are reported
+rather than tuned away. Season-total R² reads **0.5428 / 0.5733** against 0.7073 and the
+per-game rate R² reads **0.5280 / 0.5811** against the count heads' 0.81–0.95 floor band. The
+injected world is *harder* than reality: at the same MAE, truth has less between-player spread
+than a real season does, so ranking players is harder there than here. A harder world
+understates every strategy's lift, and since the *relative* standing of model and market is
+pinned it should leave `α` roughly where it belongs.
+
+**The band itself had to be re-derived rather than typed in.** 0.81–0.95 is the **count**
+heads' no-fit carry-forward floor. Read off the *selected* rows of the same file it becomes
+[0.13, 0.96], because three of the four conversion heads score under 0.35 — a bar no simulated
+world could fail. A test pins which rows it comes from.
+
+#### 🔴 The board had to be restricted to priceable players, and it is the largest single correction here
+
+`make simulate-season` scores 386 of 539 rostered players and pads the rest with **zeros** so a
+draft can still run into them. A model-ranked strategy never takes one. Measured on every run
+by drafting thirty pods of the fitted field on the *unrestricted* board, the ADP field takes
+**1.2556** and **1.1861** of them per sixteen-man entry across the two seasons, and **73.06%**
+and **74.72%** of its entries hold at least one — a roster spot that scores nothing all season.
+That is a coverage hole in the tensor arriving as a handicap on one side of the comparison, and
+it is worth far more than any axis the sweep measures. In a reduced-budget diagnostic run
+before the fix, our own **pure-ADP** entry read `P(top 2 of 12) = 0.285` against an exact
+0.1667 and `model_mean` read 0.43 — a diagnostic rather than a reproducible figure, kept
+because it is the size of the thing. `make bracket` sees the same defect from the other end,
+where the best-available benchmark reads `p_advance = 1.0` in all five tournaments.
+
+So both sides now draft the priceable board: **347 of 448** rows in 2022-23 and **359 of 464**
+in 2023-24, of which **16** and **21** carry ADP. The cost is stated rather than hidden — who is
+on the board at pick *k* changes, so the field's picks are slightly better than a real field's —
+and it is smaller and more honest than scoring a real player at zero. The right fix is upstream:
+pricing those 153 players is the open question item 4 left.
+
+**The guard that says the correction worked is the symmetric-field null**, run on the injected
+field before any strategy is scored: an entry drawn from the field reaches Round 1 at
+**0.166667** against an exact 0.166667, error **5e-11**. Every lift below is measured against
+that number.
+
+#### The sweep, paired — because the unpaired intervals cover the whole table
+
+Unpaired, the top of the table is `+0.211 [+0.143, +0.282]` and the eighth row is
+`+0.119 [+0.038, +0.209]`: nothing is separated from anything. That is a property of the
+*level*, not of the differences — a simulated season kind to one strategy is kind to all of
+them, since every entry is scored on the same drawn world. Differencing inside the sim removes
+the common term, and then almost everything resolves. Lift in `P(top 2 of 12)` against
+`model_mean`, pooled over 1,000 worlds:
+
+| arm | axis | 600k_shootaround | 20k_spin_move |
+|---|---|---|---|
+| `lineup_value_blend30` ✅ | objective | **+0.1082 [+0.0954, +0.1214]** | **+0.0720 [+0.0594, +0.0845]** |
+| `lineup_value` | objective | +0.0744 [+0.0636, +0.0858] | +0.0491 [+0.0389, +0.0597] |
+| `bracket_ev_blend30` | objective | +0.0494 [+0.0372, +0.0608] | +0.0501 [+0.0368, +0.0632] |
+| `blend_a15` | alpha | +0.0354 [+0.0287, +0.0426] | +0.0387 [+0.0314, +0.0468] |
+| `blend_late` | alpha_by_round | +0.0343 [+0.0255, +0.0433] | +0.0473 [+0.0383, +0.0572] |
+| `blend_a70` | alpha | +0.0223 [+0.0094, +0.0351] | +0.0402 [+0.0282, +0.0527] |
+| `blend_caps_dk` | position_caps | +0.0160 [+0.0058, +0.0258] | +0.0187 [+0.0092, +0.0278] |
+| `bracket_ev` | objective | **−0.0225 [−0.0339, −0.0111]** | +0.0070 [−0.0042, +0.0185] |
+| `model_q90` | ranking | −0.0075 [−0.0163, +0.0014] | −0.0199 [−0.0297, −0.0098] |
+| `adp` | ranking | **−0.0576 [−0.0733, −0.0423]** | **−0.0987 [−0.1146, −0.0828]** |
+
+**Six things this settles.**
+
+- **`α > 0` pays, and it is resolved.** Every blend arm is at or above `model_mean` and pure
+  `adp` loses decisively in both tiers. The blend is worth a further **+0.0338 [+0.0237,
+  +0.0446]** *on top of* the best objective (`lineup_value_blend30` against `lineup_value`), so
+  it is not a substitute for the in-draft pricing but an addition to it.
+- **Which `α` is not resolved, and the two tiers disagree about it.** 600k peaks at α = 0.15
+  and 20k at α = 0.70, with α = 0.30 and 0.50 unresolved against zero at 600k. The α *axis* has
+  a sign; its *location* does not, on this budget. That is Gate B's finding about
+  `rank_noise_sd` arriving one layer up, and for the same reason: the objective is flat near
+  its optimum.
+- **The per-round direction `docs/adp-plan.md` predicts is confirmed in one tier and not the
+  other.** Against its own reverse control, `blend_late` (α 0.15/0.35/0.65 over rounds 1-2, 3-8,
+  9+) minus `blend_early` (0.65/0.35/0.15) reads **+0.0340 [+0.0266, +0.0423]** at 20k —
+  resolved — and **+0.0050 [−0.0025, +0.0133]** at 600k. Leaning on the market in the deep
+  rounds is right where it resolves and never wrong.
+- **Stacking is a measured loss.** Against its own uncapped twin, `blend_stack12` costs
+  **−0.0179 / −0.0431** of lift and buys **+0.0077 / −0.0401** of `P(any of N)`. That is the
+  sign the zero-sum minutes constraint implies — teammates' season minutes are anti-correlated
+  at a measured mean pairwise **r = −0.0509** — and it is the answer to an axis the plan flagged
+  as possibly mispriced with the wrong sign.
+- **Exposure caps are a real trade with a measured price on both sides.** Against the same twin,
+  a 40% cap costs **−0.0461 [−0.0538, −0.0385]** of per-entry lift and buys **+0.0236 [+0.0142,
+  +0.0332]** of `P(any of N)`. Neither dominates. The selection criterion is per-entry lift, so
+  the cap can never be *selected* by it — which is exactly why the portfolio statistic is
+  reported beside it rather than instead of it.
+- **The EV objective trades survival for money, in the tournament whose money is in the tail.**
+  `bracket_ev` is the *worst* resolved arm at 600k on lift (−0.0225) and the *best* on ROI
+  (**+61.8** against the shipped arm's +21.5). `select-on-p-advance-report-roi` says select on
+  the first; the disagreement is a real decision and it is recorded rather than smoothed. The
+  draft room measured the same split from the other end — "a P(advance)-maximal roster is a
+  chalk roster".
+
+**What ships is `lineup_value_blend30` for both tiers**: rank by the marginal weekly-lineup
+value of `src/sim/draft_room.py`'s matroid exchange, blended 30% into the DK-recalibrated ADP
+rank, no exposure cap, no stacking, uncapped positions. Written to
+`outputs/predictions/strategy_shipped.csv`, which build item 10 reads rather than re-deciding.
+
+#### Gate D fails: the two tiers do not select different rosters
+
+| season | comparison | cross-tier overlap | within-tier | verdict |
+|---|---|---|---|---|
+| 2022-23 | shipped (tier-blind) | 0.480 | 0.517 / 0.396 | not different |
+| 2022-23 | `bracket_ev` (tier-aware) | 0.713 | 0.704 / 0.792 | not different |
+| 2022-23 | `bracket_ev_blend30` (tier-aware) | 0.442 | 0.404 / 0.458 | not different |
+| 2023-24 | shipped (tier-blind) | 0.430 | 0.415 / 0.312 | not different |
+| 2023-24 | `bracket_ev` (tier-aware) | 0.544 | 0.524 / 0.583 | not different |
+| 2023-24 | `bracket_ev_blend30` (tier-aware) | 0.292 | 0.271 / 0.323 | not different |
+
+In every comparison the two tiers' portfolios overlap each other about as much as each
+overlaps itself, and both tiers select the **same** strategy. **The comparison names its own
+mechanism**, which is what makes the answer interpretable: a `ranking` strategy is tier-blind
+by construction — the board key knows nothing about which payout table it is drafting into — so
+under those arms Gate D can only fail. The `bracket_ev` arms *are* tier-aware, pricing each
+candidate against that tournament's own pods, advance counts and cash bands, and they fail it
+too.
+
+**The mechanism is Round 1.** Both tournaments cut 2 of 12 in the round that decides whether
+there is any return at all, and 83% of entries are gone there whichever one they entered.
+Everything the economics say about the tiers — a 10,000× top prize against a flat final table —
+is a statement about the 17% of paths that survive, so it moves the objective very little.
+`two-strategies-two-tiers` said comparing the two tiers is itself a result; the result is that
+**the two portfolios can share a board**, and the practical consequence for October is that
+there is one board to build rather than two. (`only_a` / `only_b` in the artifact are confounded
+by entry count — 10 entries touch more players than 4 — so `cross_overlap` against `within` is
+the fair reading.)
+
+#### The realized readout — one good season, one wash
+
+Same portfolios, replayed against real 2022-23 and 2023-24 box scores. **A readout, not a
+selector.**
+
+| season | tier | shipped `P(top 2 of 12)` | lift | an ADP entry |
+|---|---|---|---|---|
+| 2022-23 | 600k_shootaround | 0.4015 [0.1719, 0.6397] | **+0.235** | 0.1438 |
+| 2023-24 | 600k_shootaround | 0.1855 [0.0237, 0.3943] | **+0.019** | 0.2545 |
+| 2022-23 | 20k_spin_move | 0.3382 [0.0002, 0.7501] | **+0.172** | 0.3427 |
+| 2023-24 | 20k_spin_move | 0.1412 [0.0102, 0.3739] | **−0.026** | 0.2045 |
+
+2022-23 is a good season and 2023-24 is a wash in which the ADP entry beat us in both tiers.
+The intervals resample the **field** and the entries, not the season — a season cannot be
+resampled, there are two of them, and the honest statement is that **the realized edge is not
+distinguishable from zero.** What the readout is for is catching a strategy broken in a way the
+simulated world cannot see, and nothing here is broken: the shipped arm clears the ADP baseline
+in one season of each tier and trails it in the other, which is what N = 2 looks like.
+
+#### Three caveats that bound every number above
+
+- 🔴 **The injection acts on the season-level rate and leaves the model's knowledge of the
+  *shape* exact.** All three of Gate C's named targets are level statistics — a season total, a
+  games-played CRPS, a rate R² — so an injection calibrated to them cannot perturb what the model
+  knows about the weekly distribution, the double-double threshold, or the cross-component
+  correlation. The shipped objective uses all of that, and truth is drawn from the same joint.
+  So the simulated lift is an **upper bound** on a real one.
+- 🔴 **The field drafts strictly by ADP with rank noise and does no lineup reasoning at all.**
+  A real drafter balances positions. The edge measured here is over that field, not over a
+  room of humans, and `docs/simulations-plan.md` already names real pick logs as the missing
+  calibration.
+- **`ρ` is measured on the same two seasons the sweep scores.** It is a simulator *input*,
+  calibrated the way the other four are, and validation is the split selection may read — but
+  every `α` below inherits the sampling error of two seasons of ~200 priced players.
+
+**ROI is reported and is not a level to act on.** 600k reads **+21.5 [+5.6, +46.8]** against a
++17.60% hurdle and 20k reads **+2.98 [+0.83, +5.54]** against +12.32%. Both clear the hurdle by
+orders of magnitude, which is itself the reason not to believe them: they inherit the three
+caveats above, and 600k's ROI is the figure `make bracket` and `make draft-room-prep` both
+already record as not estimable at any affordable budget (the null's E[payout] reads **−15%**
+at this field size, against **−0.0%** for 20k). The lift in `P(top 2 of 12)` is the number to
+read.
+
 ---
 
 ## The backtest, and why its two halves do different jobs
@@ -2285,10 +2512,10 @@ Every gate is judged on validation or on simulated truth. None reads the test sp
 |---|---|---|
 | **A** ✅ ⚠️ | the season simulator reproduces the **marginals it was built from**: season-total dk_pts distribution against `season_total_metrics.csv`, GP pmf against `stan_games_played_gp_pmf.csv`, and per-game bonus rate against `bonus_calibration.csv` | An assembly bug is silent. Every input head is already calibrated, so a simulator that misses a marginal it was handed has a wiring fault, not a modelling one. **Run 2026-08-09**: season totals pass (MAE 402.14 / 407.89 against 400.46, CRPS 280.49 / 281.03 against 287.26), games played passes (CRPS 9.6754 / 9.7829 against the head's 10.0057, bias +0.127 / −0.363), minutes spread passes given games played (322.05 / 319.32 against 302.75); the **bonus is +11% / +5% high and is traced out of the module** — on realized minutes the same draw reads 0.1535 / 0.1477 against 0.1559 / 0.1626, so it is the composition head's 1.8x game-level minutes over-dispersion. Two wiring faults were caught and fixed |
 | **B** ✅ ⚠️ | simulated drafts reproduce the **observed ADP curve** — mean absolute rank gap under the 17.0-pick recalibration error, so the field model is no worse than the market proxy it consumes | The field model's only real calibration target. Failing it means the opponent model is not a field. **Run 2026-08-09**: passes wide, pooled **5.922** picks on the fit region and **9.082** over every ADP'd player. The caveat is the fit rather than the gate — a **constant** rank noise is not identified by a mean-ADP target at all (the whole sd 0–30 grid spans **0.110** / **0.117** picks and the two seasons disagree about its optimum inside that band), while a rank-dependent shape is, with both validation seasons landing on **sd = 4.00** independently. What separates the shipped arm from a zero-noise field is not the 0.044-pick margin but `field_diversity`: at sd = 0 two drafts share **100%** of a seat's roster |
-| **C** | the **error-injected** simulated world reproduces the model's measured out-of-sample miss: availability CRPS ≈ 10.006 games, component R² in 0.81–0.95, season-total MAE ≈ 400.5 dk_pts | Without this the sweep cannot price ADP, exposure caps, or any other hedge against model error |
-| **D** | the sweep selects **materially different** rosters for the two tiers | If the $20 and $52 strategies converge, either the objective is not doing its job or the tier difference is smaller than the economics imply. Either way it needs to be known before entering |
+| **C** ✅ ⚠️ | the **error-injected** simulated world reproduces the model's measured out-of-sample miss: availability CRPS ≈ 10.006 games, component R² in 0.81–0.95, season-total MAE ≈ 400.5 dk_pts | Without this the sweep cannot price ADP, exposure caps, or any other hedge against model error. **Run 2026-08-09, and the premise did not survive contact**: the *uninjected* world already reproduces the miss in magnitude (MAE **414.97 / 398.96** against 400.46; availability CRPS **10.0935 / 9.9387** against 10.0057) and is *harder* than reality on the other two rows. What it gets backwards is the two rankers' relative standing — the market leads the model by **+0.052 / +0.016** Spearman on realized data and *trails* by **−0.111 / −0.118** in a world drawn from the model's posterior. So the injection rotates the error onto the market-visible direction at fixed magnitude, with `g` solved from the MAE bar and `ρ` from the skill gap; both land exactly, and `ρ` is corroborated to within 0.1 by an independent route. Season-total R² (**0.543 / 0.573** against 0.7073) and rate R² (**0.528 / 0.581** against 0.81–0.95) are **not met, in the conservative direction** |
+| **D** 🔴 | the sweep selects **materially different** rosters for the two tiers | If the $20 and $52 strategies converge, either the objective is not doing its job or the tier difference is smaller than the economics imply. Either way it needs to be known before entering. **Run 2026-08-09: it fails, and the finding is the tier difference.** Both tiers select the same strategy, and in all six comparisons the cross-tier roster overlap sits inside the within-tier band — under a tier-blind ranking (0.480 against 0.517 / 0.396) *and* under a `bracket_ev` objective that reads each tournament's own pods and cash bands (0.713 against 0.704 / 0.792). The mechanism is Round 1: both cut 2 of 12 in the only zero-consolation round, so 83% of paths end identically and the tail economics move the objective very little. **One board serves both tiers** |
 | **E** ✅ | in-draft recompute **under 1.0 s** at `n_sims = 500` on the full remaining pool | The 30-second clock. Failing it drops the draft room to ranking-submission mode. **Run 2026-08-09**: passes with 5× of headroom — **112 ms mean, 185 ms p95, 200 ms max** over 359 candidates, against 1,000 ms. Both levers the plan named were needed and both are exact rather than approximate: `n_sims = 500`, and best-7-by-slot as **one matroid exchange** per candidate. The same page also reproduces the symmetric-field null's P(advance) to **2e-8** |
-| **F** | measured edge, expressed as **lift in P(top 2 of 12)** over an ADP-drafted entry, is reported with a bootstrap interval against the break-even hurdle (+17.60% / +12.32%) | Not a pass/fail on the edge itself — a requirement that the number is quoted in comparable units with its uncertainty, rather than as a point estimate |
+| **F** ✅ | measured edge, expressed as **lift in P(top 2 of 12)** over an ADP-drafted entry, is reported with a bootstrap interval against the break-even hurdle (+17.60% / +12.32%) | Not a pass/fail on the edge itself — a requirement that the number is quoted in comparable units with its uncertainty, rather than as a point estimate. **Run 2026-08-09.** The ADP baseline is exact rather than estimated (`n_advance / pod_size` = 0.166667, reproduced by the injected field to 5e-11), so the interval on the lift is the interval on `P(advance)` shifted. Simulated: **+0.211 [+0.143, +0.282]** and **+0.199 [+0.091, +0.328]**; realized on two seasons: **+0.235 / +0.019** and **+0.172 / −0.026**, i.e. not distinguishable from zero. ROI **+21.5 [+5.6, +46.8]** against +17.60% and **+2.98 [+0.83, +5.54]** against +12.32%, both carrying the three caveats under "What was built" |
 
 ---
 
@@ -2493,9 +2720,34 @@ Plain `assert` with synthetic builders, no fixtures or classes, mirroring
 - **The 2.43x ten-game block inflation is not consumed**, and cannot be until the row above
   is settled: the simulator reads 1.40 / 1.52, and adding the ~3-line block term would put
   more variance into a minutes draw that is already too wide at the game level.
-- **153 of 539 rostered players are in the minutes allocation but not in the tensor**, for
+- 🔴 **153 of 539 rostered players are in the minutes allocation but not in the tensor**, for
   want of a component-head design row. They cannot be dropped (the allocation is zero-sum)
-  and cannot be scored. Pricing them is the same open question as the 2026 draft class.
+  and cannot be scored. Pricing them is the same open question as the 2026 draft class —
+  and since 2026-08-09 it has a price tag: `make strategy-sweep` measures on every run that
+  the ADP field drafts **1.2556** and **1.1861** of them per sixteen-man entry across the two
+  validation seasons, with **73.06%** and **74.72%** of entries holding at least one, so every
+  one is a roster spot scoring zero all season. Left in, it read as model edge
+  worth more than every strategy axis combined (a pure-ADP entry of our own scored
+  `P(top 2 of 12) = 0.285` against an exact 0.1667). The sweep restricts the board to
+  priceable players on **both** sides as a stopgap, at the cost of changing who is on the
+  board at pick *k*; a floor projection for those players would remove the stopgap.
+- 🔴 **The error injection perturbs the season-level rate and cannot perturb the model's
+  knowledge of the distribution's shape.** Gate C's three named targets are all level
+  statistics, so nothing in the injection touches what the model knows about the weekly
+  distribution, the double-double threshold or the cross-component copula — and the shipped
+  objective uses all three, in a world drawn from the same joint. Every simulated lift in
+  `make strategy-sweep` is therefore an **upper bound**. Closing it means a target expressed
+  on the *shape* rather than on the level; nothing on disk currently supplies one.
+- **`ρ`, the injection's market-visibility parameter, is measured on the two seasons the
+  sweep scores.** Legal (validation is the split selection may read) and consistent with how
+  the other four simulator inputs are calibrated, but every `α` the sweep selects inherits
+  the sampling error of two seasons of ~200 priced players. A third ADP-legal season is
+  2014-15 and it is the same cheap widening "Realized truth" already prices.
+- **`α`'s *location* is not identified and its *sign* is.** Every blend arm beats the pure
+  model and pure ADP loses to it, resolved; but 600k peaks at α = 0.15 and 20k at α = 0.70,
+  with α = 0.30 and 0.50 unresolved against zero at 600k. This is Gate B's `rank_noise_sd`
+  finding one layer up — a flat objective near its optimum — and real pick logs would not fix
+  it, because the flatness is in the payout rather than in the field.
 - **Tournament structures may change** for the live 2026-27 contests. Re-verify the metadata
   and prize CSVs before treating any backtest result as load-bearing. `make bracket`'s
   symmetric-field null is the check that will catch a bad transcription — it already caught
@@ -3009,7 +3261,18 @@ waived — one named file, bounded at `src.sim`.
 > met, fall back to exporting a static ranking + exclusion list in DK's pre-draft-rankings CSV
 > format, which is the ranking-submission mode item 6 already built.
 
-### 8. `make strategy-sweep` — the sweep, error injection, and Gates C and D
+### 8. `make strategy-sweep` — the sweep, error injection, and Gates C and D ✅ built 2026-08-09
+
+**The measured outcome is under "What was built, and what Gates C and D found" above.** Five
+things carry into items 9, 10 and 11. **Gate C's premise was half wrong** — the uninjected
+world already reproduces the model's miss in magnitude and gets the *market's relative skill*
+backwards instead, so the injection rotates rather than adds. **The board had to be restricted
+to priceable players on both sides**, because the tensor's 153 unscored players cost the ADP
+field 1.26 roster spots an entry and cost a model-ranked strategy nothing. **Nothing in the
+sweep table resolves unpaired** and almost everything does once differenced inside the
+simulated season. **Gate D fails**: one board serves both tiers. And **the shipped strategy is
+`lineup_value_blend30`**, written to `strategy_shipped.csv` for item 10 to read rather than
+re-decide.
 
 > Read `docs/simulations-plan.md` ("`src/sim/strategy.py`", "The backtest"). Build
 > `src/sim/strategy.py` + `make strategy-sweep`. A strategy is a config object (ranking source,

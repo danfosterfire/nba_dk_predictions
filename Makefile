@@ -14,7 +14,7 @@ PIP    := .venv/bin/pip
         stan-substitution season-terms games-played stan-games-played \
         stan-game-length posteriors minutes-unification composition-effects \
         scoring-periods draft-pool simulate-season bracket draft-sim \
-        draft-room draft-room-prep final-evaluation
+        draft-room draft-room-prep strategy-sweep final-evaluation
 
 venv:
 	/opt/homebrew/bin/python3.14 -m venv .venv
@@ -390,6 +390,29 @@ draft-room-prep:
 # carry an absolute shebang and do not survive the repo being renamed.
 draft-room:
 	$(PYTHON) -m streamlit run dashboard/draft_room.py
+
+# The strategy sweep: a table over ranking source, blend weight (overall and per round),
+# position caps, exposure caps, stacking, in-draft objective and entry count, scored on
+# simulated truth and read out against realized 2022-23 / 2023-24.
+#
+# GATE C runs first because it gates the sweep's validity. The plan's premise is that a
+# world drawn from the model's own posterior is too easy, so alpha goes to zero for reasons
+# that have nothing to do with the market; measured, the premise is half right. The
+# MAGNITUDE of the model's miss is already reproduced without any injection — 419.6 dk_pts
+# of season-total MAE against a measured 400.5. What is wrong is the two rankers' relative
+# standing: in that world the model leads ADP by +0.11 Spearman, while on realized
+# validation seasons the MARKET leads by +0.06. So the injection ROTATES the error onto the
+# market-visible direction at a fixed magnitude rather than adding noise on top of it, and
+# `rho` is solved from that gap. An independent route — the correlation between market
+# disagreement and the model's realized error — agrees to within a step.
+#
+# Selection is LIFT IN P(top 2 of 12), which is exact for the ADP baseline (n_advance /
+# pod_size) and resolves orders of magnitude faster than ROI; ROI rides alongside with a
+# bootstrap interval against the break-even hurdle. GATE D asks whether the two tiers
+# actually select different rosters and reports the mechanism, since a ranking strategy is
+# tier-blind by construction and only the bracket-EV arms read the payout table.
+strategy-sweep:
+	$(PYTHON) -m src.sim.strategy
 
 # Does any head need a season term, and which kind? A trend covariate and a year-level
 # random effect for every head, plus the season x role interaction the availability era

@@ -376,27 +376,36 @@ def field_reference(field_round: np.ndarray, tournament: str,
                           effective_entries=np.asarray(effective))
 
 
-def bracket_ev(round_totals: np.ndarray,
-               ref: FieldReference) -> tuple[np.ndarray, np.ndarray]:
+def bracket_ev(round_totals: np.ndarray, ref: FieldReference,
+               per_sim: bool = False) -> tuple[np.ndarray, np.ndarray]:
     """Expected payout per entry, and `P(top 2 of 12)`, for each candidate roster.
 
     `round_totals` is `[candidate, round, sim]`. Money is accumulated round by round
     against the population that round is actually played against, and the reach
     probability compounds our own advance rather than the field's — an entry collects a
     round's cash only in the sims where it got there.
+
+    `per_sim` returns both quantities as `[candidate, sim]` instead of averaging over
+    sims. The room never needs that — it is ranking candidates on one board state — but
+    `src/sim/strategy.py` does, twice: a portfolio's `P(at least one entry advances)` is
+    `1 - prod(1 - p)` **inside** a sim and cannot be recovered from per-entry means, and a
+    bootstrap over simulated seasons has to resample the sim axis. Averaging is the
+    default so no existing caller changes behaviour.
     """
     n_cand, _, n_sims = round_totals.shape
     ev = np.zeros((n_cand, n_sims))
     reach = np.ones((n_cand, n_sims))
-    p_advance = np.zeros(n_cand)
+    p_advance = np.zeros((n_cand, n_sims))
     for i, rnd in enumerate(ref.rounds):
         q = survival(ref.sorted_total[i], ref.cum_weight[i], round_totals[:, i, :])
         cash, advance = round_outcome(q, rnd["pod_size"], rnd["payout"], rnd["n_advance"])
         ev += reach * cash
         if i == 0:
-            p_advance = advance.mean(axis=1)
+            p_advance = advance
         reach = reach * advance
-    return ev.mean(axis=1), p_advance
+    if per_sim:
+        return ev, p_advance
+    return ev.mean(axis=1), p_advance.mean(axis=1)
 
 
 def null_check(field_round: np.ndarray, ref: FieldReference) -> dict:
