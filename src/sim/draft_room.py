@@ -509,7 +509,7 @@ def load_room(cfg: dict, season: str, n_sims: int | None = None,
     n_sims = int(n_sims or cfg_sim.get("n_sims_draft", 500))
     n_field_drafts = int(n_field_drafts or cfg_sim.get("draft_room", {})
                          .get("field_drafts", N_FIELD_DRAFTS))
-    # **Every captured tournament, not only the two being entered.** All five run a
+    # **Every captured tournament, not only the reference pair.** All five run a
     # 12-entry Round-1 pod, so the draft is identical and only the bracket above it
     # differs — which means a reference is a reweighting of a field that has already been
     # drafted and scored, and costs milliseconds. It is the same argument `make bracket`
@@ -1303,8 +1303,8 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
     out_dir.mkdir(parents=True, exist_ok=True)
     seed = int(SEED if seed is None else seed)
     # The null is checked on every captured structure, for `make bracket`'s reason; Gate E
-    # is measured on the two being entered, since it is a latency figure and the bracket
-    # above it barely moves it.
+    # is measured on the tournaments in `sim.tournaments`, since it is a latency figure
+    # and the bracket above it barely moves it.
     entered = list(cfg.get("sim", {}).get("tournaments", {}) or {})
 
     seasons = seasons or validation_seasons(split_frame(cfg))

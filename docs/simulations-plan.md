@@ -1205,14 +1205,17 @@ Two things the build found that the probe could not:
 
 ---
 
-## The two target tournaments
+## The two reference tournaments
 
 Derived live by `dashboard/economics.py` from `data/raw/dk_best_ball_tournament_*.csv`.
+The stakes below are **simulated reference stakes** — no contest has been entered, and
+which to enter is an open decision (since 2026-08-11 the sweep drafts all five captured
+structures; these two remain the pair the headline results are quoted at).
 
 | | `600k_shootaround` | `20k_spin_move` |
 |---|---|---|
 | entry fee | $20 | $52 |
-| **entries this year** | **10** ($200) | **4** ($208) |
+| **simulated entries** | **10** ($200) | **4** ($208) |
 | max per player | 150 | 12 |
 | field | 35,280 | 432 |
 | rake / break-even hurdle | 14.97% / **+17.60%** | 10.97% / **+12.32%** |
@@ -1297,10 +1300,11 @@ make bracket ✅      src/sim/bracket.py            best 7 of 16 by slot per per
                                                    -> outputs/predictions/bracket_{structure,
                                                       null,entries}.csv
 make strategy-sweep ✅ src/sim/strategy.py         the sweep: Gate C's error injection,
-                                                   24 strategies x 2 tiers x 2 seasons
-                                                   (22 until the execution axis landed
-                                                   2026-08-11), paired on the simulated
-                                                   season, plus the realized readout
+                                                   24 strategies x 5 tournament structures
+                                                   x 2 seasons (22 arms and 2 structures
+                                                   until 2026-08-11), paired on the
+                                                   simulated season, plus the realized
+                                                   readout
                                                    -> outputs/predictions/strategy_{gate_c,
                                                       injection,null,sweep,paired,gate_d,
                                                       realized,shipped}.csv
@@ -2203,7 +2207,9 @@ full sweep against a **stipulated** 8-pick lean — the suffix names the stipula
 lean within ~0.14 picks of the selected fit, and the noise scale still comes from the
 calibration artifact. Every value-following arm reads **higher** lift against that field:
 the shipped arm +0.2107 → **+0.3055** (600k) and +0.1989 → **+0.2656** (20k), the adp arm
-+0.045 → +0.075 (600k, pooled). A field that reaches for slots pays value for shape, and
++0.045 → +0.075 (600k, pooled) — and once the sweep covered all five captured structures
+(2026-08-11) the direction held in every one of them, +0.27 to +0.33 against the fitted
+field's +0.19 to +0.21. A field that reaches for slots pays value for shape, and
 the bracket pays value. The symmetric-field null stays exact against the need field
 (−1.1e-10 / −1.5e-10), so the comparison is apples to apples. **Conclusion: the fitted
 pure-ADP field is the harder opponent, and it stays shipped** — recorded as
@@ -2249,6 +2255,97 @@ Three results, from `strategy_sweep.csv` / `strategy_paired.csv`:
 The sweep's existing 22 arms reproduce to the digit (each arm draws from its own
 generator, so appending arms cannot perturb the table), and page 8's block 5 renders both
 halves.
+
+#### All five captured structures are swept — 2026-08-11
+
+The sweep's tournament axis grew from the two original reference tiers to **all five
+captured structures**, which took no simulation code at all — `sweep`, `ship`, `replay_realized`
+and the reports already iterated `sim.tournaments`, and the bracket layer had priced all
+five since it landed. What it took was an **entries rule**, because "how many entries"
+was the one number the two original tiers carried by hand: the config now derives every
+count from `min(max_entries_per_player, ceil($200 / entry_fee))` — stake parity, capped
+by DK's own per-player limit — which reproduces the hand-chosen 10 and 4 exactly and
+extends to **20** (`50k_four_pt_play`, $80 — the cap binds), **150** (`15k_and_one`,
+$150 — the cap binds), and **1** (`88k_alley_oop`, $450 — one entry already overshoots).
+Where stake parity breaks, the divergence is stated in the config rather than smoothed
+over, and cross-tier comparisons should mind it: the $450 single-entry tier's portfolio
+metrics (`p_any_advance` especially) are one entry's, not a stake-matched portfolio's.
+
+Two structural facts kept the extension honest. **Gate D still compares exactly the
+first two config keys** — the original reference pair — so its audited
+6-comparisons/0-separations
+record is unchanged by construction, and the config comment now marks that ordering as
+load-bearing. And **the null check runs per structure**, so all five fields reproduce
+`n_advance / pod_size` exactly before any strategy is scored against them.
+
+**Every stake here is simulated, and no contest has been entered** — which tournaments
+to enter (if any) is an open decision, and the likely first real entries are cheap
+`15k_and_one` teams whose purpose would be pick-log capture (the
+`real-pick-logs-are-the-missing-field-calibration` deadline item) rather than profit.
+
+The cost lives in one place: `15k_and_one`'s 150 entries under the four objective arms
+(one `draft_room.evaluate` per pick) add roughly 35 minutes to `make strategy-sweep`.
+The dashboard's page 8 renders every structure from the same blocks; the reference pair
+stays highlighted in block 1 and first in the selector.
+
+**Run 2026-08-11, and what the three new structures found.** All ten null checks
+(5 structures × 2 seasons) reproduce `n_advance / pod_size` to ~1e-10; the EV nulls
+resolve far better than 600k's known −15% limit (50k −3.5%, 15k −2.3%, 88k −0.0%).
+Every audited figure from the reference pair reproduced to the digit, and Gate D's 6/0
+record is unchanged. `lineup_value_blend30` ships in **four of the five** structures
+(sim lift +0.194 to +0.211) — the exception is `88k_alley_oop`, whose single $450 entry
+under shallow cuts (2/6 → 2/6) selects **`blend_a70`** at +0.412. That is one seat's
+selection at the sweep's noisiest unit, so it is a datum about the α ridge rather than
+a strategy: on the paired table `blend_a15` resolves above a30 at 600k while
+`blend_a70` resolves above it at 20k, 50k and 88k — the axis has a resolved *sign*
+(α = 0 loses to α = 0.3 under the shipped objective in all four comparable structures,
+−0.013 to −0.034, every interval clear of zero; α = 0.85 loses nearly everywhere) and
+a location that is genuinely structure-dependent rather than one number. **The shipped
+0.30 is therefore calibrated at the axis level and inherited at the digit level**: the
+objective family was only ever built at α ∈ {0, 0.3}, so "0.30 vs its neighbours under
+`lineup_value`" is unmeasured; the honest reading is un-rejectable-compromise, not
+optimum. One bookkeeping consequence of 240 swept rows: the payout-elasticity guard is
+now a median-plus-share bar rather than every-row, because the `adp` arm at 50k in
+2022-23 sits near enough the null that its log-ratio is noise (0.81 at +0.047 lift) —
+the median clears 1 in all five structures (1.62 to 5.37).
+
+#### The pick-log stake, priced — 2026-08-11
+
+`make pick-log-stake` (`strategy_pick_log_stake.csv`, `strategy_pick_log_paired.csv`).
+The likely first real entries are ~20 cheap `15k_and_one` teams whose purpose is
+capturing pick-log data, so the execution question is live at exactly that stake: what
+does submitting a pre-draft ranking cost against drafting the same 20 × $1 teams live?
+Three arms on the same injected worlds and field (null check exact, −5.5e-11 /
+−1.0e-10): DK autodraft on the submittable board (`autodraft_blend_a30`), the live
+draft room's own payout-weighted objective (`bracket_ev`), and the reference tiers'
+shipped `lineup_value_blend30`. Gaps paired on the world, pooled over both validation
+seasons.
+
+**The answer depends on which objective the stake is scored by, and the two live arms
+split it cleanly:**
+
+| arm minus autodraft | per-entry P(adv) | P(any advances) | EV $ on the $20 |
+|---|---|---|---|
+| `bracket_ev` (the room's objective) | **−0.0198** [−0.0308, −0.0083] | −0.0281 [−0.0421, −0.0142] | **+$253** [+$195, +$314] |
+| `lineup_value_blend30` | **+0.0633** [+0.0518, +0.0736] | +0.0582 [+0.0459, +0.0709] | −$3.78 [−$36, +$28], a null |
+
+The room's objective *buys tail dollars with survival*: it advances **less** often than
+the autodrafted board — resolved, not noise — while roughly tripling simulated expected
+payout, because a zero-consolation knockout's EV lives in deep runs and that is what a
+payout-weighted objective chases. The survival-maximizing arm is the mirror image:
++0.063 per-entry advance over autodraft and not a measurable dollar. **So "the
+opportunity cost of autodrafting" is not one number**: ~$250 of simulated tail EV per
+$20 if the stake is scored in dollars, ~zero (slightly *negative*) if it is scored in
+survival — the autodrafted board is already a fine survival drafter, sitting between
+the two live objectives.
+
+Two readings for the actual decision. The dollar figures inherit every EV caveat on
+this page — an injected-world level, quoted for its *sign and pairing*, not its
+magnitude — while the survival gaps are the sweep's own resolvable unit. And the
+stake's stated purpose is **data capture, which is execution-indifferent**: the pick
+log is written at draft time, so autodrafting all 20 collects identical data for zero
+clicks, and the ~320 live picks buy only the (objective-dependent) contest outcome on
+$20. Registry: `pick-log-stake-execution-priced`.
 
 ---
 

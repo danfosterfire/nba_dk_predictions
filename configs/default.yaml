@@ -406,22 +406,37 @@ sim:
     # so they drive the map and the calendar comparison is printed as drift.
     round_weeks: [17, 2, 2, 2]
 
-  # The two tournaments that go live this year, and how many entries each takes.
-  # Near-equal stake — $200 against $208 — across two structures whose objectives differ
-  # in shape rather than scale, which is why comparing them is itself a result
-  # (`two-strategies-two-tiers`). The NAMES are keys into
+  # Every captured tournament, and how many entries each takes — since 2026-08-11 the
+  # sweep drafts and scores all five structures, not only the original reference pair.
+  # These are SIMULATED stakes; no contest has been entered and which to enter is an
+  # open decision (the likely first real entries are cheap 15k_and_one teams, whose
+  # purpose would be pick-log capture rather than profit — see
+  # `real-pick-logs-are-the-missing-field-calibration`). The entry counts follow ONE
+  # rule: min(max_entries_per_player,
+  # ceil($200 / entry_fee)) — near-equal stake, capped by DK's own per-player limit —
+  # which reproduces the original hand-chosen 10 and 4 exactly and extends to the rest.
+  # Where the rule cannot reach $200 the stake diverges and that is stated rather than
+  # hidden: 15k_and_one tops out at $150 (fee $1, cap 150) and 88k_alley_oop's single
+  # entry is already $450. The FIRST TWO keys are the reference tiers — the pair the
+  # headline results are quoted at — and their order
+  # is load-bearing: Gate D compares exactly the first two. The NAMES are keys into
   # data/raw/dk_best_ball_tournament_metadata.csv, and every structural number behind
   # them — round count, pod size, advance count, cash table — is derived by
-  # dashboard/economics.py rather than repeated here. Adding a third tournament is a
-  # line here plus a row there; nothing in src/sim/ knows a tournament by name.
+  # dashboard/economics.py rather than repeated here; nothing in src/sim/ knows a
+  # tournament by name. 15k_and_one's 150 entries are the sweep's cost center: the
+  # objective arms call draft_room.evaluate once per pick, so this tier alone adds
+  # ~35 min to `make strategy-sweep`.
   tournaments:
     600k_shootaround: {entries: 10}
     20k_spin_move: {entries: 4}
+    50k_four_pt_play: {entries: 20}
+    15k_and_one: {entries: 150}
+    88k_alley_oop: {entries: 1}
 
   # `make bracket`. There is NO field-size knob: each contest is played at its own
   # `total_entries` from data/raw/dk_best_ball_tournament_metadata.csv — 35,280 down to
   # 216 — like every other structural number, and all five are simulated rather than only
-  # the two being entered. They cost one scoring pass between them: the field is drafted
+  # the reference pair. They cost one scoring pass between them: the field is drafted
   # once per season at the largest size and each contest takes the prefix it needs, which
   # is valid because entries are exchangeable and every field size is a multiple of the
   # 12-entry round-1 pod.

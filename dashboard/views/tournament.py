@@ -34,6 +34,7 @@ Replaced `dashboard/views/placeholder.py`, which held this row in `app.VIEWS` fr
 multipage shell landing on 2026-08-10 until this page did.
 """
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -66,6 +67,22 @@ def load_strategy() -> dict[str, pd.DataFrame] | None:
             return None
         frames[key] = frame
     return frames
+
+
+@st.cache_data(show_spinner="Reading the pick-log stake artifacts…")
+def load_pick_log() -> tuple[pd.DataFrame, pd.DataFrame] | None:
+    """Block 5's stake readout, loaded quietly — absence means it has not been run."""
+    directory = predictions_dir()
+    frames = []
+    for name in (strategy.PICK_LOG_STAKE_FILE, strategy.PICK_LOG_PAIRED_FILE):
+        path = directory / name
+        if not path.exists():
+            return None
+        frame = optional(path, target=strategy.MAKE_PICK_LOG)
+        if frame is None:
+            return None
+        frames.append(frame)
+    return frames[0], frames[1]
 
 
 @st.cache_data(show_spinner="Reading the field-robustness artifacts…")
@@ -152,8 +169,8 @@ def contest_block(structure: pd.DataFrame, econ: pd.DataFrame, advance: pd.DataF
             "**Round 1 pays nothing at all.** Five of every six entries are gone in a "
             "round with no consolation, in all five captured structures — so "
             "`P(any return)` *is* `P(top 2 of 12)`, and everything past Round 1 sets "
-            "the size of the return rather than its sign. The two tiers the sweep "
-            "drafts into are highlighted; the other three are drawn but not swept. "
+            "the size of the return rather than its sign. All five structures are "
+            "swept; the two reference tiers are highlighted. "
             "**20k Spin Move and 88k Alley Oop advance identically** (2 of 12, then 2 "
             "of 6, then 2 of 6), so their curves coincide exactly and the highlighted "
             "one is drawn on top — the table below lists both.")
@@ -349,9 +366,13 @@ def paired_block(paired: pd.DataFrame, tournament: str, th: dict) -> None:
         f"**{crossing} of {total} gaps do not resolve, and they are the most useful rows "
         "here.** An interval covering zero is a decision the simulation budget cannot "
         "make, not a decision made — so they are drawn in their own slot with an open "
-        "marker rather than left to be mistaken for small effects. The α arms clustered "
-        "there are the concrete case: the blend axis has a resolved *sign* and its "
-        "*location* is unresolved, and the two tiers disagree about where it is.")
+        "marker rather than left to be mistaken for small effects. The α arms are the "
+        "concrete case: the blend axis has a resolved *sign* — some market weight beats "
+        "none in every structure — but its *location* is not one number: `blend_a15` "
+        "resolves above a30 at 600k while `blend_a70` resolves above it in three of the "
+        "other four structures (and 88k ships it outright). The shipped 0.30 is a "
+        "compromise on a flat, structure-dependent ridge, and the objective family "
+        "carries only α ∈ {0, 0.3}, so its digit is inherited rather than fitted.")
     st.caption(
         "Pairing removes the common term the block-2 intervals are dominated by. Every "
         "arm is scored on the same drawn worlds, so differencing inside the world and "
@@ -458,6 +479,71 @@ def field_block(sweep: pd.DataFrame, shipped: pd.DataFrame,
             "carry that.")
 
 
+def pick_log_block(loaded: tuple[pd.DataFrame, pd.DataFrame] | None) -> None:
+    """The pick-log stake: what autodrafting 20 × $1 teams gives up against drafting
+    them live. Tournament-independent on purpose — it prices one specific planned
+    stake, not the selected tier."""
+    st.markdown("**The pick-log stake.** The likely first real entries are ~20 cheap "
+                "`15k_and_one` teams whose purpose is capturing pick-log data. What "
+                "does submitting a ranking cost against drafting them live?")
+    if loaded is None:
+        st.info(f"Not yet measured — run `{strategy.MAKE_PICK_LOG}`.")
+        return
+    pooled, gaps = strategy.pick_log_panel(*loaded)
+    if pooled.empty:
+        st.info(f"The artifact carries no rows — rerun `{strategy.MAKE_PICK_LOG}`.")
+        return
+    stake = float(pooled["stake"].iloc[0])
+    room_cost = strategy.pick_log_cost(gaps, "bracket_ev")
+
+    tiles = [
+        ("The stake", f"{int(pooled['n_entries'].iloc[0])} × "
+                      f"${pooled['entry_fee'].iloc[0]:,.0f}",
+         "Entries × fee — the stake the pick-log plan would actually place. All of it "
+         "simulated; nothing has been entered"),
+        ("Live optimizer, per entry", (f"{room_cost.get('p_advance', float('nan')):+.4f}"
+                                       if "p_advance" in room_cost else "—"),
+         "P(top 2 of 12) gap, the draft room's bracket-EV objective over DK autodraft "
+         "on the submittable board, paired on the world"),
+        ("…on the whole portfolio", (f"{room_cost.get('p_any_advance', float('nan')):+.4f}"
+                                     if "p_any_advance" in room_cost else "—"),
+         "Gap in P(at least one of the entries advances)"),
+        ("…in dollars", (f"${room_cost.get('ev_dollars', float('nan')):+,.2f}"
+                         if "ev_dollars" in room_cost else "—"),
+         f"Expected-payout gap on the ${stake:,.0f} at risk. An EV level, so it "
+         "inherits the tail-resolution caveat every EV on this page carries"),
+    ]
+    for col, (label, value, helptext) in zip(st.columns(len(tiles)), tiles):
+        col.metric(label, value, help=helptext)
+
+    st.dataframe(_pick_log_table(pooled, gaps), hide_index=True, width="stretch")
+    st.caption(
+        "**Every gap is an arm minus the autodraft baseline, paired on the world and "
+        "pooled over the validation seasons.** The autodraft row is what submitting "
+        "the shipped arm's feasible board (`blend_a30` under DK's own executor) earns "
+        "on its own; the `bracket_ev` row is the live draft room's literal objective, "
+        "which is what clicking every one of the 320 picks buys. A gap whose interval "
+        "covers zero is a decision this budget cannot make — the dollars column "
+        "especially, since a $1 tournament's EV is small against its own variance.")
+
+
+def _pick_log_table(pooled: pd.DataFrame, gaps: pd.DataFrame) -> pd.DataFrame:
+    gap_p = gaps[gaps["metric"] == "p_advance"].set_index("strategy")["gap"]
+    gap_any = gaps[gaps["metric"] == "p_any_advance"].set_index("strategy")["gap"]
+    gap_ev = gaps[gaps["metric"] == "ev_dollars"].set_index("strategy")["gap"]
+    out = pd.DataFrame({
+        "Arm": pooled["strategy"],
+        "Execution": np.where(pooled["autodraft"], "DK autodraft", "clicked live"),
+        "P(top 2 of 12)": pooled["p_advance"],
+        "P(any advances)": pooled["p_any_advance"],
+        "Portfolio EV $": pooled["portfolio_ev"],
+        "Δ P(adv) vs autodraft": pooled["strategy"].map(gap_p),
+        "Δ P(any) vs autodraft": pooled["strategy"].map(gap_any),
+        "Δ EV $ vs autodraft": pooled["strategy"].map(gap_ev),
+    })
+    return out.round(4)
+
+
 def _field_table(comparison: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame({
         "Field": comparison["field"], "Arm": comparison["strategy"],
@@ -507,9 +593,11 @@ def render() -> None:
         tournament = st.selectbox(
             "Tier", tiers, format_func=strategy.pretty_tournament,
             label_visibility="collapsed",
-            help="The two tiers the sweep drafts into. They differ by 2.6× in entry fee "
-                 "and by 100× in top-prize multiple — and select the same portfolio, "
-                 "which is what Gate D found.")
+            help="All five captured structures are swept, at one stake-parity entries "
+                 "rule (~$200 where the caps allow). The first two are the reference "
+                 "tiers — they differ by 2.6× in entry fee and 100× in top-prize "
+                 "multiple, and select the same portfolio, which is what Gate D "
+                 "found. Every stake is simulated; nothing has been entered.")
         st.markdown("---")
         st.caption(
             f"Read from `{rel(predictions_dir())}` — reproduce with "
@@ -559,3 +647,5 @@ def render() -> None:
         "a too-simple opponent. Left: give the field lineup reasoning and re-measure. "
         "Right: execute our own ranking through DK's autodraft instead of clicking.")
     field_block(frames["sweep"], frames["shipped"], load_field_probe(), tournament)
+    st.markdown("")
+    pick_log_block(load_pick_log())

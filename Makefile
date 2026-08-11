@@ -16,7 +16,7 @@ PIP    := .venv/bin/pip
         stan-game-length posteriors model-cards minutes-unification composition-effects \
         scoring-periods draft-pool simulate-season weekly-scores bracket draft-sim \
         draft-sim-need draft-room draft-room-prep strategy-sweep strategy-sweep-need \
-        final-evaluation
+        pick-log-stake final-evaluation
 
 venv:
 	/opt/homebrew/bin/python3.14 -m venv .venv
@@ -493,6 +493,17 @@ strategy-sweep:
 # and the shipped strategy_*.csv set is untouched. Requires `make draft-sim-need` first.
 strategy-sweep-need:
 	$(PYTHON) -m src.sim.strategy --field adp_need --need-weight 8
+
+# The pick-log stake, priced at the stake it would actually be: 20 entries at $1 in
+# 15k_and_one — the likely first real entries, whose purpose is capturing pick-log data
+# (see `real-pick-logs-are-the-missing-field-calibration`) — drafted three ways on the
+# same injected worlds: DK autodraft on the submittable board, the draft room's own
+# bracket-EV objective, and the reference tiers' shipped lineup-value arm. Gaps are
+# paired on the world and reported in per-entry survival, portfolio P(any advance), and
+# DOLLARS on the $20 at risk. Answers "what does clicking 320 picks buy over submitting
+# a ranking" for the stake where that trade is actually live.
+pick-log-stake:
+	$(PYTHON) -m src.sim.strategy --pick-log-stake
 
 # Does any head need a season term, and which kind? A trend covariate and a year-level
 # random effect for every head, plus the season x role interaction the availability era

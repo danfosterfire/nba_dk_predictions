@@ -4189,8 +4189,10 @@ REGISTRY: tuple[Decision, ...] = (
     Decision(
         id="two-strategies-two-tiers",
         topic="drafting",
-        claim="**Two strategies ship this year**: 10 entries at $20 "
-              "(`600k_shootaround`) and 4 entries at $52 (`20k_spin_move`).",
+        claim="**Two reference stakes anchor the sweep**: 10 simulated entries at $20 "
+              "(`600k_shootaround`) and 4 at $52 (`20k_spin_move`). These are modelled "
+              "stakes, not entries — no contest has been entered, and which to enter "
+              "is an open decision.",
         because="Near-equal stake — $200 against $208 — across two structures whose "
                 "objectives differ in shape rather than scale, so comparing them is "
                 "itself a result. `20k_spin_move`'s path is three successive shallow cuts "
@@ -4202,15 +4204,18 @@ REGISTRY: tuple[Decision, ...] = (
                 "and differentiation from the field; P(reach round 4) at random is "
                 "0.139%. Its rake hurdle is also 43% higher (+17.60% against +12.32%). "
                 "Confirming the sweep actually selects different rosters for the two was "
-                "Gate D, and on 2026-08-09 it FAILED — see `tiers-share-one-board`. The "
-                "two stakes still ship, because the structures and the rake differ; what "
-                "does not differ is the roster, so it is one board entered twice.",
+                "Gate D, and on 2026-08-09 it FAILED — see `tiers-share-one-board`: what "
+                "does not differ is the roster, so a dual entry would be one board "
+                "entered twice. Originally recorded as 'two strategies ship this year'; "
+                "corrected 2026-08-11 — the entry decision was never made, and the "
+                "likely first real entries are cheap `15k_and_one` teams for pick-log "
+                "capture rather than either reference tier.",
         status="settled",
         reproduce="make dashboard → dashboard/economics.py, "
                   "data/raw/dk_best_ball_tournament_metadata.csv, "
                   "data/raw/dk_best_ball_tournament_prize_structure.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-11",
         date="2026-08-08",
         tags=("economics", "strategy"),
     ),
@@ -4398,7 +4403,10 @@ REGISTRY: tuple[Decision, ...] = (
                 "`field-lineup-reasoning-is-a-measured-null`), but a mean curve cannot see "
                 "draft-to-draft positional runs, so the behavioural half still needs the "
                 "log. ~$40 buys 3,840 picks, which "
-                "is a large sample for a two-parameter noise model. The board must be "
+                "is a large sample for a two-parameter noise model — and the $1 "
+                "`15k_and_one` is the natural vehicle: as of 2026-08-11 the likely "
+                "first real entries are teams there for exactly this purpose. The board "
+                "must be "
                 "captured alongside: a pick log without the contemporaneous board measures "
                 "the field's noise plus the board's drift, and DK's board has zero Wayback "
                 "presence and cannot be recovered afterwards.",
@@ -6438,5 +6446,69 @@ REGISTRY: tuple[Decision, ...] = (
         reviewed="2026-08-11",
         date="2026-08-11",
         tags=("drafting", "execution"),
+    ),
+    Decision(
+        id="all-five-structures-are-swept-under-one-entries-rule",
+        topic="drafting",
+        claim="The strategy sweep drafts and scores portfolios in **all five** captured "
+              "tournament structures, with every entry count derived from one rule — "
+              "`min(max_entries_per_player, ceil($200 / entry_fee))` — rather than "
+              "hand-chosen per tier.",
+        because="The bracket layer had priced all five structures since it landed, but "
+                "the sweep drafted into only the two reference tiers, so three "
+                "captured payout shapes had null checks and no strategy readout. The "
+                "extension took no simulation code — the loops already iterated "
+                "`sim.tournaments` — only an entries rule, because the entry count was "
+                "the one hand-chosen number: stake parity at ~$200 capped by DK's own "
+                "per-player limit reproduces the original 10 and 4 exactly and extends "
+                "to 20 / 150 / 1. Every stake is simulated; nothing has been entered. "
+                "Where the rule cannot reach $200 the stake diverges "
+                "and the config says so (15k_and_one tops out at $150; 88k_alley_oop's "
+                "single entry is $450, so its portfolio metrics are one entry's). Gate "
+                "D still compares exactly the first two config keys — the reference "
+                "pair — so its 6/0 record is unchanged by construction, and the "
+                "per-structure null checks reproduce `n_advance / pod_size` exactly "
+                "before any strategy is scored. The cost center is 15k_and_one's 150 "
+                "entries under the objective arms, ~35 min of `make strategy-sweep`.",
+        status="built",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_sweep.csv, "
+                  "outputs/predictions/strategy_shipped.csv, "
+                  "outputs/predictions/strategy_null.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-11",
+        date="2026-08-11",
+        tags=("drafting", "contest-structure"),
+    ),
+    Decision(
+        id="pick-log-stake-execution-priced",
+        topic="drafting",
+        claim="On the 20 × $1 `15k_and_one` stake the pick-log plan would place, \"the "
+              "opportunity cost of autodrafting\" is **not one number**: the live "
+              "room's payout-weighted objective buys ~+$253 [+$195, +$314] of simulated "
+              "EV on the $20 while *losing* −0.020 [−0.031, −0.008] per-entry advance "
+              "probability, and the survival-maximizing arm buys +0.063 advance while "
+              "buying no dollars at all (−$3.78, interval covering zero).",
+        because="Three arms drafted the same 20-entry stake on the same injected "
+                "worlds, paired on the world and pooled over both validation seasons "
+                "(null check exact): DK autodraft on the submittable `blend_a30` "
+                "board, the draft room's `bracket_ev` objective, and "
+                "`lineup_value_blend30`. A zero-consolation knockout's EV lives in "
+                "deep runs, so the payout-weighted objective trades Round-1 survival "
+                "for tail equity — resolved in both directions — while the autodrafted "
+                "board is already a competent survival drafter sitting between the two "
+                "live objectives. The dollar column is an injected-world EV level and "
+                "is quoted for its sign and pairing, not its magnitude. For the "
+                "stake's actual purpose the execution choice is moot: pick-log data "
+                "is written at draft time, so autodrafting all 20 collects identical "
+                "data for zero clicks; the ~320 live picks buy only the "
+                "objective-dependent contest outcome on $20.",
+        status="measured",
+        reproduce="make pick-log-stake → "
+                  "outputs/predictions/strategy_pick_log_stake.csv, "
+                  "outputs/predictions/strategy_pick_log_paired.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-11",
+        date="2026-08-11",
+        tags=("drafting", "execution", "capture"),
     ),
 )

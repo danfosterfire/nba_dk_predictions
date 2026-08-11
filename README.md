@@ -432,7 +432,7 @@ scores under real tournament structures. Four stages, four `make` targets:
 | the market | `make adp` | [src/features/adp.py](src/features/adp.py) builds a point-in-time-safe ADP panel — ADP is a forecast of the same target, so it is the most leakage-prone input in the repo and gets three separate dates per row |
 | the contest | `make bracket` | [src/sim/bracket.py](src/sim/bracket.py) seats the best 7 of 16 by slot in each period and runs the four-round chain with its cascading tie-break, wildcards and payouts |
 | the draft | `make draft` | [src/sim/draft.py](src/sim/draft.py) runs the snake against a field drawn from the DK-recalibrated consensus plus rank noise |
-| the sweep | `make strategy-sweep` | [src/sim/strategy.py](src/sim/strategy.py) — **24 strategies × 2 tiers × 2 validation seasons at 500 simulated worlds each**, paired inside the world, plus the realized readout |
+| the sweep | `make strategy-sweep` | [src/sim/strategy.py](src/sim/strategy.py) — **24 strategies × 5 tournament structures × 2 validation seasons at 500 simulated worlds each**, paired inside the world, plus the realized readout. All five captured structures are swept under one stake-parity entries rule; every stake is simulated, and which contests to actually enter is an open decision |
 
 [dashboard/economics.py](dashboard/economics.py) derives the tournament structures from
 `data/raw/dk_best_ball_tournament_*.csv`: five real tournaments, Round 1 a zero-consolation

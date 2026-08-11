@@ -25,13 +25,13 @@ returning the whole fee needs `p_null / (1 − rake) = p_null·(1 + hurdle)`, i.
 
 **The assumption is conservative, and that is measured rather than asserted.**
 `payout_elasticity` reads the elasticity of the sweep's own ROI with respect to its own
-survival, `log(payout ratio) / log(survival ratio)`, off the 88 swept rows. Proportional
-means 1. It reads a median **5.40** at `600k_shootaround` and **2.01** at `20k_spin_move`,
-above 1 on **every** row — payout compounds through four cuts and the top prize is 10,000×,
-so a strategy that survives twice as often is worth far more than twice as much. The drawn
-line therefore sits *above* the lift a real break-even needs, which is the direction a
-reference line should err in. The page prints the elasticity beside the line rather than
-hiding the assumption inside it.
+survival, `log(payout ratio) / log(survival ratio)`, off every swept row of the selected
+tier. Proportional means 1, and every tier reads a median well above it (5.40 at
+`600k_shootaround` when first measured) — payout compounds through four cuts and the top
+prize runs to 10,000×, so a strategy that survives twice as often is worth far more than
+twice as much. The drawn line therefore sits *above* the lift a real break-even needs,
+which is the direction a reference line should err in. The page prints the elasticity
+beside the line rather than hiding the assumption inside it.
 """
 
 import re
@@ -54,19 +54,29 @@ GATE_B_NEED_FILE = "draft_gate_b_need.csv"
 SWEEP_NEED_FILE = "strategy_sweep_adp_need_w8.csv"
 SHIPPED_NEED_FILE = "strategy_shipped_adp_need_w8.csv"
 
+#: The pick-log stake readout — the 20 × $1 `15k_and_one` teams the pick-log plan would
+#: enter, drafted by DK autodraft against the live optimizer on the same worlds.
+PICK_LOG_STAKE_FILE = "strategy_pick_log_stake.csv"
+PICK_LOG_PAIRED_FILE = "strategy_pick_log_paired.csv"
+PICK_LOG_BASELINE = "autodraft_blend_a30"
+
 MAKE_BRACKET = "make bracket"
 MAKE_SWEEP = "make strategy-sweep"
 MAKE_SIM_NEED = "make draft-sim-need"
 MAKE_SWEEP_NEED = "make strategy-sweep-need"
+MAKE_PICK_LOG = "make pick-log-stake"
 
 #: The execution axis: the same opinion submitted as a static pre-draft board and
 #: executed by DK's autodraft logic, against clicking every pick. The manual twin of the
 #: autodraft arm, and the caps-only control that separates the executor from the caps.
 EXECUTION_ARMS = ("autodraft_blend_a30", "blend_a30", "blend_caps_dk")
 
-#: The two tiers the sweep drafts into. Five tournaments were captured and the bracket
-#: layer prices all five; only these two carry a portfolio, an entry count and a swept
-#: board, so they are the ones the strategy blocks can say anything about.
+#: The two reference tiers — the pair the headline results are quoted at, and the pair
+#: Gate D compares. Since 2026-08-11 the sweep drafts portfolios into **all five**
+#: captured structures — the entry counts follow one stake-parity rule in
+#: `configs/default.yaml` — so every tier carries a swept board and the strategy blocks
+#: render for any of them. All stakes are simulated; no contest has been entered, and
+#: which to enter is an open decision.
 TARGET_TIERS = ("600k_shootaround", "20k_spin_move")
 
 #: Facet order for the sweep, coarse-to-fine: who to rank by, how much market to blend,
@@ -407,6 +417,46 @@ def execution_panel(sweep: pd.DataFrame, tournament: str,
                      "lo": float(hit["lift_lo"].mean()),
                      "hi": float(hit["lift_hi"].mean())})
     return pd.DataFrame(rows)
+
+
+def pick_log_panel(levels: pd.DataFrame, paired: pd.DataFrame,
+                   baseline: str = PICK_LOG_BASELINE
+                   ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """The pick-log stake, shaped for block 5: pooled levels and the paired gaps.
+
+    Levels are pooled over the swept seasons per arm, with the portfolio's expected
+    payout stated in dollars beside the stake so the two can be read against each other.
+    Gaps come from the artifact already paired on the world; the baseline's
+    self-comparison rows are dropped, for `paired_panel`'s reason — a gap of exactly
+    zero with a zero-width interval is arithmetic, not a result.
+    """
+    pooled = (levels.groupby("strategy", as_index=False)
+              .agg(autodraft=("autodraft", "first"),
+                   n_entries=("n_entries", "first"),
+                   entry_fee=("entry_fee", "first"),
+                   stake=("stake", "first"),
+                   p_advance=("p_advance", "mean"),
+                   p_any_advance=("p_any_advance", "mean"),
+                   ev_per_entry=("ev", "mean"),
+                   n_seasons=("season", "nunique")))
+    pooled["portfolio_ev"] = pooled["ev_per_entry"] * pooled["n_entries"]
+    pooled = pooled.sort_values("p_any_advance", ascending=False).reset_index(drop=True)
+
+    gaps = paired[paired["strategy"] != baseline].copy()
+    gaps["crosses_zero"] = (gaps["gap_lo"] <= 0.0) & (gaps["gap_hi"] >= 0.0)
+    return pooled, gaps
+
+
+def pick_log_cost(gaps: pd.DataFrame, arm: str) -> dict[str, float]:
+    """One arm's gaps over the autodraft baseline, keyed by metric — the tile values."""
+    sub = gaps[gaps["strategy"] == arm]
+    out: dict[str, float] = {}
+    for row in sub.itertuples():
+        out[str(row.metric)] = float(row.gap)
+        out[f"{row.metric}_lo"] = float(row.gap_lo)
+        out[f"{row.metric}_hi"] = float(row.gap_hi)
+        out[f"{row.metric}_resolved"] = bool(not row.crosses_zero)
+    return out
 
 
 def autodraft_matches_caps(sweep: pd.DataFrame) -> bool:

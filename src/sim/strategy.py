@@ -1293,6 +1293,150 @@ def ship(table: pd.DataFrame, realized: pd.DataFrame, cfg: dict,
     return pd.DataFrame(rows)
 
 
+# ── 9b. The pick-log stake ────────────────────────────────────────────────────
+
+#: The stake the pick-log plan would actually place: cheap `15k_and_one` teams whose
+#: purpose is capturing real draft behaviour (`docs/adp-plan.md`, the registry's
+#: `real-pick-logs-are-the-missing-field-calibration`) — ~20 pods at $1.
+PICK_LOG_TOURNAMENT = "15k_and_one"
+PICK_LOG_ENTRIES = 20
+
+#: The three ways those teams could be drafted. `autodraft_blend_a30` is the submittable
+#: pre-draft board — the shipped arm's closest feasible twin under DK's own executor.
+#: `bracket_ev` is the live draft room's literal objective (payout-weighted EV, decision
+#: 5), and `lineup_value_blend30` is the arm the reference-tier sweep ships — both need a
+#: human clicking every pick.
+PICK_LOG_BASELINE = "autodraft_blend_a30"
+PICK_LOG_ARMS = (Strategy(PICK_LOG_BASELINE, ranking="blend", alpha=0.30,
+                          axis="execution", autodraft=True),
+                 Strategy("bracket_ev", ranking="model_mean", objective="bracket_ev",
+                          axis="objective"),
+                 Strategy("lineup_value_blend30", ranking="blend", alpha=0.30,
+                          objective="lineup_value", axis="objective"))
+
+
+def pick_log_stake(cfg: dict, seasons: list[str] | None = None,
+                   tournament: str = PICK_LOG_TOURNAMENT,
+                   n_entries: int = PICK_LOG_ENTRIES, seed: int | None = None,
+                   n_sims: int | None = None,
+                   n_field_drafts: int | None = None) -> dict[str, Path]:
+    """What autodrafting the pick-log stake gives up against drafting it live.
+
+    The sweep prices the execution axis at each tier's stake-parity entry count; this
+    prices it at the stake the pick-log plan would actually place — `n_entries` cheap
+    entries in one tournament — and in the units that stake is decided in: per-entry
+    survival, the portfolio's `P(at least one advances)`, and **dollars** of expected
+    payout on the fee actually at risk. Same injected worlds, same field, same scoring
+    as the sweep; every gap is paired on the world and bootstrapped over worlds pooled
+    across the validation seasons, exactly as `paired_gaps` does it.
+
+    The EV-in-dollars row inherits the resolution caveat every EV here carries: it is a
+    level, and `make bracket` records which structures resolve their tails at an
+    affordable field size. For `15k_and_one` the null check is the guard, as always.
+    """
+    features_dir = Path(cfg["data"]["features_dir"])
+    out_dir = Path(cfg["evaluation"]["predictions_dir"])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cfg_strategy = cfg.get("sim", {}).get("strategy", {})
+    n_sims = int(n_sims or cfg_strategy.get("n_sims", N_SIMS_SWEEP))
+    n_field_drafts = int(n_field_drafts
+                         or cfg_strategy.get("field_drafts", N_FIELD_DRAFTS))
+    seed = int(SEED if seed is None else seed)
+
+    design = split_frame(cfg)
+    seasons = seasons or validation_seasons(design)
+    for season in seasons:
+        assert_season_allowed(season, design)
+
+    print(f"The pick-log stake — {n_entries} entries in {tournament}, autodraft "
+          f"against the live optimizer")
+    print(f"  The test split is LOCKED — seasons go through `held_out.selection_split`.")
+
+    level_rows = []
+    p_traces: dict = {}
+    any_traces: dict = {}
+    ev_traces: dict = {}
+    entry_fee = float("nan")
+    for season in seasons:
+        print(f"\n── {season} ──")
+        full = draft_room.load_room(cfg, season, n_sims=n_sims)
+        room, _ = priceable_room(cfg, full, seed, n_field_drafts)
+        games_played = board_games_played(features_dir, season, room, n_sims)
+        truth, _, _ = gate_c(cfg, season, room.dk_pts, games_played, room.scorable,
+                             room.frame["player_id"].to_numpy(), room.frame,
+                             truth_sim_index(n_sims))
+        field_round = draft_room.build_field(room.frame, room.board, truth, room.masks,
+                                             room.round_of_period, room.field_cfg,
+                                             n_field_drafts, seed, room.pod_size,
+                                             room.seats)
+        ref = draft_room.field_reference(field_round, tournament)
+        entry_fee = float(ref.entry_fee)
+        check = draft_room.null_check(field_round, ref)
+        print(f"  null check {tournament}: P(top 2 of 12) "
+              f"{check['p_advance_simulated']:.6f} against "
+              f"{check['p_advance_analytic']:.6f} "
+              f"({check['p_advance_error']:+.2e})")
+
+        null = symmetric_null(tournament)
+        for strategy in PICK_LOG_ARMS:
+            rng = np.random.default_rng(seed)
+            rosters, _ = draft_portfolio(room, strategy, tournament, n_entries, rng)
+            scored = score_rosters(truth, rosters, room.masks, room.round_of_period)
+            totals = scored["round_total"].astype(np.float64)
+            out = portfolio_outcome(totals, ref, np.random.default_rng(seed + 1))
+            p_trace = out.pop("trace")
+            any_trace = out.pop("trace_any")
+            ev_entry, _ = draft_room.bracket_ev(totals, ref, per_sim=True)
+            ev_trace = ev_entry.sum(axis=0)          # portfolio dollars per world
+            key = (strategy.name, tournament)
+            p_traces[key] = (np.concatenate([p_traces[key], p_trace])
+                             if key in p_traces else p_trace)
+            any_traces[key] = (np.concatenate([any_traces[key], any_trace])
+                               if key in any_traces else any_trace)
+            ev_traces[key] = (np.concatenate([ev_traces[key], ev_trace])
+                              if key in ev_traces else ev_trace)
+            level_rows.append({"season": season, "tournament": tournament,
+                               "strategy": strategy.name,
+                               "autodraft": strategy.autodraft,
+                               "n_entries": n_entries, "entry_fee": entry_fee,
+                               "stake": n_entries * entry_fee,
+                               **{k: v for k, v in out.items()},
+                               "p_advance_null": null["p_advance_round_1"],
+                               "lift_vs_null": (out["p_advance"]
+                                                - null["p_advance_round_1"])})
+            print(f"  {strategy.name:<22} P(adv) {out['p_advance']:.4f}  "
+                  f"P(any) {out['p_any_advance']:.4f}  "
+                  f"portfolio EV ${float(ev_trace.mean()):,.2f} on a "
+                  f"${n_entries * entry_fee:,.0f} stake")
+
+    paired_rows = []
+    for metric, store in (("p_advance", p_traces), ("p_any_advance", any_traces),
+                          ("ev_dollars", ev_traces)):
+        paired_rows.append(paired_gaps(store, PICK_LOG_BASELINE, tournament, metric,
+                                       np.random.default_rng(seed + 2)))
+    paired = pd.concat(paired_rows, ignore_index=True)
+    paired["n_entries"] = n_entries
+    paired["entry_fee"] = entry_fee
+    paired["stake"] = n_entries * entry_fee
+
+    print(f"\nPaired on the world, pooled over {len(seasons)} seasons — every gap is "
+          f"an arm minus {PICK_LOG_BASELINE}:")
+    for row in paired[paired["strategy"] != PICK_LOG_BASELINE].itertuples():
+        unit = "$" if row.metric == "ev_dollars" else ""
+        print(f"  {row.strategy:<22} {row.metric:<14} {unit}{row.gap:+.4f} "
+              f"[{unit}{row.gap_lo:+.4f}, {unit}{row.gap_hi:+.4f}]  "
+              f"{'resolved' if row.resolved else 'NOT resolved'}")
+
+    paths = {}
+    for name, frame in (("strategy_pick_log_stake", pd.DataFrame(level_rows)),
+                        ("strategy_pick_log_paired", paired)):
+        dest = out_dir / f"{name}.csv"
+        frame.to_csv(dest, index=False)
+        print(f"Saved {len(frame):,} {name.replace('_', ' ')} rows → {dest}")
+        paths[name] = dest
+    return paths
+
+
 # ── 10. The entry point ────────────────────────────────────────────────────────
 
 def truth_sim_index(n_sims: int, n_truth: int = 24) -> np.ndarray:
@@ -1638,9 +1782,17 @@ if __name__ == "__main__":
                         help="stipulate the adp_need field's lean instead of reading "
                              "the fitted (zero) one — a robustness probe, suffixed "
                              "into the artifact names")
+    parser.add_argument("--pick-log-stake", action="store_true",
+                        help="price the pick-log stake instead of running the sweep: "
+                             "20 cheap 15k_and_one entries, DK autodraft against the "
+                             "live optimizer, paired on the world")
     args = parser.parse_args()
 
     cfg = yaml.safe_load(open("configs/default.yaml"))
-    run(cfg, seasons=args.season, n_sims=args.n_sims, seed=args.seed,
-        objective_arm=not args.no_objective_arm, n_field_drafts=args.field_drafts,
-        field=args.field, need_weight=args.need_weight)
+    if args.pick_log_stake:
+        pick_log_stake(cfg, seasons=args.season, seed=args.seed, n_sims=args.n_sims,
+                       n_field_drafts=args.field_drafts)
+    else:
+        run(cfg, seasons=args.season, n_sims=args.n_sims, seed=args.seed,
+            objective_arm=not args.no_objective_arm, n_field_drafts=args.field_drafts,
+            field=args.field, need_weight=args.need_weight)
