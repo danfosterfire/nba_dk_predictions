@@ -69,7 +69,21 @@ reader who never opens the board never loads the simulation layer.
 
 Where a view *interprets* an artifact — naming a principal component, say — the
 interpretation carries a machine-checkable anchor so it cannot silently invert. See
-`pca.COMPONENTS` and `pca.orient()`.
+`pca.COMPONENTS` and `pca.orient()`, and `model_cards.COMPONENT_BASIS`, which anchors "this
+head is a share and that one a shooting percentage" to a design column the artifact has to
+carry.
+
+**The third anchor points *outside* the artifacts, because that is where its claim lives.**
+`model_card_index.csv` carries a `chain_role` per head — what `make simulate-season` does
+with it, in a closed vocabulary of six, with `in_draw_path` as the boolean half. A head
+being fitted, converged and carded says nothing about whether the simulator calls it:
+sixteen of the twenty are read when a season is drawn and four are not, and the Availability
+page introduced its five heads as *"two ways of predicting the same quantity"* until the
+column existed. So `tests/test_model_cards.py` walks `src/sim/*.py` with `ast`, collects
+every key subscripted out of the posterior bundle, and asserts set equality against the
+declaration. Declared in `src/models/model_cards.py` beside `HeadSpec` and read here like
+`unit`, for the same reason `unit` is not typed into a view. See
+`docs/model-cards-plan.md`.
 
 ## Layout
 
@@ -84,7 +98,8 @@ dashboard/
     overview.py       page 1 — the one exempt page: the problem, five hero tiles, the
                       pipeline in one diagram, and the route into the other eight
     fingerprints.py   the PCA fingerprint page — controls, layout, render()
-    availability.py   page 3 — four lines that name a model class
+    availability.py   page 3 — one call that names a model class; its docstring says
+                      which two of the five heads the shipped chain actually draws
     minutes.py        page 4 — the class, plus three named blocks: one posterior at
                       two units, the injected player-season effect, and the zero-sum
                       team constraint no marginal panel can see
@@ -110,8 +125,9 @@ dashboard/
                   surfaces, the paired gaps
   model_cards.py  the model pages' pure layer — the class table (which heads make a
                   page, in which order), the seven blocks as frames, where each
-                  head's `make stan` diagnostics row lives, and the blocks a single
-                  page owns
+                  head's `make stan` diagnostics row lives, the blocks a single
+                  page owns, and the two anchored interpretations: `COMPONENT_BASIS`
+                  and the chain-role sentence `chain_role_phrase` builds
   inputs.py       page 7's pure layer — the ADP panel's dating and what it costs, the
                   capture calendar and its per-program recovery policy, and the four
                   calibrated simulator inputs at each of the three fit windows

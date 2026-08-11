@@ -7,11 +7,14 @@ and `dashboard/model_cards.py` holds the class table and every frame shape below
 
 The seven blocks, in the order the plan fixes them:
 
-1. **What this head is** — its declared specification, and its **unit**, stated at the top
-   of the page. The one block where typed prose is allowed, and only ever about the
-   specification: the component heads are season-collapsed player-seasons while the
-   composition is per player-game, and a reader comparing an R² across those pages without
-   knowing that is being misled.
+1. **What this head is** — its declared specification, its **unit**, and its **role in the
+   shipped chain**, stated at the top of the page. The one block where typed prose is
+   allowed, and only ever about the specification: the component heads are season-collapsed
+   player-seasons while the composition is per player-game, and a reader comparing an R²
+   across those pages without knowing that is being misled. The chain role is the same
+   argument one question on — a head being fitted, converged and carded says nothing about
+   whether `make simulate-season` calls it, and four of the twenty are never read at draw
+   time — so it too is read from `model_card_index.csv` rather than typed here.
 2. **The features it was fed** — one histogram per design column with train and validation
    on shared edges, plus the n / mean / sd / imputed-share table.
 3. **Feature relationships** — the correlation heatmap, and one joint density for a pair
@@ -113,6 +116,13 @@ def specification_block(row: pd.Series) -> None:
         col.metric(label, value, help=helptext)
 
     st.markdown(f"**{row['description']}**")
+    # What the head does when a season is drawn, beside what it *is*. Read from the index
+    # rather than typed: sixteen of the twenty heads are loaded by `src/sim/season.py` and
+    # four are not, and a page that decided which for itself would go stale the first time
+    # the simulator was refactored — the same argument `unit` above already carries.
+    role = mc.chain_role_phrase(row)
+    if role:
+        st.caption(role)
     # Full width rather than half: the `Note` column is the half of this table worth
     # reading, and in a half-width column Streamlit truncated every one of them.
     st.dataframe(mc.specification(row), hide_index=True, width="stretch",
@@ -466,9 +476,14 @@ def render(class_key: str, extra: dict | None = None) -> None:
     th = shell.current_theme()
 
     st.caption(spec.intro)
+    # The chain role sits on the header beside the unit, and is *dropped* rather than
+    # dashed when an older index does not carry it — a bare `·  —` in a heading reads as a
+    # field the page failed to fill rather than as one it does not have.
+    role_label = mc.text(row.get("chain_role_label"), "")
     st.markdown(
         f"### {row['label']} · fitted per **{row['unit']}**"
-        f"  \n`{row['family']}` · {int(row['n_fit']):,} rows · {mc.season_span(row)}")
+        + (f" · {role_label}" if role_label else "")
+        + f"  \n`{row['family']}` · {int(row['n_fit']):,} rows · {mc.season_span(row)}")
 
     blocks = (
         (1, "What this head is", None,

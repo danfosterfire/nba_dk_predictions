@@ -145,13 +145,17 @@ CLASSES: dict[str, ModelClass] = {
         # tenure ends.
         heads=("availability", "gp_entry", "gp_onset", "gp_duration", "gp_exit"),
         intro=(
-            "Two ways of predicting the same quantity — how many of his team's games a "
-            "player is available for. **`availability`** models it directly, as a "
-            "beta-binomial over games played out of team games. The **games-played tenure "
-            "decomposition** models the process that generates it instead: an entry index "
-            "and an exit index bound the stretch of the schedule a player is with the "
-            "team, and inside that tenure a two-state chain starts absence spells at a "
-            "fitted hazard and a beta-geometric decides how long each one lasts."),
+            "**Five heads, and the shipped chain takes two of them.** A simulated season "
+            "asks how many of his team's games a player misses and then which ones: "
+            "**`availability`** supplies the count, as a beta-binomial over games played "
+            "out of team games, and **`gp_duration`** supplies the shape the misses are "
+            "laid out in, as a beta-geometric spell length. The other three are the "
+            "**games-played tenure decomposition**, which models the generating process "
+            "instead — `gp_entry` and `gp_exit` bound the stretch of schedule a player is "
+            "with the team and `gp_onset` starts spells inside it. They are fitted and "
+            "carded and are not called when a season is drawn; what they produce is the "
+            "games-played pmf the drawn seasons are scored against. Each head says which "
+            "it is, under its own name."),
     ),
     "minutes": ModelClass(
         key="minutes",
@@ -251,6 +255,10 @@ def specification(row: pd.Series) -> pd.DataFrame:
     """
     fields = [
         ("Unit", text(row["unit"]), "One row of this head's fit"),
+        # No backticks: an `st.dataframe` cell is canvas text with no markdown, so every
+        # other Note in this table is plain prose and a stray pair would render as itself.
+        ("In the shipped chain", text(row.get("chain_role_label")),
+         "What a simulated season does with this head, if anything"),
         ("Likelihood", text(row["likelihood"]), "The observation model"),
         ("Response", text(row["response_label"]),
          "What its predictive is a distribution over"),
@@ -272,6 +280,27 @@ def specification(row: pd.Series) -> pd.DataFrame:
         fields.append(("Row filter", text(row["row_filter"]),
                        "Rows the head drops internally, so n_fit is below the frame"))
     return pd.DataFrame(fields, columns=["Field", "Value", "Note"])
+
+
+def chain_role_phrase(row: pd.Series) -> str:
+    """What this head does when a season is drawn, as one sentence plus its mechanism.
+
+    Read from `model_card_index.csv`, not typed here — a head being fitted, converged and
+    carded says nothing about whether `src/sim/season.py` calls it, and a view that decided
+    that for itself would go stale on the next refactor of the simulator. `in_draw_path`
+    picks the auxiliary, which is why the boolean ships beside the label rather than being
+    inferred from it: *"in a simulated season it **draws the games-played count**"* against
+    *"in a simulated season it is **not called at draw time**"*.
+
+    Empty for an index built before the column existed, so the page loses a caption rather
+    than printing `nan`.
+    """
+    label = text(row.get("chain_role_label"), "")
+    if not label:
+        return ""
+    verb = "it" if bool(row.get("in_draw_path", False)) else "it is"
+    note = text(row.get("chain_role_note"), "")
+    return f"**In a simulated season {verb} {label}.** {note}".strip()
 
 
 # ── Block 2 · the features it was fed ─────────────────────────────────────────

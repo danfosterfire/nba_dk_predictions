@@ -16,7 +16,7 @@ contract names land here:
 
 | artifact | grain | what it is for |
 |---|---|---|
-| `model_card_index.csv` | head | the head selector, and the *unit* every page must state |
+| `model_card_index.csv` | head | the head selector, the *unit* every page must state, and each head's role in the shipped chain |
 | `model_card_coefficients.csv` | head × term | the sorted credible-interval panel |
 | `model_card_features.csv` | head × feature × split × bin | the small-multiple histograms and the n/mean/sd/missing table |
 | `model_card_feature_corr.csv` | head × split × feature × feature | the correlation heatmap, and which pairs earn a density |
@@ -193,6 +193,74 @@ ARTIFACTS = ("model_card_index.csv", "model_card_coefficients.csv",
 # ── What each head is, declared rather than derived ───────────────────────────
 
 @dataclass(frozen=True)
+class ChainRole:
+    """What one head does when `make simulate-season` draws a season.
+
+    **A head being fitted, converged and carded says nothing about whether the simulator
+    calls it**, and until this vocabulary existed the only way to find out was to read
+    `src/sim/season.py`. Sixteen of the twenty heads are read out of the posterior bundle
+    by `_sim_one`; four are not, and one whole model page was describing its five heads as
+    alternates because nothing on the page could say which.
+
+    `label` is a verb phrase, because the page writes it into a sentence whose subject is
+    the head and whose auxiliary is chosen by `in_draw_path` — "in the simulated season it
+    **draws the games-played count**" against "it is **not called at draw time**". `note`
+    is the mechanism, and like `HeadSpec.description` it is specification prose and never a
+    result.
+
+    `in_draw_path` is the machine-checkable half. `draw_path_heads()` returns the heads it
+    claims, and `tests/test_model_cards.py` walks `src/sim/` with `ast` to assert that set
+    against the artifact keys the simulator actually subscripts — a declared "in the draw
+    path" that nothing in `src/sim/` reads is exactly the kind of interpretation that goes
+    stale on the next refactor, which is the argument `pca.orient()` and `COMPONENT_BASIS`
+    already make one level up.
+    """
+
+    label: str
+    in_draw_path: bool
+    note: str
+
+
+#: The closed vocabulary. Six roles over twenty heads: five things a season draw is
+#: assembled from, and one for a head the draw never touches.
+CHAIN_ROLES: dict[str, ChainRole] = {
+    "games_played_count": ChainRole(
+        "draws the games-played count", True,
+        "`_sim_one` draws one beta-binomial rate per player from this head's posterior and "
+        "a binomial count of games played per player-team cell. It decides how many games "
+        "are missed and nothing about which ones."),
+    "absence_layout": ChainRole(
+        "lays the absences out", True,
+        "`games_played.allocate_spells` places that count of missed games as spells at this "
+        "head's fitted `(mu, kappa)`, one pair per posterior draw. It decides how the "
+        "misses clump and nothing about how many there are — which is the axis a "
+        "best-7-of-16 knockout turns on and the one a games-played marginal cannot see."),
+    "minutes_allocation": ChainRole(
+        "allocates the team-game's minutes", True,
+        "`stan_composition.simulate_minutes` splits each team-game's `5 x game_length` "
+        "among the players available for it, with the shipped per-(player, season) effect "
+        "injected so the season-level spread comes with the head rather than being "
+        "remembered by the consumer."),
+    "game_length": ChainRole(
+        "draws how long the game is", True,
+        "`stan_game_length.sample_game_length`, once per game and shared by both teams, "
+        "because overtime is a property of the game. It is the one input a forward "
+        "simulation cannot look up."),
+    "box_score_component": ChainRole(
+        "draws one component of the box score", True,
+        "Its per-minute rate or conversion probability is evaluated once per player and "
+        "drawn per game against the minutes the allocation gave him, in `DRAW_ORDER`. "
+        "`dk_pts` is `compute_dk_pts` over the eleven heads' drawn integers."),
+    "not_at_draw_time": ChainRole(
+        "not called at draw time", False,
+        "Fitted, converged and carded, and `src/sim/season.py` never reads it out of the "
+        "posterior bundle. What it supplies instead is a **bar the simulated draw is scored "
+        "against** in Gate A: the games-played pmf for the tenure decomposition, the "
+        "season-total minutes spread for the marginal minutes head."),
+}
+
+
+@dataclass(frozen=True)
 class HeadSpec:
     """The page-facing description of one head.
 
@@ -206,12 +274,18 @@ class HeadSpec:
     `description` is specification only — what the head models and how — never a result.
     That is the one kind of typed prose `docs/dashboard-plan.md` allows on a model page,
     and it lives here for the same reason `unit` does.
+
+    `chain_role` is the same argument again, one question further on: *what the head does
+    in the chain that ships*, keyed into `CHAIN_ROLES`. It is declared beside the head
+    rather than in the dashboard for the reason `unit` is, and pinned against `src/sim/`
+    rather than merely written down for the reason `COMPONENT_BASIS` is anchored.
     """
 
     model_class: str
     unit: str
     likelihood: str
     description: str
+    chain_role: str
 
 
 CLASS_LABELS: dict[str, str] = {
@@ -227,33 +301,47 @@ CLASS_LABELS: dict[str, str] = {
 SPECS: dict[str, HeadSpec] = {
     "availability": HeadSpec(
         "availability", "player-season", "beta-binomial",
-        "Games played out of team games, shrunk hard toward a league/age baseline."),
+        "Games played out of team games, shrunk hard toward a league/age baseline.",
+        "games_played_count"),
     "gp_entry": HeadSpec(
         "availability", "player-season", "beta-binomial",
-        "Share of the schedule before a player's tenure with the team begins."),
+        "Share of the schedule before a player's tenure with the team begins.",
+        "not_at_draw_time"),
     "gp_exit": HeadSpec(
         "availability", "player-season", "beta-binomial",
-        "Share of the schedule after a player's tenure with the team ends."),
+        "Share of the schedule after a player's tenure with the team ends.",
+        "not_at_draw_time"),
     "gp_onset": HeadSpec(
         "availability", "player-season", "beta-binomial",
-        "Per-game hazard of starting an absence spell while at risk inside tenure."),
+        "Per-game hazard of starting an absence spell while at risk inside tenure.",
+        "not_at_draw_time"),
     "gp_duration": HeadSpec(
         "availability", "absence spell", "beta-geometric",
         "How long an absence spell lasts — a geometric hazard with a Beta frailty "
-        "integrated out."),
+        "integrated out.",
+        "absence_layout"),
+    # The marginal minutes head ships and is **not** in the draw path, which is the second
+    # thing this column turned up. Its season-level spread reaches the simulator as
+    # `sim.minutes.player_season_sigma`, a constant `minutes_unification` calibrated
+    # against it and `rehydrate_composition` injects into the composition — so what
+    # `season.py` reads is the composition, and this head is Gate A's minutes-spread bar.
     "minutes": HeadSpec(
         "minutes", "player-season", "beta-binomial",
-        "Season minutes as successes out of real game length, given availability."),
+        "Season minutes as successes out of real game length, given availability.",
+        "not_at_draw_time"),
     "composition": HeadSpec(
         "minutes", "player-game inside a team-game", "sequential beta-binomial",
         "A team-game's 5 x game_length minutes allocated among the players who played, "
-        "as sequential binomial trials ordered by prior-season minutes share."),
+        "as sequential binomial trials ordered by prior-season minutes share.",
+        "minutes_allocation"),
     "game_length_ot": HeadSpec(
         "game_length", "season cell of games", "beta-binomial",
-        "Whether a game goes to overtime, collapsed to season cells."),
+        "Whether a game goes to overtime, collapsed to season cells.",
+        "game_length"),
     "game_length_depth": HeadSpec(
         "game_length", "overtime-depth cell", "beta-geometric",
-        "How many overtime periods a game that reaches one goes on to play."),
+        "How many overtime periods a game that reaches one goes on to play.",
+        "game_length"),
 }
 
 _COUNT_DESCRIPTIONS = {
@@ -264,7 +352,8 @@ _COUNT_DESCRIPTIONS = {
 for _head, _what in _COUNT_DESCRIPTIONS.items():
     SPECS[_head] = HeadSpec(
         "components", "player-season", "negative binomial",
-        f"{_what} as a count with season minutes as the exposure.")
+        f"{_what} as a count with season minutes as the exposure.",
+        "box_score_component")
 
 _CONVERSION_DESCRIPTIONS = {
     "fg3a_given_fga": "The three-point share of total field-goal attempts.",
@@ -273,7 +362,36 @@ _CONVERSION_DESCRIPTIONS = {
     "ftm_given_fta": "Free-throw makes out of free-throw attempts.",
 }
 for _head, _what in _CONVERSION_DESCRIPTIONS.items():
-    SPECS[_head] = HeadSpec("components", "player-season", "beta-binomial", _what)
+    SPECS[_head] = HeadSpec("components", "player-season", "beta-binomial", _what,
+                            "box_score_component")
+
+
+def chain_role(head: str) -> ChainRole:
+    """The head's declared role in the shipped chain, or a raise naming the vocabulary."""
+    spec = SPECS.get(head)
+    if spec is None:
+        raise KeyError(f"no `HeadSpec` for {head!r}; declared heads are {sorted(SPECS)}")
+    if spec.chain_role not in CHAIN_ROLES:
+        raise KeyError(
+            f"{head!r} declares chain role {spec.chain_role!r}, which is not in the closed "
+            f"vocabulary {sorted(CHAIN_ROLES)}. The vocabulary is closed so a page can "
+            f"group by it and a test can check it against `src/sim/`.")
+    return CHAIN_ROLES[spec.chain_role]
+
+
+def draw_path_heads() -> set[str]:
+    """The heads declared to be read when a season is drawn.
+
+    The claim `tests/test_model_cards.py` checks against the artifact keys `src/sim/`
+    actually subscripts, rather than against this file a second time.
+    """
+    return {head for head in SPECS if chain_role(head).in_draw_path}
+
+
+# Import-time, so a head added with a typo'd or missing role fails on import rather than
+# on the page — the same stance `_check_splits` takes on a split label.
+for _head in SPECS:
+    chain_role(_head)
 
 
 @dataclass(frozen=True)
@@ -1576,12 +1694,21 @@ def index_row(head: str, art, frames: HeadFrames, check: dict,
             f"read it rather than hard-coding a unit string that goes stale on the next "
             f"refit — see `HeadSpec`.")
     provenance = art.provenance
+    role = chain_role(head)
     return {
         "head": head,
         "label": art.head_label,
         "model_class": spec.model_class,
         "class_label": CLASS_LABELS[spec.model_class],
         "unit": spec.unit,
+        # Beside the unit, and for the same reason: a page must be able to say what the
+        # head does in the chain that ships, and a view that types that in is a view that
+        # goes stale on the next refactor of `src/sim/season.py`. `in_draw_path` is the
+        # half a test can check; `chain_role` is the closed key a page may group by.
+        "chain_role": spec.chain_role,
+        "chain_role_label": role.label,
+        "in_draw_path": role.in_draw_path,
+        "chain_role_note": role.note,
         "family": art.family,
         "likelihood": spec.likelihood,
         "description": spec.description,
@@ -1766,9 +1893,12 @@ def run(cfg: dict, heads: tuple[str, ...] | None = None,
                       if np.isfinite(r["predictive_bias"])), key=abs, default=float("nan"))
     ungated = sorted(r["head"] for r in index if not r["ecdf_band_gated"])
     unchecked = sorted(r["head"] for r in index if r["predictive_check"] == "none")
+    drawn = sorted(r["head"] for r in index if r["in_draw_path"])
     print(f"\n{len(index)} heads carded across "
-          f"{len(set(r['model_class'] for r in index))} model classes; "
-          f"worst recipe design error "
+          f"{len(set(r['model_class'] for r in index))} model classes, "
+          f"{len(drawn)} of them in the simulator's draw path "
+          f"({', '.join(sorted(r['head'] for r in index if not r['in_draw_path']))} "
+          f"are not); worst recipe design error "
           f"{max(r['recipe_design_error'] for r in index):.2e} against a "
           f"{DESIGN_TOL:.0e} bar; {time.perf_counter() - started:.1f}s.")
     print(f"Predictive: {PRED_DRAWS} draws per head; worst 95%-ribbon half-sample "

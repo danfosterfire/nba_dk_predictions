@@ -65,7 +65,11 @@ to the relevant docs for the task at hand. The docs are:
   inherits (`selection_split` only, the `train` posterior window, a build-time recipe 
   check that fails rather than writing a wrong artifact, and a predictive drawn through 
   each head's own `predict_samples` whose mean must reproduce that head's own). Read 
-  this before adding a `model_card_*` artifact or changing a head's variant ladder.
+  this before adding a `model_card_*` artifact or changing a head's variant ladder. 
+  Since 2026-08-10 every head also declares a **`chain_role`** — what the simulator 
+  does with it, in a closed vocabulary, pinned against `src/sim/` by a test rather 
+  than merely written down. Sixteen of the twenty heads are in the draw path; 
+  `gp_entry`, `gp_exit`, `gp_onset` and the marginal `minutes` head are not.
   - minutes-composition-plan.md: Plan and notes for the production version of 
   the minutes-played model. Work completed and mostly archival at this point.
   - model-development-notes.md: Detailed notes and findings developed during

@@ -25,7 +25,9 @@ import pytest
 from sklearn.preprocessing import StandardScaler
 
 from src.models import model_cards as M
+from src.models.component_rates import CONVERSION_HEADS, COUNT_HEADS
 from src.models.posteriors import DesignRecipe, PosteriorArtifact
+from src.sim import season as S
 
 PREDICTIONS = Path("outputs/predictions")
 
@@ -141,6 +143,109 @@ def test_the_emitter_reaches_a_split_only_through_selection_split():
     assert "selection_split" in imported
     for forbidden in ("split_seasons", "final_split", "unlocked", "assert_unlocked"):
         assert forbidden not in imported
+
+
+# ── The chain role, pinned against the simulator ──────────────────────────────
+#
+# `HeadSpec.chain_role` is an *interpretation* — "this head is read when a season is
+# drawn" — and this repo's rule for an interpretation on a page is that it carries a
+# machine-checkable anchor, the way `pca.orient()` and `COMPONENT_BASIS` do. The anchor
+# here is `src/sim/season.py` itself: a head declared to be in the draw path that nothing
+# in `src/sim/` reads is exactly the claim that goes stale on the next refactor, and it
+# goes stale silently, because the page keeps rendering.
+
+def _sim_artifact_keys() -> set[str]:
+    """Every posterior-artifact key `src/sim/` actually subscripts, read with `ast`.
+
+    Static rather than dynamic because the alternative is loading twenty pickles and
+    driving a season draw, and because the failure this guards is a *source* change. Two
+    forms appear and both are resolved:
+
+    - `artifacts["gp_duration"]` — a literal, taken as itself;
+    - `artifacts[artifact_name(head)]` — the component loop, whose head list is
+      `component_rates`' own, so it is expanded from that list through the simulator's own
+      `artifact_name` rather than from a copy of the names kept here.
+
+    Anything else raises, so a third addressing form fails this test instead of quietly
+    widening the declared draw path.
+    """
+    keys: set[str] = set()
+    for path in sorted(Path("src/sim").glob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not (isinstance(node, ast.Subscript)
+                    and isinstance(node.value, ast.Name)
+                    and node.value.id == "artifacts"):
+                continue
+            key = node.slice
+            if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                keys.add(key.value)
+            elif (isinstance(key, ast.Call) and isinstance(key.func, ast.Name)
+                  and key.func.id == "artifact_name"):
+                keys |= {S.artifact_name(head) for head in COUNT_HEADS}
+                keys |= {S.artifact_name(f"{made}|{attempted}")
+                         for made, attempted in CONVERSION_HEADS}
+            else:
+                raise AssertionError(
+                    f"{path}:{node.lineno} addresses the posterior bundle as "
+                    f"`{ast.unparse(node)}`, which this scanner cannot resolve. Teach it "
+                    f"the form or the declared draw path stops being checkable.")
+    return keys
+
+
+def test_every_head_declares_a_chain_role_from_the_closed_vocabulary():
+    for head, spec in M.SPECS.items():
+        assert spec.chain_role in M.CHAIN_ROLES, (head, spec.chain_role)
+    # The vocabulary earns its closure: every term is used, and both sides of the
+    # `in_draw_path` split are populated, so the column is a distinction and not a constant.
+    used = {spec.chain_role for spec in M.SPECS.values()}
+    assert used == set(M.CHAIN_ROLES)
+    assert {role.in_draw_path for role in M.CHAIN_ROLES.values()} == {True, False}
+
+
+def test_an_undeclared_head_has_no_chain_role_rather_than_a_default():
+    with pytest.raises(KeyError, match="no `HeadSpec`"):
+        M.chain_role("a_head_that_was_never_carded")
+
+
+def test_the_declared_draw_path_is_what_the_simulator_actually_reads():
+    """The anchor. Declared draw path == the artifact keys `src/sim/` subscripts.
+
+    Both directions matter and they fail differently. A head declared in the draw path
+    that the simulator never loads is a page overstating what ships; a head the simulator
+    loads that is declared out of it is a page understating it, which is how the
+    Availability class intro came to describe five heads as two alternates.
+    """
+    assert M.draw_path_heads() == _sim_artifact_keys()
+
+
+def test_the_availability_chain_is_a_count_head_and_a_layout_head():
+    """The specific claim step 2 of `docs/dashboard-revision-plan.md` corrected.
+
+    `_sim_one` takes the games-played *count* from `availability` and lays those misses
+    out with `allocate_spells` at `gp_duration`'s shape; the three tenure heads are not
+    called at draw time. Asserted per head so a refactor that swapped which head does
+    which fails here rather than on a page nobody re-reads.
+    """
+    assert M.SPECS["availability"].chain_role == "games_played_count"
+    assert M.SPECS["gp_duration"].chain_role == "absence_layout"
+    for head in ("gp_entry", "gp_exit", "gp_onset"):
+        assert not M.chain_role(head).in_draw_path
+    # And the layout step it names is a real function, imported by the simulator itself.
+    assert S.allocate_spells is not None
+
+
+def test_the_marginal_minutes_head_is_not_in_the_draw_path_and_the_composition_is():
+    """The second correction the column turned up, and the surprising one.
+
+    Both minutes heads ship, but the simulator reads only the composition: the marginal
+    head's season-level spread arrives as `sim.minutes.player_season_sigma`, a constant
+    `minutes_unification` calibrated against it and `rehydrate_composition` injects. So
+    `artifacts["minutes"]` never appears in `src/sim/`, and a page saying "both heads are
+    drawn from" would be wrong in a way no marginal metric could show.
+    """
+    assert not M.chain_role("minutes").in_draw_path
+    assert M.chain_role("composition").in_draw_path
+    assert "minutes" not in _sim_artifact_keys()
 
 
 # ── Terms ─────────────────────────────────────────────────────────────────────
@@ -864,6 +969,24 @@ def test_every_shipped_head_is_verified_and_declares_a_unit():
     assert (index["recipe_design_error"] <= 1e-9).all()
     assert index["unit"].notna().all() and (index["unit"].str.len() > 0).all()
     assert set(index["model_class"]) <= set(M.CLASS_LABELS)
+
+
+def test_the_shipped_index_carries_each_head_s_role_in_the_shipped_chain():
+    """The column the dashboard reads instead of typing a claim about the simulator.
+
+    Asserted on the *artifact* rather than on `SPECS`, because the page reads the artifact
+    — a column emitted under the wrong name, or dropped by an edit to `index_row`, would
+    leave the page silently falling back to its empty-string branch.
+    """
+    index = _shipped("model_card_index.csv").set_index("head")
+    for column in ("chain_role", "chain_role_label", "in_draw_path", "chain_role_note"):
+        assert column in index.columns, column
+        assert index[column].notna().all(), column
+    assert set(index["chain_role"]) <= set(M.CHAIN_ROLES)
+    assert set(index[index["in_draw_path"]].index) == M.draw_path_heads()
+    # Label and note both carry text, since either one empty renders as a dash on the page.
+    assert (index["chain_role_label"].str.len() > 0).all()
+    assert (index["chain_role_note"].str.len() > 0).all()
 
 
 def test_every_shipped_head_carding_features_also_cards_their_correlations():

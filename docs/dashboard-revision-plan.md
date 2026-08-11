@@ -52,7 +52,7 @@ documentation again. All are from `dashboard/README.md` and `docs/dashboard-plan
 | # | step | user item | new pipeline work | why here |
 |---|---|---|---|---|
 | 1 | [Appearance reaches the whole page](#step-1--the-appearance-mode-reaches-the-whole-page) ✅ | 4 | none | global chrome; every later step is then verified once, under the real theme |
-| 2 | [The availability page says which head ships](#step-2--the-availability-page-says-which-head-ships) | 2 | one column on `model_card_index.csv` | small, self-contained, and it corrects a claim now on the page |
+| 2 | [The availability page says which head ships](#step-2--the-availability-page-says-which-head-ships) ✅ | 2 | one column on `model_card_index.csv` | small, self-contained, and it corrects a claim now on the page |
 | 3 | [Scaled quantile residuals](#step-3--scaled-quantile-residuals-in-block-6) | 3 | one artifact from the existing predictive | touches all four model pages through one renderer |
 | 4 | [dk_pts at the tournament round](#step-4--dk_pts-at-the-tournament-round-the-new-page) | 5 | an emitter, plus training-season tensors | the large step; it also adds a page, which moves the route table |
 | 5 | [The Overview as a paper](#step-5--the-overview-rewritten-as-a-paper) | 1 | none | last, because step 4 gives it a ninth route — the same reason it was built last the first time |
@@ -140,7 +140,9 @@ and a legitimate reset to `detected_mode()`.
 
 ## Step 2 · The availability page says which head ships
 
-**User item 2**, and the premise needs correcting before the page does.
+**User item 2. ✅ Shipped 2026-08-10** — see
+[Step 2, as built](#step-2-as-built--every-head-declares-its-role-in-the-chain). The premise
+needed correcting before the page did.
 
 ### What the code actually does
 
@@ -529,6 +531,125 @@ established (widget state does not survive a navigation) is untouched and still 
 `shell.recall` / `shell.remember`; what was wrong is the premise underneath it, that the
 dashboard should own an appearance control at all. `appearance-is-streamlits-own-setting` is
 the replacement, `settled`.
+
+---
+
+## Step 2, as built — every head declares its role in the chain
+
+**2026-08-10.** Built as specified, and the specification's own premise checked against the
+code first. Nothing had moved: `src/sim/season.py::_sim_one` draws the games-played *count*
+from `availability` and lays the misses out with `games_played.allocate_spells` at
+`gp_duration`'s fitted `(mu, kappa)`, one pair per posterior draw through `spell_shape`;
+`gp_entry`, `gp_exit` and `gp_onset` appear nowhere in `src/sim/`; and
+`stan_games_played_gp_pmf.csv` — Gate A's games-played bar — carries `arm =
+duration_covariates`, i.e. the tenure decomposition, on all 75,938 of its rows.
+
+### What shipped
+
+A `ChainRole` beside `HeadSpec` in `src/models/model_cards.py`, a **closed vocabulary of
+six**, and one role per head. `model_card_index.csv` goes from 44 columns to **48**:
+`chain_role` (the key), `chain_role_label` (the verb phrase), `in_draw_path` (the boolean)
+and `chain_role_note` (the mechanism). `views/model_page.py` writes the label into the header
+line beside the unit and the note into a caption under the head's description, and
+`model_cards.specification()` gains an "In the shipped chain" row **immediately after Unit** —
+so all four model classes get it rather than the availability page getting a special case.
+`CLASSES["availability"].intro` is rewritten from the dichotomy to the chain.
+
+| role | heads | in the draw path |
+|---|---|---|
+| `games_played_count` | `availability` | yes |
+| `absence_layout` | `gp_duration` | yes |
+| `minutes_allocation` | `composition` | yes |
+| `game_length` | `game_length_ot`, `game_length_depth` | yes |
+| `box_score_component` | the eleven component heads | yes |
+| `not_at_draw_time` | `gp_entry`, `gp_exit`, `gp_onset`, **`minutes`** | no |
+
+**Sixteen of twenty are in the draw path.** `make model-cards` prints that split and the four
+names on every run, so a refit that changes it says so in the build log rather than only in a
+test.
+
+### The finding the step did not go looking for
+
+**The marginal `minutes` head is not in the draw path either**, and that is the second place
+this dashboard was describing a head as something it is not. Both minutes heads ship —
+`make minutes-unification` settled which half each one owns — but the season-level spread
+reaches the simulator as `sim.minutes.player_season_sigma = 0.450`, a constant calibrated
+*against* the marginal head and injected into the **composition** by
+`rehydrate_composition`. So `artifacts["minutes"]` never appears in `src/sim/`: what
+`season.py` reads is the composition, and what the marginal head supplies is Gate A's
+season-total minutes-spread bar (302.75) that the drawn seasons are scored against.
+
+That is not a contradiction of "both minutes heads ship" and the Minutes page's intro is
+left alone — two heads at two units is still what the page carries. What changed is that the
+page now says, per head, which of them a season draw actually calls, which it could not
+before. It is the same class of gap the availability intro had, found by the same column, and
+it is the argument for emitting the role for **every** class rather than for the one page the
+request named.
+
+### The anchor, and that it bites
+
+`test_the_declared_draw_path_is_what_the_simulator_actually_reads` parses every module under
+`src/sim/` with `ast` and collects every key subscripted out of the posterior bundle — string
+literals like `artifacts["gp_duration"]`, plus the component loop's
+`artifacts[artifact_name(head)]`, expanded through `component_rates`' own `COUNT_HEADS` /
+`CONVERSION_HEADS` rather than through a copy of the names kept in the test. A third
+addressing form **raises** rather than silently narrowing what the scanner can see. The
+assertion is **set equality** against `model_cards.draw_path_heads()`, so both failure
+directions are covered, and the shape is the one `pca.orient()` and `COMPONENT_BASIS`
+already use: an interpretation on a page carries a machine-checkable anchor, because the
+failure mode is silent — the page keeps rendering.
+
+Checked that it actually fails rather than trusting it: declaring `gp_onset` as
+`games_played_count`, or `gp_duration` as `not_at_draw_time`, each breaks the equality.
+
+### Verification, as run
+
+**The build gate.** `make model-cards` re-run green — 20 heads, 48 index columns, worst
+recipe design error 0.0e+00 against a 1e-09 bar, worst drawn-mean gap +1.20% against 5%,
+worst ribbon half-sample disagreement 0.0145 against 0.02, 11.7 s.
+
+**`AppTest`**, both appearance modes × all nine pages: **0 exceptions in 18 runs**, identical
+element counts in the two modes, no literal `undefined` or `nan`. A second pass drove the
+head selector on all four model pages through **all twenty heads** and asserted exactly one
+chain-role caption on each, reading back the header line and the sentence — which is how the
+table above was checked against the page rather than against the source.
+
+**Kaleido** is a regression check only; no chart was touched. Two model-page figures
+(`gp_duration`'s ECDF ribbon, `availability`'s four calibration panels) re-rendered in both
+modes and looked at; `paper_bgcolor` reads `#fcfcfb` and `#1a1a19` as before.
+
+**The live page in Chrome**, 1440×900, both appearance modes as `prefers-color-scheme`,
+driving the nav link rather than `page.goto`. Availability and Minutes, in both modes:
+header line carries the role (`availability · fitted per player-season · draws the
+games-played count`, `min|available · fitted per player-season · not called at draw time`),
+the caption is present and correct, the specification table's new row sits directly under
+Unit, and no `undefined` or `nan` anywhere. **It caught one thing nothing else could**: the
+new Note cell was written with backticks around `make simulate-season`, and an `st.dataframe`
+cell is canvas text with no markdown — every other Note in that table is plain prose, and
+the pair rendered as itself. Plain prose now.
+
+One mechanic worth recording, since it cost a run: **`playwright` needs a browser and this
+machine has none of its own.** `requirements.txt` says neither layer-2 nor layer-3 tool needs
+a download, which is true of kaleido and not of playwright — `chromium.launch()` fails with
+"Executable doesn't exist". `chromium.launch(channel="chrome")` drives the system Google
+Chrome and needs no 150 MB download, which is the route to take rather than
+`playwright install`.
+
+**Tests.** 6 new in `tests/test_model_cards.py` (80 total) and 4 new in
+`tests/test_dashboard.py`, plus the `_index` builder extended with the four columns.
+`.venv/bin/python -m pytest tests/` passes.
+
+**`make dashboard-audit`: 1 orphan in, 0 out.** The step predicted this. The single orphan
+was `stan_games_played_spell_shape.csv` — the realized spell shape, i.e. exactly the quantity
+`allocate_spells` produces and the reason `gp_duration` is in the draw path at all — so the
+registry entry cites it beside `model_card_index.csv` and the games-played pmf. That is the
+entry naming its own evidence rather than a count being cleared for its own sake.
+
+### Registry
+
+`a-head-declares-its-role-in-the-shipped-chain`, `built`, topic `problem`, tagged
+`dashboard` / `provenance` / `simulations`. No existing entry is withdrawn: nothing here
+reverses a decision, it names one that was never written down.
 
 ---
 

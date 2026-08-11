@@ -108,7 +108,7 @@ draw.
 
 | artifact | grain | rows | size | what it feeds |
 |---|---|---|---|---|
-| `model_card_index.csv` | head | **20** | 11 KB | the head selector, and the *unit* every page must state |
+| `model_card_index.csv` | head | **20** | 16 KB | the head selector, the *unit* every page must state, and each head's role in the shipped chain |
 | `model_card_coefficients.csv` | head × term | **311** | 45 KB | the sorted credible-interval panel (block 4) |
 | `model_card_features.csv` | head × feature × split × bin | **14,892** | 2.1 MB | the small-multiple histograms and the n/mean/sd/missing table (block 2) |
 | `model_card_feature_corr.csv` | head × split × feature × feature | **8,920** | 767 KB | the correlation heatmap and the pairs that earn a density (block 3) |
@@ -117,7 +117,7 @@ draw.
 | `model_card_calibration.csv` | head × split × panel × 2-D bin | **28,709** | 2.4 MB | fitted-vs-observed and residual-vs-fitted, as density (block 6) |
 | `model_card_sample.parquet` | head × split × row | **54,375** | 782 KB | the bounded scatter overlaid on that density (block 6) |
 
-**8.6 MB in total** (`du`), against the 7.4 MB the seven-artifact contract cost. Twenty
+**8.7 MB in total** (`du`), against the 7.4 MB the seven-artifact contract cost. Twenty
 heads across four classes — availability
 (5), minutes (2), box-score components (11), game length (2) — carrying 268 coefficients, 20
 intercepts and 23 dispersion terms over 92 distinct features. `make model-cards` runs in
@@ -128,7 +128,9 @@ imports the head modules for their variant ladders and their own predictive.
 
 Carries the head's identity (`head`, `label`, `model_class`, `class_label`), its
 **specification** (`unit`, `family`, `likelihood`, `description`, `variant`, `response`,
-`dispersion`, `coefficient_scale`), its **population** (`n_fit`, `n_validation`,
+`dispersion`, `coefficient_scale`), its **role in the shipped chain** (`chain_role`,
+`chain_role_label`, `in_draw_path`, `chain_role_note` — added 2026-08-10 by step 2 of
+`docs/dashboard-revision-plan.md`), its **population** (`n_fit`, `n_validation`,
 `n_frame_rows`, `row_filter`, `first_season`, `last_season`, `fit_window`, `n_draws`,
 `n_features`, `n_terms`, `n_density_pairs`), its
 **sampler provenance** (`max_rhat`, `divergences`, `converged`, `git_sha`, `built_at`), its
@@ -156,6 +158,57 @@ head is refitted at a different grain; read from the artifact it cannot.
 `description` is the same argument one step further: it is **specification only** — what the
 head models and how — never a result, which is the one kind of typed prose
 `docs/dashboard-plan.md` allows on a model page.
+
+#### `chain_role` — what the simulator does with the head, and the one column with an anchor
+
+**A head being fitted, converged and carded says nothing about whether
+`make simulate-season` calls it**, and until this column existed the only way to find out
+was to read `src/sim/season.py`. That gap had already produced a wrong page: the Availability
+class intro described its five heads as *"two ways of predicting the same quantity"*, which
+reads as two alternates where one ships, when the shipped chain takes **one head from each**.
+
+Four columns, from a `ChainRole` declared beside `HeadSpec` and keyed into a closed
+vocabulary of six:
+
+| column | what it is |
+|---|---|
+| `chain_role` | the vocabulary key — `games_played_count`, `absence_layout`, `minutes_allocation`, `game_length`, `box_score_component`, `not_at_draw_time` |
+| `chain_role_label` | the verb phrase a page writes into a sentence — "draws the games-played count" |
+| `in_draw_path` | the boolean, and the half a test can check |
+| `chain_role_note` | the mechanism, specification prose, never a result |
+
+`in_draw_path` ships beside the label rather than being inferred from it because the page
+uses it to pick an auxiliary: *"in a simulated season it **draws the games-played count**"*
+against *"it **is** not called at draw time"*. A view that lost the boolean would print the
+second as the first and say the opposite of the truth.
+
+**Sixteen of the twenty heads are in the draw path. The four that are not are `gp_entry`,
+`gp_exit`, `gp_onset` and the marginal `minutes` head**, and both of those groups are worth
+stating:
+
+- the **tenure decomposition** is not called at draw time. `season.py` states why it does not
+  call `HybridProcess.sequences` — that path draws its count from a pmf already marginalized
+  over the posterior, which is right for a marginal metric and wrong for a simulator whose
+  premise is that one posterior draw moves the whole board together. What it supplies instead
+  is `stan_games_played_gp_pmf.csv`, one of Gate A's four bars, so the heads stay carded;
+- the **marginal minutes head** is not either, which the request that prompted this column
+  did not anticipate. Both minutes heads ship, but the season-level spread reaches the
+  simulator as `sim.minutes.player_season_sigma` — a constant `make minutes-unification`
+  calibrated against that head and `rehydrate_composition` injects into the composition — so
+  `src/sim/` reads the composition and scores itself against the marginal head's 302.75.
+
+**The anchor is what makes this a claim rather than a comment.** Interpretation on a page is
+allowed here only when it is tied to something a test can check, the way `pca.orient()` and
+`dashboard/model_cards.COMPONENT_BASIS` are.
+`test_the_declared_draw_path_is_what_the_simulator_actually_reads` parses every module under
+`src/sim/` with `ast`, collects every key subscripted out of the posterior bundle —
+literals like `artifacts["gp_duration"]`, plus the component loop's
+`artifacts[artifact_name(head)]` expanded through `component_rates`' own head lists — and
+asserts **set equality** against `model_cards.draw_path_heads()`. Both directions fail: a
+declared draw-path head the simulator never loads is a page overstating what ships, and a
+head the simulator loads that is declared out of it is how the Availability intro went wrong
+in the first place. A third addressing form raises rather than silently widening the declared
+path. Registered as `a-head-declares-its-role-in-the-shipped-chain`.
 
 **`n_fit` and `n_frame_rows` differ on exactly four heads, and that is not an error.**
 `StanConversion.fit` drops rows with no attempts *internally*, so the population the head
@@ -484,8 +537,8 @@ is the expensive half:
 
 ## Tests
 
-`tests/test_model_cards.py`, plain `assert` with synthetic builders, **74 tests** (34 from
-session 3a, 31 from 3b, 9 from session 4's density). The heads are real `PosteriorArtifact`s with their draws **injected**
+`tests/test_model_cards.py`, plain `assert` with synthetic builders, **80 tests** (34 from
+session 3a, 31 from 3b, 9 from session 4's density, 6 from the chain role). The heads are real `PosteriorArtifact`s with their draws **injected**
 rather than sampled — the same stance `tests/test_posteriors.py` takes, and for the same
 reason: the emitter refits nothing either. The one exception is the rehydration test, which
 builds a real `StanCount` around injected draws and asserts that `draw_predictive` returns
@@ -504,7 +557,7 @@ fail loudly —
 the population anchor, the design tolerance, the drawn-mean scale and the band's own stability
 — get one test each for the raise.
 
-**Thirteen tests read the shipped artifacts**, keeping a *derived* quantity honest against the
+**Fourteen tests read the shipped artifacts**, keeping a *derived* quantity honest against the
 artifact it came from: no split outside the vocabulary, no fit span past 2021-22, every head
 verified with `recipe_design_error ≤ 1e-9` and a declared unit, feature counts agreeing across
 the index, the features file and the square of the correlation file, term counts agreeing
@@ -513,8 +566,15 @@ three predictive artifacts, every shipped ECDF curve monotone under an ordered b
 gated head's ribbon inside `ECDF_BAND_TOL`, every checkable head's drawn mean inside
 `PREDICTIVE_BIAS_TOL`, every calibration panel counting all its rows, and the row and draw
 budgets holding; and, from session 4, every head's density covering exactly its own flagged
-pairs at the count the index reports, and every density panel counting all of its own rows. They skip rather than fail on a fresh checkout, since `make model-cards`
+pairs at the count the index reports, and every density panel counting all of its own rows;
+and, from the chain role, every head shipping all four of its columns with `in_draw_path`
+agreeing with `draw_path_heads()`. They skip rather than fail on a fresh checkout, since `make model-cards`
 needs `make posteriors` first.
+
+**The chain role adds the one test here that reads a *different* part of the repo.** The
+other seventy-nine hold this module against itself or against its own artifacts;
+`test_the_declared_draw_path_is_what_the_simulator_actually_reads` holds it against
+`src/sim/`, because that is where the claim's truth lives.
 
 **Deliberately not in `make docs-audit`.** Most figures quoted here are re-derived by
 `make model-cards` itself — the row counts, the design errors, the season spans, the band

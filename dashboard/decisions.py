@@ -5363,6 +5363,53 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("dashboard",),
     ),
     Decision(
+        id="a-head-declares-its-role-in-the-shipped-chain",
+        topic="problem",
+        claim="Every carded head declares **what the simulator does with it** — a "
+              "closed-vocabulary `chain_role` on `model_card_index.csv`, pinned against "
+              "`src/sim/` by a test. **Sixteen of the twenty heads are read when a season "
+              "is drawn and four are not**: `gp_entry`, `gp_exit`, `gp_onset` and the "
+              "marginal `minutes` head.",
+        because="A head being fitted, converged and carded says nothing about whether "
+                "`make simulate-season` calls it, and nothing on a model page could say "
+                "which — so the Availability page introduced its five heads as *\"two ways "
+                "of predicting the same quantity\"*, which reads as two alternates where "
+                "one ships. The shipped chain takes **one head from each**: "
+                "`season.py::_sim_one` draws the games-played *count* from `availability` "
+                "and lays those misses out with `games_played.allocate_spells` at "
+                "`gp_duration`'s fitted spell shape, one `(mu, kappa)` per posterior draw. "
+                "The tenure decomposition is never called at draw time — `season.py` "
+                "states why it does not call `HybridProcess.sequences`: that path draws "
+                "its count from a pmf already marginalized over the posterior, which is "
+                "right for a marginal metric and wrong for a simulator whose whole point "
+                "is that one draw moves the board together. The three heads stay on the "
+                "page because what they produce is `stan_games_played_gp_pmf.csv`, one of "
+                "Gate A's four bars. **The column also caught a second case the request "
+                "did not know about**: the marginal minutes head is not in the draw path "
+                "either. Both minutes heads ship, but the season-level spread reaches the "
+                "simulator as `sim.minutes.player_season_sigma`, a constant "
+                "`minutes_unification` calibrated against that head and "
+                "`rehydrate_composition` injects into the composition — so `src/sim/` "
+                "reads the composition and scores itself against the marginal head. "
+                "Declared beside `HeadSpec` rather than in the dashboard for the reason "
+                "`unit` is, and **anchored rather than merely written down** for the "
+                "reason `COMPONENT_BASIS` is: a declared \"in the draw path\" that nothing "
+                "in `src/sim/` reads goes stale on the next refactor and goes stale "
+                "silently, because the page keeps rendering. "
+                "`test_the_declared_draw_path_is_what_the_simulator_actually_reads` walks "
+                "`src/sim/*.py` with `ast`, collects every posterior-artifact key it "
+                "subscripts, and asserts set equality against the declaration in both "
+                "directions.",
+        status="built",
+        reproduce="make model-cards → outputs/predictions/model_card_index.csv, "
+                  "outputs/predictions/stan_games_played_gp_pmf.csv, "
+                  "outputs/predictions/stan_games_played_spell_shape.csv",
+        source="docs/dashboard-revision-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "provenance", "simulations"),
+    ),
+    Decision(
         id="two-sampler-runs-are-two-rows",
         topic="problem",
         claim="A model page's diagnostics block shows the **persisted fit and the "
