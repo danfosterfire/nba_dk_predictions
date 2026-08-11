@@ -4741,3 +4741,91 @@ def test_a_legend_over_subplot_titles_is_lifted_clear_of_them():
     fig = fig_ecdf({"Train": panel, "Validation": panel}, theme.theme("light"), "dk_pts")
     assert fig.layout.legend.y == LEGEND_ABOVE_TITLES > 1.02
     assert fig.layout.margin.t > 48
+
+
+# ── strategy.py · block 5, the field and the execution ────────────────────────
+
+def _gate_b_need() -> pd.DataFrame:
+    """Pooled (noise, need) grid rows shaped like `draft_gate_b_need.csv`."""
+    rows = [
+        # season rows, which every reader must ignore
+        {"season": "2022-23", "need_weight": 0.0, "rank_noise_sd": 4.0,
+         "mae_fit": 6.3, "mae_elite": 3.5, "selected": False, "passes": True},
+        {"season": "pooled", "need_weight": 0.0, "rank_noise_sd": 4.0,
+         "mae_fit": 5.92, "mae_elite": 3.43, "selected": True, "passes": True},
+        {"season": "pooled", "need_weight": 8.0, "rank_noise_sd": 4.0,
+         "mae_fit": 6.06, "mae_elite": 4.46, "selected": False, "passes": True},
+        {"season": "pooled", "need_weight": 8.0, "rank_noise_sd": 9.0,
+         "mae_fit": 6.50, "mae_elite": 5.00, "selected": False, "passes": True},
+    ]
+    return pd.DataFrame(rows)
+
+
+def test_need_calibration_reads_the_selected_row_and_the_best_probe_row():
+    out = strategy.need_calibration(_gate_b_need(), probe_weight=8.0)
+    assert out["fitted_need_weight"] == 0.0
+    assert out["mae_fit"] == 5.92
+    # Two probe rows at need 8; the summary takes the better-fitting one.
+    assert out["probe_mae_fit"] == 6.06
+    assert out["probe_mae_elite"] == 4.46
+    assert out["passes"]
+
+
+def test_need_calibration_refuses_a_grid_with_no_selected_row():
+    frame = _gate_b_need()
+    frame["selected"] = False
+    with pytest.raises(ValueError):
+        strategy.need_calibration(frame)
+
+
+def test_field_comparison_pools_seasons_inside_each_field():
+    sweep = _sweep()
+    need = _sweep()
+    need["lift_vs_null"] = need["lift_vs_null"] + 0.1
+    out = strategy.field_comparison(sweep, need, "600k_shootaround",
+                                    ("model_mean", "adp"))
+    assert list(out["field"].unique()) == ["Fitted ADP field",
+                                           "Need-aware probe (w = 8)"]
+    assert len(out) == 4                       # 2 fields x 2 arms, seasons pooled
+    base = out[(out["field"] == "Fitted ADP field")
+               & (out["strategy"] == "model_mean")]["lift"].iloc[0]
+    probe = out[(out["field"] != "Fitted ADP field")
+                & (out["strategy"] == "model_mean")]["lift"].iloc[0]
+    assert probe == pytest.approx(base + 0.1)
+    assert (out["n_seasons"] == 2).all()
+
+
+def test_the_autodraft_caps_identity_is_checked_from_the_artifact():
+    sweep = _sweep()
+    twins = []
+    for name in ("autodraft_blend_a30", "blend_caps_dk"):
+        twin = sweep[sweep["strategy"] == "model_mean"].copy()
+        twin["strategy"] = name
+        twins.append(twin)
+    frame = pd.concat([sweep] + twins, ignore_index=True)
+    assert strategy.autodraft_matches_caps(frame)
+
+    drifted = frame.copy()
+    hit = drifted["strategy"] == "blend_caps_dk"
+    drifted.loc[hit, "lift_vs_null"] = drifted.loc[hit, "lift_vs_null"] + 1e-6
+    assert not strategy.autodraft_matches_caps(drifted)
+    # An arm missing entirely is "no", not an error.
+    assert not strategy.autodraft_matches_caps(sweep)
+
+
+def test_the_autodraft_caps_identity_holds_in_the_real_artifact():
+    """Two code paths, one roster — pinned against the shipped sweep, not the builders."""
+    sweep = _artifact(strategy.SWEEP_FILE)
+    if "autodraft_blend_a30" not in set(sweep["strategy"]):
+        pytest.skip("sweep artifact predates the execution axis")
+    assert strategy.autodraft_matches_caps(sweep)
+
+
+def test_execution_panel_carries_only_the_execution_arms_it_finds():
+    sweep = _sweep()
+    twin = sweep[sweep["strategy"] == "model_mean"].copy()
+    twin["strategy"] = "blend_caps_dk"
+    out = strategy.execution_panel(pd.concat([sweep, twin], ignore_index=True),
+                                   "600k_shootaround")
+    assert list(out["strategy"]) == ["blend_caps_dk"]
+    assert out["lift"].iloc[0] == pytest.approx(0.105)

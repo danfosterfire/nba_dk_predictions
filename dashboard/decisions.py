@@ -4391,9 +4391,13 @@ REGISTRY: tuple[Decision, ...] = (
                 "further ADP work cannot settle how a field behaves. A pick log identifies "
                 "four things directly: the noise level, from the VARIANCE of a player's pick "
                 "rather than its mean; whether the tiered shape is right at all; positional "
-                "runs, the largest dynamic ADP-plus-noise cannot generate and the reason "
-                "`adp_need` ships switched off; and the autodraft share, which is "
-                "`sim.field.composition`'s uncalibrated knob. ~$40 buys 3,840 picks, which "
+                "runs, the largest dynamic ADP-plus-noise cannot generate; and the autodraft "
+                "share, which is `sim.field.composition`'s uncalibrated knob. The 2026-08-11 "
+                "need calibration sharpened rather than closed this: the mean-ADP target "
+                "*does* fit `need_weight` (at zero — see "
+                "`field-lineup-reasoning-is-a-measured-null`), but a mean curve cannot see "
+                "draft-to-draft positional runs, so the behavioural half still needs the "
+                "log. ~$40 buys 3,840 picks, which "
                 "is a large sample for a two-parameter noise model. The board must be "
                 "captured alongside: a pick log without the contemporaneous board measures "
                 "the field's noise plus the board's drift, and DK's board has zero Wayback "
@@ -4401,9 +4405,9 @@ REGISTRY: tuple[Decision, ...] = (
         status="deadline",
         due="2026-10-31",
         unblocks="a field model calibrated on behaviour rather than on aggregates, and "
-                 "`need_weight` / `composition` becoming measurements",
+                 "the `composition` share becoming a measurement",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-11",
         date="2026-08-09",
         tags=("market", "capture", "strategy"),
     ),
@@ -6377,5 +6381,62 @@ REGISTRY: tuple[Decision, ...] = (
         reviewed="2026-08-10",
         date="2026-08-10",
         tags=("simulations", "provenance"),
+    ),
+    Decision(
+        id="field-lineup-reasoning-is-a-measured-null",
+        topic="drafting",
+        claim="The opponent field does not gain lineup reasoning: a joint Gate B "
+              "calibration fits the `adp_need` field's slot-reaching lean at **zero** "
+              "picks, and a sweep against a stipulated 8-pick lean reads *higher* lift "
+              "for every value-following arm — the fitted pure-ADP field is the harder "
+              "opponent, and it stays shipped.",
+        because="The caveat this answers was real: the shipped field 'drafts strictly "
+                "by ADP and does no lineup reasoning at all', so the measured edge "
+                "could have been an artifact of a too-simple opponent. Fitting "
+                "(rank_noise_sd, need_weight) jointly on the observed ADP curve — with "
+                "need 0 nesting the shipped field bitwise — selects zero on both "
+                "validation seasons independently, and the degradation concentrates in "
+                "the elite region (MAE 3.43 → 6.98 picks across the need grid): the "
+                "observed market does not reach for slots. The robustness probe agrees "
+                "from the other side — at a stipulated 8-pick lean the shipped arm's "
+                "simulated lift rises from +0.2107 to +0.3055 (600k) and +0.1989 to "
+                "+0.2656 (20k), because slot-reaching buys roster shape at the price of "
+                "value. The null checks stay exact against the need field, so the "
+                "comparison is apples to apples.",
+        status="null",
+        reproduce="make draft-sim-need + make strategy-sweep-need → "
+                  "outputs/predictions/draft_gate_b_need.csv, "
+                  "outputs/predictions/draft_adp_curve_need.csv, "
+                  "outputs/predictions/strategy_*_adp_need_w8.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-11",
+        date="2026-08-11",
+        tags=("drafting", "field-model"),
+    ),
+    Decision(
+        id="autodraft-execution-is-the-caps-and-the-caps-help",
+        topic="drafting",
+        claim="Executing a static ranking through DK's autodraft is **identical** to "
+              "clicking it under DK's 8G/8F/3C caps — and both beat clicking it "
+              "uncapped. What draft-night automation actually costs is the per-pick "
+              "objective, which no static board can carry.",
+        because="The shipped arm (`lineup_value_blend30`) re-prices every candidate "
+                "against the roster it already holds, so it cannot be expressed as a "
+                "pre-draft ranking; its closest feasible twin is `blend_a30`. Executed "
+                "by DK's autodraft logic, that twin reproduces the caps-only manual arm "
+                "roster-for-roster (two code paths, one draft), beats the uncapped "
+                "click by +0.0091 [+0.0080, +0.0102] at 600k and +0.0076 [+0.0059, "
+                "+0.0093] at 20k — both resolved, the caps being crude lineup "
+                "reasoning that the best-7-by-slot scoring rewards — and gives up "
+                "−0.092 / −0.053 of simulated lift against the shipped objective arm. "
+                "So autodraft is a safe fallback for the 30-second clock, and the "
+                "objective is the half worth defending.",
+        status="measured",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_sweep.csv, "
+                  "outputs/predictions/strategy_paired.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-11",
+        date="2026-08-11",
+        tags=("drafting", "execution"),
     ),
 )

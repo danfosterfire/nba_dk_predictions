@@ -214,6 +214,11 @@ TOURNAMENTS = "data/raw/dk_best_ball_tournament_metadata.csv"
 STRATEGY_SWEEP = "outputs/predictions/strategy_sweep.csv"
 STRATEGY_SHIPPED = "outputs/predictions/strategy_shipped.csv"
 STRATEGY_GATE_D = "outputs/predictions/strategy_gate_d.csv"
+STRATEGY_PAIRED = "outputs/predictions/strategy_paired.csv"
+# The field-robustness pair, 2026-08-11: the joint (noise, need) calibration and the
+# sweep against the stipulated 8-pick lean its suffix names.
+GATE_B_NEED = "outputs/predictions/draft_gate_b_need.csv"
+SHIPPED_NEED = "outputs/predictions/strategy_shipped_adp_need_w8.csv"
 
 
 # ── Claims ────────────────────────────────────────────────────────────────────
@@ -4170,7 +4175,7 @@ def _readme() -> list[Claim]:
     # The grid is a *size*, not a score, and it is claimed for the same reason the row
     # counts above are: an arm added to `STRATEGIES` or a change to `sim.n_worlds` moves
     # it, and nothing else in this file would notice.
-    add("22", STRATEGY_SWEEP, lambda: nunique(STRATEGY_SWEEP, "strategy"),
+    add("24", STRATEGY_SWEEP, lambda: nunique(STRATEGY_SWEEP, "strategy"),
         "strategies in the sweep")
     add("500", STRATEGY_SWEEP, lambda: max_of(STRATEGY_SWEEP, "n_sims"),
         "simulated worlds per season in the sweep")
@@ -4366,6 +4371,34 @@ def _readme() -> list[Claim]:
         "Gate D paired comparisons")
     add("0", STRATEGY_GATE_D, lambda: total(STRATEGY_GATE_D, "materially_different"),
         "Gate D comparisons that separate the tiers")
+
+    # ── results: the field, and the execution axis (2026-08-11) ──────────────
+    # The fitted need weight is a zero the same way Gate D's count is: a recalibration
+    # that started selecting a positive lean would leave the README's "measured null"
+    # claim true-looking and wrong, so the selected row is claimed directly.
+    add("0", GATE_B_NEED,
+        lambda: cell(GATE_B_NEED, "need_weight", season="pooled", selected=True),
+        "fitted field lineup-reasoning lean, picks")
+    add("0.306", SHIPPED_NEED,
+        lambda: cell(SHIPPED_NEED, "sim_lift", tournament="600k_shootaround"),
+        "shipped arm's simulated lift against the stipulated need-aware field, 600k")
+    add("+0.0091", STRATEGY_PAIRED,
+        lambda: cell(STRATEGY_PAIRED, "gap", tournament="600k_shootaround",
+                     metric="p_advance", baseline="blend_a30",
+                     strategy="autodraft_blend_a30"),
+        "autodraft twin over the uncapped click of the same ranking, 600k")
+
+    def sweep_mean_lift(arm: str) -> float:
+        frame = table(STRATEGY_SWEEP)
+        if frame is None:
+            return float("nan")
+        hit = frame[(frame["tournament"] == "600k_shootaround")
+                    & (frame["strategy"] == arm)]
+        return float(hit["lift_vs_null"].mean()) if len(hit) else float("nan")
+
+    add("0.092", STRATEGY_SHIPPED,
+        lambda: shipped("sim_lift") - sweep_mean_lift("autodraft_blend_a30"),
+        "lift given up by autodrafting instead of the shipped objective, 600k")
 
     # ── discussion ────────────────────────────────────────────────────────────
     add("0.317", PROFILE,

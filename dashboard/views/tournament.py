@@ -1,13 +1,13 @@
-"""Tournament & strategy — the contest, the sweep, the two backtests, the paired gaps.
+"""Tournament & strategy — the contest, the sweep, the backtests, the field itself.
 
 The page the project builds toward, and the one that needed no new pipeline work: every
 figure on it reads something `make bracket` or `make strategy-sweep` had already written
-and nothing had ever drawn. Four blocks, in the order a reader needs them:
+and nothing had ever drawn. Five blocks, in the order a reader needs them:
 
 1. **The contest structure.** Five real DraftKings best-ball tournaments, four elimination
    rounds, Round 1 a zero-consolation knockout in every one of them, and rake expressed as
    a break-even edge hurdle — because that is the unit a *measured* edge compares in.
-2. **The sweep.** Twenty-two strategies over seven axes, drawn as lift over the
+2. **The sweep.** Twenty-four strategies over eight axes, drawn as lift over the
    symmetric-field null with intervals, faceted by axis, with the hurdle converted into
    the survival units the sweep resolves in (`strategy.break_even_lift`).
 3. **Simulated versus realized.** The same portfolios on the tuning surface and on the
@@ -17,6 +17,14 @@ and nothing had ever drawn. Four blocks, in the order a reader needs them:
    because a kind simulated season is kind to every arm at once; differencing inside the
    world removes that, and then almost everything separates. **The arms that still do not
    are the useful ones**, and they are styled rather than buried.
+5. **The field, and the execution.** Added 2026-08-11, and both halves are answers to
+   "is the lift an artifact of a too-simple opponent?". The field half: a joint Gate B
+   calibration of lineup reasoning fits its weight at **zero** — the observed market does
+   not reach for slots — and the sweep against a *stipulated* need-aware field reads
+   **higher** lift, so the fitted pure-ADP field is the conservative one and it is what
+   ships. The execution half: submitting our ranking to DK's own autodraft is *identical*
+   to clicking it under DK's caps (two code paths, one roster), it beats the uncapped
+   click, and what automation actually costs is the per-pick objective.
 
 Every number is read from an artifact. The pure layer is `dashboard/strategy.py` and the
 contest arithmetic is `dashboard/economics.py`; nothing here computes a result, and
@@ -54,6 +62,29 @@ def load_strategy() -> dict[str, pd.DataFrame] | None:
                       ("shipped", strategy.SHIPPED_FILE),
                       ("realized", strategy.REALIZED_FILE)):
         frame = optional(directory / name, target=strategy.MAKE_SWEEP)
+        if frame is None:
+            return None
+        frames[key] = frame
+    return frames
+
+
+@st.cache_data(show_spinner="Reading the field-robustness artifacts…")
+def load_field_probe() -> dict[str, pd.DataFrame] | None:
+    """Block 5's field half: the need calibration and the stipulated-field sweep.
+
+    Loaded separately from `load_strategy` and quietly: these artifacts are a follow-on
+    measurement (`make draft-sim-need`, `make strategy-sweep-need`), and their absence
+    should leave the first four blocks untouched rather than warn on every render.
+    """
+    directory = predictions_dir()
+    frames = {}
+    for key, name, target in (
+            ("gate_b_need", strategy.GATE_B_NEED_FILE, strategy.MAKE_SIM_NEED),
+            ("sweep_need", strategy.SWEEP_NEED_FILE, strategy.MAKE_SWEEP_NEED)):
+        path = directory / name
+        if not path.exists():
+            return None
+        frame = optional(path, target=target)
         if frame is None:
             return None
         frames[key] = frame
@@ -341,13 +372,120 @@ def _paired_table(panel: pd.DataFrame) -> pd.DataFrame:
     return out.round(4)
 
 
+# ── Block 5 · the field, and the execution ────────────────────────────────────
+
+def field_block(sweep: pd.DataFrame, shipped: pd.DataFrame,
+                probe: dict[str, pd.DataFrame] | None, tournament: str) -> None:
+    """Both halves of "is the lift an artifact of a too-simple opponent?".
+
+    The field half draws only when the two probe artifacts exist; the execution half
+    reads the main sweep and always draws.
+    """
+    arm = strategy.shipped_arm(shipped, tournament)
+    shipped_name = str(arm["strategy"]) if arm is not None else "lineup_value_blend30"
+
+    left, right = st.columns(2, gap="large")
+
+    with left:
+        st.markdown("**The field.** Does lineup reasoning make the opponents harder "
+                    "to beat?")
+        if probe is None:
+            st.info(f"Not yet measured here — run `{strategy.MAKE_SIM_NEED}`, then "
+                    f"`{strategy.MAKE_SWEEP_NEED}`.")
+        else:
+            calib = strategy.need_calibration(probe["gate_b_need"])
+            tiles = [
+                ("Fitted need weight", f"{calib['fitted_need_weight']:.0f} picks",
+                 "Gate B fits the field's slot-reaching lean jointly with its rank "
+                 "noise, on the observed ADP curve. Zero means the market does not "
+                 "reach — both validation seasons agree independently"),
+                ("Curve fit at 0 / at 8", f"{calib['mae_fit']:.2f} / "
+                                          f"{calib['probe_mae_fit']:.2f}",
+                 "Mean absolute pick error against the observed curve, fitted lean "
+                 "against the stipulated 8-pick probe. The degradation concentrates in "
+                 f"the elite region ({calib['mae_elite']:.2f} → "
+                 f"{calib['probe_mae_elite']:.2f})"),
+            ]
+            for col, (label, value, helptext) in zip(st.columns(len(tiles)), tiles):
+                col.metric(label, value, help=helptext)
+            comparison = strategy.field_comparison(
+                sweep, probe["sweep_need"], tournament, (shipped_name, MARKET_ARM))
+            st.dataframe(_field_table(comparison), hide_index=True, width="stretch")
+            st.caption(
+                "**Every value-following arm gains lift against the need-aware field, "
+                "which is the point.** An 8-pick reach per owed slot buys roster shape "
+                "at the price of value the observed market never actually pays — the "
+                "calibration fitting the lean at zero and this table reading higher "
+                "lifts are the same finding twice. The fitted pure-ADP field is the "
+                "**harder** opponent, and it is what every other block measures "
+                "against.")
+
+    with right:
+        st.markdown("**The execution.** What does draft-night automation cost?")
+        panel = strategy.execution_panel(sweep, tournament)
+        if panel.empty or arm is None:
+            st.info("The sweep carries no execution arms — rerun "
+                    f"`{strategy.MAKE_SWEEP}`.")
+            return
+        auto = panel[panel["strategy"] == "autodraft_blend_a30"]
+        manual = panel[panel["strategy"] == "blend_a30"]
+        cost = (float(arm["sim_lift"]) - float(auto["lift"].iloc[0])
+                if len(auto) else float("nan"))
+        tiles = [
+            ("Autodraft vs clicked", (f"{float(auto['lift'].iloc[0]) - float(manual['lift'].iloc[0]):+.4f}"
+                                      if len(auto) and len(manual) else "—"),
+             "Lift gap, the same static ranking executed by DK's autodraft against "
+             "clicking every pick uncapped. Positive: DK's 8G/8F/3C caps are crude "
+             "lineup reasoning, and they help"),
+            ("Cost of automation", f"{-cost:+.4f}",
+             f"Lift given up by submitting a ranking instead of running "
+             f"{shipped_name} live — a per-pick objective cannot be expressed as a "
+             f"static board, and that is the whole price"),
+            ("Autodraft ≡ DK caps", "yes" if strategy.autodraft_matches_caps(sweep)
+             else "NO — investigate",
+             "Executing a static ranking through DK's autodraft logic reproduces the "
+             "caps-only manual arm exactly, tier by tier and season by season — two "
+             "code paths, one roster"),
+        ]
+        for col, (label, value, helptext) in zip(st.columns(len(tiles)), tiles):
+            col.metric(label, value, help=helptext)
+        st.dataframe(_execution_table(panel, arm), hide_index=True, width="stretch")
+        st.caption(
+            "**A pre-draft ranking is a fallback the 30-second clock may force, and it "
+            "costs real lift** — not because DK's executor is bad (it beats clicking "
+            "the same ranking uncapped) but because the shipped arm re-prices every "
+            "candidate against the roster it already holds, and no static board can "
+            "carry that.")
+
+
+def _field_table(comparison: pd.DataFrame) -> pd.DataFrame:
+    out = pd.DataFrame({
+        "Field": comparison["field"], "Arm": comparison["strategy"],
+        "Lift": comparison["lift"], "Low": comparison["lo"], "High": comparison["hi"],
+    })
+    return out.round(4)
+
+
+def _execution_table(panel: pd.DataFrame, arm: pd.Series) -> pd.DataFrame:
+    rows = pd.DataFrame({
+        "Arm": panel["strategy"], "Lift": panel["lift"],
+        "Low": panel["lo"], "High": panel["hi"],
+    })
+    shipped_row = pd.DataFrame({
+        "Arm": [f"{arm['strategy']} (shipped, clicked)"],
+        "Lift": [float(arm["sim_lift"])], "Low": [float("nan")],
+        "High": [float("nan")],
+    })
+    return pd.concat([shipped_row, rows], ignore_index=True).round(4)
+
+
 # ── Page ──────────────────────────────────────────────────────────────────────
 
 def render() -> None:
     shell.compact_tiles()
     st.title("Tournament & strategy")
     st.caption(
-        "What the contest actually pays, what twenty-two drafting strategies bought "
+        "What the contest actually pays, what twenty-four drafting strategies bought "
         "against it in simulation, and what two seasons of real box scores had to say "
         "about that.")
 
@@ -393,7 +531,7 @@ def render() -> None:
     st.markdown("---")
     st.subheader("2 · The strategy sweep")
     st.caption(
-        "Twenty-two strategies over seven axes, each drafted against a field of "
+        "Twenty-four strategies over eight axes, each drafted against a field of "
         "ADP-drafting opponents in simulated seasons drawn from the model's own "
         "posterior and error-injected to reproduce its measured out-of-sample miss.")
     sweep_block(frames["sweep"], tournament, th)
@@ -413,3 +551,11 @@ def render() -> None:
         "Every arm differenced against one baseline **inside** each simulated season, "
         "which removes the common term that makes block 2's intervals overlap.")
     paired_block(frames["paired"], tournament, th)
+
+    st.markdown("---")
+    st.subheader("5 · The field, and the execution")
+    st.caption(
+        "Two stress tests of the same worry — that the measured edge is an artifact of "
+        "a too-simple opponent. Left: give the field lineup reasoning and re-measure. "
+        "Right: execute our own ranking through DK's autodraft instead of clicking.")
+    field_block(frames["sweep"], frames["shipped"], load_field_probe(), tournament)

@@ -20,6 +20,7 @@ Plain `assert` with synthetic builders, no fixtures or classes, mirroring
 `tests/test_preprocess.py`.
 """
 
+from dataclasses import replace
 from datetime import date
 
 import numpy as np
@@ -665,3 +666,18 @@ def test_a_candidate_the_completion_already_claims_ties_and_breaks_on_cushion():
     assert (inside["lineup_value"] > 0).all()
     assert inside["lineup_value"].nunique() == 1
     assert list(inside["rank_cushion"]) == sorted(inside["rank_cushion"])
+
+
+def test_the_field_cache_is_keyed_by_composition_and_need_weight(tmp_path):
+    """A cached pure-ADP field must not be served to a need-aware room, or vice versa."""
+    path = tmp_path / "field.npz"
+    field = np.zeros((4, 2, 3), dtype=np.float32)
+    cfg = D.FieldConfig(noise_model="tiered", rank_noise_sd=2.0)
+    R.save_field(path, field, "2022-23", "train", cfg, 1, ["adp"] * 12)
+    assert R.load_field(path, cfg, 3, ["adp"] * 12) is not None
+    # The key is shares rather than counts, so the engine's all-ADP default matches an
+    # explicit twelve-seat all-ADP list — and the caches written before the field carried
+    # a composition at all.
+    assert R.load_field(path, cfg, 3, None) is not None
+    assert R.load_field(path, cfg, 3, ["adp_need"] * 12) is None
+    assert R.load_field(path, replace(cfg, need_weight=8.0), 3, ["adp"] * 12) is None

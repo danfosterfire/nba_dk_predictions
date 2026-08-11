@@ -47,8 +47,22 @@ PAIRED_FILE = "strategy_paired.csv"
 SHIPPED_FILE = "strategy_shipped.csv"
 REALIZED_FILE = "strategy_realized.csv"
 
+#: The field-robustness half of block 5. `draft_gate_b_need.csv` is the joint
+#: (noise, need) calibration — it selects `need_weight = 0`, which is why the sweep
+#: against a need-aware field had to *stipulate* its lean and says so in its suffix.
+GATE_B_NEED_FILE = "draft_gate_b_need.csv"
+SWEEP_NEED_FILE = "strategy_sweep_adp_need_w8.csv"
+SHIPPED_NEED_FILE = "strategy_shipped_adp_need_w8.csv"
+
 MAKE_BRACKET = "make bracket"
 MAKE_SWEEP = "make strategy-sweep"
+MAKE_SIM_NEED = "make draft-sim-need"
+MAKE_SWEEP_NEED = "make strategy-sweep-need"
+
+#: The execution axis: the same opinion submitted as a static pre-draft board and
+#: executed by DK's autodraft logic, against clicking every pick. The manual twin of the
+#: autodraft arm, and the caps-only control that separates the executor from the caps.
+EXECUTION_ARMS = ("autodraft_blend_a30", "blend_a30", "blend_caps_dk")
 
 #: The two tiers the sweep drafts into. Five tournaments were captured and the bracket
 #: layer prices all five; only these two carry a portfolio, an entry count and a swept
@@ -59,7 +73,7 @@ TARGET_TIERS = ("600k_shootaround", "20k_spin_move")
 #: whether that blend varies with the round, what the in-draft objective prices, then the
 #: three portfolio-shape axes. Not a result order — a reading order.
 AXIS_ORDER = ("ranking", "alpha", "alpha_by_round", "objective",
-              "position_caps", "exposure", "stacking")
+              "position_caps", "exposure", "stacking", "execution")
 
 AXIS_LABELS = {
     "ranking": "Ranking source",
@@ -69,6 +83,7 @@ AXIS_LABELS = {
     "position_caps": "Position caps",
     "exposure": "Exposure cap",
     "stacking": "Same-team stacking",
+    "execution": "Execution (DK autodraft)",
 }
 
 METRIC_LABELS = {
@@ -318,3 +333,100 @@ def paired_panel(paired: pd.DataFrame, tournament: str, metric: str,
 def unresolved(panel: pd.DataFrame) -> tuple[int, int]:
     """`(gaps whose interval crosses zero, gaps in the panel)`."""
     return int(panel["crosses_zero"].sum()), int(len(panel))
+
+
+# ── Block 5 · the field, and the execution ────────────────────────────────────
+
+def need_calibration(gate_b_need: pd.DataFrame, probe_weight: float = 8.0) -> dict:
+    """What the joint (noise, need) calibration found, as the numbers block 5 prints.
+
+    The selected row is the fitted answer — `need_weight = 0` today, meaning the observed
+    ADP curve carries no slot-reaching for the field model to imitate. The probe row is
+    the stipulated lean the robustness sweep ran at, read from the same pooled grid so the
+    two `mae_fit` figures are on identical draws. `mae_elite` rides along because the
+    elite region is where a need lean degrades fastest, which is the evidence the fitted
+    zero rests on.
+    """
+    pooled = gate_b_need[gate_b_need["season"] == "pooled"]
+    if pooled.empty or not pooled["selected"].any():
+        raise ValueError("draft_gate_b_need.csv carries no pooled selected row — "
+                         "rerun `make draft-sim-need`")
+    selected = pooled[pooled["selected"]].iloc[0]
+    at_probe = pooled[pooled["need_weight"] == float(probe_weight)]
+    probe = (at_probe.loc[at_probe["mae_fit"].idxmin()] if len(at_probe) else None)
+    return {
+        "fitted_need_weight": float(selected["need_weight"]),
+        "rank_noise_sd": float(selected["rank_noise_sd"]),
+        "mae_fit": float(selected["mae_fit"]),
+        "mae_elite": float(selected["mae_elite"]),
+        "passes": bool(selected["passes"]),
+        "probe_weight": float(probe_weight) if probe is not None else float("nan"),
+        "probe_mae_fit": float(probe["mae_fit"]) if probe is not None else float("nan"),
+        "probe_mae_elite": (float(probe["mae_elite"]) if probe is not None
+                            else float("nan")),
+    }
+
+
+def field_comparison(sweep: pd.DataFrame, sweep_need: pd.DataFrame, tournament: str,
+                     arms: tuple[str, ...]) -> pd.DataFrame:
+    """The same arms against the two fields, pooled over seasons — block 5's left half.
+
+    One row per field × arm, with the interval endpoints averaged the same way the lift
+    is, so the frame draws directly. The need field's rows exist only if its sweep was
+    run; the caller decides what absence means.
+    """
+    rows = []
+    for field, frame in (("Fitted ADP field", sweep),
+                         ("Need-aware probe (w = 8)", sweep_need)):
+        sub = frame[frame["tournament"] == tournament]
+        for arm in arms:
+            hit = sub[sub["strategy"] == arm]
+            if hit.empty:
+                continue
+            rows.append({
+                "field": field, "strategy": arm,
+                "lift": float(hit["lift_vs_null"].mean()),
+                "lo": float(hit["lift_lo"].mean()), "hi": float(hit["lift_hi"].mean()),
+                "roi": float(hit["roi"].mean()),
+                "n_seasons": int(hit["season"].nunique()),
+            })
+    return pd.DataFrame(rows)
+
+
+def execution_panel(sweep: pd.DataFrame, tournament: str,
+                    arms: tuple[str, ...] = EXECUTION_ARMS) -> pd.DataFrame:
+    """The execution arms' pooled lifts for one tier — block 5's right half."""
+    sub = sweep[sweep["tournament"] == tournament]
+    rows = []
+    for arm in arms:
+        hit = sub[sub["strategy"] == arm]
+        if hit.empty:
+            continue
+        rows.append({"strategy": arm,
+                     "lift": float(hit["lift_vs_null"].mean()),
+                     "lo": float(hit["lift_lo"].mean()),
+                     "hi": float(hit["lift_hi"].mean())})
+    return pd.DataFrame(rows)
+
+
+def autodraft_matches_caps(sweep: pd.DataFrame) -> bool:
+    """Does the autodraft twin reproduce the caps-only arm exactly, everywhere?
+
+    The identity block 5 leans on: executing a static ranking through DK's autodraft is
+    the same computation as clicking it under DK's position caps, so the two arms must
+    hold identical rosters and identical lifts on every tier × season. They reach that
+    equality through two separate code paths, which is why it is checked from the
+    artifact rather than assumed from the code.
+    """
+    a = sweep[sweep["strategy"] == "autodraft_blend_a30"]
+    b = sweep[sweep["strategy"] == "blend_caps_dk"]
+    if a.empty or b.empty or len(a) != len(b):
+        return False
+    keys = ["season", "tournament"]
+    merged = a.set_index(keys)[["lift_vs_null"]].join(
+        b.set_index(keys)[["lift_vs_null"]], rsuffix="_caps", how="inner")
+    # Exact equality on purpose: the two arms hold the same rosters, so their scored
+    # lifts are the same float, not merely close.
+    return bool(len(merged) == len(a)
+                and (merged["lift_vs_null"].to_numpy()
+                     == merged["lift_vs_null_caps"].to_numpy()).all())

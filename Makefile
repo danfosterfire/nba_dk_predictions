@@ -15,7 +15,8 @@ PIP    := .venv/bin/pip
         stan-substitution season-terms games-played stan-games-played \
         stan-game-length posteriors model-cards minutes-unification composition-effects \
         scoring-periods draft-pool simulate-season weekly-scores bracket draft-sim \
-        draft-room draft-room-prep strategy-sweep final-evaluation
+        draft-sim-need draft-room draft-room-prep strategy-sweep strategy-sweep-need \
+        final-evaluation
 
 venv:
 	/opt/homebrew/bin/python3.14 -m venv .venv
@@ -425,6 +426,16 @@ bracket:
 draft-sim:
 	$(PYTHON) -m src.sim.draft
 
+# The `adp_need` field: disciplined ADP consensus merged with lineup reasoning — every
+# seat leans toward the starting slots (2 G / 2 F / 1 C) it still owes, by `need_weight`
+# picks per owed slot. (noise, need) are fitted JOINTLY on Gate B's mean-ADP target, with
+# need_weight = 0 nesting the shipped pure-ADP field exactly, so the artifact answers a
+# question the base calibration could not ask: does the fitted rank noise stand in for
+# lineup reasoning the field model omits? Writes draft_gate_b_need.csv, which is what
+# `selected_field` resolves when the composition seats `adp_need`.
+draft-sim-need:
+	$(PYTHON) -m src.sim.draft --opponent adp_need
+
 # The live draft room. `draft-room-prep` is the offline half: it drafts and scores each
 # season's reference field ONCE into data/features/draft_room_field_<season>.npz — the
 # population the recommender's `q` is read from — checks it against the symmetric-field
@@ -471,6 +482,17 @@ draft-room:
 # tier-blind by construction and only the bracket-EV arms read the payout table.
 strategy-sweep:
 	$(PYTHON) -m src.sim.strategy
+
+# The same sweep against the `adp_need` field — disciplined consensus with lineup
+# reasoning. The calibration SELECTS need_weight = 0 (the observed ADP curve carries no
+# slot-reaching, and it degrades fastest in the elite region), so the fitted field is the
+# shipped field bitwise and a sweep at it would measure nothing; this target runs the
+# ROBUSTNESS PROBE instead, stipulating an 8-pick lean — the strongest within ~0.14 picks
+# of the selected fit — with the noise scale still read from the calibration artifact.
+# A different measurement, not a re-decision: artifacts carry the `_adp_need_w8` suffix
+# and the shipped strategy_*.csv set is untouched. Requires `make draft-sim-need` first.
+strategy-sweep-need:
+	$(PYTHON) -m src.sim.strategy --field adp_need --need-weight 8
 
 # Does any head need a season term, and which kind? A trend covariate and a year-level
 # random effect for every head, plus the season x role interaction the availability era

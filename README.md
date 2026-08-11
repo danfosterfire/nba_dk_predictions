@@ -432,7 +432,7 @@ scores under real tournament structures. Four stages, four `make` targets:
 | the market | `make adp` | [src/features/adp.py](src/features/adp.py) builds a point-in-time-safe ADP panel — ADP is a forecast of the same target, so it is the most leakage-prone input in the repo and gets three separate dates per row |
 | the contest | `make bracket` | [src/sim/bracket.py](src/sim/bracket.py) seats the best 7 of 16 by slot in each period and runs the four-round chain with its cascading tie-break, wildcards and payouts |
 | the draft | `make draft` | [src/sim/draft.py](src/sim/draft.py) runs the snake against a field drawn from the DK-recalibrated consensus plus rank noise |
-| the sweep | `make strategy-sweep` | [src/sim/strategy.py](src/sim/strategy.py) — **22 strategies × 2 tiers × 2 validation seasons at 500 simulated worlds each**, paired inside the world, plus the realized readout |
+| the sweep | `make strategy-sweep` | [src/sim/strategy.py](src/sim/strategy.py) — **24 strategies × 2 tiers × 2 validation seasons at 500 simulated worlds each**, paired inside the world, plus the realized readout |
 
 [dashboard/economics.py](dashboard/economics.py) derives the tournament structures from
 `data/raw/dk_best_ball_tournament_*.csv`: five real tournaments, Round 1 a zero-consolation
@@ -568,6 +568,21 @@ its intervals cover most of the table and it selected nothing. **Gate D fails, a
 also a result** — the two buy-in tiers do not select materially different rosters in **0**
 of **6** paired comparisons, under a tier-blind ranking or a tier-aware objective, so
 "draft differently for a bigger field" is not a strategy this simulator can support.
+
+**The edge is not an artifact of a too-simple field, and automation's price is the
+objective, not the executor.** `make draft-sim-need` / `make strategy-sweep-need` /
+`make strategy-sweep`. Giving the field lineup reasoning is a measured null twice over: a
+joint Gate B calibration fits the slot-reaching lean at **0** picks (the observed ADP
+curve carries none, degrading fastest in the elite region), and against a *stipulated*
+8-pick lean the shipped arm's simulated lift **rises** to **0.306** — slot-reaching pays
+value for shape, so the fitted pure-ADP field is the harder opponent and stays shipped.
+On the execution axis, submitting our best feasible ranking to DK's own autodraft is
+identical to clicking it under DK's 8G/8F/3C caps — and beats the uncapped click by
+**+0.0091** (600k, resolved) — while giving up **0.092** of simulated lift against the
+shipped per-pick objective, which no static board can express. The 30-second-clock
+fallback is safe; the objective is the half worth defending. See
+[docs/simulations-plan.md](docs/simulations-plan.md), "The field with lineup reasoning,
+and the execution axis".
 
 **The sampler behaved.** 37 component fits with 0 divergences and every fit clearing every
 convergence bar, 54 season-term fits with 0

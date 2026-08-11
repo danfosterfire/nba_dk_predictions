@@ -1297,12 +1297,16 @@ make bracket ✅      src/sim/bracket.py            best 7 of 16 by slot per per
                                                    -> outputs/predictions/bracket_{structure,
                                                       null,entries}.csv
 make strategy-sweep ✅ src/sim/strategy.py         the sweep: Gate C's error injection,
-                                                   22 strategies x 2 tiers x 2 seasons,
-                                                   paired on the simulated season, plus
-                                                   the realized readout
+                                                   24 strategies x 2 tiers x 2 seasons
+                                                   (22 until the execution axis landed
+                                                   2026-08-11), paired on the simulated
+                                                   season, plus the realized readout
                                                    -> outputs/predictions/strategy_{gate_c,
                                                       injection,null,sweep,paired,gate_d,
                                                       realized,shipped}.csv
+                                                   --field adp_need --need-weight 8 is the
+                                                   robustness probe (make
+                                                   strategy-sweep-need), suffixed artifacts
 
 make draft-room-prep ✅ src/sim/draft_room.py      the engine: the cached reference field,
                                                    the null check and Gate E
@@ -1943,7 +1947,9 @@ in rounds 9+ — which is where 9 of the 16 roster spots are filled.
 ### What was built, and what Gates C and D found — 2026-08-09
 
 `src/sim/strategy.py`, `make strategy-sweep`. **22 strategies × 2 tiers × 2 validation
-seasons at 500 simulated worlds each, in 4.8 minutes of numpy.** Gate C passes on the two
+seasons at 500 simulated worlds each, in 4.8 minutes of numpy** (24 strategies since the
+execution axis landed 2026-08-11 — see that section below; the original 22 reproduce to
+the digit). Gate C passes on the two
 targets it can hit and misses two rows in a stated direction; Gate D **fails, and that is the
 result** — the two tiers do not select materially different rosters, under a tier-blind
 ranking or a tier-aware objective.
@@ -2145,10 +2151,15 @@ in one season of each tier and trails it in the other, which is what N = 2 looks
   knows about the weekly distribution, the double-double threshold, or the cross-component
   correlation. The shipped objective uses all of that, and truth is drawn from the same joint.
   So the simulated lift is an **upper bound** on a real one.
-- 🔴 **The field drafts strictly by ADP with rank noise and does no lineup reasoning at all.**
-  A real drafter balances positions. The edge measured here is over that field, not over a
-  room of humans, and `docs/simulations-plan.md` already names real pick logs as the missing
-  calibration.
+- ~~🔴 **The field drafts strictly by ADP with rank noise and does no lineup reasoning at
+  all.**~~ ✅ **Measured 2026-08-11, and the caveat resolves in the field's favor** — see
+  "The field with lineup reasoning, and the execution axis" below. A joint Gate B
+  calibration fits the slot-reaching lean at **zero** (the observed market does not
+  reach), and a sweep against a stipulated 8-pick lean reads *higher* lift for every
+  value-following arm, so the shipped pure-ADP field is the **conservative** opponent.
+  Real pick logs remain the missing calibration for draft-to-draft behavior; what this
+  closes is the specific worry that the lift was an artifact of a field too naive about
+  positions.
 - **`ρ` is measured on the same two seasons the sweep scores.** It is a simulator *input*,
   calibrated the way the other four are, and validation is the split selection may read — but
   every `α` below inherits the sampling error of two seasons of ~200 priced players.
@@ -2160,6 +2171,84 @@ caveats above, and 600k's ROI is the figure `make bracket` and `make draft-room-
 already record as not estimable at any affordable budget (the null's E[payout] reads **−15%**
 at this field size, against **−0.0%** for 20k). The lift in `P(top 2 of 12)` is the number to
 read.
+
+### The field with lineup reasoning, and the execution axis — 2026-08-11
+
+Two follow-on measurements, both answers to the same worry — that the measured lift is an
+artifact of a too-simple opponent — plus the sweep growing from 22 arms to **24**. The
+request behind them: give the field a strategy that is *disciplined ADP consensus merged
+with lineup reasoning* and re-measure the lift; and price an *autodraft* execution of our
+own best strategy, for the draft night where the 30-second clock wins.
+
+#### The field: lineup reasoning is a measured null, twice over
+
+`make draft-sim-need` (`src/sim/draft.py --opponent adp_need`,
+`outputs/predictions/draft_gate_b_need.csv`). The `adp_need` opponent was already
+registered and idle — ADP plus `need_weight` picks of boost per starting slot (2 G / 2 F /
+1 C) the seat still owes. The calibration fits (`rank_noise_sd`, `need_weight`)
+**jointly** on Gate B's own mean-ADP target, tiered shape, with `need_weight = 0` nesting
+the shipped pure-ADP field bitwise (same seed, same draws — pinned by
+`test_calibrate_need_at_zero_nests_the_tiered_calibration_exactly`).
+
+**It selects `need_weight = 0`, on both validation seasons independently.** The pooled
+grid is monotone against the lean — MAE(fit) 5.922 → 6.684 picks from need 0 to 32 — and
+the degradation concentrates exactly where the market is most certain: **MAE(elite) 3.43 →
+6.98**. The observed DK curve carries no slot-reaching for a field model to imitate; real
+drafters take value and let the roster follow. So the "disciplined consensus + lineup
+reasoning" field, *calibrated*, is the shipped field.
+
+**The robustness probe agrees from the other side.** `make strategy-sweep-need` runs the
+full sweep against a **stipulated** 8-pick lean — the suffix names the stipulation
+(`strategy_*_adp_need_w8.csv`) precisely because nothing fitted it; 8 is the strongest
+lean within ~0.14 picks of the selected fit, and the noise scale still comes from the
+calibration artifact. Every value-following arm reads **higher** lift against that field:
+the shipped arm +0.2107 → **+0.3055** (600k) and +0.1989 → **+0.2656** (20k), the adp arm
++0.045 → +0.075 (600k, pooled). A field that reaches for slots pays value for shape, and
+the bracket pays value. The symmetric-field null stays exact against the need field
+(−1.1e-10 / −1.5e-10), so the comparison is apples to apples. **Conclusion: the fitted
+pure-ADP field is the harder opponent, and it stays shipped** — recorded as
+`field-lineup-reasoning-is-a-measured-null` in the decision registry.
+
+Plumbing that landed with it, all behind defaults that reproduce the old behavior
+exactly: `field_composition` / `assign_seats` now actually thread through `load_room`,
+`build_field`, `draft_portfolio` and both realized/injected field builds (`Room.seats`);
+the field cache is keyed by composition and `need_weight` as well as the noise pair, with
+legacy caches read as the pure-ADP field they hold; and `selected_field` resolves an
+`adp_need` composition from its own artifact rather than mixing calibrations.
+
+#### The execution axis: autodraft ≡ DK caps, and the caps help
+
+Two new arms, `axis="execution"`: the same static ranking executed as a **submitted
+pre-draft board** under DK's documented autodraft rules (8 G / 8 F / 3 C binding, no
+queue, unpriceable players ranked last rather than masked). `Strategy(autodraft=True)`
+**refuses** any axis a static order cannot express — a per-pick objective, a per-round α
+schedule, an exposure cap, a stacking bonus — because silently dropping the axis would
+measure a different strategy under the old name. That refusal is itself the first
+finding: the shipped arm (`lineup_value_blend30`) is *infeasible* as an autodraft, so its
+closest feasible twin `blend_a30` carries the axis.
+
+Three results, from `strategy_sweep.csv` / `strategy_paired.csv`:
+
+- **`autodraft_blend_a30` = `blend_caps_dk`, roster for roster.** Executing a ranking
+  through the autodraft path reproduces the caps-only manual arm exactly on every
+  tier × season — two code paths arriving at the same drafts, checked from the artifact
+  by `dashboard/strategy.autodraft_matches_caps` and pinned by a test against the real
+  sweep. DK's autodraft executor on a static board *is* the caps, nothing more.
+- **And the caps help.** The autodraft twin beats the uncapped click of the same ranking
+  by **+0.0091 [+0.0080, +0.0102]** (600k) and **+0.0076 [+0.0059, +0.0093]** (20k),
+  both resolved. 8/8/3 is crude lineup reasoning, and best-7-by-slot scoring rewards it —
+  the interesting asymmetry with the field result being the dose: a cap that prevents
+  degenerate rosters helps, an 8-pick early reach costs.
+- **What automation costs is the objective, not the executor.** Against the shipped arm,
+  the autodraft twin gives up **−0.092** (600k) and **−0.053** (20k) of simulated lift.
+  The shipped arm re-prices every candidate against the roster it already holds; no
+  static board can carry that. So the ranking-submission fallback the 30-second clock may
+  force is safe — better than a naive click — and the per-pick objective is the half
+  worth defending. Recorded as `autodraft-execution-is-the-caps-and-the-caps-help`.
+
+The sweep's existing 22 arms reproduce to the digit (each arm draws from its own
+generator, so appending arms cannot perturb the table), and page 8's block 5 renders both
+halves.
 
 ---
 
