@@ -34,6 +34,13 @@ to the relevant docs for the task at hand. The docs are:
   each step has a "Step N, as built" section. `dashboard-build-prompts.md`, the 
   ten one-per-session build prompts, was ephemeral scaffolding and was deleted 
   when the expansion landed.
+  - dashboard-revision-plan.md: The round *after* the expansion, planned 
+  2026-08-10 — five one-per-session steps (appearance, which availability head 
+  ships, DHARMa-style quantile residuals, a round-unit dk_pts page, and the 
+  Overview as a paper). It inherits every rule `dashboard-plan.md` set; read that 
+  one first. Two of the five items turned out to have different answers than the 
+  request assumed, and the doc records why. Its prompts appendix is ephemeral 
+  scaffolding, to be deleted when the round lands.
   - data-quirks.md: Notes and findings in exploring the raw data.
   - dk_best_ball_rules.md: Copy of the tournament rules for draft kings best 
   ball tournaments **always read this**.
