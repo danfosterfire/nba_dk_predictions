@@ -5514,9 +5514,59 @@ REGISTRY: tuple[Decision, ...] = (
                 "per mode rather than flipped, so a reader who picked dark on one page "
                 "and got light on the next would be reading two different validated "
                 "palettes in one session.",
-        status="built",
+        status="withdrawn",
+        replaced_by="[[appearance-is-streamlits-own-setting]] — there is no appearance "
+                    "widget at all now, so the question of who renders it does not "
+                    "arise. The *mechanism* this entry established is untouched and "
+                    "still load-bearing: widget state does not survive a navigation, "
+                    "which is why `shell.recall` / `shell.remember` exist "
+                    "([[a-page-control-that-names-the-state-must-outlive-the-page]]). "
+                    "What was wrong was the premise underneath it — that the dashboard "
+                    "should own an appearance control in the first place.",
+        caught_by="Driving the running page in Chrome in both modes on 2026-08-10. The "
+                  "radio reached the plot surfaces and nothing else: the app background, "
+                  "header, sidebar, body text, headings, metric tiles and the "
+                  "canvas-rendered tables all followed Streamlit's own appearance "
+                  "setting instead, so the two controls could disagree and routinely "
+                  "did. `AppTest` could not have seen it — it has no DOM.",
         reproduce="make dashboard → dashboard/shell.py, dashboard/app.py",
-        source="docs/dashboard-plan.md",
+        source="docs/dashboard-revision-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard",),
+    ),
+    Decision(
+        id="appearance-is-streamlits-own-setting",
+        topic="problem",
+        claim="The dashboard has **one** appearance control, and it is Streamlit's own "
+              "System/Light/Dark switch. `.streamlit/config.toml` carries `[theme.light]` "
+              "and `[theme.dark]` generated from `theme.THEMES`, and `shell.mode()` is "
+              "`detected_mode()` with no widget behind it.",
+        because="There were two, and they owned different halves of the same page: "
+                "Streamlit's setting owned the background, header, sidebar, body text "
+                "and tables, while a sidebar radio owned the plot surfaces. A reader in "
+                "dark mode who picked 'light' got light charts on a dark page. Streamlit "
+                "1.60 carries per-mode theme config, which the project config predated "
+                "and declined to set, so the first half of the fix was a **data** change: "
+                "44 settings across two modes, derived from the palette rather than "
+                "retyped, and `make dashboard-config` regenerates them. That half alone "
+                "does not settle which control wins, and the deciding evidence is a "
+                "capability rather than a preference: **`st.dataframe` renders to a "
+                "canvas**, so no CSS a page injects can repaint a table, while config "
+                "can — and config keys off Streamlit's setting. Every model page puts a "
+                "table twin beside every chart, because the palette's relief rule "
+                "requires one, so a radio that could not move the tables would have "
+                "relocated the reported symptom rather than fixed it. Streamlit 1.60 also "
+                "promotes System/Light/Dark to the top of its own main menu "
+                "(`stMainMenuItem-theme-*`), so the radio was a second appearance control "
+                "three inches below a built-in one. **The one measured cost**: changing "
+                "appearance mid-session repaints the chrome immediately but does not "
+                "rerun the script, so already-drawn figures keep the old palette until "
+                "the next rerun — any navigation or widget click. `st.context.theme.type` "
+                "is fresh by then, confirmed in Chrome.",
+        status="settled",
+        reproduce="make dashboard-config → .streamlit/config.toml",
+        source="docs/dashboard-revision-plan.md",
         reviewed="2026-08-10",
         date="2026-08-10",
         tags=("dashboard",),

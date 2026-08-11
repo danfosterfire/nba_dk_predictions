@@ -77,9 +77,9 @@ interpretation carries a machine-checkable anchor so it cannot silently invert. 
 dashboard/
   README.md       this file
   app.py          the entrypoint — st.navigation over the pages, and VIEWS, the sidebar
-  shell.py        cross-page state: the appearance mode, current_theme(), the opt-in
-                  metric-tile type scale, and the page registry `st.page_link` rows
-                  come out of
+  shell.py        cross-page state: detected_mode() / current_theme(), the opt-in
+                  metric-tile type scale, the recall/remember pair, and the page
+                  registry `st.page_link` rows come out of
   views/
     overview.py       page 1 — the one exempt page: the problem, five hero tiles, the
                       pipeline in one diagram, and the route into the other eight
@@ -118,7 +118,9 @@ dashboard/
   charts.py       fig_radar / fig_loadings, the five tournament figures, the six
                   model-page figures, the six a single model page owns, the four
                   page 7 owns, and fig_pipeline — the one figure that plots no data
-  theme.py        SERIES, THEMES, ALL_PAIRS_CAP, theme(), apply_theme(), ordinal_colors()
+  theme.py        SERIES, THEMES, ALL_PAIRS_CAP, theme(), apply_theme(), ordinal_colors(),
+                  and the page chrome: CHROME_ROLES / SIDEBAR_ROLES, streamlit_theme(),
+                  config_toml() — what `make dashboard-config` writes
   artifacts.py    load_cfg, features_dir, predictions_dir, eda_dir, read_table, optional
   decisions.py    ─┐
   economics.py     ├ not the dashboard — see below
@@ -145,10 +147,11 @@ Three consequences worth knowing before adding a page:
 
 - **The entrypoint runs on every rerun; a `render()` runs only when its page is
   selected.** Anything that must survive navigation goes in `shell.py` and is rendered by
-  `app.py` — today the appearance mode, which a page reads through
-  `shell.current_theme()`. A widget a page declares is torn down when the reader leaves
-  it: driven under `AppTest`, a round trip resets the fingerprint view's own `component`
-  key from `pc8` to `pc1` while `appearance` holds.
+  `app.py`. A widget a page declares is torn down when the reader leaves it: driven under
+  `AppTest`, a round trip resets the fingerprint view's own `component` key from `pc8` to
+  `pc1`. **The shell renders no controls at all today** — the appearance mode was the one,
+  and it was retired on 2026-08-10 (see Colour, below); the rule stands and the next
+  genuinely global control belongs here.
 - **A control that says what the page's *other* state means cannot use that escape**, since
   it belongs to one page and the entrypoint cannot render it. `shell.recall` /
   `shell.remember` are the mechanism: a namespaced plain session-state key, which is not
@@ -156,8 +159,8 @@ Three consequences worth knowing before adding a page:
   survives a navigation, so its season, tournament, seat and objective have to as well —
   otherwise a round trip keeps the draft and silently re-reads it at seat 1 on another
   season's board. Cosmetic controls are left to reset; that is the line.
-- **Sidebar order follows that ownership**: the navigation, then the shell's controls,
-  then whatever the page writes to `st.sidebar` for itself.
+- **Sidebar order follows that ownership**: the navigation, then the shell's controls (none
+  at present), then whatever the page writes to `st.sidebar` for itself.
 - **A page that links to its siblings has to be handed them.** `st.page_link` accepts only
   a `st.Page` that `st.navigation` was given, and those are built in `app.main()`;
   rebuilding them inside a view collides on `url_path` and importing `app` from a view is a
@@ -225,6 +228,43 @@ two ends of the diverging scale rather than two categorical slots. Plot surfaces
 to the exact surfaces the palette was validated against (`#fcfcfb` / `#1a1a19`) rather than
 inherited from Streamlit's chrome, so the measured contrast figures apply as documented.
 
+### One appearance, and it is Streamlit's
+
+**There is no light/dark control in the sidebar.** There was until 2026-08-10, and it owned
+only the plot surfaces while Streamlit's own appearance setting owned the background,
+header, sidebar, body text and tables — so the two could disagree, and a reader in dark mode
+who picked "light" got light charts on a dark page. The appearance is now Streamlit's own
+**System / Light / Dark**, at the top of its main menu, read through `shell.detected_mode()`
+and used by every page through `shell.current_theme()`.
+
+**The chrome is the same palette, and it is generated rather than retyped.**
+`.streamlit/config.toml` carries `[theme.light]` and `[theme.dark]` (each with a `sidebar`
+sub-table) written by `make dashboard-config` from `theme.THEMES`, and a test parses the
+checked-in file back against `theme.streamlit_theme()`. Two roles carry it, in both modes:
+
+- **`surface` is the page's ground** and is the same value `apply_theme` paints a figure's
+  paper with, so a chart has no visible edge against the page it sits on.
+- **`plane` is the recessive panel** behind that ground — the sidebar, a dataframe header, a
+  code block. Inside the sidebar the pair inverts, so a widget reads as raised.
+
+`neutral` is deliberately kept out: it is the diverging scale's midpoint, and chrome
+borrowing it would make a zero value look like furniture. Asserted on `CHROME_ROLES` rather
+than on colours, because in dark mode `neutral` and `axis` are the same hex.
+
+Two things measured in a browser and worth knowing before touching any of it:
+
+- **`st.dataframe` renders to a canvas, so config is the only thing that can paint a
+  table.** Injected CSS cannot, which is why the radio lost rather than the config: every
+  model page puts a table twin beside every chart (the relief rule above), so a control that
+  moved the charts and not the tables would only have moved the symptom.
+- **Changing appearance mid-session does not rerun the script.** The chrome repaints
+  instantly; already-drawn figures keep the old palette until the next rerun, which any
+  navigation or widget click supplies. `st.context.theme.type` is fresh by then. A fresh
+  session in any of the three settings is coherent everywhere.
+- **`theme.chartCategoricalColors` and friends are deliberately unset.** They exist once for
+  both modes, while `SERIES` is *selected* per mode rather than flipped, so setting them
+  would push one mode's eight slots onto the other. Nothing here draws with them anyway.
+
 ## Adding a view
 
 1. Put the pure logic in its own module with no Streamlit import, and test it directly.
@@ -243,12 +283,16 @@ inherited from Streamlit's chrome, so the measured contrast figures apply as doc
    the literal string "undefined", metric tiles clipping their own values, and a click
    handler that never fired.
 
-Two mechanics of the first layer, both of which cost a while to find:
+Three mechanics of the first layer, all of which cost a while to find:
 
 - **`AppTest.switch_page` cannot reach these pages.** It resolves a *file* path and hashes
   the filename; `st.Page` over a bare callable hashes its `url_path` instead. Navigate with
   `at._page_hash = streamlit.util.calc_hash("<url_path>")`, which is the field
   `switch_page` sets anyway.
+- **"Both appearance modes" is now driven by patching `shell.detected_mode`**, not by
+  setting a session-state key — there is no widget to set. `AppTest` has no browser
+  appearance to read, so `detected_mode()` falls through to `"light"` and both modes have to
+  be asked for explicitly.
 - **A selectbox with a `format_func` stores raw values and exposes formatted options**, so
   `.select("600k_shootaround")` raises and `.set_value("600k_shootaround")` is what works.
 
@@ -315,7 +359,13 @@ running page:
   share` arrives in the namedtuple as `_10`, so reading it back by name raises — on the heads
   that actually imputed something and only those.
 - **`st.dataframe` renders to a canvas**, so its cell text is not in the DOM at all. A
-  browser check can read a caption or a metric tile and cannot read a table.
+  browser check can read a caption or a metric tile and cannot read a table. It *can* read
+  the pixels — `canvas.getContext('2d').getImageData` is not tainted here — and that is how
+  the table surfaces were checked against the palette. glide-data-grid paints the sticky
+  header into its **own** short canvas, so a probe that takes the first canvas it finds
+  reads the body twice and reports no header at all. Take the one under 60 px tall.
+  Consequences beyond testing: no CSS a page injects can repaint a table, which is what
+  settled the appearance fork above.
 - **Streamlit streams a page's blocks, so `inner_text` at first paint reads the top of the
   page only.** On the draft room the recommendation exists seconds before the board, the
   roster and the pick log below it, and three browser checks failed against a page that was

@@ -46,6 +46,9 @@ make report-calibration   # → report_transfer.parquet + outputs/eda/report_cal
 make eda              # all of the above, in dependency order
 make dashboard        # data visualizations over the precomputed artifacts
                       #    (today: the PCA player-style fingerprint)
+make dashboard-config # .streamlit/config.toml regenerated from dashboard/theme.THEMES, so
+                      #    the page chrome and the chart surfaces are one palette; a test
+                      #    parses the checked-in file back and fails if they have drifted
 make dashboard-audit  # registry drift report — a report, not a gate; exits 0 with findings
 make docs-audit       # every quoted figure in the plan docs vs its artifact — a GATE
 ```

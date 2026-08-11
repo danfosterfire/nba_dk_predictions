@@ -28,10 +28,15 @@ expansion" and "Step 7, as built".
 
 The body of this file runs on **every** rerun; a `render()` runs only when its page is
 selected. So anything that must survive navigation is rendered here, from
-`dashboard/shell.py`, and a page reads it — today the light/dark appearance mode, which
-would otherwise reset to the detected default each time the reader changed page. Sidebar
-order follows that ownership: the navigation, then the shell's controls, then whatever the
-page writes to `st.sidebar` for itself.
+`dashboard/shell.py`, and a page reads it. Sidebar order follows that ownership: the
+navigation, then the shell's controls, then whatever the page writes to `st.sidebar` for
+itself.
+
+The shell rendered one such control until 2026-08-10 — a light/dark radio — and it is
+gone. The appearance is Streamlit's own setting now, read through `shell.detected_mode()`
+and painted from one palette on both sides by `.streamlit/config.toml`; the radio could
+only reach the plot surfaces, and no page-injected CSS could ever have reached the
+canvas-rendered tables beside them. See `shell.detected_mode()` for the measurement.
 
 Nothing here imports from `src/`. The dashboard reads artifacts and nothing else, and
 `tests/test_dashboard.py` pins it for every file in the package.
@@ -126,7 +131,6 @@ def main() -> None:
     # rewrites the default page's own to `""`.
     shell.publish_pages({view.url_path: built[i] for i, view in enumerate(VIEWS)})
     page = st.navigation(built)
-    shell.appearance_control()
     page.run()
 
 

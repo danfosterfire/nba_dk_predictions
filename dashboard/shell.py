@@ -8,14 +8,10 @@ declaring it — a control declared inside a view would be torn down the moment 
 navigated away, taking its `st.session_state` entry with it, and the next page would come
 up in whatever the detected default happened to be.
 
-Today that is one thing, the light/dark appearance mode. It is genuinely global: the
-palette is selected per mode rather than flipped (`theme.py`), so a reader who picked dark
-on one page and got light on the next would be reading two different validated palettes in
-one session.
-
-The mode lives under a single key, `APPEARANCE`, seeded once from `detected_mode()` and
-thereafter owned by the widget. `current_theme()` is what a view calls; it never touches
-the key directly, so the storage can change without a view knowing.
+The appearance mode used to be that thing, under a sidebar radio this module rendered.
+**It is not a control any more, and that is a measurement rather than a simplification**
+— see `detected_mode()`. `current_theme()` is still what a view calls, and it never
+touched the storage directly, which is why retiring the widget moved no view.
 
 `remember()` / `recall()` are the other half of the same asymmetry, for a control the
 *entrypoint* cannot render on a page's behalf — see their own docstrings.
@@ -33,10 +29,9 @@ import streamlit as st
 from dashboard.theme import theme
 
 MODES = ("light", "dark")
-APPEARANCE = "appearance"
 
 # Shadow keys are namespaced so they cannot collide with a widget key, which would put two
-# owners on one entry — the same argument `appearance_control` makes about `index=`.
+# owners on one entry.
 REMEMBERED = "remembered:"
 
 V = TypeVar("V")
@@ -64,7 +59,30 @@ def compact_tiles() -> None:
 
 
 def detected_mode() -> str:
-    """Follow Streamlit's own theme where it exposes one."""
+    """Follow Streamlit's own theme, which since 2026-08-10 is the *only* appearance control.
+
+    There used to be a second one — a sidebar radio this module rendered — and the two
+    could disagree, which is the whole reason it is gone. Streamlit's setting owned the
+    page (background, header, sidebar, body text, tables) and the radio owned the plot
+    surfaces, so a reader whose Streamlit was dark and who picked "light" got light charts
+    on a dark page. `.streamlit/config.toml` now paints the chrome from the same palette
+    the charts use, which makes the hybrid *more* visible rather than less: the page is
+    exactly `#fcfcfb`/`#1a1a19`, so a chart in the other mode is a rectangle of the
+    opposite colour sitting on it.
+
+    The reason the radio lost rather than the config is a browser measurement, and it is
+    a capability rather than a preference. `st.dataframe` renders to a **canvas**, so no
+    CSS a page injects can repaint a table; only config can, and config keys off
+    Streamlit's setting. Every model page puts a table twin beside every chart — the
+    relief rule in `dashboard/README.md` — so a radio that could not move the tables would
+    have relocated the reported symptom rather than fixed it. Streamlit 1.60 also promotes
+    System/Light/Dark to the top of its own main menu, so what the radio was competing
+    with is one click away and already labelled.
+
+    Two `get`s rather than one: `st.context.theme.type` is the live browser value and is
+    what the menu changes; `theme.base` is the configured default and is what remains
+    outside a script run.
+    """
     for get in (lambda: st.context.theme.type, lambda: st.get_option("theme.base")):
         try:
             value = get()
@@ -76,9 +94,8 @@ def detected_mode() -> str:
 
 
 def mode() -> str:
-    """The selected appearance, safe to call before the control has been rendered."""
-    value = st.session_state.get(APPEARANCE)
-    return value if value in MODES else detected_mode()
+    """The appearance every page is drawn in — Streamlit's own, and nothing else."""
+    return detected_mode()
 
 
 def current_theme() -> dict:
@@ -91,7 +108,7 @@ def recall(key: str, default: V) -> V:
 
     Streamlit clears the state of every widget the current page did not render, so a
     control declared inside a `render()` comes back at its default after a navigation —
-    measured, and the reason `appearance_control` lives in the entrypoint. A page whose
+    measured, and the reason the appearance mode was never a page's to hold. A page whose
     controls *say what its other state means* cannot use that escape: the draft room's
     seat, season and tournament are only meaningful beside a pick log that is a plain
     session-state key and therefore does survive, so a silent reset to seat 1 would replay
@@ -100,8 +117,8 @@ def recall(key: str, default: V) -> V:
     A plain key written by the page while it runs is not widget state and is not cleared,
     so the pair here is the page's own memory: `recall` seeds the widget, `remember` stores
     what it came back with. It is deliberately *not* an alternative to putting genuinely
-    global state in this module — the appearance mode belongs to every page and is rendered
-    by the entrypoint; these belong to one page and only have to outlive leaving it.
+    global state in this module; these belong to one page and only have to outlive leaving
+    it.
     """
     return st.session_state.get(f"{REMEMBERED}{key}", default)
 
@@ -137,22 +154,3 @@ def page(url_path: str):
     degrade to not linking rather than raise.
     """
     return _PAGES.get(url_path)
-
-
-def appearance_control() -> str:
-    """The sidebar mode switch, rendered by the entrypoint so it outlives a page.
-
-    Seeded rather than defaulted: passing `index=` alongside a key Streamlit already
-    holds a value for makes the widget argue with session state. Seeding the key once
-    and then omitting `index=` leaves one owner.
-    """
-    if st.session_state.get(APPEARANCE) not in MODES:
-        st.session_state[APPEARANCE] = detected_mode()
-    with st.sidebar:
-        st.header("Appearance")
-        st.radio("Mode", list(MODES), key=APPEARANCE, horizontal=True,
-                 label_visibility="collapsed",
-                 help="Chart steps are selected per mode, not flipped. The choice is "
-                      "held by the shell, so it survives moving between pages.")
-        st.markdown("---")
-    return st.session_state[APPEARANCE]

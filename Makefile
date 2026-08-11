@@ -4,7 +4,7 @@ PIP    := .venv/bin/pip
 .PHONY: venv install fetch preprocess features train evaluate predict test clean \
         season-matrix pca archetypes eda team-context component-targets context-value \
         opponent persistence aging target-profile feature-diagnostics dashboard \
-        dashboard-audit docs-audit \
+        dashboard-audit dashboard-config docs-audit \
         availability availability-profile injury-reports injuries daily-capture \
         boxscore-status availability-model capture-status capture-calendar \
         report-calibration \
@@ -479,6 +479,13 @@ eda: season-matrix pca archetypes team-context context-value opponent \
 # `$(PYTHON)` and survives a rename.
 dashboard:
 	$(PYTHON) -m streamlit run dashboard/app.py
+
+# `.streamlit/config.toml` rendered from `dashboard/theme.py`, so the page chrome and
+# the chart surfaces are one palette rather than two copies of it. Run it after editing
+# `THEMES`; a test parses the checked-in file back against the module and fails if the
+# two have drifted, which is what makes this a regeneration rather than a suggestion.
+dashboard-config:
+	$(PYTHON) -m dashboard.theme
 
 # Registry drift report — see dashboard/README.md. A report, not a gate: it exits 0
 # with findings on purpose, because failing on a doc edit trains people to ignore it.

@@ -630,7 +630,11 @@ with the first as default. A page is a `render()` in `dashboard/views/`; a row c
 title, icon and a pinned `url_path`, so a deep link outlives a retitling.
 
 The appearance mode moved into `dashboard/shell.py`, rendered by the entrypoint and read by
-a view through `shell.current_theme()`. **This is forced rather than tidy.** The
+a view through `shell.current_theme()`. **Superseded 2026-08-10** — the radio is retired and
+the appearance is Streamlit's own setting; `shell.current_theme()` is unchanged and the
+navigation argument below still stands. See `docs/dashboard-revision-plan.md`, "Step 1, as
+built". The rest of this subsection is the record of what shipped in step 1 of the
+expansion. **This is forced rather than tidy.** The
 entrypoint's body runs on every rerun while a `render()` runs only when its page is
 selected, and Streamlit clears `st.session_state` for widgets the current page did not
 render — so a mode switch declared inside a view is destroyed the moment the reader
@@ -1583,7 +1587,10 @@ work of both. One consequence is worth stating rather than filing as a bug: **th
 appearance toggle is inert on this page**, because what the mode selects is a chart palette
 and there are no charts. It still *holds* across the page, which is the part that matters,
 and the tournament page repaints to the pinned dark surface after a round trip through the
-room.
+room. **No longer true as of 2026-08-10**, and in the useful direction: the toggle is gone,
+the appearance is Streamlit's own, and the page chrome comes from the same palette — so the
+room now changes with the mode in both of its launches, charts or no charts. See
+`docs/dashboard-revision-plan.md`, "Step 1, as built".
 
 ### Verification, as run
 

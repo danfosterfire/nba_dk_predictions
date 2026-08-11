@@ -1,16 +1,72 @@
 # Project-level Streamlit config for `make dashboard`.
 #
+# GENERATED — `make dashboard-config` writes this file from `dashboard/theme.py`, and
+# `tests/test_dashboard.py` parses it back against `theme.streamlit_theme()`. Edit the
+# palette or `config_toml()`, never the hex below.
+#
 # headless = true is the load-bearing line: without it Streamlit's first run on a
 # machine stops at an interactive "Email:" onboarding prompt, and `make dashboard`
 # exits 255 instead of serving.
 #
-# The chart surfaces are *not* set here on purpose. dashboard/app.py pins its plot
-# surfaces to the exact values the colour palette was validated against and offers
-# its own light/dark toggle, so Streamlit's page chrome is left to follow the
-# viewer's own theme setting.
+# The [theme.light] / [theme.dark] tables are the whole page in the palette the charts
+# were validated against, so one appearance choice moves the background, the sidebar,
+# the body text, the tables and the plots together. Streamlit's own appearance setting
+# is that choice — see `dashboard/shell.py`.
 
 [server]
 headless = true
 
 [browser]
 gatherUsageStats = false
+
+[theme.light]
+primaryColor = '#2a78d6'
+backgroundColor = '#fcfcfb'
+secondaryBackgroundColor = '#f9f9f7'
+textColor = '#0b0b0b'
+linkColor = '#2a78d6'
+borderColor = '#e1e0d9'
+dataframeBorderColor = '#c3c2b7'
+dataframeHeaderBackgroundColor = '#f9f9f7'
+codeBackgroundColor = '#f9f9f7'
+codeTextColor = '#52514e'
+font = 'system-ui, -apple-system, "Segoe UI", sans-serif'
+
+[theme.light.sidebar]
+primaryColor = '#2a78d6'
+backgroundColor = '#f9f9f7'
+secondaryBackgroundColor = '#fcfcfb'
+textColor = '#0b0b0b'
+linkColor = '#2a78d6'
+borderColor = '#c3c2b7'
+dataframeBorderColor = '#c3c2b7'
+dataframeHeaderBackgroundColor = '#fcfcfb'
+codeBackgroundColor = '#fcfcfb'
+codeTextColor = '#52514e'
+font = 'system-ui, -apple-system, "Segoe UI", sans-serif'
+
+[theme.dark]
+primaryColor = '#3987e5'
+backgroundColor = '#1a1a19'
+secondaryBackgroundColor = '#0d0d0d'
+textColor = '#ffffff'
+linkColor = '#3987e5'
+borderColor = '#2c2c2a'
+dataframeBorderColor = '#383835'
+dataframeHeaderBackgroundColor = '#0d0d0d'
+codeBackgroundColor = '#0d0d0d'
+codeTextColor = '#c3c2b7'
+font = 'system-ui, -apple-system, "Segoe UI", sans-serif'
+
+[theme.dark.sidebar]
+primaryColor = '#3987e5'
+backgroundColor = '#0d0d0d'
+secondaryBackgroundColor = '#1a1a19'
+textColor = '#ffffff'
+linkColor = '#3987e5'
+borderColor = '#383835'
+dataframeBorderColor = '#383835'
+dataframeHeaderBackgroundColor = '#1a1a19'
+codeBackgroundColor = '#1a1a19'
+codeTextColor = '#c3c2b7'
+font = 'system-ui, -apple-system, "Segoe UI", sans-serif'

@@ -51,7 +51,7 @@ documentation again. All are from `dashboard/README.md` and `docs/dashboard-plan
 
 | # | step | user item | new pipeline work | why here |
 |---|---|---|---|---|
-| 1 | [Appearance reaches the whole page](#step-1--the-appearance-mode-reaches-the-whole-page) | 4 | none | global chrome; every later step is then verified once, under the real theme |
+| 1 | [Appearance reaches the whole page](#step-1--the-appearance-mode-reaches-the-whole-page) ✅ | 4 | none | global chrome; every later step is then verified once, under the real theme |
 | 2 | [The availability page says which head ships](#step-2--the-availability-page-says-which-head-ships) | 2 | one column on `model_card_index.csv` | small, self-contained, and it corrects a claim now on the page |
 | 3 | [Scaled quantile residuals](#step-3--scaled-quantile-residuals-in-block-6) | 3 | one artifact from the existing predictive | touches all four model pages through one renderer |
 | 4 | [dk_pts at the tournament round](#step-4--dk_pts-at-the-tournament-round-the-new-page) | 5 | an emitter, plus training-season tensors | the large step; it also adds a page, which moves the route table |
@@ -61,7 +61,9 @@ documentation again. All are from `dashboard/README.md` and `docs/dashboard-plan
 
 ## Step 1 · The appearance mode reaches the whole page
 
-**User item 4.** The sidebar radio changes the plot surfaces and nothing else.
+**User item 4. ✅ Shipped 2026-08-10, as option B** — see
+[Step 1, as built](#step-1-as-built--one-appearance-and-it-is-streamlits). The sidebar radio
+changes the plot surfaces and nothing else.
 
 ### What is actually going on
 
@@ -104,6 +106,11 @@ the boundary between the two options:
   reads `st.context.theme.type` through `detected_mode()`, so the reader switches appearance
   in Streamlit's settings menu and chrome, widgets, dataframes and plots all move together.
   One control, no hybrid state possible, and one fewer thing in the sidebar.
+
+**Settled as B on 2026-08-10, and the decision rule below inverted on the measurement** —
+the list of what fails to follow the radio is neither "only the dataframes" nor "wider": it
+is the complement, everything except the plots. See
+[Step 1, as built](#step-1-as-built--one-appearance-and-it-is-streamlits).
 
 **Recommended: build the config half first, measure, then decide.** The `[theme.light]` /
 `[theme.dark]` tables are worth having under either option and cost nothing under both. With
@@ -403,6 +410,125 @@ strings, and for digits in route labels all stay green.
 The browser layer is the only one that can measure the fold, and it is the layer that
 failed this page's first draft. Measure the rendered height in Chrome at 1440×900 and record
 it in the "as built" section, as the first round did.
+
+---
+
+## Step 1, as built — one appearance, and it is Streamlit's
+
+**2026-08-10.** The config half landed as specified and the fork went to **option B**: the
+sidebar radio is retired, `shell.mode()` is `shell.detected_mode()`, and the appearance is
+Streamlit's own System / Light / Dark. `make dashboard` and `make draft-room` are unchanged,
+`SRC_IMPORTERS` still names exactly one file, and `make dashboard-audit`'s orphan count is
+still **1**.
+
+### What shipped
+
+`.streamlit/config.toml` is now **generated**. `make dashboard-config`
+(`python -m dashboard.theme`) writes **44 settings across two modes** from `theme.THEMES`,
+and `tests/test_dashboard.py` parses the checked-in file back against
+`theme.streamlit_theme()`, so a clean tree makes the target a no-op and a drifted one fails
+the suite. `headless = true` survives, with its comment.
+
+The mapping is written as palette **roles** rather than colours — `CHROME_ROLES` and
+`SIDEBAR_ROLES` — for one concrete reason: in dark mode `neutral` and `axis` are the same
+hex, so "the chrome never borrows the diverging scale's midpoint" is not a claim any
+comparison of *values* can check. Two roles carry the whole page in both modes. **`surface`
+is the ground**, and is the identical value `apply_theme` paints a figure's paper with, so a
+chart has no visible edge against its page. **`plane` is the recessive panel** behind it —
+sidebar, dataframe header, code block — and the pair *inverts* inside the sidebar so a
+widget there reads as raised. `theme.chartCategoricalColors` and its two siblings are
+deliberately left unset: they exist once for both modes while `SERIES` is selected per mode,
+so setting them would push one mode's eight slots onto the other.
+
+### What the design got wrong
+
+**Three things, and the first one inverted the step's own decision rule.**
+
+The plan said: "If the list is only the dataframes, A is defensible with a documented
+boundary; if it is wider, take B." With the config in place the list is not the dataframes
+and it is not wider — **it is the complement**. Driven in Chrome with the radio still
+present, the *only* thing that followed the radio was the plot surface. The app background,
+header, sidebar, body text, headings, metric tiles and both dataframe canvases followed
+Streamlit's setting, and did so *in the palette*, which made the hybrid worse rather than
+better: before the config the disagreement was a validated chart on Streamlit's default
+gray, and after it the page is exactly `#fcfcfb` / `#1a1a19` and a chart in the other mode is
+a rectangle of the opposite colour lying on it.
+
+So option A was never "keep the radio and lose the tables". It was "repaint six DOM surfaces
+with CSS to chase a config that already paints them correctly, and still lose the tables" —
+and the tables are not a marginal surface here, because the palette's relief rule puts a
+table twin beside **every** chart on **every** model page. A boundary drawn there relocates
+the reported symptom rather than fixing it. Two further facts pushed the same way, both
+found by looking: `st.dataframe` renders to a canvas, so no injected CSS can ever repaint a
+table while config can; and Streamlit 1.60 promotes **System / Light / Dark to the top of
+its own main menu** (`data-testid="stMainMenuItem-theme-*"`), so the radio was a second
+appearance control sitting three inches below a built-in one.
+
+**Second, the step's premise that `detected_mode()` "already reads" Streamlit's setting is
+true and incomplete.** It reads it, but a theme change does **not** rerun the script.
+Measured in a dark browser on the Availability page: choosing "Light" in Streamlit's menu
+repaints the chrome immediately — header `#1a1a19` → `#fcfcfb`, body text `#ffffff` →
+`#0b0b0b`, the dataframe canvas with it — while the plots stay on `#1a1a19`. An explicit
+Rerun moves them to `#fcfcfb`, and so does any navigation. `st.context.theme.type` is fresh
+by then, so nothing is stale except the figures already drawn, and no Python-side fix is
+possible because *no script runs* at the moment the reader changes the setting. **This is
+the one documented boundary the step ends up with, and it is a frame of lag rather than a
+disagreement**: a fresh session in any of the three settings is coherent everywhere. It is
+recorded in `dashboard/README.md` rather than papered over.
+
+**Third, a guard broke on a false positive and was the wrong shape.**
+`test_pure_modules_do_not_import_streamlit` grepped each file for the *substring*
+`streamlit`, and `theme.py` now names `.streamlit/config.toml`, a function called
+`streamlit_theme` and four paragraphs of comment about Streamlit while importing nothing.
+The rule it exists for — the pure layer must be callable without a runtime — is an import
+question, which is what `test_the_dashboard_imports_nothing_from_src` next door already
+asks. It is now an `ast` import walk, plus a second test that imports every pure module in a
+subprocess with `sys.modules['streamlit'] = None`, which asserts the promise directly rather
+than inferring it from a spelling.
+
+### Verification, as run
+
+All three layers, and the browser one is the only layer that can see any of this.
+
+**`AppTest`**, both appearance modes × all nine pages, driven by patching
+`shell.detected_mode` since there is no longer a widget to set: **0 exceptions in 18 runs**,
+and identical element counts in the two modes (Overview 1 chart / 5 tiles, Minutes 11 charts
+/ 20 tiles / 11 tables, and so on). The Overview now reports **0 selectors** where it
+reported 1, which is the radio's absence showing up as a number.
+
+**Kaleido** is a regression check only this step — no chart chrome was touched. Two pipeline
+figures re-rendered and looked at; `paper_bgcolor` reads `#fcfcfb` and `#1a1a19` as before.
+
+**The live page in Chrome**, both appearance modes driven as `prefers-color-scheme` on two
+browser contexts, navigating by the nav link rather than `page.goto`. Overview, Availability
+(for the canvas tables) and the draft room:
+
+| surface | light | dark | palette role |
+|---|---|---|---|
+| app background, header | `#fcfcfb` | `#1a1a19` | `surface` |
+| sidebar | `#f9f9f7` | `#0d0d0d` | `plane` |
+| body text, headings, metric values | `#0b0b0b` | `#ffffff` | `ink` |
+| dataframe header (canvas) | `#f9f9f7` | `#0d0d0d` | `plane` |
+| dataframe body (canvas) | `#fcfcfb` | `#1a1a19` | `surface` |
+| plot surface (`.main-svg`) | `#fcfcfb` | `#1a1a19` | `surface` |
+
+Every row agrees with every other row, and the plot surface is now the *same value* as the
+page it sits on rather than a coincidence of two configurations. 0 sidebar radios on all six
+page-loads, the navigation present on all six, and no literal `undefined` or `nan` anywhere.
+
+One measurement mechanic worth keeping, since it cost a wrong reading first: **glide-data-grid
+paints the sticky header into its own short canvas**, so a probe that takes the first
+`[data-testid="stDataFrame"] canvas` it finds reads the body twice and reports that the
+header background setting does nothing. Take the canvas under 60 px tall. That is what turned
+"`dataframeHeaderBackgroundColor` appears to be ignored" into the `plane` row above.
+
+### Registry
+
+`appearance-lives-in-the-shell` is **withdrawn** rather than deleted — the mechanism it
+established (widget state does not survive a navigation) is untouched and still carries
+`shell.recall` / `shell.remember`; what was wrong is the premise underneath it, that the
+dashboard should own an appearance control at all. `appearance-is-streamlits-own-setting` is
+the replacement, `settled`.
 
 ---
 
