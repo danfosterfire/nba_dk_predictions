@@ -22,8 +22,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import pytest
 
-from dashboard import (audit, charts, decisions, economics, inputs, model_cards, pca,
-                       strategy, theme)
+from dashboard import (audit, charts, decisions, economics, inputs, model_cards,
+                       overview, pca, strategy, theme)
 
 ROOT = Path(__file__).resolve().parent.parent
 FEATURES = ROOT / "data" / "features"
@@ -1338,10 +1338,17 @@ def test_every_page_has_a_unique_url_path_and_a_callable():
 
 
 def test_the_first_page_is_the_real_one():
-    """`pages()` makes index 0 the default, so `/` must not serve a placeholder."""
+    """`pages()` makes index 0 the default, so `/` must not serve a placeholder.
+
+    The fingerprint view held index 0 from the shell landing until the Overview took it on
+    2026-08-10, which is the whole point of that page: a reader arriving at the bare URL
+    with no context gets the one page written for them rather than a radial chart of a
+    player-season they did not choose.
+    """
     from dashboard import app
-    from dashboard.views import fingerprints
-    assert app.VIEWS[0].render is fingerprints.render
+    from dashboard.views import overview as overview_page
+    assert app.VIEWS[0].render is overview_page.render
+    assert app.VIEWS[0].url_path == "overview"
 
 
 def test_the_shell_offers_exactly_the_modes_the_palette_defines():
@@ -3657,3 +3664,285 @@ def test_the_shipped_calibrated_inputs_read_at_all_three_windows():
     rows = inputs.bonus_rows(frames["bonus"], inputs.SIM_WINDOW).set_index("unit")
     assert abs(rows.loc["player_season", "fitted"] - 0.1) < 0.01
     assert rows.loc["player_game", "fitted"] < 0.05
+
+
+# ── Page 1 · the Overview, and the three bounds it exists under ───────────────
+#
+# The charter amendment in `docs/dashboard-plan.md` grants this page an exemption from "the
+# dashboard shows data, prose belongs in the docs" on three terms. Two of them are testable
+# here and one is not: bound 1 (one screen) is a browser measurement and lives in the plan
+# doc's verification section, bound 2 (every number read from an artifact) is what the
+# `Spec` table below makes structural, and bound 3 (no registry, no provenance links, no
+# reversal log) is a grep.
+
+def _overview_frames() -> dict:
+    """A synthetic frame per source, shaped like the artifact and nothing like the data."""
+    return {
+        "coverage": pd.DataFrame({
+            "analysis": ["feasibility"] * 4 + ["derivation"],
+            "season": ["all", "2021-22", "2022-23", "2022-23", "all"],
+            "season_type": ["regular", "regular", "regular", "playoff", "regular"],
+            "player_games": [500.0, 200.0, 300.0, 40.0, 9.0]}),
+        "budget": pd.DataFrame({
+            "source": ["own_minutes", "home_away", "dk_pts_sd"],
+            "share_of_variance": [0.464, 0.0003, float("nan")]}),
+        "cards": pd.DataFrame({"head": ["a", "b", "c"], "divergences": [0, 0, 0]}),
+        "season_total": pd.DataFrame({
+            "treatment": ["beta_binomial", "full_season", "beta_binomial"],
+            "group": ["all", "all", "rotation"],
+            "metric": ["mae_dk_total"] * 3,
+            "value": [400.0, 610.0, 451.0]}),
+        "components": pd.DataFrame({
+            "head": ["fga", "blk", "fg3a", "ftm"],
+            "kind": ["count", "count", "share", "share"],
+            "variant": ["carry_forward"] * 4,
+            "val_r2": [0.95, 0.81, 0.13, 0.30]}),
+        "simulation": pd.DataFrame({"season": ["2022-23", "2023-24"],
+                                    "n_sims": [2000, 2000]}),
+        "sweep": pd.DataFrame({"strategy": ["adp", "model_mean", "adp"]}),
+        # A rate that is exactly the field null plus the lift, so the tile's three printed
+        # numbers can be checked to add up rather than merely to be present.
+        "shipped": pd.DataFrame({
+            "tournament": [overview.HEADLINE_TIER, "20k_spin_move"],
+            "realized_p_advance": [1 / 6 + 0.125, 0.2397],
+            "realized_lift": [0.125, 0.0730],
+            "realized_seasons": [2, 2]}),
+        "bracket": pd.DataFrame({"tournament": ["a", "b", "c", "a"]}),
+    }
+
+
+def test_every_source_names_the_make_target_that_writes_it():
+    """`optional()` reports a missing artifact by naming its target; a blank one reports
+    nothing useful, and this page reads more artifacts than any other."""
+    assert len(overview.SOURCES) == len({s.key for s in overview.SOURCES})
+    for source in overview.SOURCES:
+        assert source.directory in (overview.EDA, overview.PREDICTIONS), source
+        assert source.filename.endswith((".csv", ".parquet")), source
+        assert source.target.startswith("make "), source
+
+
+def test_every_reading_declares_the_sources_it_reads():
+    """Bound 2, structurally: a figure cannot reach the page except through a `Spec`.
+
+    The needs are what let a half-built repo drop a reading instead of raising, so a spec
+    that under-declares would take the page down on exactly the machine it was meant to
+    protect. Every declared key has to be a real source.
+    """
+    keys = {source.key for source in overview.SOURCES}
+    for spec in overview.STAGE_SPECS + overview.TILE_SPECS:
+        assert spec.needs, spec
+        assert set(spec.needs) <= keys, spec.needs
+
+
+def test_a_missing_artifact_costs_its_own_readings_and_no_others():
+    """The half-built repo. Eight CSVs, and no one of them may blank the page."""
+    frames = _overview_frames()
+    assert len(overview.tile_readings(frames)) == len(overview.TILE_SPECS)
+    assert len(overview.stage_readings(frames)) == len(overview.STAGE_SPECS)
+    for key in list(frames):
+        short = {k: v for k, v in frames.items() if k != key}
+        readings = overview.tile_readings(short) + overview.stage_readings(short)
+        assert readings, f"dropping {key} emptied the page"
+        assert len(readings) < len(overview.TILE_SPECS) + len(overview.STAGE_SPECS)
+    assert overview.tile_readings({}) == [] and overview.stage_readings({}) == []
+
+
+def test_every_figure_on_the_page_carries_a_digit_from_a_frame():
+    """The bound stated as an assertion: no tile and no stage may be a typed constant.
+
+    Weak on its own — a hard-coded string has digits too — which is why it sits beside the
+    reading tests below, where each figure is checked to *move with* its frame.
+    """
+    frames = _overview_frames()
+    for reading in overview.tile_readings(frames) + overview.stage_readings(frames):
+        figure = getattr(reading, "value", None) or reading.figure
+        assert any(ch.isdigit() for ch in figure), reading
+
+
+def test_the_tiles_read_the_values_their_frames_hold():
+    frames = _overview_frames()
+    tiles = {r.label: r for r in overview.tile_readings(frames)}
+    assert tiles["Season-total error"].value == "400.0 dk_pts"
+    # The comparison is the ladder's other end, differenced rather than typed.
+    assert tiles["Season-total error"].delta.startswith("-210.0")
+    assert tiles["Minutes, unknown at draft"].value == "46.4%"
+    assert tiles["Floor with nothing fitted"].value == "R² 0.81–0.95"
+    assert tiles["Divergences, 3 fits"].value == "0"
+    assert tiles["Round 1 advance rate"].value == "29.2%"
+    assert tiles["Round 1 advance rate"].delta == "+12.5% vs a 16.7% field"
+
+
+def test_the_floor_band_is_the_count_heads_and_not_the_conversions():
+    """0.81-0.95 is the *count* heads' floor. Read off the conversions too it opens to
+    [0.13, 0.96], and a band that wide is not a floor — `docs/simulations-plan.md` had to
+    re-derive this once already, which is why the filter is pinned rather than assumed."""
+    components = _overview_frames()["components"]
+    assert overview.floor_band(components) == (0.81, 0.95)
+    with pytest.raises(overview.MissingRow):
+        overview.floor_band(components[components["kind"] == "nothing"])
+
+
+def test_the_field_null_is_derived_so_the_three_numbers_add_up():
+    """The tile prints a rate, a lift and a null. Typing 1/6 in beside a rate read from an
+    artifact is how two of the three stop agreeing after a re-run."""
+    got = overview.advance(_overview_frames()["shipped"])
+    assert abs(got["rate"] - got["lift"] - got["null"]) < 1e-12
+    assert abs(got["null"] - 1 / 6) < 1e-3
+
+
+def test_the_pooled_row_is_not_counted_as_a_season():
+    """`game_length_coverage.csv` carries an `all` row beside the per-season ones, and the
+    stage prints a season count — so the pooled row is one off from a wrong number."""
+    coverage = _overview_frames()["coverage"]
+    assert overview.seasons(coverage) == 2
+    assert overview.player_games(coverage) == 500.0
+
+
+def test_a_lookup_that_finds_no_row_raises_rather_than_printing_nan():
+    """`str()` of a missing cell is the four letters `nan`, which are truthy and print on
+    the page. On a landing page there is no honest fallback, so this one is loud."""
+    with pytest.raises(overview.MissingRow):
+        overview.season_total_mae(_overview_frames()["season_total"], "no_such_arm")
+
+
+def test_stage_notes_are_short_enough_to_stay_inside_their_own_box():
+    """Plotly does not wrap an annotation and does not clip it either — an over-long note
+    simply runs out over the box's border, and only a rendering shows it. `NOTE_WIDTH` is
+    sized for the narrowest checked viewport; one wrapped line per note is the budget that
+    keeps the diagram at `STAGE_HEIGHT`."""
+    for stage in overview.stage_readings(_overview_frames()):
+        assert overview.wrap(stage.note).count("<br>") == 0, stage.note
+        assert len(stage.note) <= overview.NOTE_WIDTH, stage.note
+
+
+def test_wrap_breaks_a_long_note_rather_than_truncating_it():
+    assert overview.wrap("", 10) == ""
+    wrapped = overview.wrap("one two three four five six", 10)
+    assert wrapped.split("<br>") == ["one two", "three four", "five six"]
+
+
+def test_every_route_points_at_a_real_page_and_states_no_result():
+    """Bound 3, and the place a stray headline would try to creep back in.
+
+    The blurbs are the only prose on the page that sits next to a link, which makes them
+    the natural home for "the composition is 4.68x too narrow". They are held to naming
+    what a page holds, and every one of them has to name a page that exists.
+    """
+    from dashboard import app
+    paths = {view.url_path for view in app.VIEWS}
+    assert len(overview.ROUTES) == len(app.VIEWS) - 1
+    for route in overview.ROUTES:
+        assert route.url_path in paths, route.url_path
+        assert route.url_path != "overview", "the page does not link to itself"
+        assert route.blurb.strip() and route.blurb[0].isupper(), route
+        assert not any(ch.isdigit() for ch in route.blurb), route
+
+
+def test_the_overview_holds_no_registry_no_provenance_link_and_no_reversal_log():
+    """Bound 3 as a grep over both halves of the page.
+
+    The three things named are what made the deleted walkthrough a documentation surface:
+    an import of `decisions`, a link into `docs/`, and the withdrawn-entry log. Comments
+    and docstrings are exempt and have to be — both modules cite the charter they live
+    under in their own headers — so the check runs over the string literals that could
+    actually reach a reader, which is every literal that is not a docstring.
+    """
+    for name in ("overview.py", "views/overview.py"):
+        tree = ast.parse((ROOT / "dashboard" / name).read_text())
+        imported = {n.module or "" for n in ast.walk(tree)
+                    if isinstance(n, ast.ImportFrom)}
+        imported |= {a.name for n in ast.walk(tree) if isinstance(n, ast.Import)
+                     for a in n.names}
+        assert not any("decisions" in m for m in imported), name
+        docstrings = {id(node.body[0].value) for node in ast.walk(tree)
+                      if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef))
+                      and node.body and isinstance(node.body[0], ast.Expr)
+                      and isinstance(node.body[0].value, ast.Constant)
+                      and isinstance(node.body[0].value.value, str)}
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+                continue
+            if id(node) in docstrings:
+                continue
+            assert "docs/" not in node.value, (name, node.value[:60])
+            assert "withdrawn" not in node.value, (name, node.value[:60])
+
+
+def test_the_pipeline_diagram_draws_one_box_per_stage_and_an_arrow_between():
+    """Four arrows for five boxes: the chain is the point, and a missing head would leave
+    five tiles that merely happen to be adjacent."""
+    th = theme.theme("light")
+    stages = overview.stage_readings(_overview_frames())
+    fig = charts.fig_pipeline(stages, th)
+    assert len(fig.layout.shapes) == len(stages)
+    arrows = [a for a in fig.layout.annotations if a.showarrow]
+    labels = [a for a in fig.layout.annotations if not a.showarrow]
+    assert len(arrows) == len(stages) - 1
+    assert len(labels) == 3 * len(stages)
+    printed = {a.text for a in labels}
+    for stage in stages:
+        assert {stage.title, stage.figure} <= printed
+
+
+def test_the_diagram_spends_no_colour_slot_on_a_sequence_that_is_not_a_scale():
+    """Five steps is past `ALL_PAIRS_CAP` and, more to the point, the steps are not a
+    scale — five hues would be an encoding that decodes to nothing. Every box takes the
+    same neutral fill, and every figure prints itself, so the relief rule is trivial."""
+    th = theme.theme("light")
+    fig = charts.fig_pipeline(overview.stage_readings(_overview_frames()), th)
+    assert {s.fillcolor for s in fig.layout.shapes} == {th["neutral"]}
+    assert not fig.data, "the diagram plots no data, so it holds no traces"
+    assert fig.layout.paper_bgcolor == th["surface"]
+
+
+def test_the_diagram_leaves_room_for_the_outer_boxes_own_borders():
+    """Zero horizontal margin puts the first and last box's 1px border on the paper edge,
+    where it is clipped — caught in a PNG, invisible in the figure spec."""
+    fig = charts.fig_pipeline(overview.stage_readings(_overview_frames()),
+                              theme.theme("dark"))
+    assert fig.layout.xaxis.range[0] < 0.0 and fig.layout.xaxis.range[1] > 1.0
+    assert fig.layout.margin.l == 0 and fig.layout.margin.t < 10
+
+
+def test_an_empty_diagram_does_not_divide_by_zero():
+    """`stage_readings` returns [] on a repo with none of the five sources built."""
+    fig = charts.fig_pipeline([], theme.theme("light"))
+    assert fig.layout.shapes == () and fig.layout.annotations == ()
+
+
+# ── The entrypoint hands its pages to whoever links to them ───────────────────
+
+def test_the_page_registry_is_keyed_by_the_declared_path_not_the_rewritten_one():
+    """Streamlit rewrites the *default* page's `url_path` to `""` so it can serve `/`.
+
+    The Overview is the default page and the registry is what its sibling links come out
+    of, so reading the key back off the `StreamlitPage` would lose one row — and it would
+    lose whichever row is first, which is the one nothing links to, so nothing would fail.
+    """
+    from dashboard import app, shell
+
+    class FakePage:
+        def __init__(self, path):
+            self._declared = path
+            self.url_path = ""       # what Streamlit reports for the default page
+
+    built = {view.url_path: FakePage(view.url_path) for view in app.VIEWS}
+    shell.publish_pages(built)
+    for view in app.VIEWS:
+        assert shell.page(view.url_path) is built[view.url_path], view.url_path
+    assert shell.page("no-such-page") is None
+    shell.publish_pages({})
+    assert shell.page("overview") is None
+
+
+def test_the_entrypoint_publishes_the_pages_it_navigates_with():
+    """`st.page_link` accepts only a page `st.navigation` was handed, so the two calls have
+    to see the same objects. Building `pages()` twice would validate and route to the
+    registered twin, which works by accident until a `url_path` changes."""
+    source = (ROOT / "dashboard" / "app.py").read_text()
+    tree = ast.parse(source)
+    main = next(node for node in tree.body
+                if isinstance(node, ast.FunctionDef) and node.name == "main")
+    calls = [c for c in ast.walk(main) if isinstance(c, ast.Call)]
+    assert sum(1 for c in calls if getattr(c.func, "id", "") == "pages") == 1
+    assert any(getattr(c.func, "attr", "") == "publish_pages" for c in calls)

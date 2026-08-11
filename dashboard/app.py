@@ -53,7 +53,7 @@ import streamlit as st
 
 from dashboard import model_cards, shell
 from dashboard.views import (availability, beyond_heads, components, draft_room,
-                             fingerprints, game_length, minutes, tournament)
+                             fingerprints, game_length, minutes, overview, tournament)
 
 
 class View(NamedTuple):
@@ -65,9 +65,9 @@ class View(NamedTuple):
     url_path: str
 
 
-# Sidebar order. `docs/dashboard-plan.md` specifies seven more pages beyond these two;
-# each arrives as one module in `dashboard/views/` and one row here, and nothing else in
-# this file moves.
+# Sidebar order. The nine pages `docs/dashboard-plan.md` specifies all landed on
+# 2026-08-10; each arrived as one module in `dashboard/views/` and one row here, and
+# nothing else in this file moved, which was the point of the shape.
 #
 # **The navigation must keep at least two rows**, and that is measured rather than
 # stylistic: Streamlit draws no navigation widget at all for a one-page app, so a shell
@@ -87,6 +87,10 @@ def model_view(render: Callable[[], None], class_key: str) -> View:
 
 
 VIEWS: tuple[View, ...] = (
+    # First, so it is what `/` serves: the reader this page exists for arrives at the URL
+    # with no context. It is also the only page that links to the others, which is why it
+    # was built last — see `views/overview.py` and the charter amendment it cites.
+    View(overview.render, "Overview", ":material/home:", "overview"),
     View(fingerprints.render, "Player fingerprints", ":material/radar:", "fingerprints"),
     model_view(availability.render, availability.CLASS_KEY),
     model_view(minutes.render, minutes.CLASS_KEY),
@@ -115,7 +119,13 @@ def pages() -> list[st.Page]:
 
 def main() -> None:
     st.set_page_config(page_title="NBA best ball", layout="wide", page_icon="🏀")
-    page = st.navigation(pages())
+    built = pages()
+    # The Overview links into its siblings, and `st.page_link` takes only a `st.Page` that
+    # `st.navigation` was handed — these ones. Published before `page.run()`, so the page
+    # about to run can read them; keyed by the declared `url_path`, since Streamlit
+    # rewrites the default page's own to `""`.
+    shell.publish_pages({view.url_path: built[i] for i, view in enumerate(VIEWS)})
+    page = st.navigation(built)
     shell.appearance_control()
     page.run()
 

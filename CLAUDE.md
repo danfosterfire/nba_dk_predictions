@@ -26,13 +26,14 @@ to the relevant docs for the task at hand. The docs are:
   - adp-plan.md: Plan and notes for collecting average draft position ("adp") data
   - availability-plan.md: Plan and notes for modeling availability (games played 
   and minutes per game). Work completed and mostly archival.
-  - dashboard-build-prompts.md: The dashboard expansion's build order cut into ten 
-  one-per-session prompts. Ephemeral scaffolding — delete it when the expansion 
-  lands. Read dashboard-plan.md for the design; this file only sequences it.
   - dashboard-plan.md: Plan and notes for the streamlit dashboard. As of 
   2026-08-08 the dashboard is a **data-visualization surface**, not a project 
-  walkthrough — read this before adding or editing a view. Its "expansion" 
-  section specifies the nine-page build planned 2026-08-10.
+  walkthrough — read this before adding or editing a view. Its nine-page 
+  "expansion" shipped 2026-08-10; the "Charter amendment 2026-08-10" subsection 
+  sets the three bounds the one page of prose (the Overview) exists under, and 
+  each step has a "Step N, as built" section. `dashboard-build-prompts.md`, the 
+  ten one-per-session build prompts, was ephemeral scaffolding and was deleted 
+  when the expansion landed.
   - data-quirks.md: Notes and findings in exploring the raw data.
   - dk_best_ball_rules.md: Copy of the tournament rules for draft kings best 
   ball tournaments **always read this**.

@@ -338,6 +338,12 @@ contest arithmetic.
 
 That is the richest material in the repo and it has never been drawn.
 
+**Closed 2026-08-10, when the expansion landed.** Page 7 took the ADP and calibrated-input
+families, page 8 took the strategy and bracket families, and page 1 took the last three that
+no page had claimed — `variance_budget.csv`, `game_length_coverage.csv` and
+`sim_season_gate_a.csv`, each as one hero figure. The list above is kept as the record of
+what the expansion was chosen against, not as a to-do.
+
 ---
 
 ## The pages
@@ -346,7 +352,7 @@ Nine, in sidebar order. "Class" pages carry a head selector; the others do not.
 
 | # | page | source | new artifacts? |
 |---|---|---|---|
-| 1 | **Overview** | hero tiles from existing metrics CSVs | no |
+| 1 | **Overview** | ✅ `views/overview.py`, hero tiles from existing metrics CSVs, shipped 2026-08-10 | no |
 | 2 | **Player fingerprints** | ✅ `views/fingerprints.py`, moved unchanged 2026-08-10 | no |
 | 3 | **Availability** | ✅ `views/availability.py` over the generic renderer, shipped 2026-08-10 | one — the joint density |
 | 4 | **Minutes** | ✅ `views/minutes.py` over the generic renderer plus `minutes_unification.csv`, shipped 2026-08-10 | no — step 3 had already written them |
@@ -544,8 +550,9 @@ See [Step 2, as built](#step-2-as-built--tournament--strategy).
 **Step 3 · The model-card emitter. ✅ Shipped 2026-08-10.**
 `src/models/model_cards.py`, `make model-cards`, `docs/model-cards-plan.md`, and 65 tests.
 No dashboard work at all. The largest step and the one most worth handing a fresh session
-with the whole context budget — which is why it was cut in two in
-`docs/dashboard-build-prompts.md`. **Step 3a landed the index, the coefficients, the
+with the whole context budget — which is why the build order cut it in two (that order
+lived in `docs/dashboard-build-prompts.md`, deleted 2026-08-10 when the expansion landed;
+commit history holds it). **Step 3a landed the index, the coefficients, the
 features and the feature correlations; step 3b the predictive half** — the ECDF ribbon, the
 binned calibration density and the bounded sample — plus the fifth build-time check that
 goes with drawing anything. Seven artifacts, 7.4 MB, ten seconds, no CmdStan. See
@@ -576,9 +583,12 @@ responsiveness — measured the other way: the page is 0.46 s *faster* to first 
 cold `make draft-room`, and 0.31 s on a return. See
 [Step 7, as built](#step-7-as-built--the-draft-board-as-page-9).
 
-**Step 8 · Overview (page 1).** Last, on purpose: its hero tiles link into the pages, so it
-cannot be written until they exist, and writing it first would make it a table of contents
-for pages that do not.
+**Step 8 · Overview (page 1). ✅ Shipped 2026-08-10.** Last, on purpose: its hero tiles link
+into the pages, so it could not be written until they existed, and writing it first would
+have made it a table of contents for pages that did not. The three bounds all held, and the
+first one had to be *measured* rather than intended — the page came in at 1,144 px on a
+900 px viewport before it was cut to 702. See
+[Step 8, as built](#step-8-as-built--the-overview).
 
 ## What each step owes on the way out
 
@@ -1616,16 +1626,163 @@ reads **262** and the suite **1,369**.
 
 ---
 
+## Step 8, as built — the Overview
+
+**2026-08-10, and the expansion lands with it.** `dashboard/overview.py` (the pure layer),
+`dashboard/views/overview.py` (the page), `charts.fig_pipeline`, a page registry in
+`shell.py`, one row at the **front** of `app.VIEWS`, and 19 new tests. No new artifact, no
+pipeline run: the page reads eight CSVs that five earlier `make` targets had already
+written, three of which — `variance_budget.csv`, `game_length_coverage.csv` and
+`sim_season_gate_a.csv` — this dashboard had never drawn.
+
+Five hero tiles, one five-box pipeline diagram, eight route links, and one paragraph of
+prose. That is the whole page, and the shape of it was set by the first bound rather than
+chosen.
+
+### Bound 1 turned out to be a measurement, and the first draft failed it
+
+"One page, one screen" is the term the exemption was granted on, and it is not assertable
+from Python — `AppTest` has no DOM and reports the same five tiles and eight links whatever
+they are laid out as. Driven in Chrome at 1440×900, the first complete draft came in at
+**1,144 px against a 900 px viewport**: it scrolled, which by the charter's own words meant
+it had become the walkthrough again.
+
+It ships at **702 px**, with 198 px of headroom, and at **769 px** on a 1280×800 laptop.
+Where the 442 px came from, largest first:
+
+| change | why it was there | saved |
+|---|---|---|
+| Streamlit's default chrome | 6 rem of padding above the first element, a 2.5 rem `h1`, 1 rem between every vertical block — defaults laid out for a scrolling document | ~150 px |
+| Route blurbs cut to one line | eight three-line blurbs is 200 px of the screen; they now say what a page holds in one line each | ~90 px |
+| The diagram, 200 px → 150 px | the stage notes were a wrapped sentence each; the arrow chain already carries the meaning they were spelling out | 50 px |
+| The intro paragraph, 6 lines → 4 | it explained the contest twice | ~52 px |
+| The tile caption, 2 lines → 1 | — | 22 px |
+
+Nothing was *removed* to make it fit — the same five tiles, five stages and eight routes are
+on the page — which is the part worth recording. The bound cost the page its verbosity and
+not its content, and that is the argument for having written the bound as a hard one.
+
+**The compression lives in the view, not in `shell.py`.** `COMPACT_CSS` is scoped to the
+main container so it cannot reach the sidebar, and it is deliberately not shared: a model
+page is *supposed* to scroll, and inheriting a type scale chosen for a landing page would
+only make it scroll further. That is the same argument `shell.compact_tiles` is opt-in for.
+
+### Bound 2 is a table, so a figure cannot reach the page by being typed
+
+Every number on the page arrives through `overview.Spec` — a `build` callable over the
+frames it `needs` — so the view holds layout and the pure layer holds every lookup, and the
+season-total MAE is read from `season_total_metrics.csv` exactly as the tournament page
+reads its own artifacts. Three consequences fell out of writing it that way rather than
+inlining five `read_csv` calls:
+
+- **A half-built repo loses readings, not the page.** `_resolve` drops a reading whose
+  source is missing and keeps the rest, and a test removes each of the eight sources in turn
+  and asserts the page is neither empty nor complete. A landing page that hard-fails on the
+  one machine where `make strategy-sweep` has not run yet is a landing page nobody sees.
+- **Derived numbers are derived, not retyped.** The advance tile prints a rate, a lift and a
+  field null; the null is `rate − lift` rather than a typed 1/6, so the three numbers on the
+  tile add up in front of the reader and cannot drift apart across a re-run. A test asserts
+  the identity rather than the value.
+- **The floor band is filtered where a reader can see the filter.** `R² 0.81–0.95` is the
+  **count** heads' no-fit floor; read off the conversion heads too it opens to [0.13, 0.96],
+  which `docs/simulations-plan.md` has already had to re-derive once. `FLOOR_KIND` is a
+  named constant with a test on it.
+
+A missing row **raises** rather than returning NaN, which is the opposite of
+`model_cards.text()`'s em dash and deliberately so: a model page with one blank cell is
+still a model page, and a landing page whose hero tile reads `nan` is not.
+
+### Bound 3 is a grep, and the place it would have been broken is the route labels
+
+No decision registry, no provenance links, no reversal log. The test parses both modules
+and checks that neither imports `decisions`, and that no string literal reaching a reader
+contains `docs/` or `withdrawn` — docstrings exempt, since both files cite the charter they
+live under in their own headers. The route blurbs are held to the same rule and to one more:
+**no digits**. Eight one-line labels sitting next to eight links is exactly where "the
+composition is 4.68× too narrow" would have crept back in as a teaser.
+
+### `st.page_link` needs the entrypoint's own page objects
+
+The route block is why this step was last, and it needed one piece of plumbing.
+`st.page_link` accepts only a `st.Page` that `st.navigation` was actually handed, and those
+are constructed in `app.main()` — so a page linking to its siblings must be *given* them.
+Rebuilding them inside the view would collide on `url_path`, and importing `app` from a view
+is a cycle. `shell.publish_pages` / `shell.page` are the third instance of the asymmetry
+that module already exists for: the entrypoint runs on every rerun and a `render()` does
+not.
+
+**Keyed by the `url_path` `app.VIEWS` declares, not by `StreamlitPage.url_path`** — Streamlit
+rewrites the *default* page's own path to `""` so it can serve `/`. The Overview is now the
+default page, so reading the key back off the object would silently lose exactly one row,
+and it would lose the one row nothing links to. A test pins it with a fake page that reports
+`""`, because nothing in the app would have failed.
+
+### Three defects only the rendering could see, which is now six sessions in a row
+
+- **A metric's delta neither wraps nor truncates honestly.** Five tiles across, the
+  comparison rendered as `-210.3 against assuming a f…` — a phrase cut mid-word, which is
+  worse than no comparison at all. Fixed by a `stMetricDelta` font rule (the test ID read
+  off this Streamlit's bundle, as `shell.TILE_CSS`'s were) *and* by writing deltas that fit:
+  `-210.3 vs a full season` and `+12.7% vs a 16.7% field`.
+- **A column is a vertical stack, so an 8-cell grid filled column-major comes out ragged.**
+  One blurb wrapping to two lines in the top row pushed only *its* column's second link
+  down. The routes are now one `st.columns` call per row, so a wrap can cost alignment
+  inside its own row and nowhere else. `AppTest` counts eight page links either way.
+- **Shrinking `h1` clipped its own ascenders.** Removing the heading's top padding to buy
+  vertical space cropped the top of the type; it needs an explicit `line-height` beside the
+  smaller `font-size`, not just less padding.
+
+A fourth, from the PNG layer: with zero horizontal margin the outer boxes' 1 px borders land
+exactly on the paper edge and are clipped, so the padding lives in the axis range instead.
+
+### The diagram plots no data, and takes no colour
+
+`fig_pipeline` is the only figure in `charts.py` that holds no traces — it is five rects,
+fifteen annotations and four arrowheads. It is **uncoloured on purpose**: five steps is past
+`ALL_PAIRS_CAP`, and more to the point the steps are not a scale and not categories being
+compared, so five hues would be an encoding that decodes to nothing. Every box takes
+`th["neutral"]` and prints its own figure, which satisfies the relief rule trivially. The
+notes are wrapped in the pure layer at `NOTE_WIDTH`, sized for the **narrowest** checked
+viewport, because a plotly annotation neither wraps nor clips — an over-long note simply
+runs out over its own box, and the figure spec cannot see it.
+
+### Verification, as run
+
+**`AppTest`**, both appearance modes: **1 chart, 5 metric tiles, 8 page links, 9 captions,
+0 warnings, 0 errors, 0 exceptions**, identical in light and dark. Every page link resolves
+to a registered page, and `/` serves the Overview.
+
+**The figure rendered to PNG** in both modes through kaleido, which caught the clipped outer
+borders.
+
+**The live page driven in Chrome** through Playwright — **19 checks, all passing** at both
+1440×900 and 1280×800: five tiles, eight routes, the page fits the viewport with no scroll
+at either size, no `stException`, no literal `undefined`, `NaN` or `Traceback`, dark mode
+repaints to the pinned `rgb(26, 26, 25)` surface, and clicking the Tournament & strategy
+route navigates to `/tournament` and paints it.
+
+**19 new tests** in `tests/test_dashboard.py` (**281** there) and **1,388** across the suite.
+One existing test changed rather than being added to: `test_the_first_page_is_the_real_one`
+now names the Overview, which is the assertion that `/` serves the page written for a reader
+with no context rather than a radial chart of a player-season they did not choose.
+
+---
+
 ## Structure
 
 ```
 dashboard/
   README.md       # the rules a new view has to follow
+  overview.py     # page 1's pure layer — the five hero readings, the five pipeline
+                  #   stages and the eight routes, each as a lookup into an artifact
   __init__.py
   app.py          # the entrypoint — st.navigation, and VIEWS, the sidebar
   shell.py        # cross-page state: the appearance mode, current_theme(), the
-                  #   opt-in metric-tile type scale
+                  #   opt-in metric-tile type scale, and the page registry the
+                  #   Overview's st.page_link rows come out of
   views/
+    overview.py       # page 1 — the one page of prose, under the charter amendment's
+                      #   three bounds; its CSS is what holds it to one screen
     fingerprints.py   # the PCA fingerprint page — controls, layout, render()
     availability.py   # page 3 — four lines that name a model class
     minutes.py        # page 4 — the class, plus three named blocks: one posterior at
@@ -1649,7 +1806,8 @@ dashboard/
                   #   class counts, and the minutes page's two-unit board, spread
                   #   panel, sigma sweep and teammate coupling)
   charts.py       # fig_radar / fig_loadings, the five tournament figures, the six
-                  #   model-page figures, and the six a single page owns
+                  #   model-page figures, the six a single page owns, page 7's four,
+                  #   and fig_pipeline — the one figure here that plots no data
   theme.py        # SERIES, THEMES, ALL_PAIRS_CAP, theme(), apply_theme(), ordinal_colors()
   artifacts.py    # load_cfg, features_dir, predictions_dir, read_table, optional
   decisions.py    # NOT the dashboard — the project decision registry (see below)

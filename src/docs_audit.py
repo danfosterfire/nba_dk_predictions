@@ -201,6 +201,13 @@ MATRIX_A = "data/features/season_matrix_tierA.parquet"
 # derives them at render time from these checked-in raw boards, which are therefore
 # the artifact. `table()` reads any CSV path, so no new plumbing is needed.
 TOURNAMENTS = "data/raw/dk_best_ball_tournament_metadata.csv"
+# The drafting layer, quoted in `README.md` only. `docs/simulations-plan.md` carries the
+# same figures at far greater length and is deliberately *not* in this registry — the
+# overview is the document that goes stale, which is the argument the README builder makes
+# about itself, so the claims live where the drift risk is.
+STRATEGY_SWEEP = "outputs/predictions/strategy_sweep.csv"
+STRATEGY_SHIPPED = "outputs/predictions/strategy_shipped.csv"
+STRATEGY_GATE_D = "outputs/predictions/strategy_gate_d.csv"
 
 
 # ── Claims ────────────────────────────────────────────────────────────────────
@@ -387,6 +394,17 @@ def max_of(rel: str, column: str) -> float:
     _note_columns(column)
     frame = table(rel)
     return float(frame[column].max()) if frame is not None else float("nan")
+
+
+def nunique(rel: str, column: str) -> float:
+    """Distinct values in a column — for a doc that quotes the *size* of a grid.
+
+    `rows()` is the wrong tool where the artifact is long-format: the sweep is one row per
+    strategy x tier x season, so its arm count is a `nunique` and not a length.
+    """
+    _note_columns(column)
+    frame = table(rel)
+    return float(frame[column].nunique()) if frame is not None else float("nan")
 
 
 def mean_abs_dev(rel: str, column: str, centre: float, **where) -> float:
@@ -4142,6 +4160,15 @@ def _readme() -> list[Claim]:
     add("17.60%", TOURNAMENTS, lambda: _break_even_hurdle("600k_shootaround"),
         "highest break-even edge hurdle")
 
+    # ── methods: the drafting layer's shape ───────────────────────────────────
+    # The grid is a *size*, not a score, and it is claimed for the same reason the row
+    # counts above are: an arm added to `STRATEGIES` or a change to `sim.n_worlds` moves
+    # it, and nothing else in this file would notice.
+    add("22", STRATEGY_SWEEP, lambda: nunique(STRATEGY_SWEEP, "strategy"),
+        "strategies in the sweep")
+    add("500", STRATEGY_SWEEP, lambda: max_of(STRATEGY_SWEEP, "n_sims"),
+        "simulated worlds per season in the sweep")
+
     # ── methods: what was deprioritized ───────────────────────────────────────
     add("0.0059", DIAGNOSTICS,
         lambda: cell(DIAGNOSTICS, "delta_sequence", analysis="sequence_ablation"),
@@ -4314,6 +4341,25 @@ def _readme() -> list[Claim]:
     add("0.2%", STAN_AV_B,
         lambda: cell(STAN_AV_B, "inflation", n_players=15) - 1.0,
         "shared-beta roster spread at 15 players")
+
+    # ── results: the drafting layer ───────────────────────────────────────────
+    # The pair the README's headline turns on. They are two columns of one row, so a
+    # re-sweep that moved only the realized side — the one with N = 2 seasons behind it —
+    # would show up here as a single disagreement rather than as a silently updated story.
+    def shipped(column: str) -> float:
+        return cell(STRATEGY_SHIPPED, column, tournament="600k_shootaround")
+
+    add("0.2107", STRATEGY_SHIPPED, lambda: shipped("sim_lift"),
+        "shipped arm's simulated advance lift, 600k")
+    add("0.1268", STRATEGY_SHIPPED, lambda: shipped("realized_lift"),
+        "shipped arm's realized advance lift, 600k")
+    # Gate D's failure is a *count of zero*, which is the one shape of result that decays
+    # silently: a sweep that started separating the tiers would leave the prose true-looking
+    # and wrong. Both ends are claimed, so the denominator cannot drift either.
+    add("6", STRATEGY_GATE_D, lambda: rows(STRATEGY_GATE_D),
+        "Gate D paired comparisons")
+    add("0", STRATEGY_GATE_D, lambda: total(STRATEGY_GATE_D, "materially_different"),
+        "Gate D comparisons that separate the tiers")
 
     # ── discussion ────────────────────────────────────────────────────────────
     add("0.317", PROFILE,

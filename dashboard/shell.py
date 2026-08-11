@@ -19,6 +19,11 @@ the key directly, so the storage can change without a view knowing.
 
 `remember()` / `recall()` are the other half of the same asymmetry, for a control the
 *entrypoint* cannot render on a page's behalf — see their own docstrings.
+
+`publish_pages()` / `page()` are a third instance of it. `st.page_link` will only accept a
+`st.Page` that `st.navigation` was actually handed, and those objects are constructed in
+the entrypoint — so a page that links to its siblings has to be given them rather than
+build its own, which would either collide on `url_path` or import `app` in a circle.
 """
 
 from typing import TypeVar
@@ -105,6 +110,33 @@ def remember(key: str, value: V) -> V:
     """Store a control's value under `key` and hand it straight back."""
     st.session_state[f"{REMEMBERED}{key}"] = value
     return value
+
+
+#: The navigation's `st.Page` objects, keyed by the `url_path` `app.VIEWS` declares.
+#: Rebuilt by the entrypoint on every rerun, and plain module state rather than session
+#: state because it holds no reader's choice — it is this process's page table.
+_PAGES: dict = {}
+
+
+def publish_pages(pages: dict) -> None:
+    """Hand the entrypoint's `st.Page` objects to whichever page wants to link to them.
+
+    Keyed by the `url_path` in `app.VIEWS`, **not** by `StreamlitPage.url_path`: Streamlit
+    rewrites the default page's own path to `""` so it can serve `/`, so reading the key
+    back off the object would lose whichever page is first in the navigation.
+    """
+    _PAGES.clear()
+    _PAGES.update(pages)
+
+
+def page(url_path: str):
+    """The registered page at `url_path`, or None outside the shell.
+
+    None is a real case rather than an error: `AppTest` and the unit tests import a view
+    without going through `app.main()`, and a page that links to its siblings should
+    degrade to not linking rather than raise.
+    """
+    return _PAGES.get(url_path)
 
 
 def appearance_control() -> str:

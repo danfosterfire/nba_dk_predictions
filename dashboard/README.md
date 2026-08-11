@@ -1,19 +1,44 @@
 # The dashboard
 
-Data visualizations over the artifacts the pipeline wrote. Eight pages today — the PCA
+Data visualizations over the artifacts the pipeline wrote. Nine pages, and the expansion
+`docs/dashboard-plan.md` specifies is complete as of 2026-08-10 — the Overview, the PCA
 player-style fingerprint, all four model detail pages (Availability, Minutes, Box-score
 components, Game length), the inputs beyond the heads, the tournament & strategy page, and
-the live draft board — inside a multipage shell that the overview page still plugs into.
-Run it with `make dashboard`; the plan is `docs/dashboard-plan.md`.
+the live draft board — inside a multipage `st.navigation` shell. Run it with
+`make dashboard`.
 
-Seven of the eight are views. **The draft board is a tool**, drives a live draft under a
+Seven of the nine are views. **The draft board is a tool**, drives a live draft under a
 thirty-second clock, and ships twice: as page 9 and as its own app under `make draft-room`,
-off one `render()`. Everything below that says "a view" means the other seven.
+off one `render()`. **The Overview is prose**, and is exempt — see below. Everything that
+says "a view" means the other seven.
 
 **The dashboard shows data. Prose about the project belongs in `docs/`.** The nine-tab
 project walkthrough that used to live here was documentation rendered as an app, and every
 claim on it had to be kept in sync with a document that already made the claim. It was
 removed on 2026-08-08; commit `e8e58b0` holds it.
+
+**The Overview is the one page of prose, and the exemption is bounded rather than waived.**
+The reasoning above still stands; what changed is the audience. The walkthrough served the
+project architect and lost to `docs/`, while page 1 serves a portfolio reader who arrives at
+a URL with no context and will not open a repository — a reader no document reaches, because
+they will not read one. Three bounds are the terms it was granted on, and each has a
+mechanism rather than an intention behind it:
+
+1. **One page, one screen.** If it scrolls it is the walkthrough again. Not assertable from
+   Python — `AppTest` has no DOM — so it is a browser measurement, and the first draft
+   failed it at 1,144 px on a 900 px viewport before being cut to 702.
+2. **Every number on it is read from an artifact.** Typed prose may say what the project
+   *does*; it may not state a *result*. `overview.Spec` is the mechanism: a reading is a
+   `build` over the frames it `needs`, so the view holds layout and every figure is a
+   lookup. A tile showing season-total MAE reads `season_total_metrics.csv` like every other
+   figure on the site.
+3. **No decision registry, no provenance links, no reversal log.** Those are what made the
+   walkthrough a documentation surface, and they stay in `decisions.py` and `docs/`. A test
+   parses both modules for an import of `decisions` and for `docs/` in any string a reader
+   could see; the route labels are additionally held to carrying no digits, since eight
+   one-line labels beside eight links is where a headline would creep back in.
+
+Registered as `dashboard-overview-page-exemption`.
 
 ## The two rules
 
@@ -52,9 +77,12 @@ interpretation carries a machine-checkable anchor so it cannot silently invert. 
 dashboard/
   README.md       this file
   app.py          the entrypoint — st.navigation over the pages, and VIEWS, the sidebar
-  shell.py        cross-page state: the appearance mode, current_theme(), and the
-                  opt-in metric-tile type scale
+  shell.py        cross-page state: the appearance mode, current_theme(), the opt-in
+                  metric-tile type scale, and the page registry `st.page_link` rows
+                  come out of
   views/
+    overview.py       page 1 — the one exempt page: the problem, five hero tiles, the
+                      pipeline in one diagram, and the route into the other eight
     fingerprints.py   the PCA fingerprint page — controls, layout, render()
     availability.py   page 3 — four lines that name a model class
     minutes.py        page 4 — the class, plus three named blocks: one posterior at
@@ -72,6 +100,9 @@ dashboard/
     draft_room.py     page 9's row — three lines that defer to the room below
   draft_room.py   the live draft room — page 9 *and* its own app (`make draft-room`),
                   off one `render()`, and the one file that imports src/ (see above)
+  overview.py     page 1's pure layer — the eight sources, the five hero readings, the
+                  five pipeline stages and the eight routes, each a lookup rather than
+                  a constant
   pca.py          the fingerprint view's pure layer — orientation, SD scaling, loadings,
                   neighbours
   strategy.py     the tournament view's pure layer — the contest summary, the hurdle
@@ -85,8 +116,8 @@ dashboard/
                   capture calendar and its per-program recovery policy, and the four
                   calibrated simulator inputs at each of the three fit windows
   charts.py       fig_radar / fig_loadings, the five tournament figures, the six
-                  model-page figures, the six a single model page owns, and the four
-                  page 7 owns
+                  model-page figures, the six a single model page owns, the four
+                  page 7 owns, and fig_pipeline — the one figure that plots no data
   theme.py        SERIES, THEMES, ALL_PAIRS_CAP, theme(), apply_theme(), ordinal_colors()
   artifacts.py    load_cfg, features_dir, predictions_dir, eda_dir, read_table, optional
   decisions.py    ─┐
@@ -127,6 +158,12 @@ Three consequences worth knowing before adding a page:
   season's board. Cosmetic controls are left to reset; that is the line.
 - **Sidebar order follows that ownership**: the navigation, then the shell's controls,
   then whatever the page writes to `st.sidebar` for itself.
+- **A page that links to its siblings has to be handed them.** `st.page_link` accepts only
+  a `st.Page` that `st.navigation` was given, and those are built in `app.main()`;
+  rebuilding them inside a view collides on `url_path` and importing `app` from a view is a
+  cycle. `shell.publish_pages` / `shell.page` are the registry, keyed by the `url_path`
+  `app.VIEWS` declares — **not** by `StreamlitPage.url_path`, which Streamlit rewrites to
+  `""` for the default page so it can serve `/`.
 
 A page is one module in `views/` exposing `render() -> None`, plus one row in `app.VIEWS`
 carrying its title, icon and `url_path`. **The four model detail pages are one renderer and
@@ -296,6 +333,17 @@ running page:
   table simply loses its right-hand columns off the edge. The fix that works is fewer and
   shorter columns, plus full width for a table whose long column is the point — checked by
   reading the rendered page, since `AppTest` reports a `dataframe` element either way.
+- **A metric's `delta` neither wraps nor truncates honestly.** Five tiles across a row, a
+  delta of `-210.3 against assuming a full season` renders as `-210.3 against assuming a f…`
+  — a comparison cut mid-word, which is worse than no comparison. A `stMetricDelta` font
+  rule buys a few characters; the real fix is writing a delta that fits the column, with the
+  full framing in the tile's `help`.
+- **An `st.columns` cell is a vertical stack, so an N-across grid filled column-major comes
+  out ragged.** One caption wrapping to two lines in the top row pushes only *that* column's
+  next element down. One `st.columns` call per row keeps a wrap's cost inside its own row —
+  and `AppTest` cannot see the difference, since it counts the same elements either way.
+- **Shrinking an `h1` by removing its padding clips the ascenders.** A smaller `font-size`
+  needs an explicit `line-height` beside it, not just less padding above.
 - **Plotly does not offset grouped scatter, only grouped bars.** Two series at the same
   categorical y sit exactly on top of each other, so every dot-and-interval chart here puts
   its rows on a *numeric* y axis and nudges each series off the row by hand, restoring the

@@ -1525,3 +1525,74 @@ def fig_block_inflation(panel: pd.DataFrame, th: dict, highlight: str = "min",
     # line, and `theme.py` bans dashes because a dash is supposed to mean something.
     fig.add_vline(x=1.0, line=dict(color=th["ink2"], width=2), layer="above")
     return fig
+
+
+# ── The Overview page ─────────────────────────────────────────────────────────
+#
+# One figure, and it is the only chart here that plots no data. The pipeline diagram is a
+# *layout* — five boxes in a row with the reader's eye pushed left to right — so it is
+# built out of shapes and annotations like the radial grid, for the same reason: everything
+# on it is chrome, and nothing on it should be pickable or hoverable as if it were a point.
+#
+# Its figures still come from artifacts (`dashboard/overview.py` builds the strings), which
+# is the charter bound that page exists under. What is typed here is the geometry.
+
+#: Box geometry on a unit canvas. The gap is where the arrow between two stages goes, so it
+#: is wide enough to read as a connector rather than as a seam.
+STAGE_GAP = 0.035
+#: Where the three lines of a box sit, as a fraction of its height. The figure is the tall
+#: one and takes the middle; the title labels it from above and the note explains from below.
+STAGE_TITLE_Y = 0.79
+STAGE_FIGURE_Y = 0.50
+STAGE_NOTE_Y = 0.20
+STAGE_HEIGHT = 150
+
+
+def fig_pipeline(stages: list, th: dict, title: str = "") -> go.Figure:
+    """The project in one row of boxes: data → heads → seasons → strategies → contests.
+
+    Deliberately uncoloured. A five-step chain is past `ALL_PAIRS_CAP` and, more to the
+    point, the steps are not a scale and not categories being compared — giving them five
+    hues would be an encoding that decodes to nothing. The boxes take the neutral fill and
+    every figure prints itself, so the relief rule is satisfied trivially.
+
+    `stages` is a list of `overview.Stage`; the notes must already be `<br>`-wrapped, since
+    a plotly annotation does not wrap and silently runs off the end of its box.
+    """
+    fig = go.Figure()
+    n = max(len(stages), 1)
+    width = (1.0 - STAGE_GAP * (n - 1)) / n
+
+    for i, stage in enumerate(stages):
+        x0 = i * (width + STAGE_GAP)
+        fig.add_shape(type="rect", x0=x0, x1=x0 + width, y0=0.0, y1=1.0,
+                      line=dict(color=th["axis"], width=1), fillcolor=th["neutral"],
+                      layer="below")
+        centre = x0 + width / 2
+        for y, text, size, color in (
+                (STAGE_TITLE_Y, stage.title, 12, th["ink2"]),
+                (STAGE_FIGURE_Y, stage.figure, 25, th["ink"]),
+                (STAGE_NOTE_Y, stage.note, 11, th["muted"])):
+            fig.add_annotation(x=centre, y=y, text=text, showarrow=False,
+                               xanchor="center", yanchor="middle",
+                               font=dict(family=FONT, size=size, color=color))
+        if i:
+            # Drawn as an annotation rather than a shape because plotly puts an arrowhead
+            # on an annotation and not on a line shape, and the head is what makes the row
+            # a chain rather than five tiles that happen to be adjacent.
+            fig.add_annotation(x=x0, y=0.5, ax=x0 - STAGE_GAP, ay=0.5,
+                               xref="x", yref="y", axref="x", ayref="y",
+                               text="", showarrow=True, arrowhead=2, arrowsize=1.1,
+                               arrowwidth=1.4, arrowcolor=th["axis"])
+
+    # The margins below are zero so the row spans the column, which puts the outer boxes'
+    # own 1px borders exactly on the paper edge and clips them — visible only in a
+    # rendering. The range carries the padding instead.
+    fig.update_xaxes(visible=False, range=[-0.012, 1.012], fixedrange=True)
+    fig.update_yaxes(visible=False, range=[-0.03, 1.03], fixedrange=True)
+    fig.update_layout(title=title)
+    fig = apply_theme(fig, th, height=STAGE_HEIGHT, legend=False)
+    # The theme leaves 48px of top margin for a title; this figure has none, and on a page
+    # whose whole constraint is one screen that is 48px of nothing.
+    fig.update_layout(margin=dict(l=0, r=0, t=4, b=4), hovermode=False)
+    return fig

@@ -5432,13 +5432,67 @@ REGISTRY: tuple[Decision, ...] = (
                 "does but may not state a result — a hero tile reads "
                 "`season_total_metrics.csv` like every other figure. That last bound is "
                 "the mechanism, since the walkthrough died of hand-typed claims drifting "
-                "from the documents that made them.",
+                "from the documents that made them. **Shipped 2026-08-10** as "
+                "`dashboard/views/overview.py` over `dashboard/overview.py`, with all "
+                "three bounds met and the third one enforced by a test that greps both "
+                "modules — see [[overview-fits-one-screen-by-measurement]].",
         status="settled",
         reproduce="make dashboard → dashboard/app.py",
         source="docs/dashboard-plan.md",
         reviewed="2026-08-10",
         date="2026-08-10",
         tags=("dashboard", "provenance"),
+    ),
+    Decision(
+        id="overview-fits-one-screen-by-measurement",
+        topic="problem",
+        claim="The Overview's one-screen bound is a **browser measurement**, not an "
+              "intention: the first complete draft was **1,144 px on a 900 px viewport** "
+              "and it ships at **702 px**, with the same five tiles, five pipeline "
+              "stages and eight routes on it.",
+        because="`AppTest` has no DOM and reports the identical five tiles and eight "
+                "page links however they are laid out, so the bound the exemption was "
+                "granted on is invisible to every layer of verification except a real "
+                "browser — which means a page that quietly became the walkthrough again "
+                "would have passed the suite. Measured in Chrome, the 442 px came off in "
+                "this order: ~150 px of Streamlit's defaults (6 rem of leading padding, "
+                "a 2.5 rem `h1`, 1 rem between blocks — chrome laid out for a scrolling "
+                "document), ~90 px of route blurbs cut from three lines to one, 50 px of "
+                "diagram, ~52 px of an intro that explained the contest twice, and 22 px "
+                "of caption. Nothing was removed to make it fit, which is the part worth "
+                "recording: the bound cost the page its verbosity and not its content. "
+                "The CSS that does it is scoped to the page rather than shared through "
+                "`shell.py`, because a model page is supposed to scroll.",
+        status="measured",
+        reproduce="make dashboard → dashboard/views/overview.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard",),
+    ),
+    Decision(
+        id="page-links-come-from-the-entrypoint",
+        topic="problem",
+        claim="A page that links to its siblings is **handed** their `st.Page` objects by "
+              "the entrypoint, through `shell.publish_pages` — keyed by the `url_path` "
+              "`app.VIEWS` declares, never by `StreamlitPage.url_path`.",
+        because="`st.page_link` accepts only a page `st.navigation` was actually given, "
+                "and those are constructed inside `app.main()`; rebuilding them in a view "
+                "collides on `url_path` and importing `app` from a view is a cycle. So "
+                "this is the same asymmetry `shell.py` already exists for "
+                "([[appearance-lives-in-the-shell]]) — the entrypoint's body runs on "
+                "every rerun and a `render()` does not. The key matters and is not a "
+                "detail: Streamlit rewrites the **default** page's own `url_path` to `\"\"` "
+                "so it can serve `/`, and the Overview is now the default page, so "
+                "reading the key back off the object would silently drop exactly one row "
+                "— the one row nothing links to, so nothing in the app would fail. A test "
+                "pins it with a fake page that reports `\"\"`.",
+        status="built",
+        reproduce="make dashboard → dashboard/shell.py, dashboard/app.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard",),
     ),
     Decision(
         id="appearance-lives-in-the-shell",
