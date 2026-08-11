@@ -26,6 +26,34 @@ to the relevant docs for the task at hand. The docs are:
   - adp-plan.md: Plan and notes for collecting average draft position ("adp") data
   - availability-plan.md: Plan and notes for modeling availability (games played 
   and minutes per game). Work completed and mostly archival.
+  - availability-ship-plan.md: **Ephemeral scaffolding**, written 2026-08-11 — a 
+  six-session work plan with one prepared prompt per session for shipping the 
+  2012-13 window and role-graded `rho` into `stan_availability.py` and propagating 
+  it through posteriors, model cards, the simulator, the games-played floor and the 
+  contest layer. Carries the three traps that would otherwise bite (do **not** filter 
+  `availability_design` — six modules import it; the Stan change is a transplant of 
+  `composition_glm.stan`'s `n_rho`/`rho_bin` pattern; every session must end with 
+  `make docs-audit` green because it is a gate). Delete it when the round lands, as 
+  `dashboard-build-prompts.md` was.
+  - availability-window-plan.md: The fitting window, the season trend, and where the 
+  beta-binomial's `rho` lives — opened 2026-08-11 when `model_card_ecdf.csv` showed the 
+  availability head missing **both** ends of its own distribution in opposite directions, 
+  invisible to every metric it had been gated on. Carries the era break test (a sup-F scan 
+  against a Monte-Carlo null), the `make availability-window` ladder that crosses window × 
+  season term × dispersion, and the three results it settled: a 2012-13 window plus a 
+  role-graded `rho` is the shippable arm, a season trend is a **null** because it buys the 
+  boundaries by wrecking the body, and `rho` is pooled across *players* rather than across 
+  *seasons*. Read this before changing the availability head's fitting window or adding a 
+  season term to it. Its last section carries the same question, measured but not yet 
+  laddered, for the two minutes heads. **`make availability-weighting` (2026-08-11) 
+  is its follow-up**: four ways to *spend* old seasons rather than keep or discard 
+  them — `l2` x lookback, separate `beta`/`rho` windows, exponential season decay, 
+  and per-coefficient-block windowing — selected on a rolling harness over the 
+  fitting half and then confirmed once on validation. The measurement that stands 
+  is that the drift is in the **level**, not the relationships: 5 of 20 columns 
+  carry it, and windowing the age and absence blocks makes the head *worse*. 
+  **None of the four beats the plain window on validation**, so nothing new ships, 
+  and one mechanism explains all four — they lean on the COVID trough.
   - dashboard-plan.md: Plan and notes for the streamlit dashboard. As of 
   2026-08-08 the dashboard is a **data-visualization surface**, not a project 
   walkthrough — read this before adding or editing a view. Its nine-page 

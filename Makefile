@@ -6,7 +6,9 @@ PIP    := .venv/bin/pip
         opponent persistence aging target-profile feature-diagnostics dashboard \
         dashboard-audit dashboard-config docs-audit \
         availability availability-profile injury-reports injuries daily-capture \
-        boxscore-status availability-model capture-status capture-calendar \
+        boxscore-status availability-model availability-window \
+        availability-weighting capture-status \
+        capture-calendar \
         report-calibration \
         season-total adp adp-draftkings adp-fantasypros adp-panel adp-profile \
         adp-status game-length serial-correlation component-rates \
@@ -168,6 +170,20 @@ component-rates:
 
 availability-model:
 	$(PYTHON) -m src.models.availability
+
+# The fitting-window x season-trend ladder for the availability head, scored on TAIL
+# COVERAGE rather than only CRPS — the shipped head misses both ends of its own
+# distribution and no marginal metric it has ever been gated on can see that. Point MLE,
+# no CmdStan, seconds: an arm earns a Stan port here, it does not ship from here.
+availability-window:
+	$(PYTHON) -m src.models.availability_window
+
+# Four ways to SPEND the old seasons rather than keep or discard them wholesale:
+# regularization crossed with lookback (the confound in the ladder above), separate
+# windows for the mean and the dispersion, exponential season decay, and per-coefficient-
+# block windowing. All scored on the rolling harness — validation is never read.
+availability-weighting:
+	$(PYTHON) -m src.models.availability_weighting
 
 # ── Stan heads ────────────────────────────────────────────────────────────────
 # Fitted SEPARATELY, one model per head, because the chain availability -> min |

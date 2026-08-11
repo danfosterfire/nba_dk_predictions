@@ -245,8 +245,31 @@ above the mean of the data it fits.
 This is a measurement, not a defect report: the heads clear their own gates as scored today,
 and nothing above has been through validation.
 
-## 4. Go back over the games played models. 
+## 4. ✅ Go back over the games played models — MEASURED 2026-08-11, moved to its own doc
 
-The beta binomial model predictions are under-predicting the frequency of players 
-playing all 82 games and also under predicting the frequency of players playing 
-very few (< 10) games. 
+Was: *"The beta binomial model predictions are under-predicting the frequency of players
+playing all 82 games and also under predicting the frequency of players playing very few
+(< 10) games."*
+
+**Half of that is right and half is backwards, which is what told us the mechanism.** The
+low half holds — the head puts **5.21%** of validation player-seasons below ten games
+against an observed **8.15%**. The high half runs the other way: it puts **5.95%** at a full
+schedule against an observed **2.72%**, so it *over*-predicts an iron man by 2.19×. Both are
+outside the posterior-predictive band, and both are wrong on the fitting half too. One
+defect, two symptoms — the fitted Beta frailty is too **U-shaped**, with too much mass on
+both boundaries and too little in the shoulders.
+
+`make availability-window` is the ladder that separated the candidate causes, and
+**`docs/availability-window-plan.md` is now the live document** — the era break test, the
+window × trend × dispersion results, what ships, and the same question carried over to the
+minutes heads. Three things it settled, so they are not re-opened here:
+
+- a shorter **fitting window** (2012-13 on) plus a **role-graded `rho`** wins CRPS by
+  −0.181 with a clear paired interval, wins PIT, and cuts boundary error 43%;
+- a **season trend** is a null — it closes both boundaries by shifting location and wrecks
+  the body of the distribution doing it;
+- **`rho` is not where the era lives** (it moves −6.4% across windows); the low tail
+  survives every instrument and is a functional-form limit.
+
+What remains open is item 3's question and the low tail's likelihood — both carried in that
+doc's "what this leaves" section rather than here.

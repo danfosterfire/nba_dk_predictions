@@ -3060,6 +3060,181 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("gate",),
     ),
     Decision(
+        id="availability-misses-both-boundaries",
+        topic="availability",
+        claim="**The availability head misses both ends of its own distribution, in "
+              "opposite directions**, and no metric it has ever been gated on can see "
+              "it.",
+        because="From `model_card_ecdf.csv` on validation: it puts **5.21%** of "
+                "player-seasons below ten games against an observed **8.15%**, and "
+                "**5.95%** at a full schedule against an observed **2.72%** — both "
+                "outside the 95% posterior-predictive band, and both wrong on train "
+                "too (4.16% against 5.70%; 7.56% against 6.60%). The fitted Beta "
+                "frailty is too **U-shaped**: too much mass on both boundaries, too "
+                "little in the shoulders at 2–15 and 70–80 games. CRPS, MAE and PIT KS "
+                "are all blind to it, which is how the head cleared every gate while "
+                "being wrong about a dead roster slot and an iron man — the two events "
+                "a Round-1 knockout turns on. `docs/potential-to-dos.md` item 4 "
+                "recorded the high half **backwards**; the head over-predicts a full "
+                "schedule, by 2.19×.",
+        status="measured",
+        reproduce="make model-cards → outputs/predictions/model_card_ecdf.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-11",
+        date="2026-08-11",
+        tags=("head", "calibration"),
+    ),
+    Decision(
+        id="availability-era-break-is-a-slope-not-a-step",
+        topic="availability",
+        claim="Availability changed regime around **2017-2020** — but it is a change of "
+              "**slope**, not a step, and the best *fitting window* is not the break.",
+        because="On the head's own design rows, mean `gp_share` sits flat near 0.710 "
+                "for twenty seasons then falls to 0.605–0.638. A sup-F scan against a "
+                "5,000-replicate Monte-Carlo null puts the break at **2017-18** "
+                "(F = **91.8**, null 95th pct 9.2), and it survives a linear-trend null "
+                "(F = 33.2). But the location is **not identified** — 91.8 / 90.6 / "
+                "83.9 at 2017-18 / 2018-19 / 2019-20 — BIC prefers a broken trend "
+                "(−229.8) over a level shift (−220.8), and the pre/post slopes are "
+                "−0.00065 against **−0.0103** per season, sixteen times steeper. The "
+                "two tails break in different places: P(played every game) breaks at "
+                "**2004-05**, a twenty-season erosion. COVID cannot be fully separated "
+                "— pre-COVID data alone gives only F = 11.9.",
+        status="measured",
+        reproduce="make availability-window → "
+                  "outputs/predictions/availability_window.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-11",
+        date="2026-08-11",
+        tags=("era",),
+    ),
+    Decision(
+        id="a-season-trend-buys-the-tails-by-breaking-the-middle",
+        topic="availability",
+        claim="**A season trend does not ship on the availability head.** It is the only "
+              "instrument that closes both boundaries, and it closes them by wrecking "
+              "the body of the distribution.",
+        because="`three_point_era__trend__role` gets P(full schedule) error to −0.0019 "
+                "and P(GP<10) to −0.0060 — near-perfect boundaries — by shifting the "
+                "whole predictive **down**, so P(GP<41) and P(GP<60) blow out to "
+                "**+0.073** and **+0.079** while CRPS goes to 10.0677 and PIT KS to "
+                "0.1244. On the five-season window it is catastrophic: `post_break__"
+                "trend__shared` reads CRPS **10.7940**, +0.788 against the incumbent "
+                "with a bootstrap interval of [+0.445, +1.118]. **A location instrument "
+                "cannot fix a shape defect** — the arms with the best boundary coverage "
+                "are the worst models. This is why `season_terms` selecting `trend` for "
+                "`gp` on a 0.011 CRPS margin was right not to be adopted. **Confirmed on "
+                "the full rowset, and the confirmation supplies the cause.** A "
+                "rolling-origin run over the fitting half (13 origins, 5,142 rows) at "
+                "first reads as a contradiction — pooled CRPS 9.9087 against 9.9180 — "
+                "until it is read per origin. **The entire pooled gain is 2020 and "
+                "2021**, the COVID and Omicron seasons, 2021 alone at -0.194; the median "
+                "origin is **+0.0060**, i.e. hurt, and the trend wins only 5 of 13. It is "
+                "a transient correction wearing a trend's clothes, which is exactly why "
+                "it overshoots on validation: fitted through 2021-22 it extrapolates the "
+                "COVID drop into two seasons that partially recovered.",
+        status="null",
+        reproduce="make availability-window → "
+                  "outputs/predictions/availability_window.csv, "
+                  "outputs/predictions/availability_window_rolling.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-11",
+        date="2026-08-11",
+        tags=("era", "null"),
+    ),
+    Decision(
+        id="the-availability-drift-is-the-level-not-the-relationships",
+        topic="availability",
+        claim="The league moved the **level** of availability and the workload "
+              "relationship. How age and absence history predict availability did not "
+              "change — and windowing those blocks makes the head *worse*.",
+        because="Splicing one coefficient block at a time from an 8-season fit into an "
+                "all-seasons fit, over 13 rolling origins: **intercept + workload** (5 of "
+                "20 columns) buys **−0.0359** CRPS [−0.0535, −0.0187] winning 11 of 13 "
+                "origins, the intercept alone −0.0197, and windowing **all** 20 columns "
+                "only −0.0162 with an interval that covers zero. The age curve is "
+                "**+0.0172** [+0.0078, +0.0267] and absence history **+0.0146** [+0.0043, "
+                "+0.0258] — significantly *worse* on recent seasons only. Five columns "
+                "carry the whole effect and the other fifteen want every season.",
+        status="measured",
+        reproduce="make availability-weighting → "
+                  "outputs/predictions/availability_weighting.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-11",
+        date="2026-08-11",
+        tags=("era",),
+    ),
+    Decision(
+        id="none-of-the-window-optimizations-confirm",
+        topic="availability",
+        claim="**Regularization tuning, split beta/rho windows, exponential season decay "
+              "and block windowing all lose to the plain 2012-13 window on validation.** "
+              "Nothing new ships.",
+        because="Each was selected on the rolling harness, where block windowing won most "
+                "decisively (9.8983, 11/13 origins). On the one validation reading, taken "
+                "after the recipes were fixed: the plain window + role-graded `rho` reads "
+                "**9.8247**, lookback-8 9.8289, `l2` = 16 9.8328, decay 0.85 **9.8641**, "
+                "decay 0.80 9.8662, and **block windowing 9.9265** — the rolling winner is "
+                "the worst challenger. **One mechanism explains all four**: every "
+                "instrument here leans harder on recent seasons, and the most recent "
+                "training seasons are the COVID trough, so all of them over-correct "
+                "downward into two validation seasons that partially recovered. Decay 0.80 "
+                "posts the *best* full-schedule error of any arm (+0.0075) with a worse "
+                "CRPS, which is over-correction rather than calibration. Block splicing "
+                "fails for a second reason too: the blocks are not orthogonal, so a "
+                "transplanted vector is not a fit of anything. **This also bounds the "
+                "rolling harness** — every origin in it is one season ahead inside the "
+                "training half, so it cannot see a two-step extrapolation across a regime "
+                "transient and systematically prefers arms that lean recent.",
+        status="null",
+        reproduce="make availability-weighting → "
+                  "outputs/predictions/availability_weighting.csv, "
+                  "outputs/predictions/availability_weighting_confirmation.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-11",
+        date="2026-08-11",
+        tags=("era", "null"),
+    ),
+    Decision(
+        id="rho-is-graded-by-role-not-by-era",
+        topic="availability",
+        claim="The dispersion is **not** where the era lives. `rho` is pooled across "
+              "*players* rather than across *seasons*, and grading it on role is a "
+              "small free win.",
+        because="The hypothesis was that one `rho` shared over 25 seasons produced the "
+                "boundary mass. Falsified: `rho` moves only **0.2806 → 0.2627 → "
+                "0.2608** across the full, 2012-13 and 2017-18 windows — **−6.4%** "
+                "across windows whose mean `gp_share` differs by 0.09. What is real is "
+                "the *other* pooling: fitted per prior-MPG bucket, `rho` reads "
+                "**0.3084** for `<12 mpg` against **0.2456** for `30+ mpg`, a "
+                "**1.26×** spread (1.47× on the 2012-13 window) — sensible in "
+                "direction but far milder than the composition head's 2.07×. It buys "
+                "−0.017 CRPS on the full window and −0.020 on the era window and hurts "
+                "no metric. The best arm is **`three_point_era__none__role`**: CRPS "
+                "**9.8247**, −0.181 against the incumbent with a paired interval of "
+                "[−0.257, −0.103], PIT KS **0.0588** against 0.0939, and boundary error "
+                "cut 43%. **The low tail survives everything** — the best non-trend arm "
+                "moves its error only from −0.0290 to −0.0230, so it is a functional-"
+                "form limit of the beta-binomial rather than an era or pooling effect. "
+                "**Confirmed on the full rowset**: over 13 rolling origins and 5,142 "
+                "fitting-half rows the role grading beats the shared scalar at **5 of 5** "
+                "lookbacks in both season-term specs, and the window win replicates with "
+                "an interior optimum at a **lookback of 8 seasons** (CRPS 9.9180 against "
+                "9.9478, winning 9 of 13 origins). The confirmation adds one thing the "
+                "validation ladder could not see: **PIT and boundary error keep improving "
+                "monotonically down to a 3-season lookback while CRPS turns around at 8**, "
+                "so the mean function and the dispersion want different windows and one "
+                "window cannot serve both.",
+        status="measured",
+        reproduce="make availability-window → "
+                  "outputs/predictions/availability_window.csv, "
+                  "outputs/predictions/availability_window_rolling.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-11",
+        date="2026-08-11",
+        tags=("head", "calibration"),
+    ),
+    Decision(
         id="spell-simulator-not-built",
         topic="simulations",
         claim="~~The residual copula over a shared `min` draw is not built.~~ **Both halves "
