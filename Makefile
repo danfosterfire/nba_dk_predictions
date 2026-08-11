@@ -4,16 +4,17 @@ PIP    := .venv/bin/pip
 .PHONY: venv install fetch preprocess features train evaluate predict test clean \
         season-matrix pca archetypes eda team-context component-targets context-value \
         opponent persistence aging target-profile feature-diagnostics dashboard \
-        dashboard-audit docs-audit \
+        dashboard-audit dashboard-config docs-audit \
         availability availability-profile injury-reports injuries daily-capture \
-        boxscore-status availability-model capture-status report-calibration \
+        boxscore-status availability-model capture-status capture-calendar \
+        report-calibration \
         season-total adp adp-draftkings adp-fantasypros adp-panel adp-profile \
         adp-status game-length serial-correlation component-rates \
         variance-budget residual-correlation season-effects \
         stan stan-availability stan-minutes stan-components stan-composition \
         stan-substitution season-terms games-played stan-games-played \
-        stan-game-length posteriors minutes-unification composition-effects \
-        scoring-periods draft-pool simulate-season bracket draft-sim \
+        stan-game-length posteriors model-cards minutes-unification composition-effects \
+        scoring-periods draft-pool simulate-season weekly-scores bracket draft-sim \
         draft-room draft-room-prep strategy-sweep final-evaluation
 
 venv:
@@ -45,7 +46,9 @@ injury-reports:
 injuries:
 	$(PYTHON) -m src.data.injuries --daily
 
-daily-capture: injury-reports injuries
+# The calendar runs last and makes no requests: whatever captured, record what is now on
+# disk. A cron that stops firing is only visible in the artifact it stops refreshing.
+daily-capture: injury-reports injuries capture-calendar
 
 # Which days were captured, which had no report to capture, and which were MISSED.
 # The PDF gaps are recoverable until they age out; the ESPN gaps never are.
@@ -53,6 +56,11 @@ capture-status:
 	$(PYTHON) -m src.data.injury_reports --status
 	@echo
 	$(PYTHON) -m src.data.injuries --status
+
+# The same coverage as `capture-status` and `adp-status`, for all four programs, as an
+# artifact rather than a printout — the dashboard's page 7 draws it. Reads disk only.
+capture-calendar:
+	$(PYTHON) -m src.data.capture_calendar
 
 # The 2006-07 → 2025-26 inactive-list and DNP-reason backfill. ~24,600 games, 8-14 h.
 # Resumable per game — kill it and re-run.
@@ -262,6 +270,36 @@ WINDOW ?= train
 posteriors:
 	$(PYTHON) -m src.models.posteriors --window $(WINDOW)
 
+# The dashboard-shaped view of every fitted head — one flat artifact per block of a model
+# page: the index, the coefficients, the features, their correlations, the predictive ECDF
+# ribbon, the binned calibration density and a bounded scatter sample.
+# The pages CANNOT read data/features/posteriors/*.pkl themselves: unpickling imports
+# src.models.posteriors, which the dashboard's ast-based purity guard cannot see because it
+# walks static imports only, and the object carries a fitted StandardScaler plus the ordered
+# design steps — the capability to score an arbitrary frame, which is exactly the drift the
+# rule exists to prevent. So this emitter stands between them and the dashboard reads only
+# its output.
+#
+# Reads the `train` window and nothing else, deliberately without a WINDOW knob: at
+# train_val the validation rows were IN the fit, and a "validation" histogram drawn from
+# those coefficients is an in-sample picture wearing the wrong label. Every emitted row
+# carries `split` in {train, validation}; there is no test column.
+#
+# Cheap and NO CmdStan — ~10 s over the persisted posteriors, no refit and no Stan sampler.
+# It fails the build rather than writing a wrong artifact: each head's design matrix is
+# re-derived twice, once through the persisted recipe and once through the head's own
+# variant ladder, and the two must agree to 1e-9 — and the 200-draw predictive it draws
+# through each head's OWN predict_samples must reproduce that head's reported mean to 5%,
+# which is the failure a design check structurally cannot see. See docs/model-cards-plan.md.
+#
+# There is deliberately no rebuild-one-head flag, unlike `make posteriors`: at ten seconds
+# for all twenty a partial run buys nothing and would leave the artifacts describing three
+# heads. To debug one head's check, `--check <heads>` builds and verifies without writing:
+#
+#   $(PYTHON) -m src.models.model_cards --check composition
+model-cards:
+	$(PYTHON) -m src.models.model_cards
+
 # Does the composition supersede the marginal minutes head? README.md claimed the two
 # "compose rather than compete", with the marginal head still owning the season-level mean
 # and the game-level dispersion. This scores both at the SEASON unit on the same validation
@@ -328,6 +366,26 @@ draft-pool:
 # CmdStan. Defaults to the two VALIDATION seasons; `--season` and `--n-sims` override.
 simulate-season:
 	$(PYTHON) -m src.sim.season
+
+# Gate A at the unit the LINEUP is set at. `make simulate-season` scores the season total,
+# the games-played pmf, the per-game bonus rate and the season-total minutes spread —
+# nothing scores dk_pts at the scoring period, which is where DK seats the best 7 of 16 and
+# therefore where every weekly max, round total and elimination cut downstream comes from.
+# A head is only a model at the unit it was scored at; this is that check one level down
+# from Gate A's own headline row.
+#
+# NO re-simulation: the tensor's second axis already IS the scoring period, so the whole
+# target is a reduction plus the model-card binning helpers, by import, and runs in ~2 s.
+# It reads four tensors — the two validation seasons plus 2018-19 and 2021-22, which are
+# the last two TRAINING seasons carrying DK's whole four-round structure (2020-21 has no
+# Round 4 at all and 2019-20's is the Orlando bubble). Build the training pair first:
+#
+#   $(PYTHON) -m src.sim.season --season 2018-19 --season 2021-22
+#
+# `--draws` moves the number of simulated seasons behind each panel and `--no-write` gates
+# without writing, which is how that budget was measured rather than assumed.
+weekly-scores:
+	$(PYTHON) -m src.sim.weekly
 
 # The contest itself: best 7 of 16 by slot each scoring period, the four-round advance
 # chain, the cascading tie-break, wildcards and payouts. Every structural number — round
@@ -441,6 +499,13 @@ eda: season-matrix pca archetypes team-context context-value opponent \
 # `$(PYTHON)` and survives a rename.
 dashboard:
 	$(PYTHON) -m streamlit run dashboard/app.py
+
+# `.streamlit/config.toml` rendered from `dashboard/theme.py`, so the page chrome and
+# the chart surfaces are one palette rather than two copies of it. Run it after editing
+# `THEMES`; a test parses the checked-in file back against the module and fails if the
+# two have drifted, which is what makes this a regeneration rather than a suggestion.
+dashboard-config:
+	$(PYTHON) -m dashboard.theme
 
 # Registry drift report — see dashboard/README.md. A report, not a gate: it exits 0
 # with findings on purpose, because failing on a doc edit trains people to ignore it.

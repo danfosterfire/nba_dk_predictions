@@ -12,18 +12,27 @@ test. Missing artifacts are *skipped*, so a fresh checkout without `make eda` is
 It guards the artifact→prose direction tightly and the prose→artifact direction loosely;
 see the module docstring for exactly what it cannot catch.
 
-**It covers twelve docs with 2,360 claims and one builder per doc**: `README.md`,
+**It covers thirteen docs with 2,460 claims and one builder per doc**: `README.md`,
 `availability-plan`, `minutes-composition-plan`, `predictions-plan`, `games-played-plan`,
-`shot-attempt-basis-plan`, `adp-plan`, and the five files the 2026-08-08 reorganization
-split `CLAUDE.md` into — `facts-archive`, `model-development-notes`, `data-quirks`,
-`project-spec` and `train-validate-test-split`.
+`shot-attempt-basis-plan`, `adp-plan`, `simulations-plan`, and the five files the 2026-08-08
+reorganization split `CLAUDE.md` into — `facts-archive`, `model-development-notes`,
+`data-quirks`, `project-spec` and `train-validate-test-split`.
+
 Coverage of measured figures: 79% (README), 79% (shot-attempt basis), 67% (model
 development notes), 64% (composition), 63% (predictions), 60% (adp), 58% (availability),
 46% (games played), 40% (facts archive), 33% (project spec), 26% (train/validate/test),
-21% (data quirks) — `make docs-audit` prints them live, so treat the
+21% (data quirks), 4% (simulations) — `make docs-audit` prints them live, so treat the
 printout rather than this line as current. The uncovered remainder is prose-only figures
 (`docs/provenance-plan.md` lists all fourteen), costing estimates, and counts of things
 rather than measurements.
+
+**`simulations-plan` joined on 2026-08-10 and is the one doc claimed in part rather than in
+whole**, which is why it sits at the bottom of that list. Deliberate: the doc is 3,400 lines
+covering five build items, and its builder claims exactly one section — the weekly Gate A
+row `make weekly-scores` added, whose readings nothing else re-derives. The rest of the
+layer's figures are re-derived by their own targets' build gates, which is the argument
+`docs/model-cards-plan.md` makes for staying out of the audit entirely. **A low coverage
+percentage on a long doc is not a to-do list**; a *claimed* figure that stops agreeing is.
 **668 of the claims are superseded values held for the record**, which is the number that
 grows fastest as heads move off the test split: each conversion retires a measurement
 without deleting it. The season-term conversion alone added **161** — the largest single

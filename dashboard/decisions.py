@@ -4747,11 +4747,17 @@ REGISTRY: tuple[Decision, ...] = (
                 "`SRC_IMPORTERS` names the single file and a second test holds it to "
                 "`src.sim`, the numpy layer over the artifacts that imports no CmdStan: "
                 "an exempt page still cannot fit anything. Everything it computes lives "
-                "in `src/sim/draft_room.py`; the page is the surface.",
+                "in `src/sim/draft_room.py`; the page is the surface. **Keyed by path "
+                "since 2026-08-10**, when [[draft-room-is-a-page-and-still-an-app]] gave "
+                "the room a navigation row at `views/draft_room.py`: under the old "
+                "basename match that sibling would have inherited the exemption the "
+                "moment it was created, so joining the app would have widened the hole by "
+                "the act of naming a file. The wrapper is held to the ordinary rule and "
+                "imports nothing from `src/` at all.",
         status="settled",
         reproduce="make test → tests/test_dashboard.py, dashboard/README.md",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-10",
         date="2026-08-09",
         tags=("architecture", "conventions"),
     ),
@@ -5061,5 +5067,1315 @@ REGISTRY: tuple[Decision, ...] = (
         reviewed="2026-08-09",
         date="2026-08-09",
         tags=("split", "leakage"),
+    ),
+    Decision(
+        id="dashboard-pages-not-tabs",
+        topic="problem",
+        claim="The dashboard expansion is a **`st.navigation` multipage app**, not "
+              "`st.tabs`. The user-facing word 'tab' maps to a page.",
+        because="Streamlit executes the body of *every* tab on every rerun — tabs are a "
+                "client-side affordance and the inactive content is hidden with CSS, not "
+                "skipped. Nine tabs would mean every interaction anywhere re-runs all "
+                "nine, including the one that loads the 90 MB `sim_tensor_*.npz`, and no "
+                "amount of caching fixes it because the cost is the rendering rather than "
+                "the I/O. `st.navigation` / `st.Page` runs only the selected page's "
+                "script while keeping one server process, so `cache_data` and "
+                "`cache_resource` stay shared across pages and a tensor loaded by the "
+                "draft board stays warm across navigation. This is what makes the draft "
+                "board feasible inside the same app at all. **The shell landed "
+                "2026-08-10** as step 1 of the build order: `dashboard/app.py` is the "
+                "`st.navigation` entrypoint and each page is one module in "
+                "`dashboard/views/` behind a `render()`.",
+        status="settled",
+        reproduce="make dashboard → dashboard/app.py, dashboard/views/fingerprints.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "performance"),
+    ),
+    Decision(
+        id="model-cards-emitter-not-posterior-pickles",
+        topic="problem",
+        claim="The model detail pages read **flat artifacts from a new `make "
+              "model-cards`**, never `data/features/posteriors/*.pkl` directly.",
+        because="The pickles carry thinned coefficient draws and a design recipe for "
+                "twenty heads, which is exactly what the pages want — and reading them "
+                "would break the dashboard's binding rule twice over. Unpickling imports "
+                "`src.models.posteriors`, which the `ast`-based guard cannot see because "
+                "it only walks static imports, so the guard would pass while the rule "
+                "broke. And the object returned carries a fitted `StandardScaler` and the "
+                "ordered design steps — the capability to score an arbitrary frame, which "
+                "is precisely the drift the rule prevents. So an emitter stands between "
+                "them and the dashboard reads only its output. The emitter goes through "
+                "`held_out.selection_split` so no test row can reach a page, and reads "
+                "the `train` posterior window rather than `train_val`, since at "
+                "`train_val` the validation rows were in the fit and a 'validation' "
+                "scatter drawn from those coefficients is an in-sample scatter wearing "
+                "the wrong label. **Built 2026-08-10** — `src/models/model_cards.py`, "
+                "`make model-cards`, twenty heads in ~10 s with no CmdStan. All seven "
+                "artifacts ship: the index, the coefficients, the features and the feature "
+                "correlations from session 3a, and the predictive half — the ECDF ribbon, "
+                "the binned calibration density and a bounded scatter sample — from 3b, "
+                "7.4 MB in total.",
+        status="built",
+        reproduce="make model-cards → outputs/predictions/model_card_index.csv, "
+                  "outputs/predictions/model_card_coefficients.csv, "
+                  "outputs/predictions/model_card_features.csv, "
+                  "outputs/predictions/model_card_feature_corr.csv, "
+                  "outputs/predictions/model_card_ecdf.csv, "
+                  "outputs/predictions/model_card_calibration.csv, "
+                  "outputs/predictions/model_card_sample.parquet",
+        source="docs/model-cards-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "provenance", "split"),
+    ),
+    Decision(
+        id="model-cards-verify-against-the-ladder",
+        topic="problem",
+        claim="`make model-cards` re-derives every head's design matrix **twice** — once "
+              "through the persisted recipe on the raw frame, once through the head's own "
+              "variant ladder — and fails the build on any disagreement past 1e-9, on top "
+              "of a row-count anchor against the posterior's own provenance.",
+        because="The emitter rebuilds the *frames*, which is a drift surface "
+                "`posteriors.py`'s 400-row probe check cannot see: a `build_design` that "
+                "changed shape, a split that moved or a filter that drifted would leave "
+                "the coefficients describing one population and the histograms describing "
+                "another, and both files would look perfectly well-formed. So the "
+                "population is anchored on `provenance.n_fit_rows` and the season span, "
+                "the transform is checked against the ladder that produced it, and the "
+                "artifact's own `roundtrip()` is run as well — because check 2 is "
+                "*tautological* for the nine heads whose recipe carries no design steps, "
+                "and the index says which of the two is load-bearing per head "
+                "(`design_check` = `ladder` or `vacuous`). Saying so is the difference "
+                "between a gate and a green tick that means nothing. As shipped every "
+                "head passes check 2 at exactly 0.0 and the worst round-trip prediction "
+                "error is 1.3e-15. **A fifth check landed with the predictive half on "
+                "2026-08-10**, because all four of the above pass on a design matrix that "
+                "is then *drawn from* on the wrong scale: `predictive_bias` requires the "
+                "drawn mean to reproduce the head's own reported mean to 5%, and the worst "
+                "across twenty heads is +1.20%.",
+        status="built",
+        reproduce="make model-cards → outputs/predictions/model_card_index.csv",
+        source="docs/model-cards-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "provenance"),
+    ),
+    Decision(
+        id="model-card-features-are-the-design-columns",
+        topic="problem",
+        claim="The feature block histograms each head's **own design columns from its own "
+              "variant ladder** — post-transform, pre-standardization — not the raw "
+              "builder columns, with `missing_share` resolved through the source column "
+              "rather than the feature's own name.",
+        because="'The features it was fed' *is* the design matrix, and the two things most "
+                "worth looking at do not exist in the raw frame at all: the spline bases "
+                "and the imputation flags. The resolution rule is the part that would "
+                "have failed silently — a design column is usually two transforms from "
+                "the column whose missingness it inherits "
+                "(`logit_fg3m_pct_lag1__s3` is a spline over a logit over "
+                "`fg3m_pct_lag1`), so reading the flag off the feature's own name would "
+                "report a flat zero for every spline basis in the project and render as a "
+                "perfectly good-looking page. The share is read off the head's own "
+                "`__miss` flag wherever it minted one — its record of what it filled "
+                "rather than a re-derivation of it. Train and validation also share one "
+                "pooled edge set per feature, because comparing the two histograms is the "
+                "block's entire job and two histograms on their own edges cannot be "
+                "compared.",
+        status="built",
+        reproduce="make model-cards → outputs/predictions/model_card_features.csv",
+        source="docs/model-cards-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard",),
+    ),
+    Decision(
+        id="model-card-coefficients-are-standardized",
+        topic="problem",
+        claim="Coefficients are published on the **standardized design scale**, with the "
+              "scaler's centre and scale carried per term and the fitted "
+              "`StandardScaler` deliberately left behind.",
+        because="A sorted bar chart across terms is only a legitimate comparison if the "
+                "terms share a scale, and every head fits a `StandardScaler`'d matrix — so "
+                "the honest label is the one the artifact states (`coefficient_scale`) "
+                "rather than one the reader has to assume. Shipping `mean_` and `scale_` "
+                "as two columns lets a consumer unstandardize — the arithmetic "
+                "`stan_game_length._unstandardized` already does — without shipping the "
+                "object, which is the emitter's whole point: the numbers travel and the "
+                "capability to score an arbitrary frame does not. `term_family` groups a "
+                "six-column spline basis under the quantity it expands, because six "
+                "independent bars for one term swamp every real term in the head.",
+        status="built",
+        reproduce="make model-cards → outputs/predictions/model_card_coefficients.csv",
+        source="docs/model-cards-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard",),
+    ),
+    Decision(
+        id="model-card-predictive-is-the-heads-own-draw",
+        topic="problem",
+        claim="The predictive artifacts are drawn through **each head's own "
+              "`predict_samples`**, rehydrated around its persisted draws — and where a "
+              "head has none, through that head's own parameters plus one line for the "
+              "family's sampling law. Never a second implementation of a predictive.",
+        because="A model card describing a differently-drawn model is worse than no model "
+                "card: the page's authority comes entirely from being the same object the "
+                "simulator loads. Thirteen of the twenty heads expose `predict_samples` and "
+                "are called directly, with the minutes and composition heads going through "
+                "`minutes_unification`'s existing rehydrators rather than a second copy — "
+                "so the composition is drawn **with the shipped "
+                "`sim.minutes.player_season_sigma = 0.450`**, which is what every other "
+                "consumer gets, and `player_season_sigma` is an index column so a page can "
+                "say so. The other seven never draw at all: availability, the three "
+                "games-played binomial heads and overtime onset score through an explicit "
+                "pmf and the two beta-geometric heads through a log-likelihood, so there is "
+                "nothing to call and `family_draws` takes the per-draw parameters from the "
+                "artifact's own `mu_draws` and the family's own shape function. What keeps "
+                "that honest is a build-time check rather than a convention: the drawn mean "
+                "must reproduce the head's own reported mean to 5%, and the beta-geometrics "
+                "are checked on `P(T = 1)` — which IS their `mu` — rather than on a mean "
+                "they do not report.",
+        status="built",
+        reproduce="make model-cards → outputs/predictions/model_card_ecdf.csv, "
+                  "outputs/predictions/model_card_calibration.csv, "
+                  "outputs/predictions/model_card_sample.parquet",
+        source="docs/model-cards-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "provenance"),
+    ),
+    Decision(
+        id="model-card-ribbon-budget-is-measured-not-assumed",
+        topic="problem",
+        claim="The predictive is **200 draws over at most 20,000 rows a split**, and that "
+              "budget is verified at build time by re-reading the 95% ECDF ribbon on two "
+              "interleaved halves of the draws rather than being asserted to be enough.",
+        because="The composition alone is 631,158 rows times 1,000 persisted draws, and "
+                "none of that buys a better picture — but 'the band is stable well before "
+                "that' is the kind of claim that is easy to write and never check. So "
+                "`band_stability` measures it: two independent half-budget readings differ "
+                "by about twice the standard error of the full-budget estimate they average "
+                "to, which makes the statistic a conservative bound, and it falls as "
+                "`1/sqrt(D)` across 100 / 200 / 400 draws — the confirmation that it is "
+                "measuring Monte Carlo error rather than misfit. At the shipped 200 the "
+                "worst gated head reads **0.0145** against a 0.02 bar, so the ribbon is "
+                "good to roughly 0.007 in ECDF units and 400 draws would buy a third of a "
+                "pixel. `game_length_ot` is reported rather than gated: its two validation "
+                "cells give an ECDF that takes three values, where a half-sample gap of 0.5 "
+                "is the frame and not the budget. The row cap is a subsample of the "
+                "population, so it moves Monte Carlo error and not the estimand — and on "
+                "the composition it is taken in whole team-game blocks, because "
+                "`ragged_arrays` rejects a frame cut through one.",
+        status="built",
+        reproduce="make model-cards → outputs/predictions/model_card_ecdf.csv, "
+                  "outputs/predictions/model_card_index.csv",
+        source="docs/model-cards-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "performance", "provenance"),
+    ),
+    Decision(
+        id="feature-correlation-not-pair-plots",
+        topic="problem",
+        claim="A model page's feature-relationship block is a **correlation heatmap plus "
+              "one on-demand 2-D density**, not a pair plot matrix.",
+        because="A full pairwise matrix over the 12–20 features a head is fed is 150–400 "
+                "panels — unreadable at any size that fits on a page, and an artifact "
+                "carrying every pairwise 2-D binning is large for something nobody reads. "
+                "The question the pair plot is being asked is whether anything in the "
+                "block is collinear and what the joint looks like where it matters, and "
+                "that survives the substitution: a heatmap answers the first at a glance "
+                "and a single density, precomputed for the top ~20 correlated pairs per "
+                "head, answers the second on demand. `feature_correlation_tierA.parquet` "
+                "is the precedent for the heatmap. **Built in two halves, both on "
+                "2026-08-10**: `model_card_feature_corr.csv` carries the whole square per "
+                "head and split — the diagonal included, so a heatmap is a reshape rather "
+                "than a reconstruction, and a constant column reads as `NaN` rather than "
+                "as a spurious zero — with `pair_rank` and `top_pair` over the distinct "
+                "off-diagonal pairs; `model_card_feature_density.parquet` then bins an "
+                "18 × 18 joint for every flagged pair, on both splits, over the grid they "
+                "share. The pair list is ranked on the **training** split and both panels "
+                "are drawn for it, so flipping the split changes the picture and not the "
+                "menu. 93,608 cells over 720 panels, and at rank 20 |r| is still 0.62 on "
+                "the availability block — the flagged set is where the joint is worth "
+                "looking at rather than an arbitrary prefix.",
+        status="built",
+        reproduce="make model-cards → "
+                  "outputs/predictions/model_card_feature_corr.csv, "
+                  "outputs/predictions/model_card_feature_density.parquet",
+        source="docs/model-cards-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard",),
+    ),
+    Decision(
+        id="quantile-residuals-replace-the-raw-residual-panel",
+        topic="problem",
+        claim="Block 6's residual-against-predicted panel is a **scaled quantile residual** "
+              "— DHARMa's, computed by `stan_utils.pit_from_samples` and scored by "
+              "`ks_uniform`, both used by import. The raw residual panel is **removed** "
+              "from the emitter rather than left unread, so `model_card_calibration.csv` "
+              "carries one panel and the contract got smaller: 8.7 MB → 7.5 MB.",
+        because="Four model pages are one renderer, and a raw residual means a different "
+                "thing on each of them: a negative binomial's on a season rebound total, a "
+                "beta-binomial's on a conversion count and a beta-geometric's on a spell "
+                "length share no scale, so the same-looking panel was four different "
+                "pictures. A randomized quantile residual is uniform iff calibrated "
+                "**whatever the likelihood is**, which is exactly what one renderer over "
+                "twenty heads needs — and the randomization is required rather than "
+                "optional here, because every response on these pages is discrete and the "
+                "plain quantile of a discrete predictive is not uniform even under a "
+                "perfect model. It is cut from the SAME draws as the ribbon above it, so a "
+                "page cannot show a QQ and a ribbon describing two different predictives. "
+                "**The KS distance is reported and never thresholded**, the rule "
+                "`band_distance` already carries one block up: at n ~ 10^4 a uniformity "
+                "test rejects every head in the project. The one bar is on the draw budget "
+                "— `ks_stability` re-reads the distance on two interleaved halves of the "
+                "draws, worst gated 0.0105 against 0.02 — because at 200 draws a row with "
+                "no replicate at its observed value carries a residual quantized to 1/200, "
+                "which is four rows in five on `minutes`. Measured at 100 / 200 / 400 / "
+                "800 draws the KS moves by <= 0.001, and it moves *upward*, so the shipped "
+                "budget understates the miss rather than inventing one. **Two panels ship "
+                "rather than one because the second finds what the first cannot**: "
+                "`minutes` is nearly uniform overall at KS 0.0302 and its quartile lines "
+                "sit 0.29 off their own levels across the predicted range. The composition "
+                "was expected to be out of scope and is not — `u` is a function of the "
+                "draws and the observed, its `predict_samples` draws minutes, and "
+                "`stan_composition.score_samples` already computes this exact statistic; "
+                "`predictive_check` governs the fitted value and does not decide it. "
+                "`QUANTILE_OUT_OF_SCOPE` exists anyway, empty and tested, because a wrong "
+                "panel is worse than an absent one and an absent one with no reason beside "
+                "it is worse than both.",
+        status="built",
+        reproduce="make model-cards → outputs/predictions/model_card_quantile.csv, "
+                  "outputs/predictions/model_card_index.csv, "
+                  "outputs/predictions/model_card_sample.parquet",
+        source="docs/dashboard-revision-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "provenance"),
+    ),
+    Decision(
+        id="model-card-density-is-parquet-not-csv",
+        topic="problem",
+        claim="The joint-density artifact ships as **parquet**, which is the second "
+              "exception to this family being flat CSVs, and the reason is the opposite "
+              "of the first one's.",
+        because="`model_card_sample.parquet` is binary because it is three float columns "
+                "and nothing else, and a CSV would widen every `float32` back to text. "
+                "The density is the mirror image: two long feature names restated on "
+                "every one of its 93,608 cells, where parquet's dictionary encoding is "
+                "the difference between **10.5 MB** and **0.55 MB** — measured, by "
+                "writing both. That is what makes 20 flagged pairs per head affordable "
+                "at all; as a CSV the same contract would have cost more than the other "
+                "seven artifacts put together and the pair count would have had to be cut "
+                "to fit. Total footprint goes from 7.4 MB across seven artifacts to 8.6 MB "
+                "across eight.",
+        status="built",
+        reproduce="make model-cards → "
+                  "outputs/predictions/model_card_feature_density.parquet",
+        source="docs/model-cards-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "performance"),
+    ),
+    Decision(
+        id="model-pages-are-one-renderer-and-a-class-table",
+        topic="problem",
+        claim="The four model detail pages are **one renderer over one class table**, not "
+              "four pages — a view module is a `render()` that names its class and "
+              "nothing else.",
+        because="Pages 3–6 draw the same seven blocks over heads that differ only in "
+                "which artifact rows they select, so a second copy of the renderer would "
+                "be four copies of every rule the blocks encode — that a spline basis is "
+                "grouped, that the intercept stays off the sorted panel, that the ribbon "
+                "is read as a distance. `dashboard/model_cards.py::CLASSES` carries the "
+                "title, icon, `url_path`, head order and specification intro for all four; "
+                "`views/model_page.py::render(class_key)` is the page; "
+                "`views/availability.py` is four lines. **The head order is declared and "
+                "the unit is not**: entry, onset, duration, exit is how a tenure runs and "
+                "no column carries that, while `unit` is read from "
+                "`model_card_index.csv` per head, because the five availability heads are "
+                "not all at one unit — `gp_duration` is per absence spell and the rest per "
+                "player-season. A test asserts every carded head belongs to exactly one "
+                "declared page, so a twenty-first head fails rather than vanishing from "
+                "the navigation.",
+        status="built",
+        reproduce="make model-cards → outputs/predictions/model_card_index.csv",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard",),
+    ),
+    Decision(
+        id="a-head-declares-its-role-in-the-shipped-chain",
+        topic="problem",
+        claim="Every carded head declares **what the simulator does with it** — a "
+              "closed-vocabulary `chain_role` on `model_card_index.csv`, pinned against "
+              "`src/sim/` by a test. **Sixteen of the twenty heads are read when a season "
+              "is drawn and four are not**: `gp_entry`, `gp_exit`, `gp_onset` and the "
+              "marginal `minutes` head.",
+        because="A head being fitted, converged and carded says nothing about whether "
+                "`make simulate-season` calls it, and nothing on a model page could say "
+                "which — so the Availability page introduced its five heads as *\"two ways "
+                "of predicting the same quantity\"*, which reads as two alternates where "
+                "one ships. The shipped chain takes **one head from each**: "
+                "`season.py::_sim_one` draws the games-played *count* from `availability` "
+                "and lays those misses out with `games_played.allocate_spells` at "
+                "`gp_duration`'s fitted spell shape, one `(mu, kappa)` per posterior draw. "
+                "The tenure decomposition is never called at draw time — `season.py` "
+                "states why it does not call `HybridProcess.sequences`: that path draws "
+                "its count from a pmf already marginalized over the posterior, which is "
+                "right for a marginal metric and wrong for a simulator whose whole point "
+                "is that one draw moves the board together. The three heads stay on the "
+                "page because what they produce is `stan_games_played_gp_pmf.csv`, one of "
+                "Gate A's four bars. **The column also caught a second case the request "
+                "did not know about**: the marginal minutes head is not in the draw path "
+                "either. Both minutes heads ship, but the season-level spread reaches the "
+                "simulator as `sim.minutes.player_season_sigma`, a constant "
+                "`minutes_unification` calibrated against that head and "
+                "`rehydrate_composition` injects into the composition — so `src/sim/` "
+                "reads the composition and scores itself against the marginal head. "
+                "Declared beside `HeadSpec` rather than in the dashboard for the reason "
+                "`unit` is, and **anchored rather than merely written down** for the "
+                "reason `COMPONENT_BASIS` is: a declared \"in the draw path\" that nothing "
+                "in `src/sim/` reads goes stale on the next refactor and goes stale "
+                "silently, because the page keeps rendering. "
+                "`test_the_declared_draw_path_is_what_the_simulator_actually_reads` walks "
+                "`src/sim/*.py` with `ast`, collects every posterior-artifact key it "
+                "subscripts, and asserts set equality against the declaration in both "
+                "directions.",
+        status="built",
+        reproduce="make model-cards → outputs/predictions/model_card_index.csv, "
+                  "outputs/predictions/stan_games_played_gp_pmf.csv, "
+                  "outputs/predictions/stan_games_played_spell_shape.csv",
+        source="docs/dashboard-revision-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "provenance", "simulations"),
+    ),
+    Decision(
+        id="two-sampler-runs-are-two-rows",
+        topic="problem",
+        claim="A model page's diagnostics block shows the **persisted fit and the "
+              "selection fit as two rows that name themselves**, with an em dash wherever "
+              "a source carries nothing.",
+        because="`make posteriors` refits each head once at its shipped variant and keeps "
+                "the draws every other block on the page is cut from, recording R̂ and "
+                "divergences; `make stan` fitted the whole variant ladder, recorded ESS, "
+                "treedepth and wall clock, and threw the draws away. They are different "
+                "chains of the same specification and their R̂ need not agree — "
+                "`gp_onset` reads 1.00187 persisted against 1.00399 in selection. A single "
+                "row assembled from both would claim one run and would put a selection "
+                "ESS beside a persisted R̂ as though one fit produced them. The absent "
+                "cells are the point rather than an omission, so they read `—` rather "
+                "than `None`, which renders as a measurement of nothing. Each head's "
+                "selection label is a per-class template filled from its own index row "
+                "(`fg3a|fga/logit_own_spline/val`), so a head refitted at another arm "
+                "follows its own row; a test resolves every shipped head's label against "
+                "the real table, because the failure mode is a block that renders empty "
+                "rather than wrong.",
+        status="built",
+        reproduce="make posteriors → data/features/posteriors/train/manifest.csv",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "provenance"),
+    ),
+    Decision(
+        id="calibration-panels-are-scaled-to-their-own-densest-cell",
+        topic="problem",
+        claim="The four predicted-against-observed panels are each scaled to **their own "
+              "densest cell**, under one colourbar labelled as relative — and both splits "
+              "of a panel are drawn on **one axis range**.",
+        because="Both were caught by rendering the figure rather than by reading the code. "
+                "A validation panel over 751 rows puts an order of magnitude more share "
+                "into each cell than a training panel over 8,232, so one absolute "
+                "colourbar drawn from the first panel labels the other three wrongly, and "
+                "a shared absolute scale washes the larger split out entirely; the raw "
+                "share stays in every cell's hover, so nothing is lost. And the emitter "
+                "deliberately clips each density's tails into its end bins — letting the "
+                "unclipped scatter overlay set the axis undoes exactly that, which "
+                "squashed `gp_duration`'s 2-to-9-game density into a sliver behind one "
+                "62-game spell. Sharing the range across splits is also what makes the "
+                "two panels comparable, which is the reason they are side by side.",
+        status="built",
+        reproduce="make model-cards → outputs/predictions/model_card_calibration.csv, "
+                  "outputs/predictions/model_card_sample.parquet",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard",),
+    ),
+    Decision(
+        id="dashboard-overview-page-exemption",
+        topic="problem",
+        claim="One page of prose — the **Overview** — is exempted from 'the dashboard "
+              "shows data, prose belongs in the docs', bounded to opening above the fold "
+              "and ending inside one more screen, with every *result* on it read from an "
+              "artifact.",
+        because="The 2026-08-08 overhaul deleted a nine-tab walkthrough for being "
+                "documentation rendered as an app, and that reasoning stands. The "
+                "audience is what changed: the walkthrough served the project architect "
+                "and lost to `docs/`, while the Overview serves a portfolio reader who "
+                "arrives at a URL with no context and will not open a repository. No "
+                "document serves that reader, because they will not read one. The "
+                "exemption is bounded rather than granted: a height bound, no decision "
+                "registry or provenance links, and typed prose may say what the project "
+                "does but may not state a result — a sentence quoting the season-total "
+                "MAE reads `season_total_metrics.csv` like every other figure. That last "
+                "bound is the mechanism, since the walkthrough died of hand-typed claims "
+                "drifting from the documents that made them. **Shipped 2026-08-10** as "
+                "`dashboard/views/overview.py` over `dashboard/overview.py`, with all "
+                "three bounds met and the third one enforced by a test that greps both "
+                "modules — see [[overview-fits-one-screen-by-measurement]]. The page was "
+                "rewritten as a four-section paper the same day and bound 1 was amended "
+                "with it, deliberately and to a hard ceiling: "
+                "[[overview-bound-one-amended-for-the-paper]].",
+        status="settled",
+        reproduce="make dashboard → dashboard/app.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "provenance"),
+    ),
+    Decision(
+        id="overview-fits-one-screen-by-measurement",
+        topic="problem",
+        claim="The Overview's height bound is a **browser measurement**, not an "
+              "intention. Three readings at 1440x900: the first tile draft **1,144 px**, "
+              "the tile page as shipped **702 px**, and the four-section paper that "
+              "replaced it **1,036 px** (**1,161 px** at 1280x800).",
+        because="`AppTest` has no DOM and reports the identical tiles, headings and page "
+                "links however they are laid out, so the bound the exemption was "
+                "granted on is invisible to every layer of verification except a real "
+                "browser — which means a page that quietly became the walkthrough again "
+                "would have passed the suite. On the tile draft, measured in Chrome, the "
+                "442 px came off in this order: ~150 px of Streamlit's defaults (6 rem of "
+                "leading padding, a 2.5 rem `h1`, 1 rem between blocks — chrome laid out "
+                "for a scrolling document), ~90 px of route blurbs cut from three lines "
+                "to one, 50 px of diagram, ~52 px of an intro that explained the contest "
+                "twice, and 22 px of caption. Nothing was removed to make it fit, which "
+                "is the part worth recording: the bound cost the page its verbosity and "
+                "not its content. The CSS that does it is scoped to the page rather than "
+                "shared through `shell.py`, because a model page is supposed to scroll. "
+                "**The paper is the third reading and it is the cheap one**: four "
+                "sections, the diagram and nine routes come in *below* the tile draft "
+                "that was rejected, because two sections to a row is both a readable "
+                "measure and half the height of a full-width column. Read off "
+                "`[data-testid=\"stMain\"]`'s `scrollHeight` — `document.body` reports 0 "
+                "here, since Streamlit scrolls its own container and not the document.",
+        status="measured",
+        reproduce="make dashboard → dashboard/views/overview.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard",),
+    ),
+    Decision(
+        id="overview-bound-one-amended-for-the-paper",
+        topic="problem",
+        claim="Bound 1 of the Overview's exemption is amended from **one page, one "
+              "screen** to **opens above the fold, scrolls no further than one screen "
+              "more** — a ceiling of two viewports, still measured in a browser.",
+        because="The page was rewritten on 2026-08-10 from five hero tiles into "
+                "`README.md`'s four sections, because five numbers stacked in a row are "
+                "an overview of nothing — the reader gets figures with no argument around "
+                "them. Four sections of two-to-four sentences will not fit 900 px "
+                "alongside the pipeline diagram and nine route links, so the bound had to "
+                "move or the page did, and the only things left to cut were the diagram "
+                "(the one figure carrying the whole shape at a glance) and the routes "
+                "(the reason the page was built last). **Amending is the smaller loss, "
+                "and the bound's own reason survives it**: bound 1 existed because 'if it "
+                "scrolls it has become the walkthrough again', and the walkthrough was "
+                "nine tabs of rendered decision registry — four paragraphs that open "
+                "above the fold are not that, and a hard two-screen ceiling is what keeps "
+                "the difference enforceable rather than rhetorical. Measured on the way "
+                "out: **1,036 px on a 900 px viewport** (136 px past the fold) and "
+                "**1,161 px on 800 px** (361 px past), i.e. inside the new ceiling by 764 "
+                "and 439 px — and *below* the 1,144 px tile draft this bound rejected in "
+                "the first place. Above the fold at 1440x900 the reader gets the title, "
+                "the Introduction with its first artifact-read figure, the whole Methods "
+                "section, the pipeline diagram and both remaining headings. Bounds 2 and "
+                "3 do not move; bound 2 gains a half, since prose has room for a typed "
+                "number where a tile did not — a typed sentence now carries **no digit at "
+                "all**, and the contest's own rules are spelled in words. See "
+                "[[overview-fits-one-screen-by-measurement]] for the three readings and "
+                "[[dashboard-overview-page-exemption]] for the terms this amends.",
+        status="settled",
+        reproduce="make dashboard → dashboard/views/overview.py, dashboard/overview.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard",),
+    ),
+    Decision(
+        id="page-links-come-from-the-entrypoint",
+        topic="problem",
+        claim="A page that links to its siblings is **handed** their `st.Page` objects by "
+              "the entrypoint, through `shell.publish_pages` — keyed by the `url_path` "
+              "`app.VIEWS` declares, never by `StreamlitPage.url_path`.",
+        because="`st.page_link` accepts only a page `st.navigation` was actually given, "
+                "and those are constructed inside `app.main()`; rebuilding them in a view "
+                "collides on `url_path` and importing `app` from a view is a cycle. So "
+                "this is the same asymmetry `shell.py` already exists for "
+                "([[appearance-lives-in-the-shell]]) — the entrypoint's body runs on "
+                "every rerun and a `render()` does not. The key matters and is not a "
+                "detail: Streamlit rewrites the **default** page's own `url_path` to `\"\"` "
+                "so it can serve `/`, and the Overview is now the default page, so "
+                "reading the key back off the object would silently drop exactly one row "
+                "— the one row nothing links to, so nothing in the app would fail. A test "
+                "pins it with a fake page that reports `\"\"`.",
+        status="built",
+        reproduce="make dashboard → dashboard/shell.py, dashboard/app.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard",),
+    ),
+    Decision(
+        id="appearance-lives-in-the-shell",
+        topic="problem",
+        claim="The light/dark appearance switch is rendered by the **entrypoint**, from "
+              "`dashboard/shell.py`, not by any page — and a view reads it rather than "
+              "declaring it.",
+        because="Streamlit clears `st.session_state` for widgets the current page did not "
+                "render, and the entrypoint's body runs on every rerun while a "
+                "`render()` runs only when its page is selected. A mode switch declared "
+                "inside a view would therefore be torn down the moment the reader "
+                "navigated away, and the next page would come up in whatever "
+                "`detected_mode()` returned. That is not a hypothetical: driven under "
+                "`AppTest`, a round trip to a second page and back resets the "
+                "fingerprint view's own `component` key from `pc8` to `pc1` while "
+                "`appearance` holds — same session, same navigation, opposite outcomes, "
+                "which is the demonstration and the reason at once. It matters here "
+                "rather than being cosmetic because `theme.py`'s palettes are *selected* "
+                "per mode rather than flipped, so a reader who picked dark on one page "
+                "and got light on the next would be reading two different validated "
+                "palettes in one session.",
+        status="withdrawn",
+        replaced_by="[[appearance-is-streamlits-own-setting]] — there is no appearance "
+                    "widget at all now, so the question of who renders it does not "
+                    "arise. The *mechanism* this entry established is untouched and "
+                    "still load-bearing: widget state does not survive a navigation, "
+                    "which is why `shell.recall` / `shell.remember` exist "
+                    "([[a-page-control-that-names-the-state-must-outlive-the-page]]). "
+                    "What was wrong was the premise underneath it — that the dashboard "
+                    "should own an appearance control in the first place.",
+        caught_by="Driving the running page in Chrome in both modes on 2026-08-10. The "
+                  "radio reached the plot surfaces and nothing else: the app background, "
+                  "header, sidebar, body text, headings, metric tiles and the "
+                  "canvas-rendered tables all followed Streamlit's own appearance "
+                  "setting instead, so the two controls could disagree and routinely "
+                  "did. `AppTest` could not have seen it — it has no DOM.",
+        reproduce="make dashboard → dashboard/shell.py, dashboard/app.py",
+        source="docs/dashboard-revision-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard",),
+    ),
+    Decision(
+        id="appearance-is-streamlits-own-setting",
+        topic="problem",
+        claim="The dashboard has **one** appearance control, and it is Streamlit's own "
+              "System/Light/Dark switch. `.streamlit/config.toml` carries `[theme.light]` "
+              "and `[theme.dark]` generated from `theme.THEMES`, and `shell.mode()` is "
+              "`detected_mode()` with no widget behind it.",
+        because="There were two, and they owned different halves of the same page: "
+                "Streamlit's setting owned the background, header, sidebar, body text "
+                "and tables, while a sidebar radio owned the plot surfaces. A reader in "
+                "dark mode who picked 'light' got light charts on a dark page. Streamlit "
+                "1.60 carries per-mode theme config, which the project config predated "
+                "and declined to set, so the first half of the fix was a **data** change: "
+                "44 settings across two modes, derived from the palette rather than "
+                "retyped, and `make dashboard-config` regenerates them. That half alone "
+                "does not settle which control wins, and the deciding evidence is a "
+                "capability rather than a preference: **`st.dataframe` renders to a "
+                "canvas**, so no CSS a page injects can repaint a table, while config "
+                "can — and config keys off Streamlit's setting. Every model page puts a "
+                "table twin beside every chart, because the palette's relief rule "
+                "requires one, so a radio that could not move the tables would have "
+                "relocated the reported symptom rather than fixed it. Streamlit 1.60 also "
+                "promotes System/Light/Dark to the top of its own main menu "
+                "(`stMainMenuItem-theme-*`), so the radio was a second appearance control "
+                "three inches below a built-in one. **The one measured cost**: changing "
+                "appearance mid-session repaints the chrome immediately but does not "
+                "rerun the script, so already-drawn figures keep the old palette until "
+                "the next rerun — any navigation or widget click. `st.context.theme.type` "
+                "is fresh by then, confirmed in Chrome.",
+        status="settled",
+        reproduce="make dashboard-config → .streamlit/config.toml",
+        source="docs/dashboard-revision-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard",),
+    ),
+    Decision(
+        id="draft-room-is-a-page-and-still-an-app",
+        topic="drafting",
+        claim="The live draft room ships **both ways** — page 9 of the dashboard and a "
+              "standalone `make draft-room` — off one `render()`, and the navigation is "
+              "the *faster* of the two rather than a compromise for draft night.",
+        because="The room is the most expensive thing on the surface: ~40 MB of reference "
+                "field and a 90 MB tensor behind it. Under `st.tabs` it would have run on "
+                "every interaction anywhere in the app "
+                "([[dashboard-pages-not-tabs]]); under `st.navigation` its script does not run "
+                "until the reader selects it, and `st.cache_resource` holds the field for "
+                "the life of the process. Measured in Chrome over three cold restarts "
+                "rather than argued: first paint is **3.17 s** selected from the "
+                "navigation against **3.63 s** for a cold `make draft-room`, and a return "
+                "visit is **0.31 s** with no rebuild — the cold launch pays for the "
+                "browser loading Streamlit's bundle, which an in-app click has already "
+                "done. So the acceptance condition ('leave them separate if navigation is "
+                "measurably slower') resolved the other way. The standalone launch stays "
+                "anyway, and not for speed: draft night is a thirty-second clock and "
+                "nothing else should be able to raise, block or allocate inside that "
+                "process. `main()` is `set_page_config` plus `render()`, which is the "
+                "whole of the split, and a test pins that the shared half sets no page "
+                "config — a second call raises, on the page, at navigation time.",
+        status="built",
+        reproduce="make dashboard → dashboard/draft_room.py, dashboard/views/draft_room.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "product"),
+    ),
+    Decision(
+        id="a-page-control-that-names-the-state-must-outlive-the-page",
+        topic="drafting",
+        claim="The draft room's season, tournament, seat and objective are held in plain "
+              "session-state keys (`shell.recall` / `shell.remember`) rather than left to "
+              "widget state, because they say what the pick log *means*.",
+        because="[[appearance-lives-in-the-shell]] records that Streamlit clears widget "
+                "state for a page the reader has left, and the escape it used — render it "
+                "from the entrypoint — is not available to a control that belongs to one "
+                "page. The room made the gap consequential rather than cosmetic: its pick "
+                "log is a plain key and **does** survive a navigation, so a control that "
+                "resets beside it does not lose the draft, it silently re-reads it. "
+                "Measured under `AppTest` with the shadow keys disabled: leave the room "
+                "and come back and the seat goes 5 → 1 and the objective `p_advance` → "
+                "`bracket_ev` while the picks stay put — and the season goes 2022-23 → "
+                "2023-24, where the log's board index 2 stops meaning Luka Dončić and "
+                "starts meaning Giannis Antetokounmpo. Wrong-seat bookkeeping is the "
+                "failure the page's own docstring calls the one that invalidates "
+                "everything below it. With the keys in place the same round trip returns "
+                "every control unchanged.",
+        status="built",
+        reproduce="make dashboard → dashboard/shell.py, dashboard/draft_room.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "product"),
+    ),
+    Decision(
+        id="one-page-renders-no-navigation",
+        topic="problem",
+        claim="The navigation **must carry at least two pages**, because Streamlit draws "
+              "no navigation widget at all for a single-page app — so the shell shipped "
+              "a placeholder beside the one real page until step 2 replaced it.",
+        because="Measured in a browser rather than assumed: with one `st.Page`, "
+                "`st.navigation(position='sidebar')` still sends `Position.SIDEBAR` and "
+                "the frontend renders nothing — `[data-testid=\"stSidebarNav\"]` is absent "
+                "from the DOM, while two pages render it with both entries. So a shell "
+                "shipped alone would be indistinguishable from the single-page script it "
+                "replaced, and neither the navigation nor the cross-page state in "
+                "[[appearance-lives-in-the-shell]] could be verified in a browser at all. "
+                "The placeholder was the *next* page in the build order rather than a "
+                "lorem-ipsum tab, so step 2 replaced its row in `app.VIEWS` instead of "
+                "adding to it — [[tournament-page-is-the-cheap-half]] landed on "
+                "2026-08-10 and `dashboard/views/placeholder.py` was deleted with it. "
+                "**The constraint outlives the placeholder** and is now pinned by "
+                "`test_the_navigation_carries_at_least_two_entries`, which is what stops "
+                "a future edit back to one page silently rendering no nav. Two rules the "
+                "placeholder followed are recorded because the next one will need them: "
+                "it showed no numbers, and it named `make` targets rather than artifact "
+                "filenames — `audit.py`'s orphaned-artifact check counts an artifact as "
+                "read when any string literal in `dashboard/` names it, so a placeholder "
+                "listing `strategy_sweep.csv` would report a file as drawn that nothing "
+                "draws, and the orphan count is how the plan picks what to build next.",
+        status="built",
+        reproduce="make dashboard → dashboard/app.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "provenance"),
+    ),
+    Decision(
+        id="tournament-page-is-the-cheap-half",
+        topic="drafting",
+        claim="The **Tournament & strategy** page reads the strategy and bracket families "
+              "as they already stand and emits no new artifact — four blocks over "
+              "`bracket_structure`, `strategy_sweep`, `strategy_shipped` beside "
+              "`strategy_realized`, and `strategy_paired`.",
+        because="`make dashboard-audit`'s orphaned-artifact check asks the inverse "
+                "question — what has the pipeline written that nothing looks at — and it "
+                "pointed straight here: the whole strategy family, the bracket family "
+                "and `economics.py`'s contest arithmetic were on disk, checked by their "
+                "own gates, and had never been drawn. That is what made this step 2 of "
+                "the expansion rather than step 8: it is the richest page in the plan, it "
+                "needs no pipeline work, and it exercises the multipage shell with a "
+                "genuinely different layout before the expensive model-card step lands. "
+                "The four blocks are ordered as a reader needs them rather than as the "
+                "pipeline produced them — what the contest pays, what the sweep bought, "
+                "what the honest readout said, and which gaps the budget could not "
+                "settle.",
+        status="built",
+        reproduce="make dashboard → outputs/predictions/strategy_sweep.csv, "
+                  "outputs/predictions/strategy_paired.csv, "
+                  "outputs/predictions/strategy_shipped.csv, "
+                  "outputs/predictions/strategy_realized.csv, "
+                  "outputs/predictions/bracket_structure.csv",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "drafting"),
+    ),
+    Decision(
+        id="hurdle-is-drawn-in-survival-units",
+        topic="drafting",
+        claim="The break-even hurdle is drawn on the sweep's lift axis as "
+              "**`p_null × hurdle`** — +0.0293 at `600k_shootaround`, +0.0205 at "
+              "`20k_spin_move` — under a stated proportional-payout assumption, with the "
+              "measured elasticity printed beside it.",
+        because="The hurdle is denominated in *return* and the sweep's headline is "
+                "denominated in *survival*, because `select-on-p-advance-report-roi` put "
+                "it there: ROI is dominated by rare deep runs and does not resolve at any "
+                "affordable budget. Drawing +17.60% on a lift axis would be a units "
+                "error, and drawing nothing would leave the page's central chart with no "
+                "reference for whether an edge is worth entering on. An exchangeable "
+                "entry returns `1 − rake` at `p_null`, so returning the fee needs "
+                "`p_null/(1 − rake) = p_null·(1 + hurdle)` and the lift is `p_null · "
+                "hurdle`. **The assumption is conservative and that is measured, not "
+                "asserted**: the elasticity of the sweep's own ROI with respect to its "
+                "own survival has a median of 5.40 at `600k_shootaround` and 2.01 at "
+                "`20k_spin_move`, and exceeds 1 on all 88 swept rows — payout compounds "
+                "through four cuts into a 10,000× top prize — so the drawn line sits "
+                "above the lift a real break-even needs. The page prints the elasticity "
+                "rather than hiding the assumption inside the line.",
+        status="built",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_sweep.csv",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "drafting", "economics"),
+    ),
+    Decision(
+        id="unresolved-gaps-are-styled-not-buried",
+        topic="drafting",
+        claim="A paired gap whose 95% interval covers zero gets its **own categorical "
+              "slot, an open marker and a count tile**, rather than being greyed out or "
+              "dropped.",
+        because="An unresolved gap is a decision the simulation budget cannot make, not a "
+                "small effect — and on this page it is load bearing, because the α arms "
+                "are exactly the ones clustered there: "
+                "[[alpha-has-a-sign-but-not-a-location]] is *visible* only if the "
+                "unresolved rows are legible. Recessive grey would say the opposite of "
+                "what the finding is. The encoding is triply redundant so no value is "
+                "reachable by colour alone — the interval visibly straddles the zero "
+                "line, the marker is hollow (the same convention the fingerprint uses for "
+                "a pinned spoke), and both the legend and the table twin name it. "
+                "`crosses_zero` is derived from the interval the chart draws rather than "
+                "read from the artifact's own `resolved` column, so the styling can never "
+                "contradict the bar beside it; a test pins that the two agree on the "
+                "shipped artifact. The self-comparison row is dropped, since a baseline "
+                "against itself is a zero-width interval at zero and would sit in the "
+                "unresolved count forever.",
+        status="built",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_paired.csv",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "drafting"),
+    ),
+    Decision(
+        id="a-pages-own-block-is-named-not-numbered",
+        topic="problem",
+        claim="The seven model-page blocks are **numbered and shared**; a block only one "
+              "page owns is **named**, and sits at the question it extends rather than at "
+              "the end.",
+        because="`model_page.render(class_key, extra=...)` keys a page's own block on the "
+                "numbered block it follows. Inserting it into the sequence instead would "
+                "mean block 5 was a different block on two of the four pages, which is the "
+                "one property the shared numbering buys. Both blocks that exist today are "
+                "keyed on block 1 — the box-score page's no-fit floor and the game-length "
+                "page's per-class check — because 'what did this head buy over doing "
+                "nothing' is the first thing to know about a head and not the eighth. "
+                "Pages 5 and 6 also confirmed the step-4 premise that a model page is "
+                "configuration: `views/components.py` and `views/game_length.py` name a "
+                "class and add one callable each, and `model_cards.CLASSES` already "
+                "carried their title, icon, `url_path`, head order and intro.",
+        status="built",
+        reproduce="make model-cards → outputs/predictions/model_card_index.csv",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard",),
+    ),
+    Decision(
+        id="every-component-head-is-drawn-against-its-floor",
+        topic="components",
+        claim="The box-score page draws **every head's margin over its own no-fit floor**, "
+              "with `ftm|fta`'s negative margin on the chart rather than omitted.",
+        because="A component head's whole claim is that fitting bought something over the "
+                "player's prior per-36 rate carried forward, and this repo's own headline "
+                "for the rate side is that the floor scores validation R² 0.81-0.95 on the "
+                "counts. A fitted score with no reference point is unreadable. On the "
+                "shipped Stan ladder ten heads clear their floor and `ftm|fta` does not "
+                "(-0.0190 R²), which is a finding — an empirical-Bayes shrink of a prior "
+                "free-throw percentage is already close to optimal for a quantity that is "
+                "nearly pure player skill. The zero line is the floor, so position carries "
+                "it; a non-clearing bar is also outlined and prints its own value, because "
+                "no value on this surface may be reachable by colour alone. R² is each "
+                "head's own on its own response, so a bar's height reads as how much the "
+                "fit added and never as one head beating another. Read from "
+                "`stan_component_metrics.csv` rather than from the model cards, which "
+                "describe the arm that shipped and carry no record of what it beat.",
+        status="built",
+        reproduce="make stan-components → outputs/predictions/stan_component_metrics.csv",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "components"),
+    ),
+    Decision(
+        id="the-share-head-is-anchored-to-its-own-column",
+        topic="components",
+        claim="Each box-score head declares whether it is a **count, an attempt share or a "
+              "conversion**, anchored to the design column carrying its own prior-season "
+              "rate — and `fg3a|fga`'s page says in words that it is not a shooting "
+              "percentage.",
+        because="`fg3a | fga` models `fg3a / fga`, the three-point share of a player's shot "
+                "diet, and its own prior-season term is named `logit_fg3a_pct_lag1` — where "
+                "`_pct_` is `fg3a / fga` and **not** `fg3m / fg3a`. Three-point shooting "
+                "percentage is a different quantity on a different head "
+                "(`logit_fg3m_pct_lag1`), and block 4 puts the first of those names at the "
+                "top of the panel as the head's strongest term. That is exactly the "
+                "confusion `stan_components.conversion_variants` takes an explicit `own=` "
+                "parameter to prevent in the fitting code, and a page reprinting the column "
+                "name without saying which ratio it is hands it back on the way out. The "
+                "claim is an interpretation, so it carries a machine-checkable anchor in "
+                "the sense `pca.orient()` uses: a test asserts every declared "
+                "`own_family` is a real `term_family` on that head in "
+                "`model_card_features.csv`, so a refit that renames the column fails rather "
+                "than mislabels.",
+        status="built",
+        reproduce="make model-cards → outputs/predictions/model_card_features.csv",
+        source="docs/shot-attempt-basis-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "components"),
+    ),
+    Decision(
+        id="game-length-is-read-at-the-games-unit",
+        topic="components",
+        claim="The game-length page's own block reads both heads **in games** — observed "
+              "against the fitted arm and its floor, per game class — because block 5's "
+              "ribbon cannot say anything about them.",
+        because="The onset head is fitted on 26 season cells and the depth head on 4 depth "
+                "cells, so each has a **two-point** validation ECDF. A posterior-predictive "
+                "ribbon over two grid points is an arithmetic shape, not a calibration "
+                "reading, and the page says so with the grid count read from the artifact. "
+                "`make stan-game-length` already writes the readout that works: a "
+                "predictive count per game class for every arm of the ladder including its "
+                "no-fit floor. `regulation` is `n_games` minus the other three by "
+                "construction for every arm alike, so it is carried in the table and left "
+                "off the figure, where it is a 2,300-long bar that flattens the three "
+                "classes the arms differ on. The observed is an outlined bar rather than a "
+                "third filled series: it is the target the two arms are measured against, "
+                "and ink is what block 5 already uses for an observed curve.",
+        status="built",
+        reproduce="make stan-game-length → outputs/predictions/stan_game_length_ppc.csv, "
+                  "outputs/predictions/stan_game_length_depth.csv",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "components"),
+    ),
+    Decision(
+        id="the-smallest-heads-fixed-the-shared-renderer",
+        topic="problem",
+        claim="Pages 5 and 6 changed `model_page.py` and `charts.py` **once** rather than "
+              "forking a renderer, and the five defects they exposed were all latent on the "
+              "pages already shipped.",
+        because="The two game-length heads are the smallest in the project — one design "
+                "column and none — and the box-score heads are the first to impute "
+                "anything, so between them they reached branches the availability page "
+                "cannot. Each fix is in the shared layer and Availability was re-verified "
+                "after all five: a lone design column reported as 'correlates with nothing' "
+                "when its off-diagonal is empty by arithmetic; a 1 x 1 correlation heatmap "
+                "drawn as though it were a measurement; `DataFrame.itertuples` renaming "
+                "`Imputed share` to `_10` so block 2 raised a `KeyError` on any head that "
+                "imputed something; plotly inferring `lines+markers` **and its own default "
+                "colorway** for a ribbon of 20 points or fewer, putting stray cyan and red "
+                "dots on a validated palette; and a four-column feature grid drawing one "
+                "histogram in its leftmost quarter. A sixth was a missing value rather than "
+                "a layout: the depth head has no season span, and an f-string over an "
+                "absent CSV cell printed the literal `nan`, which is the same class of "
+                "defect as the `undefined` a plotly title with no text renders as.",
+        status="built",
+        reproduce="make dashboard → dashboard/views/model_page.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard",),
+    ),
+    Decision(
+        id="two-units-share-an-axis-only-through-their-floors",
+        topic="minutes",
+        claim="The minutes page draws the two-unit reversal on one axis by plotting each "
+              "arm's CRPS **as a ratio to the no-fit floor of its own unit**, never the "
+              "CRPS itself.",
+        because="The page exists to show that one posterior clears its floor at the "
+                "per-player-game unit and fails at the season unit while the marginal head "
+                "does the reverse — and the two CRPS are 4.4945 minutes and 170.06, which "
+                "cannot share an axis. The floor is the reference every head in this "
+                "project is already quoted against, so normalizing by it is not a "
+                "convenience: the zero line *is* the floor, position carries the verdict, "
+                "and the ratio is dimensionless. The shipped readings are +3.9% and -5.4% "
+                "for the composition against -2.3% and +10.5% for the marginal head. The "
+                "two heads meet at both units without anything being refitted: at the "
+                "season unit `make minutes-unification` rehydrates both around their "
+                "persisted posteriors, and at the per-game unit the marginal head is the "
+                "`independent_comparator` arm the composition's own ladder refits as its "
+                "control.",
+        status="built",
+        reproduce="make minutes-unification → outputs/predictions/minutes_unification.csv",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "minutes"),
+    ),
+    Decision(
+        id="three-named-blocks-go-where-their-questions-are",
+        topic="problem",
+        claim="A model page may key **several** named blocks, one per numbered block whose "
+              "question it extends — the minutes page has three, at blocks 1, 5 and 6.",
+        because="Pages 5 and 6 settled that a page's own block is named rather than "
+                "numbered and both keyed theirs on block 1, which left open whether the "
+                "hook was 'the page's extra material' or 'the block that answers this "
+                "question'. It is the second. The two-unit verdict follows block 1 because "
+                "which unit a head is a model at is the first thing to know about it; the "
+                "injected player-season effect follows block 5 because what fails at the "
+                "season unit is calibration and sigma is what moves the PIT KS; and the "
+                "zero-sum team constraint follows block 6 because block 6 is four panels of "
+                "*marginal* residuals and no marginal metric can see whether a head carries "
+                "it. Putting all three under block 1 would have answered two questions "
+                "before they were asked.",
+        status="built",
+        reproduce="make dashboard → dashboard/views/minutes.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard",),
+    ),
+    Decision(
+        id="a-comparison-page-fixes-its-colours",
+        topic="problem",
+        claim="Where a page's figures compare two heads rather than mark one among many, "
+              "each head keeps **one fixed palette slot for the whole page** and the tiles "
+              "rather than the colour say which head the selector has open.",
+        because="Pages 5 and 6 use highlight-and-gray, where slot 0 marks the open head "
+                "among eleven bars. Three of the minutes page's four figures have exactly "
+                "two series and both are the point, so a slot that followed the selector "
+                "would mean two different things on one screen. Two series is well inside "
+                "`ALL_PAIRS_CAP`, so nothing is lost. What follows the selector instead is "
+                "the tile row, which reads the open head's own side of each comparison in "
+                "its own direction — and that is where the sign errors live, since flipping "
+                "a paired gap means swapping the interval's ends as well as negating them, "
+                "which is wrong in exactly one of the two branches and looks fine in the "
+                "other.",
+        status="built",
+        reproduce="make dashboard → dashboard/charts.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "palette"),
+    ),
+    Decision(
+        id="a-reference-line-the-axis-already-names-is-drawn-bare",
+        topic="problem",
+        claim="A reference line whose meaning the axis title already carries is drawn "
+              "**without a label**, because neither placement available to one is safe in "
+              "general.",
+        because="`_reference_line` can put its label at the top of the paper or at the "
+                "floor, and both are at the line's own x — so the top collides with the "
+                "legend exactly when zero falls under a legend entry, and the floor collides "
+                "with the bottom row's interval. Which one happens is a property of the "
+                "*data*, invisible in the trace and only findable by rendering: it was "
+                "visible on the minutes page's sigma sweep and latent on the tournament "
+                "page, which has used the same builder since it shipped. `fig_paired`'s x "
+                "title reads 'gap ... against <baseline>', so the label was a duplicate and "
+                "dropping it removes the collision surface rather than moving it. The "
+                "tournament page was re-rendered to confirm the only change there is one "
+                "fewer annotation.",
+        status="built",
+        reproduce="make dashboard → dashboard/charts.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "palette"),
+    ),
+    Decision(
+        id="the-shipped-sigma-is-read-from-the-card-not-typed",
+        topic="minutes",
+        claim="The minutes page reads the injected effect's shipped sigma from "
+              "`player_season_sigma` on the composition's own model card, and a test holds "
+              "that it is still the **train** grid's optimum.",
+        because="0.450 is load-bearing precisely because of where it came from: the "
+                "validation grid's optimum is 0.375, and a sigma read off the split it is "
+                "later scored against would be tuned. The two grids score disjoint rows — "
+                "742 validation player-seasons against 1,145 training ones — both optima are "
+                "interior, and they differ by one grid step, which is the evidence the "
+                "figure was not moved by the evaluation data. `make posteriors` records the "
+                "value and `minutes_unification.rehydrate_composition` applies it, so a page "
+                "that typed 0.450 would keep printing it after the shipped value moved, and "
+                "a refit that moved the train optimum without moving the persisted value "
+                "would leave the page claiming a sigma nothing selected. Both failures are "
+                "now a failing test rather than a stale page.",
+        status="built",
+        reproduce="make model-cards → outputs/predictions/model_card_index.csv",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "minutes"),
+    ),
+    Decision(
+        id="a-printout-is-not-an-artifact",
+        topic="data",
+        claim="The capture programs' coverage is emitted as **two CSVs** by `make "
+              "capture-calendar`, alongside the printouts `make capture-status` and `make "
+              "adp-status` already produce, and the emitter re-reads those commands' own "
+              "readers rather than re-deriving anything.",
+        because="A printout is the right shape for a person at a terminal and the wrong "
+                "one for everything else: the coverage of a perishable feed is an "
+                "operational fact, and a printout cannot be drawn, diffed, or checked by "
+                "anything. Two files rather than one because they answer two questions — "
+                "the calendar says *which days*, and the program table says *what happens "
+                "to a day that is missing*, which is a fact about the **source** rather "
+                "than about the archive and is the one thing a reader cannot infer from a "
+                "grid of cells. It re-reads `injury_reports.capture_status` and `injuries`' "
+                "snapshot/missing-day pair so the printout and the artifact cannot drift "
+                "apart; a test pins that they agree. It runs at the end of "
+                "`make daily-capture`, because a scheduler that stops firing is only "
+                "visible in the artifact it stops refreshing.",
+        status="built",
+        reproduce="make capture-calendar → outputs/eda/capture_calendar.csv, "
+                  "outputs/eda/capture_programs.csv",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("capture", "dashboard"),
+    ),
+    Decision(
+        id="a-day-with-no-report-is-not-a-gap",
+        topic="data",
+        claim="The calendar's state vocabulary is three words, not two: `captured`, "
+              "`nothing_to_capture`, `missed`. The middle one is the load-bearing one.",
+        because="A day the CDN 403s is a day with no report to have — the offseason, the "
+                "All-Star break — and is not a failure; a day that was never attempted is "
+                "a **run that did not happen**. Without the middle state the two are "
+                "indistinguishable from the outside, and a scheduler that silently stopped "
+                "firing would only become visible once the days were already gone. It is "
+                "also a rendering decision: on the live archive 47 of 211 injury-report "
+                "days are `nothing_to_capture`, so colouring them as gaps would cry wolf "
+                "on a quarter of the calendar and train the reader to ignore the orange.",
+        status="built",
+        reproduce="make capture-calendar → outputs/eda/capture_calendar.csv",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("capture", "dashboard"),
+    ),
+    Decision(
+        id="recoverability-rides-on-the-row-not-the-cell",
+        topic="data",
+        claim="Whether a missed day can still be fetched is drawn on the calendar's **row "
+              "label**, never as a fourth cell colour.",
+        because="It is a property of the *program*, not of the day: an injury-report gap "
+                "is recoverable until it ages out of the CDN's window and an ESPN gap "
+                "never is, and neither fact varies along its own row. Encoding it in the "
+                "cell would also break the palette: the states already take two categorical "
+                "slots and a neutral, and a fourth would put orange beside red, which is "
+                "exactly the pair `theme.py`'s validation rejects. Putting it on the axis "
+                "is a second channel that costs nothing and satisfies the relief rule.",
+        status="built",
+        reproduce="make dashboard → dashboard/inputs.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "palette", "capture"),
+    ),
+    Decision(
+        id="an-event-programs-empty-days-are-not-gaps",
+        topic="data",
+        claim="Only a `daily` program can hold a `missed` day. An `event` program's empty "
+              "stretches are drawn as nothing rather than as failures.",
+        because="The DraftKings board is live only while contests are, and FantasyPros is "
+                "captured when it moves — neither has a schedule to have missed, so filling "
+                "their rows would invent roughly a year of failures a year and bury the two "
+                "genuine daily programs' gaps under them. The cadence is a column on "
+                "`capture_programs.csv` for exactly this reason, and the calendar carries "
+                "rows only for days that have a state rather than a dense grid.",
+        status="built",
+        reproduce="make capture-calendar → outputs/eda/capture_programs.csv",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("capture", "dashboard"),
+    ),
+    Decision(
+        id="the-fit-window-is-shown-rather-than-chosen-for-the-reader",
+        topic="simulations",
+        claim="Page 7 draws each of the four calibrated simulator inputs at **all three** "
+              "fit windows and names both the safe default (`train_val`) and the window "
+              "`make simulate-season` actually consumes (`train`).",
+        because="Both are right, for different reasons, and that is the finding rather than "
+                "an inconsistency. `residual_correlation.to_matrix` defaults to `train_val` "
+                "because it is the window that is never *wrong* — it excludes the test "
+                "seasons and nothing else — and `src/sim/season.py` overrides it to `train` "
+                "because its backtest scores 2022-23 and 2023-24, which are *inside* "
+                "`train_val`. Which window to consume is decided by what the number will be "
+                "scored against, not by which is widest. The panel exists because the "
+                "windows differ by two seasons out of thirty: the largest of the four moves "
+                "**3.9%** across them and the rest by less, so a number consumed at the "
+                "wrong window would never announce itself in the output.",
+        status="built",
+        reproduce="make dashboard → outputs/eda/residual_correlation.csv",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "leakage", "simulations"),
+    ),
+    Decision(
+        id="a-correlation-heatmap-is-scaled-to-what-it-carries",
+        topic="problem",
+        claim="The residual copula's heatmap narrows its colour scale to ±0.15 and blanks "
+              "its own diagonal; the model pages' feature-correlation heatmap keeps the "
+              "pinned ±1. Same builder, two scales, and the caller states which.",
+        because="The pin is right on a model page — feature correlations run the whole "
+                "range, and pinning them is what makes two heads' heatmaps mean the same "
+                "thing. It is wrong here: the copula's largest off-diagonal cell is "
+                "**+0.133**, so on the pinned scale every cell that is not the diagonal "
+                "renders as the neutral midpoint and the figure reports *no dependence* "
+                "about a matrix that exists precisely to carry some. The diagonal is what "
+                "forces the scale — 1.0 by construction, and no information — so narrowing "
+                "and masking are one decision. Only a rendered figure showed it; the trace "
+                "was correct throughout.",
+        status="built",
+        reproduce="make dashboard → dashboard/charts.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "palette"),
+    ),
+    Decision(
+        id="an-unnamed-row-grays-out-rather-than-taking-a-slot",
+        topic="problem",
+        claim="`charts._head_colors` falls back to `muted` for a row its slot map does not "
+              "name, rather than to the next categorical slot.",
+        because="It is what lets one map serve both a *fixed pairing* and "
+                "*highlight-and-gray*, which is what let the three-window panel reuse "
+                "`fig_metric_facets` instead of growing a near-copy: the minutes page names "
+                "every head it draws so the fallback never fires there, and the inputs page "
+                "names only the window the simulator consumes and lets the other two recede. "
+                "Handing an unnamed row `series[len(slots)]` was a colour nobody chose, "
+                "which is the worse failure either way.",
+        status="built",
+        reproduce="make dashboard → dashboard/charts.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "palette"),
+    ),
+    Decision(
+        id="weekly-scores-are-gate-a-at-the-unit-the-lineup-is-set-at",
+        topic="simulations",
+        claim="`make weekly-scores` scores observed against simulated `dk_pts` **per "
+              "player per scoring period**, on train and validation, and page 8 of the "
+              "dashboard draws it. Gate A's four bars are all at the season or the game; "
+              "**nothing scored dk_pts at the week**, which is the unit DK seats the best "
+              "7 of 16 in and therefore the unit every weekly max, round total and "
+              "elimination cut is a function of.",
+        because="A head is only a model at the unit it was scored at — the lesson "
+                "`make minutes-unification` already paid for, where one posterior cleared "
+                "its floor per team-game and failed it per season. Changing the unit "
+                "needed **no re-simulation**: the tensor's second axis already IS the "
+                "scoring period, so the whole target is a reduction plus `make "
+                "model-cards`' own binning helpers by import, and it runs in 1.3 s over "
+                "30,780 player-periods. What it found: the simulator is **-2.93 dk_pts a "
+                "week on train and -2.26 on validation**, R^2 0.396 / 0.455 against 0.59-0.63 "
+                "at the season total, and the bias is concentrated at the **start** of the "
+                "season — -5.28 in week 1 sliding to -0.70 by week 17. The spread, which "
+                "is what a max over sixteen players is most sensitive to, comes in at "
+                "**0.92-0.95x** the observed, and about **a fifth of player-weeks score "
+                "nothing at all** against 15-18% simulated. Three of the twenty periods "
+                "are DOUBLE weeks (Rounds 2-4), so every panel is faceted by period "
+                "length rather than pooled: a two-week total in a distribution of one-week "
+                "ones is a right tail that is a calendar fact. The KS distance is reported "
+                "and never thresholded, the rule the model pages already carry; the only "
+                "bars are on the 500 simulated seasons behind each panel, re-read on two "
+                "interleaved halves.",
+        status="built",
+        reproduce="make weekly-scores → outputs/predictions/weekly_score_index.csv, "
+                  "outputs/predictions/weekly_score_period.csv, "
+                  "outputs/predictions/weekly_score_quantile.csv",
+        source="docs/dashboard-revision-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "simulations", "provenance"),
+    ),
+    Decision(
+        id="the-training-pair-is-the-last-two-four-round-seasons",
+        topic="simulations",
+        claim="The training side of the weekly readout is **2018-19 and 2021-22**, not the "
+              "last two training seasons. Two seasons rather than all twenty-five, to "
+              "match the validation pair; and those two rather than 2020-21 and 2021-22, "
+              "because a season that does not carry DK's whole four-round structure "
+              "contributes structural zeros rather than evidence.",
+        because="Measured before committing to the run rather than after reading a "
+                "surprising panel. **2020-21 has no Round 4 at all** — the COVID season "
+                "started on 21 December 2020 and ran out of weeks, so tensor slot 19 "
+                "carries 0 games and every player's Round-4 total is exactly zero on both "
+                "sides. **2019-20's Round 4 is the Orlando bubble**: 293 players against "
+                "373 in Round 3, so a fifth of the pool has an observed zero that is a "
+                "schedule fact rather than an availability outcome — worse than an absence, "
+                "because it looks like data. `assert_covers_the_tensor` refuses a season "
+                "with an empty slot rather than scoring it, so the decision is enforced "
+                "instead of remembered. Cost was sized first as the plan asked: one season "
+                "is ~78 s and ~80 MB at 2,000 sims, measured at `--n-sims 20` before the "
+                "full run. `season.allowed_seasons` already permitted a training season "
+                "through `held_out.selection_split`, so nothing needed unlocking and a "
+                "test season still refuses.",
+        status="settled",
+        reproduce="make simulate-season → data/features/sim_tensor_2018-19.npz, "
+                  "data/features/sim_tensor_2021-22.npz, "
+                  "outputs/predictions/sim_season_gate_a.csv",
+        source="docs/dashboard-revision-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("simulations", "provenance"),
+    ),
+    Decision(
+        id="gate-a-merges-by-season-rather-than-clobbering",
+        topic="simulations",
+        claim="`make simulate-season` merges its Gate A rows into "
+              "`sim_season_gate_a.csv` **by season**, replacing only the seasons it just "
+              "ran.",
+        because="`--season` is a real flag and a partial run is the normal workflow — "
+                "simulating one training season used to write a one-season file and "
+                "silently drop the record for every other season, including the two "
+                "validation ones the layer is scored on. It is the mistake `make "
+                "posteriors`' manifest already avoids by merging on `head`, for the same "
+                "reason: the expensive artifact is per unit. Re-running a season replaces "
+                "its own rows rather than appending, so the file cannot end up holding two "
+                "readings of one season and leaving a consumer to pick.",
+        status="built",
+        reproduce="make simulate-season → outputs/predictions/sim_season_gate_a.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("simulations", "provenance"),
     ),
 )

@@ -902,8 +902,14 @@ def simulate(ctx: dict) -> dict:
 
 # ── Gate A ────────────────────────────────────────────────────────────────────
 
-def _metrics(samples: np.ndarray, y: np.ndarray) -> dict:
-    """The marginal metric set every head in this project reports, on `(sims x rows)`."""
+def marginal_metrics(samples: np.ndarray, y: np.ndarray) -> dict:
+    """The marginal metric set every head in this project reports, on `(sims x rows)`.
+
+    Public because Gate A is not the only place it is read: `src/sim/weekly.py` scores the
+    same tensor at the scoring-period unit and has to do it with the *same* arithmetic, or
+    a reader comparing a weekly MAE against the season-total row beside it is comparing two
+    definitions rather than two units.
+    """
     pred = samples.mean(axis=0)
     return {"n": int(len(y)),
             "mae": float(np.abs(pred - y).mean()),
@@ -1026,7 +1032,7 @@ def gate_a(cfg: dict, ctx: dict, sim: dict) -> pd.DataFrame:
     # ── 1. season-total dk_pts ───────────────────────────────────────────────
     totals = sim["dk_pts"].sum(axis=1).T                 # (sims x units)
     keep = realized["gp"].to_numpy() > 0
-    m = _metrics(totals[:, keep].astype(float), realized["dk_total"].to_numpy()[keep])
+    m = marginal_metrics(totals[:, keep].astype(float), realized["dk_total"].to_numpy()[keep])
     incumbent = _bar(pd.read_csv(out_dir / "season_total_metrics.csv"),
                      treatment="beta_binomial", group="all")
     bar = incumbent.set_index("metric")["value"]
@@ -1045,7 +1051,7 @@ def gate_a(cfg: dict, ctx: dict, sim: dict) -> pd.DataFrame:
     order = np.empty(ctx["n_units"], dtype=np.int64)
     order[ctx["component_row"][has_unit]] = np.flatnonzero(has_unit)
     gp_unit = sim["season_gp"][:, order]
-    gp_metrics = _metrics(gp_unit[:, keep], realized["gp"].to_numpy()[keep])
+    gp_metrics = marginal_metrics(gp_unit[:, keep], realized["gp"].to_numpy()[keep])
     # The pmf is compared **pooled over players**, not player by player. A per-player
     # empirical pmf from `n_sims` draws over 83 support points is mostly Monte Carlo error:
     # its total variation against any smooth pmf falls with `n_sims` whatever the model
@@ -1129,7 +1135,7 @@ def gate_a(cfg: dict, ctx: dict, sim: dict) -> pd.DataFrame:
                                     ["predictive_sd"].iloc[0]),
                  "composition_only": float(_bar(unification, arm="composition_sum")
                                            ["predictive_sd"].iloc[0]),
-                 **_metrics(minutes[:, keep], realized["minutes"].to_numpy()[keep])})
+                 **marginal_metrics(minutes[:, keep], realized["minutes"].to_numpy()[keep])})
 
     # ── diagnostics, reported and not gated ──────────────────────────────────
     probe = sim["probe"]
@@ -1293,12 +1299,31 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
         gates.append(table)
         _report_gate(table)
 
-    gate = pd.concat(gates, ignore_index=True)
     dest = out_dir / "sim_season_gate_a.csv"
+    gate = merge_gate(pd.concat(gates, ignore_index=True), dest)
     gate.to_csv(dest, index=False)
-    print(f"\nSaved {len(gate):,} Gate A rows → {dest}")
+    print(f"\nSaved {len(gate):,} Gate A rows over "
+          f"{gate['season'].nunique()} seasons → {dest}")
     paths["gate_a"] = dest
     return paths
+
+
+def merge_gate(fresh: pd.DataFrame, dest: Path) -> pd.DataFrame:
+    """This run's Gate A rows over whatever the file already held, merged **by season**.
+
+    `--season` is a real flag, so a run that names one season used to write a one-season
+    file and silently drop the record for every other season. That is the mistake
+    `make posteriors`' manifest already avoids by merging on `head`, and for the same
+    reason: the expensive artifact is per unit and a partial run is the normal workflow.
+    Re-running a season replaces its own rows rather than appending a second copy, so the
+    file cannot grow two readings of one season and leave a consumer to pick.
+    """
+    if not dest.exists():
+        return fresh
+    kept = pd.read_csv(dest)
+    kept = kept[~kept["season"].isin(set(fresh["season"]))]
+    return pd.concat([kept, fresh], ignore_index=True).sort_values(
+        ["season", "check"], kind="stable").reset_index(drop=True)
 
 
 def _report_gate(table: pd.DataFrame) -> None:

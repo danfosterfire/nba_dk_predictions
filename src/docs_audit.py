@@ -123,6 +123,12 @@ NOTES = "docs/model-development-notes.md"  # findings from model selection and f
 QUIRKS = "docs/data-quirks.md"             # raw-data and library behaviour
 SPEC = "docs/project-spec.md"              # the spec every workflow reads
 SPLIT = "docs/train-validate-test-split.md"
+SIMS = "docs/simulations-plan.md"           # the simulation and drafting layer
+
+WEEK_INDEX = "outputs/predictions/weekly_score_index.csv"
+WEEK_PERIOD = "outputs/predictions/weekly_score_period.csv"
+WEEK_QUANTILE = "outputs/predictions/weekly_score_quantile.csv"
+SIM_GATE_A = "outputs/predictions/sim_season_gate_a.csv"
 
 GP_GATE = "outputs/predictions/stan_games_played_gate.csv"
 GP_COLLAPSE = "outputs/predictions/stan_games_played_collapse.csv"
@@ -201,6 +207,13 @@ MATRIX_A = "data/features/season_matrix_tierA.parquet"
 # derives them at render time from these checked-in raw boards, which are therefore
 # the artifact. `table()` reads any CSV path, so no new plumbing is needed.
 TOURNAMENTS = "data/raw/dk_best_ball_tournament_metadata.csv"
+# The drafting layer, quoted in `README.md` only. `docs/simulations-plan.md` carries the
+# same figures at far greater length and is deliberately *not* in this registry — the
+# overview is the document that goes stale, which is the argument the README builder makes
+# about itself, so the claims live where the drift risk is.
+STRATEGY_SWEEP = "outputs/predictions/strategy_sweep.csv"
+STRATEGY_SHIPPED = "outputs/predictions/strategy_shipped.csv"
+STRATEGY_GATE_D = "outputs/predictions/strategy_gate_d.csv"
 
 
 # ── Claims ────────────────────────────────────────────────────────────────────
@@ -387,6 +400,17 @@ def max_of(rel: str, column: str) -> float:
     _note_columns(column)
     frame = table(rel)
     return float(frame[column].max()) if frame is not None else float("nan")
+
+
+def nunique(rel: str, column: str) -> float:
+    """Distinct values in a column — for a doc that quotes the *size* of a grid.
+
+    `rows()` is the wrong tool where the artifact is long-format: the sweep is one row per
+    strategy x tier x season, so its arm count is a `nunique` and not a length.
+    """
+    _note_columns(column)
+    frame = table(rel)
+    return float(frame[column].nunique()) if frame is not None else float("nan")
 
 
 def mean_abs_dev(rel: str, column: str, centre: float, **where) -> float:
@@ -4142,6 +4166,15 @@ def _readme() -> list[Claim]:
     add("17.60%", TOURNAMENTS, lambda: _break_even_hurdle("600k_shootaround"),
         "highest break-even edge hurdle")
 
+    # ── methods: the drafting layer's shape ───────────────────────────────────
+    # The grid is a *size*, not a score, and it is claimed for the same reason the row
+    # counts above are: an arm added to `STRATEGIES` or a change to `sim.n_worlds` moves
+    # it, and nothing else in this file would notice.
+    add("22", STRATEGY_SWEEP, lambda: nunique(STRATEGY_SWEEP, "strategy"),
+        "strategies in the sweep")
+    add("500", STRATEGY_SWEEP, lambda: max_of(STRATEGY_SWEEP, "n_sims"),
+        "simulated worlds per season in the sweep")
+
     # ── methods: what was deprioritized ───────────────────────────────────────
     add("0.0059", DIAGNOSTICS,
         lambda: cell(DIAGNOSTICS, "delta_sequence", analysis="sequence_ablation"),
@@ -4314,6 +4347,25 @@ def _readme() -> list[Claim]:
     add("0.2%", STAN_AV_B,
         lambda: cell(STAN_AV_B, "inflation", n_players=15) - 1.0,
         "shared-beta roster spread at 15 players")
+
+    # ── results: the drafting layer ───────────────────────────────────────────
+    # The pair the README's headline turns on. They are two columns of one row, so a
+    # re-sweep that moved only the realized side — the one with N = 2 seasons behind it —
+    # would show up here as a single disagreement rather than as a silently updated story.
+    def shipped(column: str) -> float:
+        return cell(STRATEGY_SHIPPED, column, tournament="600k_shootaround")
+
+    add("0.2107", STRATEGY_SHIPPED, lambda: shipped("sim_lift"),
+        "shipped arm's simulated advance lift, 600k")
+    add("0.1268", STRATEGY_SHIPPED, lambda: shipped("realized_lift"),
+        "shipped arm's realized advance lift, 600k")
+    # Gate D's failure is a *count of zero*, which is the one shape of result that decays
+    # silently: a sweep that started separating the tiers would leave the prose true-looking
+    # and wrong. Both ends are claimed, so the denominator cannot drift either.
+    add("6", STRATEGY_GATE_D, lambda: rows(STRATEGY_GATE_D),
+        "Gate D paired comparisons")
+    add("0", STRATEGY_GATE_D, lambda: total(STRATEGY_GATE_D, "materially_different"),
+        "Gate D comparisons that separate the tiers")
 
     # ── discussion ────────────────────────────────────────────────────────────
     add("0.317", PROFILE,
@@ -5020,6 +5072,163 @@ def _tail_standard_error(metric: str) -> float:
     return float(np.sqrt(p * (1 - p) / n))
 
 
+# ── The weekly unit — Gate A one level below the season total ─────────────────
+
+def _week(column: str, period_type: str = "week", split: str = "train") -> float:
+    """One reading off `weekly_score_index.csv`, keyed the way the artifact is."""
+    return _one(table(WEEK_INDEX), column, period_type=period_type, split=split)
+
+
+def _week_extreme(column: str, largest: bool = True) -> float:
+    """The widest or narrowest reading across the four facets.
+
+    The doc quotes several of these as spans — "KS distances span 0.0265-0.0639" — because
+    four facets of one comparison are read together and a span is what a reader takes from
+    the table. Claiming both ends means a facet that moves in either direction fails.
+    """
+    frame = table(WEEK_INDEX)
+    if frame is None:
+        return float("nan")
+    values = frame[column].astype(float)
+    return float(values.max() if largest else values.min())
+
+
+def _week_spread_ratio(largest: bool = True) -> float:
+    """Simulated over observed sd, pooled over every row and draw, across the facets.
+
+    Derived here rather than emitted because it is a ratio of two columns the artifact
+    already carries, and the doc's claim is about the ratio. `pooled_sd` is deliberately
+    the numerator: `point_sd` is narrower by construction and is the substitution this
+    figure exists to avoid.
+    """
+    frame = table(WEEK_INDEX)
+    if frame is None:
+        return float("nan")
+    ratio = frame["pooled_sd"].astype(float) / frame["observed_sd"].astype(float)
+    return float(ratio.max() if largest else ratio.min())
+
+
+def _week_line_gap(largest: bool = True) -> float:
+    """How far a binned quartile line sits from its own level, worst per facet.
+
+    The page computes this in `dashboard/weekly.py` from the same rows; re-derived here
+    from the artifact so the doc's span is checked against the file rather than the view.
+    """
+    frame = table(WEEK_QUANTILE)
+    if frame is None:
+        return float("nan")
+    lines = frame[frame["panel"] == "quantile"]
+    gap = (lines["y"].astype(float) - lines["level"].astype(float)).abs()
+    worst = gap.groupby([lines["period_type"], lines["split"]]).max()
+    return float(worst.max() if largest else worst.min())
+
+
+def _week_period_bias(slot: int, split: str = "validation") -> float:
+    """Per-scoring-period bias, pooled across the split's seasons by row count.
+
+    Row-weighted rather than a mean of means, which is what `weekly.profile_panel` draws
+    and why each season's own `n` ships on the artifact.
+    """
+    frame = table(WEEK_PERIOD)
+    if frame is None:
+        return float("nan")
+    part = frame[(frame["split"] == split) & (frame["slot"] == slot)]
+    return float(np.average(part["bias"].astype(float),
+                            weights=part["n"].astype(float)))
+
+
+def _season_total_bias(largest: bool = True) -> float:
+    """Gate A's own season-total bias, across the four simulated seasons."""
+    frame = table(SIM_GATE_A)
+    if frame is None:
+        return float("nan")
+    values = frame[frame["check"] == "season_total_dk"]["bias"].astype(float)
+    return float(values.max() if largest else values.min())
+
+
+def _weekly() -> list[Claim]:
+    """`docs/simulations-plan.md`'s weekly Gate A row — the fifth bar, added 2026-08-10.
+
+    Everything here is a *reading* rather than a gate, which is why it is claimed at all:
+    the row counts, the season-total reconstruction and the draw budget are re-derived by
+    `make weekly-scores` itself and fail the build, exactly as `docs/model-cards-plan.md`
+    argues for its own figures. The metric table, the spreads and the per-period profile
+    are checked by nothing else, and they are what a reader takes away.
+    """
+    facets = (("week", "train", "13,022", "52.74", "49.81", "30.07", "−2.93", "0.3957",
+               "20.39"),
+              ("week", "validation", "13,141", "53.40", "51.14", "29.06", "−2.26",
+               "0.4549", "19.63"),
+              ("double_week", "train", "2,298", "93.24", "89.63", "50.48", "−3.61",
+               "0.4615", "34.37"),
+              ("double_week", "validation", "2,319", "98.51", "97.31", "52.90", "−1.21",
+               "0.4216", "36.18"))
+    columns = ("n", "observed_mean", "predicted_mean", "mae", "bias", "r2", "crps")
+    C: list[Claim] = []
+    for period_type, split, *quoted in facets:
+        for text, column in zip(quoted, columns):
+            C.append(_c(text, WEEK_INDEX,
+                        (lambda c=column, p=period_type, s=split: _week(c, p, s)),
+                        f"weekly {period_type}/{split} {column}", doc=SIMS))
+
+    C += [
+        _c("30,780", WEEK_INDEX, lambda: total(WEEK_INDEX, "n"),
+           "player-periods scored", doc=SIMS),
+        # The spread, which is what a max over sixteen players is most sensitive to.
+        _c("0.920", WEEK_INDEX, lambda: _week_spread_ratio(largest=False),
+           "narrowest simulated/observed sd ratio", doc=SIMS),
+        _c("0.954", WEEK_INDEX, lambda: _week_spread_ratio(largest=True),
+           "widest simulated/observed sd ratio", doc=SIMS),
+        _c("28.89", WEEK_INDEX, lambda: _week("point_sd"),
+           "one-week train point-prediction sd", doc=SIMS),
+        _c("49.05", WEEK_INDEX, lambda: _week("observed_sd"),
+           "one-week train observed sd", doc=SIMS),
+        # Zero weeks — the feature a season total averages away completely.
+        # Quoted as percentages, and `check_values` scales a `%` claim itself.
+        _c("20.7%", WEEK_INDEX, lambda: _week("zero_share"),
+           "one-week train observed zero share", doc=SIMS),
+        _c("19.9%", WEEK_INDEX,
+           lambda: _week("zero_share", split="validation"),
+           "one-week validation observed zero share", doc=SIMS),
+        _c("16.9%", WEEK_INDEX, lambda: _week("predicted_zero_share"),
+           "one-week train simulated zero share", doc=SIMS),
+        _c("18.2%", WEEK_INDEX,
+           lambda: _week("predicted_zero_share", split="validation"),
+           "one-week validation simulated zero share", doc=SIMS),
+        # Calibration, read as a distance and never as a verdict.
+        _c("0.0265", WEEK_INDEX, lambda: _week_extreme("ks", largest=False),
+           "narrowest KS distance", doc=SIMS),
+        _c("0.0639", WEEK_INDEX, lambda: _week_extreme("ks", largest=True),
+           "widest KS distance", doc=SIMS),
+        _c("0.103", WEEK_QUANTILE, lambda: _week_line_gap(largest=False),
+           "narrowest quantile-line gap", doc=SIMS),
+        _c("0.131", WEEK_QUANTILE, lambda: _week_line_gap(largest=True),
+           "widest quantile-line gap", doc=SIMS),
+        # The only bars in the target, and both are on the budget rather than the model.
+        _c("0.0061", WEEK_INDEX, lambda: _week_extreme("ecdf_band_mc"),
+           "worst ribbon half-sample disagreement", doc=SIMS),
+        _c("0.0027", WEEK_INDEX, lambda: _week_extreme("ks_mc"),
+           "worst KS half-sample disagreement", doc=SIMS),
+        # Where the season-total bias actually sits, week by week.
+        _c("−5.28", WEEK_PERIOD, lambda: _week_period_bias(0),
+           "validation bias in week 1", doc=SIMS),
+        _c("−4.99", WEEK_PERIOD, lambda: _week_period_bias(1),
+           "validation bias in week 2", doc=SIMS),
+        _c("−3.27", WEEK_PERIOD, lambda: _week_period_bias(2),
+           "validation bias in week 3", doc=SIMS),
+        _c("−1.08", WEEK_PERIOD, lambda: _week_period_bias(12),
+           "validation bias in week 13", doc=SIMS),
+        _c("−0.70", WEEK_PERIOD, lambda: _week_period_bias(16),
+           "validation bias in week 17", doc=SIMS),
+        # Gate A's own season-total bias, so the weekly row is read against it.
+        _c("−21.9", SIM_GATE_A, lambda: _season_total_bias(largest=True),
+           "smallest season-total bias", doc=SIMS),
+        _c("−71.6", SIM_GATE_A, lambda: _season_total_bias(largest=False),
+           "largest season-total bias", doc=SIMS),
+    ]
+    return C
+
+
 def _build() -> tuple[Claim, ...]:
     """Every claim, in doc order. One builder per doc — the registry is long enough that
     a single function made it hard to see which doc a section belonged to.
@@ -5029,7 +5238,7 @@ def _build() -> tuple[Claim, ...]:
     rather than taking one for the whole builder."""
     return tuple(_availability() + _composition() + _predictions() + _adp()
                  + _established_facts() + _readme() + _shot_basis() + _games_played()
-                 + _games_played_in_notes() + _train_validate_test())
+                 + _games_played_in_notes() + _train_validate_test() + _weekly())
 
 
 CLAIMS: tuple[Claim, ...] = _build()

@@ -20,3 +20,9 @@ pypdf>=6.0.0        # NBA official injury-report PDFs (src/data/injury_reports.p
 # wrapper — CmdStan itself is a separate ~1 GB toolchain install and is NOT pip-managed:
 #   .venv/bin/python -c "import cmdstanpy; cmdstanpy.install_cmdstan()"
 cmdstanpy>=1.3.0
+# Dashboard verification layers 2 and 3 (dashboard/README.md): kaleido renders a figure to
+# PNG to prove it is legible, playwright drives the live page to prove the page is. Both
+# use the system Chrome — `p.chromium.launch(channel="chrome")` — so neither needs
+# `playwright install` and its ~150 MB browser download.
+kaleido>=1.3.0
+playwright>=1.62.0

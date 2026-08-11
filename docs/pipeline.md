@@ -46,6 +46,9 @@ make report-calibration   # → report_transfer.parquet + outputs/eda/report_cal
 make eda              # all of the above, in dependency order
 make dashboard        # data visualizations over the precomputed artifacts
                       #    (today: the PCA player-style fingerprint)
+make dashboard-config # .streamlit/config.toml regenerated from dashboard/theme.THEMES, so
+                      #    the page chrome and the chart surfaces are one palette; a test
+                      #    parses the checked-in file back and fails if they have drifted
 make dashboard-audit  # registry drift report — a report, not a gate; exits 0 with findings
 make docs-audit       # every quoted figure in the plan docs vs its artifact — a GATE
 ```
@@ -53,7 +56,12 @@ make docs-audit       # every quoted figure in the plan docs vs its artifact —
 ### Availability data capture
 
 ```bash
-make daily-capture     # injury-reports + injuries — MUST be on a cron; see the Makefile
+make daily-capture     # injury-reports + injuries + capture-calendar — MUST be on a
+                       #    cron; see the Makefile
+make capture-calendar  # → outputs/eda/capture_{calendar,programs}.csv. The same coverage
+                       #    `capture-status` and `adp-status` print, as an artifact the
+                       #    dashboard's page 7 draws. Reads disk only, makes no requests —
+                       #    a printout cannot be drawn, diffed or checked by anything
 make boxscore-status   # 2006-07 → 2025-26 inactive lists + DNP reasons, ~8-14 h, resumable
 make availability-model  # baselines + CRPS/PIT → outputs/predictions/availability_*.csv
 make season-total      # composes gp × rate → outputs/predictions/season_total_*.csv
@@ -166,6 +174,26 @@ make minutes-unification
                        #   It also runs the same injection grid on TRAINING rows, which is
                        #   what makes the injection shippable: sigma_train = 0.450 against
                        #   the validation grid's 0.375.
+
+make weekly-scores     # Gate A at the unit a LINEUP is set at: observed against
+                       #   simulated dk_pts per player per scoring period, on train and
+                       #   validation → outputs/predictions/weekly_score_{index,period,
+                       #   ecdf,calibration,quantile}.csv + weekly_score_sample.parquet,
+                       #   and page 8 of the dashboard. `make simulate-season` scores the
+                       #   season total, the games-played pmf, the per-game bonus rate and
+                       #   the minutes spread — nothing scored dk_pts at the week, which
+                       #   is where DK seats the best 7 of 16. NO re-simulation: the
+                       #   tensor's second axis already IS the scoring period, so the whole
+                       #   target is a reduction plus `make model-cards`' binning helpers
+                       #   by import, in ~2 s. Reads four tensors: the two validation
+                       #   seasons plus 2018-19 and 2021-22, which are the last two
+                       #   TRAINING seasons carrying DK's whole four-round structure —
+                       #   2020-21 has no Round 4 at all and 2019-20's is the bubble, and
+                       #   a season with an empty slot is REFUSED rather than scored as
+                       #   zeros. Build the training pair first with
+                       #   `python -m src.sim.season --season 2018-19 --season 2021-22`
+                       #   (~78 s and ~80 MB each). `--draws` moves the simulated-season
+                       #   budget and `--no-write` gates without writing.
 
 make composition-effects
                        # item 3d — the per-(player, season) random effect fitted as

@@ -5,10 +5,10 @@ Predict a player's performance in a popular NBA best-ball fantasy contest (`dk_p
 season starts.
 
 A chain of Bayesian component models — availability, minutes-as-team-composition, and the
-box-score components of `dk_pts` — is fitted in Stan on 30 seasons of NBA box scores. Drawing
-whole seasons from their joint posterior is built (`make simulate-season`); ranking players
-from those draws and backtesting drafting strategies under real contest rules are the next
-two stages, and are labelled as planned below.
+box-score components of `dk_pts` — is fitted in Stan on 30 seasons of NBA box scores. Whole
+seasons are drawn from their joint posterior (`make simulate-season`), ranked into a draft
+board, and played out in a simulated snake draft against an ADP field under real contest
+structures (`make strategy-sweep`), which closes the chain from a box score to a roster.
 
 This file is the overview. `CLAUDE.md` is the working reference for conventions and measured
 facts; `docs/*-plan.md` hold the detailed designs.
@@ -419,23 +419,35 @@ readout; the specification is pinned by measurements rather than guesses:
   **entry index × exit index × a within-tenure two-state chain**
   ([docs/games-played-plan.md](docs/games-played-plan.md), `make games-played`).
 
-### Ranking, drafting and tournaments — planned
+### Ranking, drafting and tournaments — built
 
-Also not built, and the reason the simulation layer exists. Simulated seasons produce a
-posterior over each player's season trajectory; that becomes a draft ranking, which is
-executed in a simulated snake draft against an ADP-based opponent model, and the resulting
-portfolios are replayed against realized box scores under real tournament structures.
+The reason the simulation layer exists, and the chain is now closed end to end. Simulated
+seasons give a posterior over each player's season trajectory; that becomes a draft ranking,
+which is executed in a simulated snake draft against an ADP-based opponent model, and the
+resulting portfolios are replayed both inside the simulated world and against realized box
+scores under real tournament structures. Four stages, four `make` targets:
 
-The pieces already in place are the market side and the contest economics.
-[src/features/adp.py](src/features/adp.py) builds a point-in-time-safe ADP panel — ADP is a
-forecast of the same target, so it is the most leakage-prone input in the repo and gets
-three separate dates per row. [dashboard/economics.py](dashboard/economics.py) derives the
-tournament structures from `data/raw/dk_best_ball_tournament_*.csv`: five real tournaments,
-Round 1 a zero-consolation knockout in every one, and rake expressed as a break-even edge
-hurdle (+10.45% to +17.60%) because that is the unit a measured edge can be compared in.
+| stage | target | what it does |
+|---|---|---|
+| the market | `make adp` | [src/features/adp.py](src/features/adp.py) builds a point-in-time-safe ADP panel — ADP is a forecast of the same target, so it is the most leakage-prone input in the repo and gets three separate dates per row |
+| the contest | `make bracket` | [src/sim/bracket.py](src/sim/bracket.py) seats the best 7 of 16 by slot in each period and runs the four-round chain with its cascading tie-break, wildcards and payouts |
+| the draft | `make draft` | [src/sim/draft.py](src/sim/draft.py) runs the snake against a field drawn from the DK-recalibrated consensus plus rank noise |
+| the sweep | `make strategy-sweep` | [src/sim/strategy.py](src/sim/strategy.py) — **22 strategies × 2 tiers × 2 validation seasons at 500 simulated worlds each**, paired inside the world, plus the realized readout |
+
+[dashboard/economics.py](dashboard/economics.py) derives the tournament structures from
+`data/raw/dk_best_ball_tournament_*.csv`: five real tournaments, Round 1 a zero-consolation
+knockout in every one, and rake expressed as a break-even edge hurdle (+10.45% to +17.60%)
+because that is the unit a measured edge can be compared in.
 
 ADP belongs in *this* layer, not in the prediction layer — that is a settled decision, so the
 blend weight sweeps a real axis rather than a weight the model already absorbed.
+
+**And the layer ships a tool, not only a backtest.** [dashboard/draft_room.py](dashboard/draft_room.py)
+is a live recommender that prices each candidate inside a completed roster — one click per
+pick, against a season's simulated field — and it is the one file in `dashboard/` allowed to
+import from `src/`. It runs both as page 9 of the dashboard and standalone under `make
+draft-room`, because draft night is a thirty-second clock. See
+[docs/simulations-plan.md](docs/simulations-plan.md).
 
 ### What was tried and deprioritized
 
@@ -546,6 +558,17 @@ cross-component cancellation. The minutes head is the single exception and adopt
 effect. What a year effect *is* worth is joint spread: **+10.4%** on a 15-man roster's
 season-total sd, against +0.2% from shared coefficient uncertainty.
 
+**The drafting edge is large in the simulated world and the realized readout cannot confirm
+it — which is the result, not a caveat.** `make strategy-sweep`. Against a symmetric-field
+null, the arm that ships lifts its Round-1 advance probability by **0.2107** in the 600k
+Shootaround's simulated worlds and by **0.1268** on the two validation seasons replayed
+against realized box scores. The second number is not a smaller version of the first: the
+simulated side pools 500 drawn worlds per season and the realized side has exactly one, so
+its intervals cover most of the table and it selected nothing. **Gate D fails, and that is
+also a result** — the two buy-in tiers do not select materially different rosters in **0**
+of **6** paired comparisons, under a tier-blind ranking or a tier-aware objective, so
+"draft differently for a bigger field" is not a strategy this simulator can support.
+
 **The sampler behaved.** 37 component fits with 0 divergences and every fit clearing every
 convergence bar, 54 season-term fits with 0
 divergences and 0 treedepth saturation, and the availability port reproduces the point MLE
@@ -553,7 +576,7 @@ with the MLE inside the 95% credible interval for 21 of 21 terms. Cost is concen
 entirely in the spline variants. Dropping the test side halved the component fit count from
 74 and cut sampler time from 305.0 to **137.4** minutes *while* raising every selection fit
 to full-length chains — which incidentally fixed the one fit that used to miss its R̂ bar.
-969 tests pass (`.venv/bin/python -m pytest tests/`).
+1,437 tests pass (`.venv/bin/python -m pytest tests/`).
 
 ---
 
@@ -596,19 +619,30 @@ not currently clear its floor.
 
 ```
 src/data/       fetch, preprocess, availability capture (box-score status, injury
-                reports, ESPN feed), ADP capture
+                reports, ESPN feed), ADP capture, and `capture_calendar.py`, which
+                writes what all four of those archives hold as an artifact rather
+                than a printout
 src/features/   component targets, game length, team context, opponent, availability, ADP,
                 and scoring periods — the NBA week grid DK's tournament rounds sit on
 src/eda/        the season-level analysis pipeline — one module per artifact
 src/models/     the Stan heads (availability, minutes, composition, components,
                 game length, season terms) plus the sklearn references they are checked
                 against, and `posteriors.py`, which persists every fitted head's thinned
-                draws and design recipe so nothing downstream has to refit
+                draws and design recipe so nothing downstream has to refit —
+                `model_cards.py` turns those into the flat tables the dashboard reads,
+                since the dashboard may not open a pickle that can score a frame
 src/stan/       four .stan sources for twenty-plus heads
 src/sim/        the simulation and drafting layer — numpy over the posterior artifacts,
-                so nothing here needs CmdStan. Today `season.py`, which writes THE tensor
-dashboard/      data visualizations over the artifacts — today the PCA player-style
-                fingerprint; reads artifacts only, never refits
+                so nothing here needs CmdStan. `season.py` writes THE tensor,
+                `bracket.py` runs the four-round contest, `draft.py` the snake against
+                an ADP field, `strategy.py` the sweep, and `draft_room.py` the live
+                recommender's engine
+dashboard/      data visualizations over the artifacts — a multipage Streamlit shell over
+                the Overview, the PCA player-style fingerprint, the model detail pages
+                (one renderer, seven blocks, a class table), the inputs the simulator is
+                *given* rather than fits, the tournament & strategy page and the live
+                draft board, which also ships standalone as `make draft-room`;
+                reads artifacts only, never refits
 docs/           plan docs — predictions, availability, minutes composition, ADP,
                 simulations, EDA, provenance, dashboard, contest rules
 ```
@@ -620,7 +654,7 @@ make install          # create .venv and install requirements
 make fetch            # pull raw data from nba_api (long)
 make eda              # the full season-level EDA sweep
 make stan             # fit the availability, minutes and component heads
-make dashboard        # Streamlit walkthrough at http://localhost:8501
+make dashboard        # the Streamlit views at http://localhost:8501
 make test             # pytest
 ```
 

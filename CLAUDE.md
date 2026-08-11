@@ -28,7 +28,35 @@ to the relevant docs for the task at hand. The docs are:
   and minutes per game). Work completed and mostly archival.
   - dashboard-plan.md: Plan and notes for the streamlit dashboard. As of 
   2026-08-08 the dashboard is a **data-visualization surface**, not a project 
-  walkthrough — read this before adding or editing a view.
+  walkthrough — read this before adding or editing a view. Its nine-page 
+  "expansion" shipped 2026-08-10 and the revision round below added a tenth page 
+  the same day; the "Charter amendment 2026-08-10" subsection 
+  sets the three bounds the one page of prose (the Overview) exists under, and 
+  each step has a "Step N, as built" section. **Bound 1 was amended 2026-08-10** 
+  when the Overview was rewritten as a paper — "opens above the fold, scrolls no 
+  further than one screen more", a measured ceiling — and bound 2 gained a half: 
+  a typed sentence on that page carries no digit at all. 
+  `dashboard-build-prompts.md`, the 
+  ten one-per-session build prompts, was ephemeral scaffolding and was deleted 
+  when the expansion landed.
+  - dashboard-revision-plan.md: The round *after* the expansion, planned 
+  2026-08-10 — five one-per-session steps (appearance, which availability head 
+  ships, DHARMa-style quantile residuals, a dk_pts page at the unit the contest is 
+  decided at, and the Overview as a paper). It inherits every rule 
+  `dashboard-plan.md` set; read that 
+  one first. Three of the five items turned out to have different answers than the 
+  request assumed, and the doc records why. **All five shipped 2026-08-10** and each 
+  has an "as built" section: the appearance is now Streamlit's own setting, with 
+  the page chrome generated into `.streamlit/config.toml` by `make 
+  dashboard-config`; every head declares its role in the shipped chain; block 6 
+  of the model pages is a scaled quantile residual rather than a raw one; the 
+  dashboard has a tenth page, **Weekly scores**, which is Gate A at the scoring 
+  period (`make weekly-scores`, `src/sim/weekly.py`); and the Overview is now a 
+  four-section paper rather than five hero tiles, which cost a charter amendment. 
+  Step 4's unit moved from the 
+  tournament round to the **week** mid-session at the user's request, and the doc 
+  records both the request and what the change cost. Its prompts appendix was 
+  ephemeral scaffolding and was deleted when the round landed.
   - data-quirks.md: Notes and findings in exploring the raw data.
   - dk_best_ball_rules.md: Copy of the tournament rules for draft kings best 
   ball tournaments **always read this**.
@@ -45,6 +73,19 @@ to the relevant docs for the task at hand. The docs are:
   completed and mostly archival at this point.
   - injuries_paper.md: Copy of a study on workload contributing to achilles 
   tendon ruptures in basketball players. Archival.
+  - model-cards-plan.md: The contract between the fitted heads and the dashboard's 
+  model detail pages — what `make model-cards` writes, and the four rules the emitter 
+  inherits (`selection_split` only, the `train` posterior window, a build-time recipe 
+  check that fails rather than writing a wrong artifact, and a predictive drawn through 
+  each head's own `predict_samples` whose mean must reproduce that head's own). Read 
+  this before adding a `model_card_*` artifact or changing a head's variant ladder. 
+  Since 2026-08-10 every head also declares a **`chain_role`** — what the simulator 
+  does with it, in a closed vocabulary, pinned against `src/sim/` by a test rather 
+  than merely written down. Sixteen of the twenty heads are in the draw path; 
+  `gp_entry`, `gp_exit`, `gp_onset` and the marginal `minutes` head are not. The 
+  ninth artifact, `model_card_quantile.csv`, is DHARMa's scaled quantile residual 
+  and **replaced** the calibration file's raw-residual panel; its KS distance is 
+  reported and never thresholded.
   - minutes-composition-plan.md: Plan and notes for the production version of 
   the minutes-played model. Work completed and mostly archival at this point.
   - model-development-notes.md: Detailed notes and findings developed during
