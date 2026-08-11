@@ -244,3 +244,9 @@ above the mean of the data it fits.
 
 This is a measurement, not a defect report: the heads clear their own gates as scored today,
 and nothing above has been through validation.
+
+## 4. Go back over the games played models. 
+
+The beta binomial model predictions are under-predicting the frequency of players 
+playing all 82 games and also under predicting the frequency of players playing 
+very few (< 10) games. 
