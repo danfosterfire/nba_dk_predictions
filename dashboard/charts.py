@@ -283,6 +283,11 @@ def _reference_line(fig: go.Figure, x: float, th: dict, label: str,
     nothing in the trace can see that. A caller whose axis title already names the reference
     — `fig_paired`'s is literally "gap … against `<baseline>`" — has nothing to lose by
     dropping the second copy, and gains a placement that cannot collide.
+
+    Drawn **below** the data, which is right for every caller here because their marks are
+    dots and intervals that a line behind stays readable through. A caller whose marks are
+    solid bars *crossing* the reference needs it above them instead, and draws its own —
+    see `fig_block_inflation`.
     """
     placement = dict(row="all", col=1) if faceted else {}
     fig.add_vline(x=x, line=dict(color=color or th["axis"], width=1), layer="below",
@@ -633,18 +638,26 @@ def fig_features(panel: pd.DataFrame, th: dict, columns: int = HIST_COLUMNS,
 
 
 def fig_correlation(square: pd.DataFrame, th: dict, title: str = "",
-                    height: int = 520) -> go.Figure:
-    """The feature correlation matrix, diverging around zero, diagonal included.
+                    height: int = 520, limit: float = 1.0) -> go.Figure:
+    """A correlation matrix, diverging around zero.
 
-    `square` is `model_cards.correlation_square()`. **Diverging rather than sequential**,
-    because the sign of a correlation is a direction and not a magnitude, and pinned to
-    [−1, +1] rather than to the data's own range so two heads' heatmaps mean the same thing.
-    A constant column arrives as a row of `NaN` and is drawn as a gap on the surface — which
-    is the point of shipping the whole square: the empty row stays on the axis and says so.
+    `square` is `model_cards.correlation_square()` on a model page and
+    `inputs.copula_square()` on page 7. **Diverging rather than sequential**, because the
+    sign of a correlation is a direction and not a magnitude. A constant column arrives as a
+    row of `NaN` and is drawn as a gap on the surface — which is the point of shipping the
+    whole square: the empty row stays on the axis and says so.
+
+    `limit` is the scale's half-range and **defaults to the full [−1, +1]**, because a model
+    page's feature correlations run the whole range and pinning them means two heads'
+    heatmaps mean the same thing. A caller whose matrix does not is obliged to say so: the
+    residual copula's largest off-diagonal cell is +0.133, so on the pinned scale every cell
+    that is not the diagonal renders as the neutral midpoint and the figure reports "no
+    dependence" about a matrix that exists precisely to carry some. Narrowing the scale is
+    then not cosmetic, and neither is masking the diagonal that forces it.
     """
     fig = go.Figure(go.Heatmap(
         z=square.to_numpy(dtype=float), x=list(square.columns), y=list(square.index),
-        zmin=-1.0, zmax=1.0, zmid=0.0, colorscale=th["diverging"],
+        zmin=-limit, zmax=limit, zmid=0.0, colorscale=th["diverging"],
         hoverongaps=False,
         colorbar=dict(title=dict(text="r", font=dict(color=th["ink2"], size=11)),
                       tickfont=dict(color=th["muted"], size=10), thickness=12,
@@ -1058,8 +1071,16 @@ PERCENT_BAR_TEXT_ROOM = 0.18
 
 
 def _head_colors(th: dict, heads, slots: dict) -> list[str]:
-    """The fixed per-head slot every figure on the minutes page shares."""
-    return [th["series"][slots.get(head, len(slots))] for head in heads]
+    """The fixed per-row slot a page shares across its figures.
+
+    **A row not in `slots` recedes to `muted` rather than taking the next categorical
+    slot.** That is what makes the map usable as highlight-and-gray as well as as a fixed
+    pairing: the minutes page names every head it draws, so the fallback never fires there,
+    and the inputs page names only the window the simulator consumes and lets the other two
+    gray out. Handing an unnamed row a colour nobody chose is the failure mode either way.
+    """
+    return [th["series"][slots[head]] if head in slots else th["muted"]
+            for head in heads]
 
 
 def fig_unit_verdict(board: pd.DataFrame, th: dict, slots: dict, title: str = "",
@@ -1118,13 +1139,15 @@ def fig_unit_verdict(board: pd.DataFrame, th: dict, slots: dict, title: str = ""
 
 def fig_metric_facets(panel: pd.DataFrame, th: dict, slots: dict, columns: int = 2,
                       title: str = "", row_height: int = 150) -> go.Figure:
-    """The same two heads read four ways, one metric per facet on its own axis.
+    """The same few rows read several ways, one metric per facet on its own axis.
 
-    `panel` is `model_cards.spread_panel()`. Every facet has its own x range because the
-    four metrics are in three different units — minutes, minutes, and a KS statistic — and a
-    shared axis would either flatten the small one or blow out the large one. What is shared
-    is the pair of rows, so a reader reads *down* the facets to see the same two heads
-    change places.
+    `panel` is `model_cards.spread_panel()` on the minutes page and
+    `inputs.window_facets()` on the inputs page — the same shape in both, which is why there
+    is one builder: a small fixed set of rows, compared inside each facet, where the facets
+    are in different units. Every facet has its own x range for that reason; on the minutes
+    page they are minutes, minutes and a KS statistic, and on the inputs page a correlation,
+    two variance ratios and a frailty variance. What is shared is the *rows*, so a reader
+    reads **down** the facets to see the same rows change places.
 
     A facet whose frame carries a `reference` draws it as a labelled line: the predictive-sd
     panel is the only one with a target value, and without it a reader cannot tell whether
@@ -1291,4 +1314,214 @@ def fig_coupling(panel: pd.DataFrame, th: dict, slots: dict, title: str = "",
     fig.update_layout(title=title)
     fig = apply_theme(fig, th, height)
     _reference_line(fig, 0.0, th, "independent draws", at_floor=True)
+    return fig
+
+
+# ── The four figures the inputs page owns ─────────────────────────────────────
+#
+# Page 7 draws things that are not model outputs, so two of these encode something no other
+# figure here does: a **calendar of days** and a **ladder of corrections**. The other two —
+# the copula heatmap and the three-window panel — reuse `fig_correlation` and
+# `fig_metric_facets` rather than growing near-copies, which is why they are absent below.
+#
+# The palette rules land on this page the same way they land everywhere else, with one
+# wrinkle worth stating: the calendar's cell states are *categorical*, and the one
+# distinction a reader most needs — whether a missed day can still be fetched — is
+# deliberately **not** a fourth colour. It is constant along a row, so it rides on the row
+# label instead. Two coloured states and a neutral is well inside `ALL_PAIRS_CAP`; four
+# would not have been, and orange-beside-red is the exact pair the validation rejects.
+
+#: Height of one program's row on the calendar, and of one snapshot row on the ADP timeline.
+CALENDAR_ROW = 34
+#: A capture is one day wide on an axis measured in days, so the marks are drawn as a
+#: heatmap rather than as markers: a marker has a size in pixels and would misreport a
+#: single missed day as a week at one zoom level and hide it at another.
+#:
+#: **Only the rows are separated, not the days**, and that is a rendered-figure finding: at
+#: 150 days a two-pixel `xgap` is nearly as wide as a cell, so an unbroken run of captures
+#: came out as a barcode and a genuinely missing day was indistinguishable from the gutter
+#: between two present ones. A calendar's whole job is to make a hole visible.
+CALENDAR_ROW_GAP = 3
+
+
+def _stepped_colorscale(colors: list[str]) -> list[list]:
+    """A discrete colorscale over `len(colors)` integer codes, with hard edges.
+
+    Plotly has no categorical heatmap: a colorscale is continuous, so each band is written
+    twice — once at its own floor and once at the next one — which is what makes the
+    boundary a step rather than a gradient. Codes are then read against
+    `zmin = -0.5, zmax = n - 0.5`, so code `k` lands in the middle of band `k`.
+    """
+    n = len(colors)
+    scale = []
+    for i, color in enumerate(colors):
+        scale.append([i / n, color])
+        scale.append([(i + 1) / n, color])
+    return scale
+
+
+def fig_calendar(grid: pd.DataFrame, labels: list[str], th: dict, states: tuple,
+                 state_labels: dict, title: str = "",
+                 row_height: int = CALENDAR_ROW) -> go.Figure:
+    """Every capture program's coverage, one cell per day — the operational alarm.
+
+    `grid` is `inputs.calendar_grid()` and `labels` is `inputs.row_labels()`, which carries
+    the recoverability of a gap. **The row label is load-bearing rather than decorative**:
+    the cells encode three states in two slots and a neutral, and whether a missed cell is a
+    backlog item or an incident is a property of the *program*, so encoding it in the cell
+    would spend a colour the palette cannot spare on a fact that never varies along a row.
+
+    A day a program has no row for is left as a gap on the surface rather than painted as
+    "captured nothing" — an `event` program has no schedule to have missed, and painting its
+    empty stretches would invent 118 failures a year for a board that opens in October.
+
+    A heatmap draws no legend, so the three states arrive as marker-only traces with no
+    points in them. That is the only way to name a categorical colour in plotly without
+    putting a continuous colourbar over three integers and calling it a scale.
+    """
+    days = sorted(grid["capture_date"].unique())
+    day_index = {d: i for i, d in enumerate(days)}
+    z = np.full((len(labels), len(days)), np.nan)
+    hover = np.empty((len(labels), len(days)), dtype=object)
+    hover[:] = ""
+    for cell in grid.itertuples(index=False):
+        if not 0 <= cell.row < len(labels):
+            continue
+        column = day_index[cell.capture_date]
+        z[cell.row, column] = cell.code
+        hover[cell.row, column] = (f"{cell.label}<br>{cell.capture_date}<br>"
+                                   f"<b>{cell.state_label}</b><br>"
+                                   f"{cell.records:,.0f} records")
+
+    colors = [th["series"][0], th["neutral"], th["series"][1]]
+    fig = go.Figure(go.Heatmap(
+        z=z, x=days, y=labels, zmin=-0.5, zmax=len(states) - 0.5,
+        colorscale=_stepped_colorscale(colors), showscale=False, hoverongaps=False,
+        xgap=0, ygap=CALENDAR_ROW_GAP, customdata=hover,
+        hovertemplate="%{customdata}<extra></extra>"))
+    for state, color in zip(states, colors):
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], mode="markers", name=state_labels.get(state, state),
+            marker=dict(symbol="square", size=11, color=color,
+                        line=dict(color=th["axis"], width=1)),
+            hoverinfo="skip", showlegend=True))
+
+    fig.update_xaxes(showgrid=False, tickfont=dict(size=10))
+    fig.update_yaxes(showgrid=False, zeroline=False, tickfont=dict(size=11),
+                     autorange="reversed")
+    fig.update_layout(title=title)
+    return apply_theme(fig, th, height=len(labels) * row_height + 150)
+
+
+def fig_adp_lag(snaps: pd.DataFrame, th: dict, title: str = "",
+                row_height: int = CALENDAR_ROW) -> go.Figure:
+    """Every ADP board on the axis that decides whether it may be used: days from tip-off.
+
+    One row per season, one mark per captured board, `x` measured from that season's first
+    game. **Everything at or left of zero is legal and everything right of it is not**, so
+    the finding is a position on the axis rather than a colour — the two series are then a
+    second route to the same fact and the marker symbol is a third, which is what the relief
+    rule asks for on a page where the distinction decides whether a season exists at all.
+
+    The zero line is drawn bare. The x axis title already says what zero is, and a labelled
+    reference has no placement that is safe in general — see `_reference_line`.
+    """
+    seasons = sorted(snaps["season"].unique(), reverse=True)
+    position = {s: i for i, s in enumerate(seasons)}
+    fig = go.Figure()
+    for legal, name, symbol, color in (
+            (True, "observed before the opener — usable", "circle", th["series"][0]),
+            (False, "observed after it — dropped by `training_rows`", "x-thin",
+             th["series"][1])):
+        part = snaps[snaps["legal"] == legal]
+        if part.empty:
+            continue
+        fig.add_trace(go.Scatter(
+            x=part["lag_days"], y=[position[s] for s in part["season"]],
+            mode="markers", name=name,
+            marker=dict(size=DOT + 1, color=color, symbol=symbol,
+                        line=dict(color=color if symbol.startswith("x") else th["surface"],
+                                  width=2 if symbol.startswith("x") else 1)),
+            customdata=list(zip(part["source"], part["as_of_date"], part["rows"])),
+            hovertemplate="%{customdata[0]} · %{customdata[1]}<br>"
+                          "%{x:+.0f} days from tip-off<br>%{customdata[2]:,} rows"
+                          "<extra></extra>"))
+
+    fig.update_xaxes(title="days from the season's first game — negative is before it")
+    fig.update_yaxes(tickmode="array", tickvals=list(position.values()),
+                     ticktext=seasons, showgrid=False, zeroline=False,
+                     range=[len(seasons) - 0.5, -0.5])
+    fig.update_layout(title=title)
+    fig = apply_theme(fig, th, height=max(280, len(seasons) * row_height + 130))
+    _reference_line(fig, 0.0, th, "")
+    return fig
+
+
+def fig_ladder(ladder: pd.DataFrame, th: dict, title: str = "",
+               row_height: int = CALENDAR_ROW) -> go.Figure:
+    """The consensus→DK recalibration ladder, in the order it was built.
+
+    Measured order rather than sorted order, because each rung is a correction *added to*
+    the one above it; sorting by score would turn a ladder into a menu and quietly invite
+    reading the best row as the shipped one, which it is not.
+
+    Highlight-and-gray on the shipped arm: seven rungs is past `ALL_PAIRS_CAP`, and the one
+    distinction worth a slot is which rung `adp_transfer.parquet` actually holds.
+    """
+    rows = list(range(len(ladder)))
+    fig = go.Figure(go.Bar(
+        x=ladder["mean_abs_rank_gap"], y=rows, orientation="h", showlegend=False,
+        marker=dict(color=[th["series"][0] if s else th["muted"]
+                           for s in ladder["shipped"]],
+                    line=dict(color=th["surface"], width=1)),
+        text=[f"{v:.2f}" for v in ladder["mean_abs_rank_gap"]], textposition="outside",
+        textfont=dict(size=BAR_TEXT_SIZE, color=th["ink2"]), cliponaxis=False,
+        customdata=[("shipped" if s else "measured, not shipped")
+                    for s in ladder["shipped"]],
+        hovertemplate="%{y}<br>%{x:.3f} picks<extra>%{customdata}</extra>"))
+    fig.update_xaxes(title="mean absolute rank gap against the DK board, in picks",
+                     range=_bar_text_range(ladder["mean_abs_rank_gap"],
+                                           room=WIDE_BAR_TEXT_ROOM))
+    fig.update_yaxes(tickmode="array", tickvals=rows, ticktext=list(ladder["arm"]),
+                     showgrid=False, zeroline=False, range=[len(ladder) - 0.5, -0.5])
+    fig.update_layout(title=title, bargap=0.35)
+    return apply_theme(fig, th, height=max(260, len(ladder) * row_height + 120),
+                       legend=False)
+
+
+def fig_block_inflation(panel: pd.DataFrame, th: dict, highlight: str = "min",
+                        title: str = "", row_height: int = 26) -> go.Figure:
+    """Ten-game block variance inflation per component — where sequential structure is.
+
+    One is independence, and the axis title says so, so the reference line is drawn bare.
+    `highlight` takes slot 0 because exactly one of these rows is an *input*: minutes carry
+    the serial dependence and every other head is drawn to show that it does not, which is
+    the measured null the simulator's third rule rests on.
+    """
+    rows = list(range(len(panel)))
+    fig = go.Figure(go.Bar(
+        x=panel["block_inflation"], y=rows, orientation="h", showlegend=False,
+        marker=dict(color=[th["series"][0] if c == highlight else th["muted"]
+                           for c in panel["component"]],
+                    line=dict(color=th["surface"], width=1)),
+        text=[f"{v:.3f}×" for v in panel["block_inflation"]], textposition="outside",
+        textfont=dict(size=BAR_TEXT_SIZE, color=th["ink2"]), cliponaxis=False,
+        customdata=list(zip(panel["kind"], panel["lag1"])),
+        hovertemplate="%{y}<br>%{x:.4f}× independent draws<br>lag-1 r "
+                      "%{customdata[1]:+.4f}<extra>%{customdata[0]}</extra>"))
+    fig.update_xaxes(title="ten-game block variance, × independent draws",
+                     range=_bar_text_range(panel["block_inflation"],
+                                           room=PERCENT_BAR_TEXT_ROOM))
+    fig.update_yaxes(tickmode="array", tickvals=rows, ticktext=list(panel["component"]),
+                     showgrid=False, zeroline=False, range=[len(panel) - 0.5, -0.5])
+    fig.update_layout(title=title, bargap=0.3)
+    fig = apply_theme(fig, th, height=max(280, len(panel) * row_height + 120),
+                      legend=False)
+    # Its own line rather than `_reference_line`, for two reasons a rendered PNG supplied.
+    # At the shared helper's hairline weight it was indistinguishable from the gridlines it
+    # sits among, and eleven of these twelve bars end within half a unit of it — so the
+    # question the chart exists to answer was answered for nobody. And it goes **above** the
+    # bars: below them it survives only in the gutters between rows, which reads as a dashed
+    # line, and `theme.py` bans dashes because a dash is supposed to mean something.
+    fig.add_vline(x=1.0, line=dict(color=th["ink2"], width=2), layer="above")
     return fig

@@ -412,6 +412,10 @@ the emitter writes it — the fork is decided, the block is not built.
 
 ### Page 7 — Inputs beyond the heads
 
+**✅ Shipped 2026-08-10.** The design below stands as written; what it cost, the one emitter
+it needed, and the four things it did not anticipate are in
+[Step 6, as built](#step-6-as-built--inputs-beyond-the-heads).
+
 The user's item 3. The through-line is **everything the simulator consumes that is not a
 fitted coefficient**, which is a genuinely distinct kind of input and is currently invisible:
 
@@ -454,6 +458,10 @@ blocks:
    and should be styled as such rather than buried.
 
 ### Page 9 — The draft board
+
+**✅ Shipped 2026-08-10.** The design below stands, and the feasibility argument came back
+as a measurement rather than an expectation — see
+[Step 7, as built](#step-7-as-built--the-draft-board-as-page-9).
 
 The user's item 5, and the answer is **yes, it is feasible, and it is feasible only because
 of finding 1.** As a `st.tabs` child it would be a disaster; as an `st.Page` its script does
@@ -557,9 +565,16 @@ is a view module that names a class plus its own named blocks — and the bespok
 [Step 5a, as built](#step-5a-as-built--box-score-components-and-game-length) and
 [Step 5b, as built](#step-5b-as-built--the-minutes-page).
 
-**Step 6 · Inputs beyond the heads (page 7).** Includes the small capture-calendar emitter.
+**Step 6 · Inputs beyond the heads (page 7). ✅ Shipped 2026-08-10.** Including the small
+capture-calendar emitter, which is the step's only pipeline work: `make capture-calendar`
+writes the two CSVs behind block 1, since `make capture-status` and `make adp-status` print
+rather than write. See [Step 6, as built](#step-6-as-built--inputs-beyond-the-heads).
 
-**Step 7 · The draft board as a page (9).** Plus keeping `make draft-room` standalone.
+**Step 7 · The draft board as a page (9). ✅ Shipped 2026-08-10.** Both conditions held, and
+the one that was written as a risk — that navigation might cost the room its
+responsiveness — measured the other way: the page is 0.46 s *faster* to first paint than a
+cold `make draft-room`, and 0.31 s on a return. See
+[Step 7, as built](#step-7-as-built--the-draft-board-as-page-9).
 
 **Step 8 · Overview (page 1).** Last, on purpose: its hero tiles link into the pages, so it
 cannot be written until they exist, and writing it first would make it a table of contents
@@ -1319,6 +1334,288 @@ render all seven blocks.
 
 ---
 
+## Step 6, as built — Inputs beyond the heads
+
+**2026-08-10.** `dashboard/views/beyond_heads.py` over a new pure layer
+`dashboard/inputs.py`, four new figures in `charts.py` and two reused, one new emitter
+(`src/data/capture_calendar.py`, `make capture-calendar`) writing two small CSVs, and 38 new
+tests. The page is one row in `app.VIEWS` at `url_path="inputs"`, sitting between Game
+length and Tournament & strategy so the navigation reads in page order.
+
+The design in "Page 7" above stands as written — three blocks, the calendar as an
+operational alarm, every calibrated input showing its `fit_window`. Four things it did not
+anticipate are below, and three of the four were found by *looking at a rendered figure*
+rather than by asserting about one.
+
+### The blocks are drawn in the opposite order to the way the plan lists them
+
+The plan lists ADP first and the capture programs second. On the page the capture block is
+**block 1**, because it is the only block on this dashboard that is an *alarm* rather than a
+result: everything else here is a measurement that will still be there tomorrow, and a
+missing capture day is a thing that stops being fixable. Putting it below a six-tile ADP
+block would have made a reader scroll past the one thing that is time-sensitive. The two
+ADP blocks and the calibrated block are then in the plan's order.
+
+### The emitter is two files, because the calendar cannot carry the recovery policy
+
+`make capture-calendar` writes `capture_calendar.csv` — one row per (program, day) that has
+a state — and `capture_programs.csv`, one row per program. The split is not tidiness. The
+calendar answers *which days*; the program table answers *what happens to a day that is
+missing*, which is a fact about the **source** rather than about the archive, and it is the
+one thing a reader cannot infer from a grid of cells. The emitter re-reads
+`injury_reports.capture_status` and `injuries`' snapshot/missing-day pair rather than
+re-deriving the states, so the printout and the artifact cannot drift apart, and a test pins
+that they agree. It runs at the end of `make daily-capture`: a scheduler that stops firing
+is only visible in the artifact it stops refreshing.
+
+**The state vocabulary is three words and the middle one is load-bearing.** `captured`,
+`nothing_to_capture`, `missed`. A day the CDN 403s is the offseason and is *not* a failure;
+a day nobody attempted is a run that did not happen. On the live archive that distinction is
+47 days out of 211, so colouring the middle state as a gap would cry wolf on a quarter of the
+calendar. Registered as `a-day-with-no-report-is-not-a-gap`.
+
+**Recoverability is a property of the program and rides on the row label.** An
+injury-report gap is fetchable until it ages out and an ESPN gap never is, and neither varies
+along its own row. A fourth cell colour would also have put orange beside red — the exact
+pair `theme.py`'s validation rejects — so the axis carries it and the cells stay at two slots
+and a neutral. Registered as `recoverability-rides-on-the-row-not-the-cell`.
+
+**An `event` program has no schedule to have missed**, so the DK and FantasyPros rows are
+drawn as sparse captures with nothing in between rather than as a year of failures a year.
+That is why `cadence` is a column. Registered as
+`an-event-programs-empty-days-are-not-gaps`.
+
+### The window disagreement is the finding, not a bug to reconcile
+
+`residual_correlation.to_matrix` defaults to `train_val` and `src/sim/season.py` overrides it
+to `train`, and **both are right**. `train_val` is the window that is never *wrong* — it
+excludes the test seasons and nothing else — so it is the safe default for an unthinking
+caller. The shipped simulation is scored against a backtest on 2022-23 and 2023-24, which
+are *inside* `train_val`, so a run at that window would calibrate itself on the seasons it is
+about to be marked on. The page draws all four inputs at all three windows and names both.
+The measurement that makes the block worth drawing: **the largest of the four moves 3.9%
+across the three windows and the rest by less** — the residual copula's count-block mean r
+reads +0.0225 / +0.0222 / +0.0216, the ten-game block inflation 2.4321× / 2.4206× / 2.4167×,
+the player-game bonus overdispersion 0.0248 / 0.0248 / 0.0249, and the game-level minutes
+dispersion 4.648× / 4.684× / 4.716×. A number that moved visibly would have been caught years
+ago; one that does not is the kind that gets consumed at the wrong window forever.
+Registered as `the-fit-window-is-shown-rather-than-chosen-for-the-reader`.
+
+### Two figures were reused rather than written, and one of them needed a one-line fix
+
+The three-window panel is `fig_metric_facets`, the minutes page's builder — the same shape in
+both places: a handful of rows compared inside each facet, facets in different units. Reusing
+it needed `_head_colors` to fall back to `muted` for a row its slot map does not name,
+instead of to the next categorical slot. That is what lets one map serve both a *fixed
+pairing* (the minutes page names both its heads) and *highlight-and-gray* (the inputs page
+names only the window the simulator consumes). Handing an unnamed row a colour nobody chose
+was the worse behaviour either way. Registered as
+`an-unnamed-row-grays-out-rather-than-taking-a-slot`.
+
+The copula heatmap is `fig_correlation`, which gained one `limit` parameter — see below.
+
+### Verification, as run
+
+**`AppTest`**, both appearance modes × all three fit windows: **6 charts, 14 tiles, 11
+tables, 1 selector, 1 warning, 12 captions, 0 exceptions, 0 missing-artifact warnings**,
+identical in every one of the six combinations. The other pages still report their own
+counts.
+
+**Twelve figures rendered to PNG** through kaleido, in both modes, and looked at. **Three
+defects, all invisible in the trace:**
+
+- 🔴 **The copula heatmap showed its own diagonal and nothing else.** `fig_correlation` pins
+  its scale to [−1, +1], which is right on a model page — feature correlations run the whole
+  range, and pinning them is what makes two heads' heatmaps comparable. The copula's largest
+  off-diagonal cell is **+0.133**, so every real cell rendered as the neutral midpoint and
+  the figure reported *no dependence* about a matrix that exists to carry some. The diagonal
+  is what forces the scale (1.0 by construction, no information), so narrowing to ±0.15 and
+  masking the diagonal are one decision, and the caller states the limit rather than the
+  builder guessing it. Registered as `a-correlation-heatmap-is-scaled-to-what-it-carries`.
+- **The calendar read as a barcode.** At 150 days a two-pixel `xgap` is nearly as wide as a
+  cell, so an unbroken run of captures came out striped and a genuinely missing day was
+  indistinguishable from the gutter between two present ones — on the one chart whose whole
+  job is making a hole visible. Days are now flush and only the rows are separated.
+- **The block-inflation reference line was a gridline.** Eleven of its twelve bars end within
+  half a unit of 1.0, and at `_reference_line`'s hairline weight the reference was
+  indistinguishable from the gridlines beside it. Drawn `layer="below"` it also survived only
+  in the gutters between bars, which *reads as a dashed line* — and `theme.py` bans dashes
+  because a dash is supposed to mean something. It is now its own line, above the bars, at
+  weight 2.
+
+Two smaller things the render settled rather than caught: the calendar's row labels went to
+two lines (on one line the longest is 62 characters, and plotly gives a tick label whatever
+width it asks for, so the axis was taking a third of the plot away from the calendar it
+labels), and the ADP timeline's zero line is drawn bare because its axis title already reads
+"days from the season's first game — negative is before it".
+
+**The live page driven in Chrome** through Playwright — **28 checks, all passing**:
+`/inputs` deep-links, the navigation lists eight rows with page 7 sixth, all three block
+headings are present, six plots draw, no `stException`, no missing-artifact alert, no literal
+`"undefined"` and no literal `nan` before or after an interaction, all fourteen tiles render
+without clipping their own values, the four numbers the ADP block exists to show are on the
+page, sidebar order is nav → Appearance → Fit window by geometry, switching the fit window
+changes the numbers rather than decorating them, the mode switch repaints to the pinned dark
+surface and holds across an in-app round trip to the tournament page and back, and the
+calendar's table twin opens.
+
+**A fourth defect came from reading the rendered page rather than asserting it**, which is
+now five sessions in a row: **the capture block had four stacked bold paragraphs describing
+each source**, which is prose about the project on a surface whose charter says prose belongs
+in `docs/`. The block had turned back into a document. They moved inside the expander, beside
+the table they annotate; the main surface keeps the alarm, the calendar and its two captions.
+
+**38 new tests** — 30 in `tests/test_dashboard.py` (262 there) and 8 in a new
+`tests/test_capture_calendar.py` — and **1,369** across the suite. One of the emitter tests
+caught a real bug: a manifest that exists and is empty made `read_csv` raise, so
+`make capture-calendar` fell over on exactly the archive it exists to report as missing.
+Four are artifact-contract tests: the shipped panel still loses four of its nine seasons, the
+shipped ladder still names the arm that ships, the calendar and its program table are still
+one measurement, and all four calibrated inputs still read at all three windows within 5%.
+
+---
+
+## Step 7, as built — the draft board as page 9
+
+**2026-08-10.** One row in `app.VIEWS`, a three-line `dashboard/views/draft_room.py`, a
+`render()` / `main()` split inside `dashboard/draft_room.py`, `recall` / `remember` in
+`shell.py`, and 7 new tests. **No new artifact, no pipeline run and no change to what the
+room computes** — `src/sim/draft_room.py` was not touched.
+
+### The condition written as a risk measured the other way
+
+The step was allowed to leave the two launches separate if navigation made the room slower
+to first paint. It does not: it makes it *faster*, and a return visit is not close.
+Playwright driving Chrome, "first paint" being the moment the recommendation's `Recompute`
+tile is on screen, three rounds against freshly restarted servers:
+
+| launch | run 1 | run 2 | run 3 |
+|---|---|---|---|
+| `make draft-room`, cold process | 3.57 s | 3.66 s | 3.67 s |
+| page 9 from the navigation, cold process | 3.18 s | 3.18 s | 3.15 s |
+| page 9, away to another page and back | 0.31 s | 0.32 s | 0.33 s |
+| page 9, away and back a second time | 0.31 s | 0.33 s | 0.31 s |
+| `make draft-room`, second browser session on the same process | 0.45 s | 0.44 s | 0.43 s |
+
+Both cold rows pay the same 2.06 s `load_room` and the same 0.89 s
+`import src.sim.draft_room`. What separates them is that a `goto` against a cold server
+also downloads Streamlit's frontend bundle and opens a fresh websocket, where a navigation
+click has both already; the last row isolates that, being a warm cache reached through a
+fresh page load and costing 0.12 s more than the in-app return. **The row that matters is
+the third: 0.31 s to re-enter a room that costs 3.6 s to launch**, which is finding 1
+arriving as a number rather than as an argument.
+
+So the standalone launch stays for the reason it was specified and not for speed. Draft
+night is a thirty-second clock, and what a separate process buys is that nothing else can
+raise, block or allocate inside it — `main()` is `st.set_page_config` plus `render()`, and
+that is the whole of the split.
+
+### The field is not rebuilt, and the page says so itself
+
+`open_room` is `@st.cache_resource(show_spinner="Drafting the reference field — once per
+season…")`, so a cache **miss is visible in the DOM** and the browser layer can assert on it
+instead of inferring it from a stopwatch. Polling every 20 ms across each navigation, the
+spinner appears on both cold launches and on **neither** return. `AppTest` checks the same
+claim by counting rather than by looking — `src.sim.draft_room.load_room` patched to count
+its calls, out to the fingerprint page and back: **one call, zero rebuilds.**
+
+### The move exposed a defect that exists only because it moved
+
+`appearance-lives-in-the-shell` recorded that Streamlit clears widget state for a page the
+reader has left, and the escape it used — render the control from the entrypoint — is
+not available to a control that belongs to *one* page. The room is where that stops being
+cosmetic, because its state is split down the middle: the **pick log is a plain
+session-state key and survives** a navigation, while the season, tournament, seat and
+objective are widgets and do not. A reader who steps away mid-draft therefore does not lose
+the draft. They keep it, and re-read it under different assumptions.
+
+Measured under `AppTest` with every control moved off its default, one pick taken, out to
+the fingerprint page and back:
+
+| | season | tournament | seat | objective | picks |
+|---|---|---|---|---|---|
+| before | 2022-23 | `600k_shootaround` | 5 | `p_advance` | `[2]` |
+| after, widget state only | **2023-24** | `600k_shootaround` | **1** | **`bracket_ev`** | `[2]` |
+| after, as shipped | 2022-23 | `600k_shootaround` | 5 | `p_advance` | `[2]` |
+
+The seat is the sharp one — the page's own docstring calls wrong-seat bookkeeping "the
+failure that silently invalidates everything below it" — but the **season is the one that
+changes what the log says**: board index 2 is Luka Dončić on the 2022-23 board and Giannis
+Antetokounmpo on the 2023-24 one, so the identical pick log names a different pod.
+
+The fix is `shell.recall` / `shell.remember`, a namespaced plain key the page writes as it
+runs: not widget state, so nothing clears it. It is deliberately **not** a general escape
+hatch from the shell — genuinely global state still belongs in the entrypoint, and this is
+for the narrower case where a page's own control says what that page's own surviving state
+means. `top` (candidates shown) is left to reset, because it is cosmetic, and that is the
+line. Registered as `a-page-control-that-names-the-state-must-outlive-the-page`.
+
+### The `src/` exemption came out narrower than it went in
+
+The room needed a row-owning module under `views/`, and naming it `views/draft_room.py`
+would have handed it the exemption for free: `SRC_IMPORTERS` matched on **basename**, so a
+second file called `draft_room.py` anywhere in the package was exempt the moment it
+existed. The keys are now paths. One file is exempt, it is still held to `src.sim`, and the
+wrapper is held to the ordinary rule — it imports nothing from `src/` at all, and a test
+pins each half of that.
+
+The wrapper also **defers** its import of the room to inside `render()`. `app.py` imports
+every view module before it draws anything, so a module-level import would have put 0.89 s
+of `src.sim` on the startup path of every page including the ones that never touch the
+simulation layer; a subprocess test pins that importing the wrapper pulls in no `src.*` at
+all.
+
+### The middle verification layer has nothing to render
+
+Page 9 draws **no figure** — it is buttons, metric tiles, captions and two tables — so the
+PNG layer is skipped for the first time in the expansion, and the browser layer does the
+work of both. One consequence is worth stating rather than filing as a bug: **the
+appearance toggle is inert on this page**, because what the mode selects is a chart palette
+and there are no charts. It still *holds* across the page, which is the part that matters,
+and the tournament page repaints to the pinned dark surface after a round trip through the
+room.
+
+### Verification, as run
+
+**`AppTest`**, both appearance modes: **36 buttons, 9 metric tiles, 1 table, 3 selectboxes,
+10 captions, 3 expanders, 1 warning, 0 errors, 0 exceptions**, identical in light and dark.
+The warning is the room's own injury-relevance banner — the feeds describe today and the
+board is 2023-24 — which is the page working rather than a defect. The counted round trip
+above holds `picks`, the seat and `appearance`, and the fingerprint page still drew its two
+charts on the way through.
+
+**The live pages driven in Chrome** through Playwright — **28 checks, all passing**: eight
+navigation rows in the declared order with the draft board last, `/draft-room` deep-links,
+the room paints from the navigation, its own 15 px root scale applies **and does not leak**
+(16 px → 15 px → 16 px across the trip), sidebar order is nav → Appearance → Draft room by
+geometry, no `stException`, no literal `undefined` and no literal `nan` before or after a
+pick, all six of the room's landmarks are on the page, a click puts a pick in the log, the
+log and the seat survive a navigation while the player taken stays off the board, the
+return does not rebuild the field, dark mode leaves the room intact and still repaints the
+tournament page to `rgb(26, 26, 25)`, and `make draft-room` serves a page with no
+navigation and no exception.
+
+Reading the rendered navigation rather than asserting on it caught one thing: the row had
+taken `:material/sports_basketball:`, which the box-score components page already owns. Two
+identical icons in one sidebar is a row the reader has to read twice, so the draft board
+draws a ranked list instead.
+
+Two things the browser layer cost that are about *reading* a Streamlit page rather than
+about this page, recorded in `dashboard/README.md` with the rest of that list:
+
+- **Streamlit streams a page's blocks**, so `inner_text` at first paint sees the top of the
+  page only. The recommendation exists seconds before the board, the roster and the pick
+  log below it; three checks failed against a page that was fine.
+- **The first `button` in the main container is a zero-size chrome element** and clicking it
+  silently does nothing — a pick check that had never taken a pick, and passed its
+  "the player is gone" companion for the wrong reason. A pick button is the one carrying
+  `·` separators.
+
+**7 new tests**, and with step 6's landing in the same working tree `tests/test_dashboard.py`
+reads **262** and the suite **1,369**.
+
+---
+
 ## Structure
 
 ```
@@ -1337,6 +1634,10 @@ dashboard/
     game_length.py    # page 6 — the class, plus both heads read in games
     model_page.py     # the seven-block model detail page, once, for all four classes
     tournament.py     # the contest, the sweep, both backtests, the paired gaps
+    draft_room.py     # page 9's row — three lines that defer to the room below, so the
+                      #   import that reaches src.sim happens on demand and not at start
+  draft_room.py   # the live draft room — page 9 AND its own app (make draft-room), the
+                  #   one file allowed to import from src/, bounded at src.sim
   pca.py          # the fingerprint view's pure layer — orientation, SD scaling,
                   #   loadings, neighbours
   strategy.py     # the tournament view's pure layer — the contest summary, the

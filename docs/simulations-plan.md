@@ -2163,6 +2163,14 @@ prose already failed once here:
 precomputed sim tensor and the draft pool, shows the board, and takes **one click per pick** to
 mark a player gone. No external access, no OCR, no page scraping on the critical path.
 
+**Since 2026-08-10 it ships twice off one `render()`** — still its own app under `make
+draft-room`, which is what draft night launches, and also page 9 of the dashboard. That is
+`docs/dashboard-plan.md`'s step 7, and the reason the standalone launch stays is blast
+radius rather than speed: measured in Chrome, the page paints in 3.17 s cold against the
+standalone launch's 3.63 s and in **0.31 s** on a return, because `st.cache_resource` holds
+the reference field for the life of the process. What a separate process buys is that
+nothing else can raise, block or allocate inside a thirty-second clock.
+
 **Latency is the design constraint and it should be treated as a gate.** A 30-second fast-draft
 clock means a recompute budget well under a second. That is achievable because the expensive
 work is precomputed: the in-draft calculation is the marginal bracket EV of adding each

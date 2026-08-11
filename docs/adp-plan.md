@@ -587,6 +587,14 @@ lines, plain-`assert` tests with synthetic builders.
 `make adp` runs A→C in order; `make adp-status` reports coverage for both sources without
 making a request. 40 tests in `tests/test_adp.py`.
 
+**Since 2026-08-10 that coverage is also an artifact.** `make capture-calendar`
+(`src/data/capture_calendar.py`) re-reads the same manifests both ADP sources' `--status`
+paths read and writes `outputs/eda/capture_{calendar,programs}.csv`, so the dashboard's
+"Inputs beyond the heads" page can draw the two boards beside the two daily injury feeds. It
+records the distinction that matters here: FantasyPros is `recovery = archive` because
+Wayback holds its history, and DraftKings is `recovery = never`. See
+[dashboard-plan.md](dashboard-plan.md#step-6-as-built--inputs-beyond-the-heads).
+
 > ⏳ **The Wayback backfill has not been run yet, and that is the one outstanding task.**
 > 23 snapshots are archived (8 seasons) against the 259 the CDX index lists. Live capture
 > and parsing are verified end-to-end — a live pull on 2026-07-28 returned 310 KB / 260

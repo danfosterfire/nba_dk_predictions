@@ -53,7 +53,12 @@ make docs-audit       # every quoted figure in the plan docs vs its artifact —
 ### Availability data capture
 
 ```bash
-make daily-capture     # injury-reports + injuries — MUST be on a cron; see the Makefile
+make daily-capture     # injury-reports + injuries + capture-calendar — MUST be on a
+                       #    cron; see the Makefile
+make capture-calendar  # → outputs/eda/capture_{calendar,programs}.csv. The same coverage
+                       #    `capture-status` and `adp-status` print, as an artifact the
+                       #    dashboard's page 7 draws. Reads disk only, makes no requests —
+                       #    a printout cannot be drawn, diffed or checked by anything
 make boxscore-status   # 2006-07 → 2025-26 inactive lists + DNP reasons, ~8-14 h, resumable
 make availability-model  # baselines + CRPS/PIT → outputs/predictions/availability_*.csv
 make season-total      # composes gp × rate → outputs/predictions/season_total_*.csv

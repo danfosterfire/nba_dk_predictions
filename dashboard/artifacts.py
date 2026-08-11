@@ -28,6 +28,11 @@ def predictions_dir() -> Path:
     return ROOT / load_cfg()["evaluation"]["predictions_dir"]
 
 
+def eda_dir() -> Path:
+    """Where the EDA and capture-status reports land."""
+    return ROOT / load_cfg()["eda"]["output_dir"]
+
+
 @st.cache_data(show_spinner=False)
 def read_table(path_str: str, columns: tuple[str, ...] | None = None) -> pd.DataFrame:
     path = Path(path_str)

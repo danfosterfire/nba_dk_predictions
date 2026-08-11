@@ -4747,11 +4747,17 @@ REGISTRY: tuple[Decision, ...] = (
                 "`SRC_IMPORTERS` names the single file and a second test holds it to "
                 "`src.sim`, the numpy layer over the artifacts that imports no CmdStan: "
                 "an exempt page still cannot fit anything. Everything it computes lives "
-                "in `src/sim/draft_room.py`; the page is the surface.",
+                "in `src/sim/draft_room.py`; the page is the surface. **Keyed by path "
+                "since 2026-08-10**, when [[draft-room-is-a-page-and-still-an-app]] gave "
+                "the room a navigation row at `views/draft_room.py`: under the old "
+                "basename match that sibling would have inherited the exemption the "
+                "moment it was created, so joining the app would have widened the hole by "
+                "the act of naming a file. The wrapper is held to the ordinary rule and "
+                "imports nothing from `src/` at all.",
         status="settled",
         reproduce="make test → tests/test_dashboard.py, dashboard/README.md",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-10",
         date="2026-08-09",
         tags=("architecture", "conventions"),
     ),
@@ -5462,6 +5468,63 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("dashboard",),
     ),
     Decision(
+        id="draft-room-is-a-page-and-still-an-app",
+        topic="drafting",
+        claim="The live draft room ships **both ways** — page 9 of the dashboard and a "
+              "standalone `make draft-room` — off one `render()`, and the navigation is "
+              "the *faster* of the two rather than a compromise for draft night.",
+        because="The room is the most expensive thing on the surface: ~40 MB of reference "
+                "field and a 90 MB tensor behind it. Under `st.tabs` it would have run on "
+                "every interaction anywhere in the app "
+                "([[dashboard-pages-not-tabs]]); under `st.navigation` its script does not run "
+                "until the reader selects it, and `st.cache_resource` holds the field for "
+                "the life of the process. Measured in Chrome over three cold restarts "
+                "rather than argued: first paint is **3.17 s** selected from the "
+                "navigation against **3.63 s** for a cold `make draft-room`, and a return "
+                "visit is **0.31 s** with no rebuild — the cold launch pays for the "
+                "browser loading Streamlit's bundle, which an in-app click has already "
+                "done. So the acceptance condition ('leave them separate if navigation is "
+                "measurably slower') resolved the other way. The standalone launch stays "
+                "anyway, and not for speed: draft night is a thirty-second clock and "
+                "nothing else should be able to raise, block or allocate inside that "
+                "process. `main()` is `set_page_config` plus `render()`, which is the "
+                "whole of the split, and a test pins that the shared half sets no page "
+                "config — a second call raises, on the page, at navigation time.",
+        status="built",
+        reproduce="make dashboard → dashboard/draft_room.py, dashboard/views/draft_room.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "product"),
+    ),
+    Decision(
+        id="a-page-control-that-names-the-state-must-outlive-the-page",
+        topic="drafting",
+        claim="The draft room's season, tournament, seat and objective are held in plain "
+              "session-state keys (`shell.recall` / `shell.remember`) rather than left to "
+              "widget state, because they say what the pick log *means*.",
+        because="[[appearance-lives-in-the-shell]] records that Streamlit clears widget "
+                "state for a page the reader has left, and the escape it used — render it "
+                "from the entrypoint — is not available to a control that belongs to one "
+                "page. The room made the gap consequential rather than cosmetic: its pick "
+                "log is a plain key and **does** survive a navigation, so a control that "
+                "resets beside it does not lose the draft, it silently re-reads it. "
+                "Measured under `AppTest` with the shadow keys disabled: leave the room "
+                "and come back and the seat goes 5 → 1 and the objective `p_advance` → "
+                "`bracket_ev` while the picks stay put — and the season goes 2022-23 → "
+                "2023-24, where the log's board index 2 stops meaning Luka Dončić and "
+                "starts meaning Giannis Antetokounmpo. Wrong-seat bookkeeping is the "
+                "failure the page's own docstring calls the one that invalidates "
+                "everything below it. With the keys in place the same round trip returns "
+                "every control unchanged.",
+        status="built",
+        reproduce="make dashboard → dashboard/shell.py, dashboard/draft_room.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "product"),
+    ),
+    Decision(
         id="one-page-renders-no-navigation",
         topic="problem",
         claim="The navigation **must carry at least two pages**, because Streamlit draws "
@@ -5832,5 +5895,153 @@ REGISTRY: tuple[Decision, ...] = (
         reviewed="2026-08-10",
         date="2026-08-10",
         tags=("dashboard", "minutes"),
+    ),
+    Decision(
+        id="a-printout-is-not-an-artifact",
+        topic="data",
+        claim="The capture programs' coverage is emitted as **two CSVs** by `make "
+              "capture-calendar`, alongside the printouts `make capture-status` and `make "
+              "adp-status` already produce, and the emitter re-reads those commands' own "
+              "readers rather than re-deriving anything.",
+        because="A printout is the right shape for a person at a terminal and the wrong "
+                "one for everything else: the coverage of a perishable feed is an "
+                "operational fact, and a printout cannot be drawn, diffed, or checked by "
+                "anything. Two files rather than one because they answer two questions — "
+                "the calendar says *which days*, and the program table says *what happens "
+                "to a day that is missing*, which is a fact about the **source** rather "
+                "than about the archive and is the one thing a reader cannot infer from a "
+                "grid of cells. It re-reads `injury_reports.capture_status` and `injuries`' "
+                "snapshot/missing-day pair so the printout and the artifact cannot drift "
+                "apart; a test pins that they agree. It runs at the end of "
+                "`make daily-capture`, because a scheduler that stops firing is only "
+                "visible in the artifact it stops refreshing.",
+        status="built",
+        reproduce="make capture-calendar → outputs/eda/capture_calendar.csv, "
+                  "outputs/eda/capture_programs.csv",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("capture", "dashboard"),
+    ),
+    Decision(
+        id="a-day-with-no-report-is-not-a-gap",
+        topic="data",
+        claim="The calendar's state vocabulary is three words, not two: `captured`, "
+              "`nothing_to_capture`, `missed`. The middle one is the load-bearing one.",
+        because="A day the CDN 403s is a day with no report to have — the offseason, the "
+                "All-Star break — and is not a failure; a day that was never attempted is "
+                "a **run that did not happen**. Without the middle state the two are "
+                "indistinguishable from the outside, and a scheduler that silently stopped "
+                "firing would only become visible once the days were already gone. It is "
+                "also a rendering decision: on the live archive 47 of 211 injury-report "
+                "days are `nothing_to_capture`, so colouring them as gaps would cry wolf "
+                "on a quarter of the calendar and train the reader to ignore the orange.",
+        status="built",
+        reproduce="make capture-calendar → outputs/eda/capture_calendar.csv",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("capture", "dashboard"),
+    ),
+    Decision(
+        id="recoverability-rides-on-the-row-not-the-cell",
+        topic="data",
+        claim="Whether a missed day can still be fetched is drawn on the calendar's **row "
+              "label**, never as a fourth cell colour.",
+        because="It is a property of the *program*, not of the day: an injury-report gap "
+                "is recoverable until it ages out of the CDN's window and an ESPN gap "
+                "never is, and neither fact varies along its own row. Encoding it in the "
+                "cell would also break the palette: the states already take two categorical "
+                "slots and a neutral, and a fourth would put orange beside red, which is "
+                "exactly the pair `theme.py`'s validation rejects. Putting it on the axis "
+                "is a second channel that costs nothing and satisfies the relief rule.",
+        status="built",
+        reproduce="make dashboard → dashboard/inputs.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "palette", "capture"),
+    ),
+    Decision(
+        id="an-event-programs-empty-days-are-not-gaps",
+        topic="data",
+        claim="Only a `daily` program can hold a `missed` day. An `event` program's empty "
+              "stretches are drawn as nothing rather than as failures.",
+        because="The DraftKings board is live only while contests are, and FantasyPros is "
+                "captured when it moves — neither has a schedule to have missed, so filling "
+                "their rows would invent roughly a year of failures a year and bury the two "
+                "genuine daily programs' gaps under them. The cadence is a column on "
+                "`capture_programs.csv` for exactly this reason, and the calendar carries "
+                "rows only for days that have a state rather than a dense grid.",
+        status="built",
+        reproduce="make capture-calendar → outputs/eda/capture_programs.csv",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("capture", "dashboard"),
+    ),
+    Decision(
+        id="the-fit-window-is-shown-rather-than-chosen-for-the-reader",
+        topic="simulations",
+        claim="Page 7 draws each of the four calibrated simulator inputs at **all three** "
+              "fit windows and names both the safe default (`train_val`) and the window "
+              "`make simulate-season` actually consumes (`train`).",
+        because="Both are right, for different reasons, and that is the finding rather than "
+                "an inconsistency. `residual_correlation.to_matrix` defaults to `train_val` "
+                "because it is the window that is never *wrong* — it excludes the test "
+                "seasons and nothing else — and `src/sim/season.py` overrides it to `train` "
+                "because its backtest scores 2022-23 and 2023-24, which are *inside* "
+                "`train_val`. Which window to consume is decided by what the number will be "
+                "scored against, not by which is widest. The panel exists because the "
+                "windows differ by two seasons out of thirty: the largest of the four moves "
+                "**3.9%** across them and the rest by less, so a number consumed at the "
+                "wrong window would never announce itself in the output.",
+        status="built",
+        reproduce="make dashboard → outputs/eda/residual_correlation.csv",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "leakage", "simulations"),
+    ),
+    Decision(
+        id="a-correlation-heatmap-is-scaled-to-what-it-carries",
+        topic="problem",
+        claim="The residual copula's heatmap narrows its colour scale to ±0.15 and blanks "
+              "its own diagonal; the model pages' feature-correlation heatmap keeps the "
+              "pinned ±1. Same builder, two scales, and the caller states which.",
+        because="The pin is right on a model page — feature correlations run the whole "
+                "range, and pinning them is what makes two heads' heatmaps mean the same "
+                "thing. It is wrong here: the copula's largest off-diagonal cell is "
+                "**+0.133**, so on the pinned scale every cell that is not the diagonal "
+                "renders as the neutral midpoint and the figure reports *no dependence* "
+                "about a matrix that exists precisely to carry some. The diagonal is what "
+                "forces the scale — 1.0 by construction, and no information — so narrowing "
+                "and masking are one decision. Only a rendered figure showed it; the trace "
+                "was correct throughout.",
+        status="built",
+        reproduce="make dashboard → dashboard/charts.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "palette"),
+    ),
+    Decision(
+        id="an-unnamed-row-grays-out-rather-than-taking-a-slot",
+        topic="problem",
+        claim="`charts._head_colors` falls back to `muted` for a row its slot map does not "
+              "name, rather than to the next categorical slot.",
+        because="It is what lets one map serve both a *fixed pairing* and "
+                "*highlight-and-gray*, which is what let the three-window panel reuse "
+                "`fig_metric_facets` instead of growing a near-copy: the minutes page names "
+                "every head it draws so the fallback never fires there, and the inputs page "
+                "names only the window the simulator consumes and lets the other two recede. "
+                "Handing an unnamed row `series[len(slots)]` was a colour nobody chose, "
+                "which is the worse failure either way.",
+        status="built",
+        reproduce="make dashboard → dashboard/charts.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "palette"),
     ),
 )

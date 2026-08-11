@@ -18,7 +18,11 @@ is the *rendering* and not only the I/O.
 server process, so `@st.cache_data` and `@st.cache_resource` are shared across them and a
 tensor loaded by one page stays warm if the reader navigates away and back. That is the
 only structure in which the live draft board can be a page at all, rather than a separate
-app. See `docs/dashboard-plan.md`, "The expansion".
+app — and since 2026-08-10 it is one. Measured in Chrome rather than argued: the room's
+first paint is 3.17 s selected from the navigation against 3.63 s for a cold
+`make draft-room`, and **0.31 s** on a return visit, because the ~40 MB reference field is
+still in `st.cache_resource` from the first one. See `docs/dashboard-plan.md`, "The
+expansion" and "Step 7, as built".
 
 ## What the entrypoint owes a page
 
@@ -48,8 +52,8 @@ if str(ROOT) not in sys.path:
 import streamlit as st
 
 from dashboard import model_cards, shell
-from dashboard.views import (availability, components, fingerprints, game_length,
-                             minutes, tournament)
+from dashboard.views import (availability, beyond_heads, components, draft_room,
+                             fingerprints, game_length, minutes, tournament)
 
 
 class View(NamedTuple):
@@ -88,7 +92,17 @@ VIEWS: tuple[View, ...] = (
     model_view(minutes.render, minutes.CLASS_KEY),
     model_view(components.render, components.CLASS_KEY),
     model_view(game_length.render, game_length.CLASS_KEY),
+    View(beyond_heads.render, "Inputs beyond the heads", ":material/inventory_2:",
+         "inputs"),
     View(tournament.render, "Tournament & strategy", ":material/trophy:", "tournament"),
+    # Last, and the one row whose page is also its own app: `make draft-room` launches
+    # `dashboard/draft_room.py` directly for draft night. The row costs nothing until it is
+    # selected — `views/draft_room.py` defers the import that reaches `src.sim`, so a
+    # reader who never opens the room never loads the simulation layer.
+    # The icon is a ranked list rather than a basketball because `model_cards.CLASSES`
+    # already spends `sports_basketball` on the box-score page, and two identical icons in
+    # one navigation is a row a reader has to read twice.
+    View(draft_room.render, "Draft board", ":material/format_list_numbered:", "draft-room"),
 )
 
 

@@ -1,8 +1,17 @@
 """The live draft room — one click per pick, a ranked recommendation in ~110 ms.
 
-Run it with `make draft-room`. It is **not** part of the walkthrough app: the dashboard
-shows finished data and this drives a decision under a thirty-second clock, so it gets its
-own page, its own layout and its own rules about what is on screen.
+**Two launches, one body.** `make draft-room` runs this file directly, and that is what
+draft night uses: a thirty-second clock should not share a process with anything. The
+dashboard also carries it as page 9, through the three-line `dashboard/views/draft_room.py`
+that imports `render()`. The split is the whole of it — `main()` is
+`st.set_page_config` plus `render()`, so the page config is set exactly once by whichever
+entrypoint owns the process, and everything on screen is written once.
+
+That a page this expensive can live in the app at all is a property of `st.navigation`
+rather than a judgement call: a page's script does not run until the reader selects it, and
+`@st.cache_resource` holds the ~40 MB reference field for the life of the process, so
+coming *back* to the room costs a rerun rather than a rebuild. Measured in a browser rather
+than assumed — see `docs/dashboard-plan.md`, "Step 7, as built".
 
 Everything that computes anything lives in `src/sim/draft_room.py`. This file is the
 surface: it holds the pick log, draws the board, and turns a click into
@@ -24,7 +33,9 @@ precisely the drift the rule was written to prevent, arriving through the other 
 
 So the invariant is narrowed rather than waived: `tests/test_dashboard.py` still fails on
 any other file, and it pins that this one reaches no further than `src.sim`, which is the
-numpy layer over the artifacts and imports no Stan.
+numpy layer over the artifacts and imports no Stan. Joining the navigation did not widen
+it — `SRC_IMPORTERS` still names one file, and it now names it by *path*, so the view
+wrapper cannot inherit the exemption by sharing a basename.
 
 ## What is on screen, and why each piece is there
 
@@ -57,7 +68,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from dashboard import economics
+from dashboard import economics, shell
 from dashboard.artifacts import load_cfg
 from src.sim import draft, draft_room
 
@@ -160,6 +171,20 @@ def injury_panel(rows: pd.DataFrame, title: str) -> None:
                         f"</small>", unsafe_allow_html=True)
 
 
+def choice(label: str, options: list[str], key: str, default: int, **kwargs) -> str:
+    """A selectbox whose choice outlives the reader leaving the page.
+
+    Standalone this is exactly `st.selectbox`; as page 9 of the dashboard it is what stops
+    a navigation away and back from silently re-pointing the room at a different season or
+    tournament while the pick log stays put. A remembered option that is no longer on offer
+    — a season whose tensor has gone — falls back to the caller's default rather than
+    raising.
+    """
+    was = shell.recall(key, None)
+    index = options.index(was) if was in options else default
+    return shell.remember(key, st.selectbox(label, options, index=index, **kwargs))
+
+
 def format_gap(value: float, objective: str) -> str:
     """A difference in the unit the table is ranked in, signed and readable at a glance."""
     if objective == "bracket_ev":
@@ -220,8 +245,12 @@ def pick_button(room, player: int, key: str, label: str | None = None,
 
 # ── The page ──────────────────────────────────────────────────────────────────
 
-def main() -> None:
-    st.set_page_config(page_title="Draft room", page_icon="🏀", layout="wide")
+def render() -> None:
+    """The page. Called by `main()` standalone and by `views/draft_room.py` in the app.
+
+    It sets no page config, because that is the one call a Streamlit process may make
+    exactly once and it belongs to whichever entrypoint owns the process.
+    """
     st.markdown(PAGE_CSS, unsafe_allow_html=True)
 
     cfg = load_cfg()
@@ -234,9 +263,11 @@ def main() -> None:
                  f"`{cfg['data']['features_dir']}` — run `make simulate-season` first.")
         return
 
+    # Four of these five say what the pick log *means*, so they are remembered rather than
+    # defaulted — see `choice`. `top` is cosmetic and is left to reset.
     with st.sidebar:
         st.header("Draft room")
-        season = st.selectbox("Season board", seasons, index=len(seasons) - 1)
+        season = choice("Season board", seasons, "season", len(seasons) - 1)
         entered = set(sim.get("tournaments", {}) or {})
         structures = economics.advance_table().merge(
             economics.load_metadata().rename(columns={"type": "tournament"}),
@@ -244,15 +275,16 @@ def main() -> None:
         fees = dict(zip(structures["tournament"],
                         structures["entry_fee_per_team"]))
         tournaments = sorted(fees, key=lambda t: -entered.__contains__(t))
-        tournament = st.selectbox(
-            "Tournament", tournaments,
+        tournament = choice(
+            "Tournament", tournaments, "tournament", 0,
             format_func=lambda t: f"{'★ ' if t in entered else ''}{t} · ${fees[t]:,.0f}")
-        seat = st.number_input("Your seat", 1, int(sim.get("pod_size", 12)),
-                               int(room_cfg.get("seat", 0)) + 1) - 1
-        objective = st.selectbox(
-            "Rank by", list(draft_room.RANK_OBJECTIVES),
-            index=list(draft_room.RANK_OBJECTIVES).index(
-                room_cfg.get("objective", "bracket_ev")))
+        seat = st.number_input(
+            "Your seat", 1, int(sim.get("pod_size", 12)),
+            shell.recall("seat", int(room_cfg.get("seat", 0)) + 1)) - 1
+        shell.remember("seat", seat + 1)
+        objective = choice("Rank by", list(draft_room.RANK_OBJECTIVES), "objective",
+                           list(draft_room.RANK_OBJECTIVES).index(
+                               room_cfg.get("objective", "bracket_ev")))
         top = st.slider("Candidates shown", 5, 20, 10)
         st.divider()
         st.button("↩︎ Undo last pick", on_click=undo, width="stretch")
@@ -485,6 +517,17 @@ def main() -> None:
     })
     with st.expander(f"Pick log — {len(log)} picks"):
         st.dataframe(log.iloc[::-1], hide_index=True, width="stretch")
+
+
+def main() -> None:
+    """`make draft-room` — one process, one page, no navigation to share it with.
+
+    Draft night runs this rather than the dashboard, and the reason is not performance
+    (page 9 paints as fast) but blast radius: nothing else in the process can raise, hold
+    the GIL, or load a 90 MB tensor while a clock is running.
+    """
+    st.set_page_config(page_title="Draft room", page_icon="🏀", layout="wide")
+    render()
 
 
 if __name__ == "__main__":

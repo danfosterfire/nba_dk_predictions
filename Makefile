@@ -6,7 +6,8 @@ PIP    := .venv/bin/pip
         opponent persistence aging target-profile feature-diagnostics dashboard \
         dashboard-audit docs-audit \
         availability availability-profile injury-reports injuries daily-capture \
-        boxscore-status availability-model capture-status report-calibration \
+        boxscore-status availability-model capture-status capture-calendar \
+        report-calibration \
         season-total adp adp-draftkings adp-fantasypros adp-panel adp-profile \
         adp-status game-length serial-correlation component-rates \
         variance-budget residual-correlation season-effects \
@@ -45,7 +46,9 @@ injury-reports:
 injuries:
 	$(PYTHON) -m src.data.injuries --daily
 
-daily-capture: injury-reports injuries
+# The calendar runs last and makes no requests: whatever captured, record what is now on
+# disk. A cron that stops firing is only visible in the artifact it stops refreshing.
+daily-capture: injury-reports injuries capture-calendar
 
 # Which days were captured, which had no report to capture, and which were MISSED.
 # The PDF gaps are recoverable until they age out; the ESPN gaps never are.
@@ -53,6 +56,11 @@ capture-status:
 	$(PYTHON) -m src.data.injury_reports --status
 	@echo
 	$(PYTHON) -m src.data.injuries --status
+
+# The same coverage as `capture-status` and `adp-status`, for all four programs, as an
+# artifact rather than a printout — the dashboard's page 7 draws it. Reads disk only.
+capture-calendar:
+	$(PYTHON) -m src.data.capture_calendar
 
 # The 2006-07 → 2025-26 inactive-list and DNP-reason backfill. ~24,600 games, 8-14 h.
 # Resumable per game — kill it and re-run.

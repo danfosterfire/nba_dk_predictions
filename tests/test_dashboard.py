@@ -22,12 +22,13 @@ import pandas as pd
 import plotly.graph_objects as go
 import pytest
 
-from dashboard import (audit, charts, decisions, economics, model_cards, pca, strategy,
-                       theme)
+from dashboard import (audit, charts, decisions, economics, inputs, model_cards, pca,
+                       strategy, theme)
 
 ROOT = Path(__file__).resolve().parent.parent
 FEATURES = ROOT / "data" / "features"
 PREDICTIONS = ROOT / "outputs" / "predictions"
+EDA = ROOT / "outputs" / "eda"
 
 
 # ── Synthetic builders ────────────────────────────────────────────────────────
@@ -1084,6 +1085,12 @@ def test_the_repo_root_is_on_the_path_for_package_imports():
 # `draft.legal_mask`; the alternative to importing them is a second copy of the matroid
 # that seats a weekly lineup and a second opinion about which players are legal, which is
 # the drift this rule exists to prevent arriving through the other door.
+#
+# **Keyed by path rather than by basename, since 2026-08-10.** The room joined the
+# navigation as page 9, which gave it a row-owning sibling at `views/draft_room.py` — and
+# under the old basename match that sibling would have inherited the exemption for free,
+# widening a deliberately narrow hole by the act of naming a file. The wrapper is held to
+# the ordinary rule; only the path below is exempt.
 SRC_IMPORTERS = {"draft_room.py": "src.sim"}
 
 
@@ -1109,10 +1116,23 @@ def test_the_dashboard_imports_nothing_from_src():
     """
     offenders = []
     for path in sorted((ROOT / "dashboard").rglob("*.py")):
-        if path.name in SRC_IMPORTERS:
+        if path.relative_to(ROOT / "dashboard").as_posix() in SRC_IMPORTERS:
             continue
         offenders += [f"{path.relative_to(ROOT)}: {name}" for name in _src_imports(path)]
     assert offenders == []
+
+
+def test_the_exemption_is_a_path_so_a_second_file_cannot_inherit_it_by_name():
+    """The room's navigation row lives in a file with the same basename as the room.
+
+    `views/draft_room.py` owns page 9's row and `draft_room.py` is the page; under a
+    basename match the wrapper would have been exempt the moment it was created, which is
+    a widened hole nobody would have had to argue for. Both files exist, exactly one is
+    exempt, and the key that exempts it names a directory.
+    """
+    assert list(SRC_IMPORTERS) == ["draft_room.py"]
+    assert (ROOT / "dashboard" / "views" / "draft_room.py").exists()
+    assert _src_imports(ROOT / "dashboard" / "views" / "draft_room.py") == []
 
 
 def test_the_one_exempt_page_reaches_no_further_than_the_simulation_layer():
@@ -1130,6 +1150,107 @@ def test_the_one_exempt_page_reaches_no_further_than_the_simulation_layer():
         for module in imports:
             assert module == allowed or module.startswith(f"{allowed}."), \
                 f"{name} imports {module}, outside the exempt {allowed}"
+
+
+# ── The draft room, which is both a page and its own app ──────────────────────
+#
+# Page 9 joined the navigation on 2026-08-10 and `make draft-room` still launches the same
+# file directly, because draft night is a thirty-second clock and should not share a
+# process with anything. Everything below is one of the two conditions that made the move
+# allowed — see `docs/dashboard-plan.md`, "Page 9".
+
+def test_only_the_standalone_entrypoint_sets_the_page_config():
+    """`st.set_page_config` may be called once per process, so `render()` must not.
+
+    Both launches reach the same body: `main()` sets the config and calls `render()`;
+    `app.py` sets its own and calls `render()` through the view wrapper. A
+    `set_page_config` left in the shared half raises `StreamlitAPIException` in the app —
+    on the page, at navigation time, which is the one place no unit test looks.
+    """
+    tree = ast.parse((ROOT / "dashboard" / "draft_room.py").read_text())
+    functions = {node.name: node for node in tree.body
+                 if isinstance(node, ast.FunctionDef)}
+    assert {"render", "main"} <= set(functions)
+    setters = {name for name, node in functions.items()
+               for call in ast.walk(node)
+               if isinstance(call, ast.Call)
+               and getattr(call.func, "attr", "") == "set_page_config"}
+    assert setters == {"main"}
+    assert "render" in {call.func.id for call in ast.walk(functions["main"])
+                        if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)}
+
+
+def test_make_draft_room_still_launches_the_page_file_itself():
+    """The standalone launch is a condition of the move, not a leftover convenience."""
+    assert "streamlit run dashboard/draft_room.py" in (ROOT / "Makefile").read_text()
+
+
+def test_the_draft_board_row_hands_off_to_the_page_module():
+    """The row is owned by a `views/` module; the page it draws lives beside the package.
+
+    Every other row's `render` *is* the page. This one delegates, which is what lets one
+    file be both a page and an app — so the row is pinned here rather than left to the
+    generic navigation tests, which cannot tell a delegation from a stub.
+    """
+    from dashboard import app
+    rows = [v for v in app.VIEWS if v.url_path == "draft-room"]
+    assert len(rows) == 1 and rows[0].title == "Draft board"
+    assert rows[0].render.__module__ == "dashboard.views.draft_room"
+
+
+def test_the_view_wrapper_defers_the_simulation_import_until_the_page_is_opened():
+    """A reader who never opens the room never loads `src.sim`.
+
+    `app.py` imports every view module before it draws anything, so a module-level import
+    here would put `import src.sim.draft_room` — 0.89 s — on the startup path of every
+    page. Run in a subprocess because this suite imports the simulation layer elsewhere,
+    and `sys.modules` is per-process.
+    """
+    import subprocess
+    import sys
+    probe = ("import sys; import dashboard.views.draft_room as page; "
+             "assert callable(page.render); "
+             "assert not [m for m in sys.modules if m.startswith('src.')], "
+             "sorted(m for m in sys.modules if m.startswith('src.'))")
+    subprocess.run([sys.executable, "-c", probe], cwd=ROOT, check=True)
+
+
+def test_a_remembered_control_survives_the_page_being_left(monkeypatch):
+    """`shell.recall` / `shell.remember` are plain keys, which navigation does not clear.
+
+    Streamlit clears widget state for a page the reader has left. The draft room's pick
+    log is a plain key and *does* survive, so a control that resets while the log persists
+    is worse than either — it replays a real pod against the wrong seat.
+    """
+    from dashboard import shell
+    monkeypatch.setattr(shell.st, "session_state", {})
+    assert shell.recall("seat", 1) == 1
+    assert shell.remember("seat", 7) == 7
+    assert shell.recall("seat", 1) == 7
+    # Namespaced, so a shadow key and a widget key of the same name stay separate owners.
+    assert list(shell.st.session_state) == ["remembered:seat"]
+
+
+def test_a_remembered_choice_that_is_no_longer_on_offer_falls_back(monkeypatch):
+    """A season whose tensor has gone must not take the room down with it."""
+    from dashboard import draft_room as page
+    from dashboard import shell
+    seen = {}
+
+    def selectbox(label, options, index=0, **kwargs):
+        seen["index"] = index
+        return options[index]
+
+    monkeypatch.setattr(shell.st, "session_state", {})
+    monkeypatch.setattr(page.st, "selectbox", selectbox)
+    seasons = ["2022-23", "2023-24"]
+
+    assert page.choice("Season board", seasons, "season", len(seasons) - 1) == "2023-24"
+    assert seen["index"] == 1
+    shell.remember("season", "2022-23")
+    assert page.choice("Season board", seasons, "season", len(seasons) - 1) == "2022-23"
+    shell.remember("season", "1996-97")
+    assert page.choice("Season board", seasons, "season", len(seasons) - 1) == "2023-24"
 
 
 # The Streamlit surface, exhaustively. Everything else in the package stays testable
@@ -2987,3 +3108,552 @@ def test_the_shipped_index_lets_both_minutes_heads_render_all_seven_blocks():
     # Its dispersion is role-graded, which is why block 4 tiles four of them and not one.
     scalars = model_cards.scalar_terms(cards["coefficients"], "composition")
     assert int((scalars["term_role"] == "dispersion").sum()) == 4
+
+
+# ── Page 7 · inputs beyond the heads ──────────────────────────────────────────
+#
+# Three families that have nothing in common except that none of them is a fitted
+# coefficient, so they get three groups of builders rather than one.
+
+def _adp_panel() -> pd.DataFrame:
+    """A panel shaped like `adp_panel.parquet`: long over players, dated per snapshot.
+
+    Four seasons that between them cover every case the block has to handle — a season
+    with a legal board and a late one beside it, a season with only late boards, a season
+    with several legal boards, and a board for a season that has not been played.
+    """
+    snapshots = [
+        # (season, source, as_of, season_start, lag, legal, players)
+        ("2018-19", "fantasypros", "2019-09-02", "2018-10-16", 321.0, False, 3),
+        ("2022-23", "fantasypros", "2022-10-02", "2022-10-18", -16.0, True, 4),
+        ("2022-23", "fantasypros", "2022-10-15", "2022-10-18", -3.0, True, 4),
+        ("2023-24", "fantasypros", "2023-10-17", "2023-10-24", -7.0, True, 2),
+        ("2023-24", "fantasypros", "2024-08-03", "2023-10-24", 284.0, False, 2),
+        ("2026-27", "draftkings", "2026-07-28", None, None, True, 5),
+    ]
+    rows = []
+    for season, source, as_of, start, lag, legal, players in snapshots:
+        for i in range(players):
+            rows.append({"season": season, "snapshot_source": source,
+                         "as_of_date": as_of, "season_start_date": start,
+                         "snapshot_lag_days": lag,
+                         "captured_before_season_start": legal,
+                         "player_name": f"Player {i}", "adp": 1.0 + i})
+    return pd.DataFrame(rows)
+
+
+def _adp_profile() -> pd.DataFrame:
+    rows = [("agreement", "n_pairs", 226.0), ("agreement", "spearman", 0.8675),
+            ("agreement", "mean_abs_rank_gap", 23.115),
+            ("ladder", "consensus raw", 24.378),
+            ("ladder", "+ linear rescale", 21.377),
+            ("ladder", inputs.SHIPPED_LADDER_ARM, 17.322),
+            ("ladder", "+ isotonic + C/F/G offset", 15.316),
+            ("position_bias", "C:mean_rank_gap", 13.88),
+            ("position_bias", "C:n", 43.0),
+            ("position_bias", "G:mean_rank_gap", -4.89),
+            ("position_bias", "G:n", 97.0),
+            ("tier_gap", "R9+:mean_abs_rank_gap", 32.31), ("tier_gap", "R9+:n", 134.0),
+            ("tier_gap", "R1-2:mean_abs_rank_gap", 5.09), ("tier_gap", "R1-2:n", 23.0)]
+    return pd.DataFrame(rows, columns=["section", "metric", "value"])
+
+
+def _adp_audit() -> pd.DataFrame:
+    columns = ["section", "source", "rule", "board_name", "matched_name", "board_season",
+               "seasons_apart", "player_id", "metric", "value"]
+    rows = [
+        ("fuzzy_match", "draftkings", "prefix", "Alexandre Sarr", "Alex Sarr", "2025-26",
+         0.0, 1.0, "", np.nan),
+        ("ablation_match", "draftkings", "surname_initial", "Cameron Boozer",
+         "Carlos Boozer", "2026-27", 12.0, 2.0, "agrees_with_cascade", 0.0),
+        ("ablation_match", "draftkings", "surname_initial", "Alexandre Sarr", "Alex Sarr",
+         "2025-26", 0.0, 1.0, "agrees_with_cascade", 1.0),
+        ("summary", "", "cascade", "", "", "", np.nan, np.nan, "unmatched", 17.0),
+        ("summary", "", "cascade", "", "", "", np.nan, np.nan, "matchable_rows", 3417.0),
+        ("summary", "", "cascade", "", "", "", np.nan, np.nan,
+         "unmatched_rate_cascade", 0.00498),
+        ("summary", "", "surname_initial", "", "", "", np.nan, np.nan,
+         "ablation_false_matches", 23.0),
+        ("summary", "", "surname_initial", "", "", "", np.nan, np.nan,
+         "unmatched_rate_surname_initial", 0.0),
+    ]
+    return pd.DataFrame(rows, columns=columns)
+
+
+def _calendar() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """A calendar and its program table, with one gap of each kind."""
+    rows = [
+        ("injury_reports", "2026-08-08", "captured", False, 130.0),
+        ("injury_reports", "2026-08-09", "nothing_to_capture", False, 0.0),
+        ("injury_reports", "2026-08-10", "missed", True, 0.0),
+        ("espn_injuries", "2026-08-08", "captured", False, 40.0),
+        ("espn_injuries", "2026-08-09", "missed", False, 0.0),
+        ("espn_injuries", "2026-08-10", "missed", False, 0.0),
+        ("adp_fantasypros", "2026-07-28", "captured", False, 260.0),
+        ("adp_draftkings", "2026-07-28", "captured", False, 942.0),
+    ]
+    calendar = pd.DataFrame(rows, columns=["program", "capture_date", "state",
+                                           "recoverable", "records"])
+    programs = pd.DataFrame([
+        ("injury_reports", "daily", "window", 210, "2026-08-08", "2026-08-10",
+         3, 1, 1, 1, 1, 0),
+        ("espn_injuries", "daily", "never", 0, "2026-08-08", "2026-08-10",
+         3, 1, 0, 2, 0, 2),
+        ("adp_fantasypros", "event", "archive", 0, "2026-07-28", "2026-07-28",
+         1, 1, 0, 0, 0, 0),
+        ("adp_draftkings", "event", "never", 0, "2026-07-28", "2026-07-28",
+         1, 1, 0, 0, 0, 0),
+    ], columns=["program", "cadence", "recovery", "recovery_window_days", "window_start",
+                "window_end", "n_days", "n_captured", "n_nothing_to_capture", "n_missed",
+                "n_recoverable", "n_lost"])
+    programs["records"] = 0.0
+    return calendar, programs
+
+
+def _calibrated() -> dict[str, pd.DataFrame]:
+    """The four artifacts, at three windows, with the components' kinds carried."""
+    counts = ["fga", "reb"]
+    conversions = ["fg3a|fga", "fg3m|fg3a"]
+    kinds = {**{c: "count" for c in counts}, **{c: "conversion" for c in conversions}}
+    residual, serial, bonus, dispersion = [], [], [], []
+    for shift, window in enumerate(inputs.FIT_WINDOWS):
+        for a in counts + conversions:
+            for b in counts + conversions:
+                r = 1.0 if a == b else (0.12 if {a, b} == set(counts)
+                                        else -0.05 + 0.001 * shift)
+                residual.append({"fit_window": window, "component_a": a,
+                                 "component_b": b, "kind_a": kinds[a],
+                                 "kind_b": kinds[b], "r": r, "n_games": 1000,
+                                 "basis": inputs.MINUTES_CONDITIONED,
+                                 "minutes_conditioned": True})
+                residual.append({"fit_window": window, "component_a": a,
+                                 "component_b": b, "kind_a": kinds[a],
+                                 "kind_b": kinds[b], "r": r + 0.5, "n_games": 1000,
+                                 "basis": "raw", "minutes_conditioned": False})
+        for component, kind, inflation in (("min", "minutes", 2.43 - 0.01 * shift),
+                                           ("min_detrended", "minutes", 1.70),
+                                           ("fga", "count", 1.37)):
+            serial.append({"fit_window": window, "component": component, "kind": kind,
+                           "block_inflation": inflation, "lag1": 0.28, "n_pairs": 5000})
+        for unit, fitted in (("player_season", 0.0967), ("player_game", 0.0248)):
+            bonus.append({"fit_window": window, "analysis": "fitted", "unit": unit,
+                          "bucket": "all", "overdispersion": fitted + 0.0001 * shift,
+                          "n": 1000, "relative_bias": 0.0, "is_shipped": False,
+                          "is_independent": False})
+            bonus.append({"fit_window": window, "analysis": "calibration", "unit": unit,
+                          "bucket": "all", "overdispersion": 0.1, "n": 1000,
+                          "relative_bias": 0.16, "is_shipped": True,
+                          "is_independent": False})
+        dispersion.append({"metric": "game_level_rho", "fit_window": window,
+                           "rho": 0.078, "implied_overdispersion": 4.65 + 0.03 * shift,
+                           "n_player_games": 700000.0, "note": ""})
+    return {"residual": pd.DataFrame(residual), "serial": pd.DataFrame(serial),
+            "bonus": pd.DataFrame(bonus), "dispersion": pd.DataFrame(dispersion)}
+
+
+# ── Block 1 · what point-in-time safety costs ─────────────────────────────────
+
+def test_a_season_is_usable_if_any_board_beat_the_opener_not_if_all_did():
+    """`training_rows` filters rows, not seasons, so a season with one legal board and
+    three late ones is a season the backtest can draft in. Reading the verdict as an `all`
+    would throw away 2023-24, which has exactly that shape on the real panel."""
+    coverage = inputs.season_coverage(_adp_panel()).set_index("season")
+    assert bool(coverage.loc["2023-24", "legal"])
+    assert coverage.loc["2023-24", "n_snapshots"] == 2
+    assert coverage.loc["2023-24", "n_legal"] == 1
+    assert coverage.loc["2023-24", "earliest_legal"] == "2023-10-17"
+    # And a season whose only boards are late is not usable at all.
+    assert not bool(coverage.loc["2018-19", "legal"])
+    assert coverage.loc["2018-19", "legal_rows"] == 0
+
+
+def test_the_cost_of_the_dating_rule_is_counted_in_seasons_and_in_rows():
+    """Both, because they say different things: the row share is what the panel loses and
+    the season count is what the *backtest* loses, and a season is not partly draftable."""
+    cost = inputs.point_in_time_cost(_adp_panel())
+    assert (cost["seasons_held"], cost["seasons_legal"], cost["seasons_lost"]) == (4, 3, 1)
+    assert cost["lost"] == ("2018-19",)
+    assert cost["legal_rows"] < cost["rows"]
+    assert 0.0 < cost["row_share"] < 1.0
+
+
+def test_a_board_for_an_unplayed_season_is_legal_and_has_no_position_on_the_axis():
+    """It cannot postdate a season that has not started, so it is kept; it has no tip-off
+    to measure from, so it is named in the table rather than drawn at a zero it never had."""
+    snaps = inputs.snapshots(_adp_panel())
+    undated = inputs.undated(snaps)
+    assert list(undated["season"]) == ["2026-27"] and bool(undated["legal"].iloc[0])
+    assert len(inputs.datable(snaps)) == len(snaps) - 1
+    assert inputs.datable(snaps)["lag_days"].notna().all()
+
+
+def test_the_ladder_keeps_the_order_it_was_measured_in_and_flags_what_ships():
+    """Sorting by score would turn a ladder of stacked corrections into a menu, and put an
+    arm that is not shipped at the top of it."""
+    ladder = inputs.ladder(_adp_profile())
+    assert list(ladder["arm"])[0] == "consensus raw"          # as measured, not as ranked
+    assert ladder["mean_abs_rank_gap"].iloc[-1] < ladder["mean_abs_rank_gap"].iloc[0]
+    shipped = ladder[ladder["shipped"]]
+    assert list(shipped["arm"]) == [inputs.SHIPPED_LADDER_ARM]
+    # The shipped rung is deliberately NOT the best one on the board.
+    assert shipped["mean_abs_rank_gap"].iloc[0] > ladder["mean_abs_rank_gap"].min()
+
+
+def test_the_rejected_matching_rule_scores_better_and_is_still_wrong():
+    """The page's one warning, and the reason it is a warning: an unmatched rate improves
+    with every fabricated match, so it is monotonically increasing in its own error."""
+    summary = inputs.match_summary(_adp_audit())
+    assert summary["surname_initial"]["unmatched_rate_surname_initial"] < \
+        summary["cascade"]["unmatched_rate_cascade"]
+    assert summary["surname_initial"]["ablation_false_matches"] > 0
+    # And the fabrications are listed by name rather than counted, worst-dated first.
+    false = inputs.ablation_false_matches(_adp_audit())
+    assert list(false["board name"]) == ["Cameron Boozer"]
+    assert float(false["seasons apart"].iloc[0]) == 12.0
+    # The surviving fuzzy tier stays small enough to read.
+    assert len(inputs.fuzzy_matches(_adp_audit())) == 1
+
+
+# ── Block 2 · the calendar is an alarm ────────────────────────────────────────
+
+def test_recoverability_rides_on_the_row_label_because_it_never_varies_along_a_row():
+    """Encoding it in the cell would spend a colour the palette cannot spare on a fact that
+    is constant across the row — and the states already take two slots and a neutral."""
+    _, programs = _calendar()
+    labels = inputs.row_labels(programs)
+    assert len(labels) == len(programs)
+    assert "recoverable until it ages out" in labels[0]
+    assert "permanently lost" in labels[1]
+    assert len(inputs.STATE_ORDER) == 3
+
+
+def test_an_event_programs_empty_days_are_drawn_as_nothing_rather_than_as_gaps():
+    """A board that opens in October has no schedule to have missed, so filling its row
+    would report a year of failures a year."""
+    calendar, programs = _calendar()
+    grid = inputs.calendar_grid(calendar, programs, days=30)
+    per_program = grid.groupby("program").size().to_dict()
+    assert per_program["adp_draftkings"] == 1
+    assert per_program["injury_reports"] == 3
+    # Every cell carries a code the figure can map, and the row it belongs on.
+    assert set(grid["code"]) <= set(range(len(inputs.STATE_ORDER)))
+    assert set(grid["row"]) == set(range(len(programs)))
+
+
+def test_the_alarm_separates_a_chore_from_an_incident():
+    """One number would collapse "run the cron" and "these days no longer exist"."""
+    _, programs = _calendar()
+    alarm = inputs.calendar_alarm(programs)
+    assert alarm["recoverable"] == 1 and alarm["lost"] == 2
+    assert alarm["worst"] == inputs.PROGRAM_NOTES["espn_injuries"].label
+    # And the gap table says which of the two each day is.
+    calendar, _ = _calendar()
+    gaps = inputs.gap_table(calendar)
+    assert len(gaps) == 3 and gaps["Still fetchable"].sum() == 1
+
+
+def test_the_calendar_row_is_matched_by_index_not_by_label_prefix():
+    """`row_labels` decorates a program name with its policy, so matching a cell to a row
+    by label means matching a prefix — and two programs sharing one would silently stack."""
+    calendar, programs = _calendar()
+    programs = programs.copy()
+    programs.loc[programs["program"] == "adp_draftkings", "program"] = "injury_reports_v2"
+    calendar = calendar.copy()
+    calendar.loc[calendar["program"] == "adp_draftkings", "program"] = "injury_reports_v2"
+    grid = inputs.calendar_grid(calendar, programs, days=30)
+    rows = dict(zip(grid["program"], grid["row"]))
+    assert rows["injury_reports"] != rows["injury_reports_v2"]
+
+
+def test_every_capture_program_has_a_note_and_every_note_a_program():
+    """`PROGRAM_NOTES` is the page's interpretation of the artifact, so it is anchored in
+    both directions — a new program with no note would render as a blank row, and a note
+    for a program nobody captures would describe a source that is not there."""
+    _, programs = _calendar()
+    assert set(programs["program"]) == set(inputs.PROGRAM_NOTES)
+    assert set(programs["recovery"]) <= set(inputs.RECOVERY_LABELS)
+    for note in inputs.PROGRAM_NOTES.values():
+        assert note.label and note.what and note.stake
+
+
+# ── Block 3 · the window is shown, not chosen for the reader ──────────────────
+
+def test_the_copula_keeps_its_counts_ahead_of_its_conversions():
+    """Only the count block is imposed on the simulator's draws, so reading it off the
+    wrong corner of the matrix would be silent. The order comes from the artifact."""
+    frames = _calibrated()
+    order = inputs.copula_components(frames["residual"])
+    kinds = inputs.copula_kinds(frames["residual"])
+    seen_conversion = False
+    for name in order:
+        if kinds[name] == "conversion":
+            seen_conversion = True
+        else:
+            assert not seen_conversion, order
+    square = inputs.copula_square(frames["residual"])
+    assert list(square.index) == list(square.columns) == order
+
+
+def test_the_copula_scale_is_narrowed_and_its_diagonal_blanked_together():
+    """A self-correlation is 1.0 by construction and the largest real cell is a tenth of
+    that, so a scale that fits the diagonal renders every real cell as the midpoint."""
+    frames = _calibrated()
+    limit = inputs.copula_limit(frames["residual"])
+    assert 0.0 < limit < 1.0
+    cells = inputs.copula_cells(frames["residual"])
+    assert limit >= cells["r"].abs().max()
+    masked = inputs.copula_square(frames["residual"], mask_diagonal=True)
+    assert masked.to_numpy().diagonal().tolist() == [np.nan] * len(masked) or \
+        np.isnan(np.diag(masked.to_numpy())).all()
+    # The unmasked square keeps the diagonal, because there it is a free check on the pivot.
+    assert (np.diag(inputs.copula_square(frames["residual"]).to_numpy()) == 1.0).all()
+    fig = charts.fig_correlation(masked, theme.theme("light"), limit=limit)
+    assert (fig.data[0].zmin, fig.data[0].zmax) == (-limit, limit)
+
+
+def test_a_pair_appears_once_on_the_cell_list_and_never_against_itself():
+    cells = inputs.copula_cells(_calibrated()["residual"], top=20)
+    assert len(cells) == len(set(cells["pair"]))
+    assert not any(pair.split(" · ")[0] == pair.split(" · ")[1] for pair in cells["pair"])
+
+
+def test_the_detrended_minutes_series_is_not_drawn_as_a_second_component():
+    """It is the same series with the season trend removed, so drawing both puts one
+    component on the chart twice and invites reading them as two heads."""
+    frames = _calibrated()
+    drawn = inputs.block_inflation(frames["serial"], "train")
+    assert "min_detrended" not in set(drawn["component"])
+    assert drawn["component"].iloc[0] == "min"                  # largest first
+    assert "min_detrended" in set(
+        inputs.block_inflation(frames["serial"], "train", detrended=True)["component"])
+
+
+def test_the_bonus_overdispersion_is_reported_per_unit_against_the_shipped_constant():
+    """Two units, two answers, and the simulator draws at the second. Reporting one would
+    make the constant look either calibrated or badly wrong depending which."""
+    rows = inputs.bonus_rows(_calibrated()["bonus"], "train").set_index("unit")
+    assert set(rows.index) == {"player_season", "player_game"}
+    assert rows.loc["player_season", "fitted"] > rows.loc["player_game", "fitted"] * 3
+    assert (rows["shipped_constant"] == 0.1).all()
+    # The season unit sits on the constant and the game unit does not, which is the point.
+    assert abs(rows.loc["player_season", "fitted"] - 0.1) < 0.01
+    assert abs(rows.loc["player_game", "fitted"] - 0.1) > 0.05
+
+
+def test_every_calibrated_input_reads_at_every_window_and_moves_almost_not_at_all():
+    """The block's argument: the three windows differ by two seasons out of thirty, so a
+    number consumed at the wrong one would never announce itself in the output."""
+    frames = _calibrated()
+    panel = inputs.window_panel(frames)
+    assert len(panel) == len(inputs.CALIBRATED) * len(inputs.FIT_WINDOWS)
+    assert set(panel["fit_window"]) == set(inputs.FIT_WINDOWS)
+    assert panel["value"].notna().all()
+    assert (panel["relative_spread"] < 0.10).all()
+    label, spread = inputs.widest_relative_spread(panel)
+    assert label in set(panel["label"]) and 0.0 <= spread < 0.10
+
+
+def test_the_two_windows_the_page_names_are_the_two_the_code_actually_uses():
+    """`train_val` is the safe default and `train` is what the simulator overrides it to,
+    and the page's whole claim is that both are right for different reasons."""
+    assert inputs.SAFE_WINDOW in inputs.FIT_WINDOWS
+    assert inputs.SIM_WINDOW in inputs.FIT_WINDOWS
+    assert inputs.SAFE_WINDOW != inputs.SIM_WINDOW
+    # And the simulator's window is the one the figure highlights, alone.
+    assert list(inputs.WINDOW_SLOTS) == [inputs.SIM_WINDOW]
+
+
+def test_an_unnamed_row_grays_out_rather_than_taking_a_colour_nobody_chose():
+    """The fallback that lets one builder serve a fixed pairing and highlight-and-gray."""
+    th = theme.theme("light")
+    assert charts._head_colors(th, ["a", "b"], {"a": 0}) == [th["series"][0], th["muted"]]
+
+
+def test_the_window_facets_reshape_into_the_builder_the_minutes_page_already_has():
+    """One figure, two pages: a handful of rows compared inside each facet, facets in
+    different units. A near-copy would be a second place for the palette rules to drift."""
+    frames = _calibrated()
+    facets = inputs.window_facets(inputs.window_panel(frames))
+    assert set(facets.columns) >= {"metric_label", "head", "label", "value", "text",
+                                   "reference"}
+    assert facets["reference"].isna().all()          # none of these has a target value
+    fig = charts.fig_metric_facets(facets, theme.theme("light"), inputs.WINDOW_SLOTS,
+                                   columns=2)
+    assert len(fig.data) == len(inputs.CALIBRATED)
+    for trace in fig.data:
+        assert len(set(trace.marker.color)) == 2     # the simulator's window, and gray
+
+
+# ── Page 7's figures ──────────────────────────────────────────────────────────
+
+def test_the_calendar_names_its_states_without_a_colourbar_over_three_integers():
+    """A heatmap draws no legend and a continuous colourbar over three categories is a
+    claim they are a scale, so the states arrive as marker traces with no points in them."""
+    calendar, programs = _calendar()
+    th = theme.theme("light")
+    fig = charts.fig_calendar(inputs.calendar_grid(calendar, programs, days=30),
+                              inputs.row_labels(programs), th, inputs.STATE_ORDER,
+                              inputs.STATE_LABELS)
+    heat = fig.data[0]
+    assert not heat.showscale
+    keys = [trace.name for trace in fig.data[1:]]
+    assert keys == [inputs.STATE_LABELS[s] for s in inputs.STATE_ORDER]
+    assert all(trace.mode == "markers" for trace in fig.data[1:])
+    # Two categorical slots and a neutral — well inside ALL_PAIRS_CAP.
+    used = [trace.marker.color for trace in fig.data[1:]]
+    assert used == [th["series"][0], th["neutral"], th["series"][1]]
+    assert len([c for c in used if c in th["series"]]) <= theme.ALL_PAIRS_CAP
+
+
+def test_a_day_no_program_covers_stays_a_hole_rather_than_becoming_a_zero():
+    """A painted cell would report "captured nothing" about a day nobody owed."""
+    calendar, programs = _calendar()
+    fig = charts.fig_calendar(inputs.calendar_grid(calendar, programs, days=30),
+                              inputs.row_labels(programs), theme.theme("light"),
+                              inputs.STATE_ORDER, inputs.STATE_LABELS)
+    z = np.asarray(fig.data[0].z, dtype=float)
+    assert np.isnan(z).any() and not fig.data[0].hoverongaps
+
+
+def test_the_days_are_not_separated_but_the_rows_are():
+    """At 150 days a gap between cells is as wide as a cell, so a run of captures came out
+    as a barcode and a genuinely missing day looked like the gutter beside a present one."""
+    calendar, programs = _calendar()
+    fig = charts.fig_calendar(inputs.calendar_grid(calendar, programs, days=30),
+                              inputs.row_labels(programs), theme.theme("light"),
+                              inputs.STATE_ORDER, inputs.STATE_LABELS)
+    assert fig.data[0].xgap == 0 and fig.data[0].ygap > 0
+
+
+def test_the_adp_timeline_carries_legality_three_ways():
+    """Position on the axis, colour, and marker shape — because whether a season exists at
+    all turns on it, and three light-mode slots fall under 3:1 on the light surface."""
+    snaps = inputs.datable(inputs.snapshots(_adp_panel()))
+    fig = charts.fig_adp_lag(snaps, theme.theme("light"))
+    assert len(fig.data) == 2
+    legal, late = fig.data
+    assert legal.marker.symbol != late.marker.symbol
+    assert legal.marker.color != late.marker.color
+    assert all(x <= 0 for x in legal.x) and all(x > 0 for x in late.x)
+    assert "negative is before it" in fig.layout.xaxis.title.text
+    # The reference at zero is drawn bare — the axis title already says what zero is.
+    assert not fig.layout.annotations
+
+
+def test_the_block_inflation_reference_is_drawn_over_the_bars_and_at_weight():
+    """Below them it survives only in the gutters and reads as a dashed line, which
+    `theme.py` bans; at hairline weight it is indistinguishable from the gridlines."""
+    frames = _calibrated()
+    fig = charts.fig_block_inflation(inputs.block_inflation(frames["serial"], "train"),
+                                     theme.theme("light"))
+    lines = [s for s in fig.layout.shapes if s.type == "line"]
+    assert len(lines) == 1 and lines[0].x0 == 1.0
+    assert lines[0].layer == "above" and lines[0].line.width >= 2
+    assert lines[0].line.dash in (None, "solid")
+    assert "independent draws" in fig.layout.xaxis.title.text
+
+
+def test_every_bar_on_page_seven_prints_its_own_value():
+    """The relief rule in its most literal form: no bar's length is the only route to its
+    number, because three light-mode slots fall under 3:1 on the light surface."""
+    th = theme.theme("light")
+    frames = _calibrated()
+    for fig in (charts.fig_ladder(inputs.ladder(_adp_profile()), th),
+                charts.fig_block_inflation(
+                    inputs.block_inflation(frames["serial"], "train"), th)):
+        bars = [t for t in fig.data if isinstance(t, go.Bar)]
+        assert bars and all(len(t.text) == len(t.x) for t in bars)
+        assert all(t.textposition == "outside" and t.cliponaxis is False for t in bars)
+
+
+def test_page_sevens_figures_carry_a_title_and_the_pinned_surface():
+    """`apply_theme` sets `title.text` explicitly because a title object with a font and no
+    text renders as the literal string "undefined" in a browser."""
+    frames = _calibrated()
+    calendar, programs = _calendar()
+    for mode in theme.THEMES:
+        th = theme.theme(mode)
+        figs = [
+            charts.fig_calendar(inputs.calendar_grid(calendar, programs, days=30),
+                                inputs.row_labels(programs), th, inputs.STATE_ORDER,
+                                inputs.STATE_LABELS),
+            charts.fig_adp_lag(inputs.datable(inputs.snapshots(_adp_panel())), th),
+            charts.fig_ladder(inputs.ladder(_adp_profile()), th),
+            charts.fig_block_inflation(
+                inputs.block_inflation(frames["serial"], "train"), th),
+        ]
+        for fig in figs:
+            assert fig.layout.title.text is not None
+            assert fig.layout.paper_bgcolor == th["surface"]
+            assert fig.layout.plot_bgcolor == th["surface"]
+            for trace in fig.data:
+                if isinstance(trace, go.Scatter):
+                    assert trace.mode                      # never plotly's own inference
+
+
+# ── The shipped artifacts, for page 7 ─────────────────────────────────────────
+
+def _eda(name: str) -> pd.DataFrame:
+    path = EDA / name
+    if not path.exists():
+        pytest.skip(f"{name} not built")
+    return pd.read_csv(path)
+
+
+def test_the_shipped_panel_still_loses_four_of_its_nine_seasons_to_the_dating_rule():
+    """Quoted on the page and in `docs/simulations-plan.md`. If a Wayback backfill ever
+    recovers a season, the number moves and the prose has to move with it."""
+    path = FEATURES / inputs.PANEL_FILE
+    if not path.exists():
+        pytest.skip("adp_panel.parquet not built")
+    cost = inputs.point_in_time_cost(pd.read_parquet(path))
+    assert cost["seasons_held"] == 9
+    assert cost["seasons_legal"] == 5
+    assert cost["lost"] == ("2017-18", "2018-19", "2019-20", "2024-25")
+    # Both validation seasons survive, which is the coverage that actually matters.
+    coverage = inputs.season_coverage(pd.read_parquet(path)).set_index("season")
+    assert bool(coverage.loc["2022-23", "legal"]) and bool(coverage.loc["2023-24", "legal"])
+
+
+def test_the_shipped_ladder_still_names_the_arm_that_ships():
+    """The page flags the shipped rung rather than the best one, so the name has to exist
+    in the artifact — a renamed rung would silently flag nothing."""
+    ladder = inputs.ladder(_eda(inputs.PROFILE_FILE))
+    assert int(ladder["shipped"].sum()) == 1
+    assert ladder["mean_abs_rank_gap"].min() < \
+        float(ladder.loc[ladder["shipped"], "mean_abs_rank_gap"].iloc[0])
+
+
+def test_the_shipped_calendar_agrees_with_its_own_program_table():
+    """The counts are read from the program table and the grid from the calendar, so the
+    two files have to be one measurement. Both come from one `make capture-calendar` run."""
+    calendar, programs = _eda(inputs.CALENDAR_FILE), _eda(inputs.PROGRAMS_FILE)
+    assert set(programs["program"]) == set(inputs.PROGRAM_NOTES)
+    for row in programs.itertuples(index=False):
+        part = calendar[calendar["program"] == row.program]
+        assert int((part["state"] == inputs.CAPTURED).sum()) == row.n_captured
+        assert int((part["state"] == inputs.MISSED).sum()) == row.n_missed
+        assert row.n_recoverable + row.n_lost == row.n_missed
+    # Only a `window` program can hold a recoverable gap; the rest are gone when missed.
+    windowed = set(programs.loc[programs["recovery"] == "window", "program"])
+    assert set(programs.loc[programs["n_recoverable"] > 0, "program"]) <= windowed
+
+
+def test_the_shipped_calibrated_inputs_read_at_all_three_windows():
+    """The whole block: four numbers, three windows, and none of them moves enough to be
+    noticed if it were consumed at the wrong one."""
+    frames = {"residual": _eda(inputs.RESIDUAL_FILE), "serial": _eda(inputs.SERIAL_FILE),
+              "bonus": _eda(inputs.BONUS_FILE)}
+    path = PREDICTIONS / inputs.DISPERSION_FILE
+    if not path.exists():
+        pytest.skip("stan_minutes_dispersion.csv not built")
+    frames["dispersion"] = pd.read_csv(path)
+    panel = inputs.window_panel(frames)
+    assert panel["value"].notna().all()
+    assert (panel["relative_spread"] < 0.05).all()
+    # The copula's own count block is the part the simulator imposes, and it is positive.
+    assert inputs.copula_mean(frames["residual"], inputs.SIM_WINDOW) > 0
+    # The shipped bonus constant is calibrated at the season unit and not at the game one.
+    rows = inputs.bonus_rows(frames["bonus"], inputs.SIM_WINDOW).set_index("unit")
+    assert abs(rows.loc["player_season", "fitted"] - 0.1) < 0.01
+    assert rows.loc["player_game", "fitted"] < 0.05

@@ -16,7 +16,12 @@ one session.
 The mode lives under a single key, `APPEARANCE`, seeded once from `detected_mode()` and
 thereafter owned by the widget. `current_theme()` is what a view calls; it never touches
 the key directly, so the storage can change without a view knowing.
+
+`remember()` / `recall()` are the other half of the same asymmetry, for a control the
+*entrypoint* cannot render on a page's behalf — see their own docstrings.
 """
+
+from typing import TypeVar
 
 import streamlit as st
 
@@ -24,6 +29,12 @@ from dashboard.theme import theme
 
 MODES = ("light", "dark")
 APPEARANCE = "appearance"
+
+# Shadow keys are namespaced so they cannot collide with a widget key, which would put two
+# owners on one entry — the same argument `appearance_control` makes about `index=`.
+REMEMBERED = "remembered:"
+
+V = TypeVar("V")
 
 # Streamlit's metric tiles are sized for a three-tile hero row, and clip their own values
 # past four across — caught in a browser on the fingerprint page's five-tile header, where
@@ -68,6 +79,32 @@ def mode() -> str:
 def current_theme() -> dict:
     """The palette every chart on every page is built against."""
     return theme(mode())
+
+
+def recall(key: str, default: V) -> V:
+    """What this control held before the reader last left the page, or `default`.
+
+    Streamlit clears the state of every widget the current page did not render, so a
+    control declared inside a `render()` comes back at its default after a navigation —
+    measured, and the reason `appearance_control` lives in the entrypoint. A page whose
+    controls *say what its other state means* cannot use that escape: the draft room's
+    seat, season and tournament are only meaningful beside a pick log that is a plain
+    session-state key and therefore does survive, so a silent reset to seat 1 would replay
+    a real pod against the wrong roster rather than lose it.
+
+    A plain key written by the page while it runs is not widget state and is not cleared,
+    so the pair here is the page's own memory: `recall` seeds the widget, `remember` stores
+    what it came back with. It is deliberately *not* an alternative to putting genuinely
+    global state in this module — the appearance mode belongs to every page and is rendered
+    by the entrypoint; these belong to one page and only have to outlive leaving it.
+    """
+    return st.session_state.get(f"{REMEMBERED}{key}", default)
+
+
+def remember(key: str, value: V) -> V:
+    """Store a control's value under `key` and hand it straight back."""
+    st.session_state[f"{REMEMBERED}{key}"] = value
+    return value
 
 
 def appearance_control() -> str:

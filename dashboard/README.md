@@ -1,10 +1,14 @@
 # The dashboard
 
-Data visualizations over the artifacts the pipeline wrote. Six views today — the PCA
+Data visualizations over the artifacts the pipeline wrote. Eight pages today — the PCA
 player-style fingerprint, all four model detail pages (Availability, Minutes, Box-score
-components, Game length) and the tournament & strategy page — inside a multipage shell that
-three more pages plug into. Run it with `make dashboard`; the plan is
-`docs/dashboard-plan.md`.
+components, Game length), the inputs beyond the heads, the tournament & strategy page, and
+the live draft board — inside a multipage shell that the overview page still plugs into.
+Run it with `make dashboard`; the plan is `docs/dashboard-plan.md`.
+
+Seven of the eight are views. **The draft board is a tool**, drives a live draft under a
+thirty-second clock, and ships twice: as page 9 and as its own app under `make draft-room`,
+off one `render()`. Everything below that says "a view" means the other seven.
 
 **The dashboard shows data. Prose about the project belongs in `docs/`.** The nine-tab
 project walkthrough that used to live here was documentation rendered as an app, and every
@@ -31,6 +35,13 @@ other door. So `SRC_IMPORTERS` in `tests/test_dashboard.py` names the one file a
 cannot refit anything. Everything it computes lives in `src/sim/draft_room.py`; this file
 is the surface. Registered as `draft-room-imports-src-sim`.
 
+**The keys are paths, not basenames**, and that is what stopped the exemption widening when
+the room joined the navigation on 2026-08-10. Page 9's row is owned by
+`views/draft_room.py`, which shares a basename with the exempt file and would have
+inherited the exemption by existing. It is held to the ordinary rule instead: it imports
+nothing from `src/`, and it defers even its import of the room to inside `render()`, so a
+reader who never opens the board never loads the simulation layer.
+
 Where a view *interprets* an artifact — naming a principal component, say — the
 interpretation carries a machine-checkable anchor so it cannot silently invert. See
 `pca.COMPONENTS` and `pca.orient()`.
@@ -53,10 +64,14 @@ dashboard/
     game_length.py    page 6 — the class, plus both heads read in games
     model_page.py     the seven-block model detail page, written once and shared by
                       the four model classes (pages 3-6)
+    beyond_heads.py   page 7 — the three families of input that are not a fitted
+                      coefficient: the capture programs as an alarm, ADP and what
+                      dating it costs, and the four calibrated simulator inputs
     tournament.py     the contest structure, the strategy sweep, simulated against
                       realized, and the paired gaps
-  draft_room.py   the live draft room — `make draft-room`. Its own app, not a page of
-                  app.py, and the one file that imports src/ (see above)
+    draft_room.py     page 9's row — three lines that defer to the room below
+  draft_room.py   the live draft room — page 9 *and* its own app (`make draft-room`),
+                  off one `render()`, and the one file that imports src/ (see above)
   pca.py          the fingerprint view's pure layer — orientation, SD scaling, loadings,
                   neighbours
   strategy.py     the tournament view's pure layer — the contest summary, the hurdle
@@ -66,10 +81,14 @@ dashboard/
                   page, in which order), the seven blocks as frames, where each
                   head's `make stan` diagnostics row lives, and the blocks a single
                   page owns
+  inputs.py       page 7's pure layer — the ADP panel's dating and what it costs, the
+                  capture calendar and its per-program recovery policy, and the four
+                  calibrated simulator inputs at each of the three fit windows
   charts.py       fig_radar / fig_loadings, the five tournament figures, the six
-                  model-page figures, and the six a single page owns
+                  model-page figures, the six a single model page owns, and the four
+                  page 7 owns
   theme.py        SERIES, THEMES, ALL_PAIRS_CAP, theme(), apply_theme(), ordinal_colors()
-  artifacts.py    load_cfg, features_dir, predictions_dir, read_table, optional
+  artifacts.py    load_cfg, features_dir, predictions_dir, eda_dir, read_table, optional
   decisions.py    ─┐
   economics.py     ├ not the dashboard — see below
   audit.py        ─┘
@@ -91,7 +110,7 @@ runs only the selected page's script, in one server process, so `@st.cache_data`
 `@st.cache_resource` stay shared and a tensor loaded by one page is still warm after a
 navigation. See `docs/dashboard-plan.md`, finding 1.
 
-Two consequences worth knowing before adding a page:
+Three consequences worth knowing before adding a page:
 
 - **The entrypoint runs on every rerun; a `render()` runs only when its page is
   selected.** Anything that must survive navigation goes in `shell.py` and is rendered by
@@ -99,6 +118,13 @@ Two consequences worth knowing before adding a page:
   `shell.current_theme()`. A widget a page declares is torn down when the reader leaves
   it: driven under `AppTest`, a round trip resets the fingerprint view's own `component`
   key from `pc8` to `pc1` while `appearance` holds.
+- **A control that says what the page's *other* state means cannot use that escape**, since
+  it belongs to one page and the entrypoint cannot render it. `shell.recall` /
+  `shell.remember` are the mechanism: a namespaced plain session-state key, which is not
+  widget state and is therefore not cleared. The draft room's pick log is a plain key and
+  survives a navigation, so its season, tournament, seat and objective have to as well —
+  otherwise a round trip keeps the draft and silently re-reads it at seat 1 on another
+  season's board. Cosmetic controls are left to reset; that is the line.
 - **Sidebar order follows that ownership**: the navigation, then the shell's controls,
   then whatever the page writes to `st.sidebar` for itself.
 
@@ -253,6 +279,18 @@ running page:
   that actually imputed something and only those.
 - **`st.dataframe` renders to a canvas**, so its cell text is not in the DOM at all. A
   browser check can read a caption or a metric tile and cannot read a table.
+- **Streamlit streams a page's blocks, so `inner_text` at first paint reads the top of the
+  page only.** On the draft room the recommendation exists seconds before the board, the
+  roster and the pick log below it, and three browser checks failed against a page that was
+  fine. Wait for the *last* block before reading the text — which is also why "first paint"
+  and "the page is finished" are two different measurements.
+- **The first `button` inside `stMainBlockContainer` is a zero-size chrome element**, and
+  clicking it silently does nothing. A pick check that had never taken a pick still passed
+  its "that player is off the board" companion, for the wrong reason. Identify a real
+  control by its own text.
+- **A `@st.cache_resource` spinner is a cache *miss* rendered into the DOM**, which makes
+  "was this rebuilt?" assertable in a browser rather than inferred from a stopwatch. Poll
+  for `show_spinner`'s text across a navigation; on a hit it never appears.
 - **`st.dataframe` truncates the column that carries the content**, quietly and with no
   ellipsis in the DOM. A `column_config` width is a hint rather than a guarantee, and a wide
   table simply loses its right-hand columns off the edge. The fix that works is fewer and

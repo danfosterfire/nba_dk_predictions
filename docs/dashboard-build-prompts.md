@@ -19,8 +19,8 @@ bespoke, the other two are configuration).
 | 5 | 4 | ✅ **done 2026-08-10** — the generic model renderer + Availability page | **one artifact** |
 | 6 | 5a | ✅ **done 2026-08-10** — Box-score components + Game length pages | no |
 | 7 | 5b | ✅ **done 2026-08-10** — Minutes page, incl. the two-unit comparison | no |
-| 8 | 6 | Inputs beyond the heads + the capture-calendar emitter | small |
-| 9 | 7 | Draft board as a page | no |
+| 8 | 6 | ✅ **done 2026-08-10** — Inputs beyond the heads + the capture-calendar emitter | **one emitter** |
+| 9 | 7 | ✅ **done 2026-08-10** — Draft board as page 9, `make draft-room` still standalone | no |
 | 10 | 8 | Overview | no |
 
 Run them in order. Sessions 3 and 4 are the only ones that must not be reordered against
@@ -312,7 +312,21 @@ reader reaches before the strategy page.
 Verify with the three layers. Update the plan doc and registry.
 ```
 
-## Session 8 — Inputs beyond the heads
+## Session 8 — Inputs beyond the heads ✅ done 2026-08-10
+
+Kept for the record. What it landed is in
+[dashboard-plan.md](dashboard-plan.md#step-6-as-built--inputs-beyond-the-heads).
+
+Two things worth carrying forward. **"Keep it small; this is not a new pipeline stage" was
+the right instruction and it still bought two files, not one** — the calendar answers *which
+days* and the program table answers *what happens to a day that is missing*, and only the
+second is a fact about the source rather than about the archive. A prompt that says "a small
+emitter" should expect the split where the artifact carries two units. And **the prompt named
+three figures and the page reused two builders it did not name**: the three-window panel is
+the minutes page's `fig_metric_facets` and the copula is the model pages' `fig_correlation`.
+Both needed one parameter each to serve a second caller, which is a cheaper edit than a
+near-copy and is the fourth session in a row where the shared builder was the thing that
+moved.
 
 ```
 Implement step 6 of the dashboard expansion: the "Inputs beyond the heads" page (page 7),
@@ -340,7 +354,7 @@ stage.
 Verify with the three layers. Update the plan doc and registry.
 ```
 
-## Session 9 — the Draft board page
+## Session 9 — the Draft board page ✅ done 2026-08-10
 
 ```
 Implement step 7 of the dashboard expansion: the draft board as a page (page 9).

@@ -596,7 +596,9 @@ not currently clear its floor.
 
 ```
 src/data/       fetch, preprocess, availability capture (box-score status, injury
-                reports, ESPN feed), ADP capture
+                reports, ESPN feed), ADP capture, and `capture_calendar.py`, which
+                writes what all four of those archives hold as an artifact rather
+                than a printout
 src/features/   component targets, game length, team context, opponent, availability, ADP,
                 and scoring periods — the NBA week grid DK's tournament rounds sit on
 src/eda/        the season-level analysis pipeline — one module per artifact
@@ -611,7 +613,9 @@ src/sim/        the simulation and drafting layer — numpy over the posterior a
                 so nothing here needs CmdStan. Today `season.py`, which writes THE tensor
 dashboard/      data visualizations over the artifacts — a multipage Streamlit shell over
                 the PCA player-style fingerprint, the model detail pages (one renderer,
-                seven blocks, a class table) and the tournament & strategy page;
+                seven blocks, a class table), the inputs the simulator is *given*
+                rather than fits, the tournament & strategy page and the live
+                draft board, which also ships standalone as `make draft-room`;
                 reads artifacts only, never refits
 docs/           plan docs — predictions, availability, minutes composition, ADP,
                 simulations, EDA, provenance, dashboard, contest rules

@@ -1271,6 +1271,16 @@ the machine was asleep or off, while launchd re-runs a missed `StartCalendarInte
 wake. `make capture-status` reports which days are archived, which had no report to archive,
 and which were **missed**. 51 new tests; 308 pass overall.
 
+**`make capture-calendar` writes that same report as an artifact** (added 2026-08-10,
+`src/data/capture_calendar.py` → `outputs/eda/capture_{calendar,programs}.csv`). It re-reads
+`injury_reports.capture_status` and `injuries`' snapshot/missing-day pair rather than
+re-deriving the states, so the printout and the artifact cannot disagree, and it runs at the
+end of `make daily-capture` — a scheduler that stops firing is only visible in the artifact
+it stops refreshing. The three-state vocabulary is this section's distinction made
+machine-readable: `captured`, `nothing_to_capture` (a 403 with no report to have — not a
+failure), `missed`. The dashboard draws it as a coverage calendar; see
+[dashboard-plan.md](dashboard-plan.md#step-6-as-built--inputs-beyond-the-heads).
+
 ---
 
 ## ⛔ Blocked — not skipped, and what unblocks each
