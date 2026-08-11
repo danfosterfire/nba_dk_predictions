@@ -322,7 +322,7 @@ class Route(NamedTuple):
     blurb: str
 
 
-#: One line each, for the same reason the stage notes are one line: eight blurbs at three
+#: One line each, for the same reason the stage notes are one line: nine blurbs at three
 #: lines apiece is 200 px of the screen this page is not allowed to exceed. Each says what
 #: its page holds, in the page's own terms, and none of them states a result.
 ROUTES: tuple[Route, ...] = (
@@ -332,6 +332,7 @@ ROUTES: tuple[Route, ...] = (
     Route("components", "Eleven heads against a no-fit floor."),
     Route("game-length", "Overtime — whether, and how deep."),
     Route("inputs", "The market and the fixed constants."),
+    Route("weekly", "Scored at the unit a lineup is set."),
     Route("tournament", "The sweep: simulated vs realized."),
     Route("draft-room", "The live board. One click per pick."),
 )

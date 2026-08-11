@@ -244,7 +244,10 @@ anticipate, are in [Step 1, as built](#step-1-as-built--the-multipage-shell),
 
 The goal is a single surface that presents the whole project — the PCA view keeps its
 content under the name **Player fingerprints**, and eight pages join it covering the model
-layer, the non-model inputs, the tournament layer, and the live draft board.
+layer, the non-model inputs, the tournament layer, and the live draft board. **A ninth
+joined them on 2026-08-10** — the weekly-scores page, from step 4 of
+`docs/dashboard-revision-plan.md` — so the surface is ten pages; the nine-page language in
+this section is the expansion's own scope and is left as written.
 
 ## The three findings that shape the design
 
@@ -348,7 +351,9 @@ what the expansion was chosen against, not as a to-do.
 
 ## The pages
 
-Nine, in sidebar order. "Class" pages carry a head selector; the others do not.
+**Ten as of 2026-08-10**, in sidebar order — nine when the expansion landed, plus the
+weekly-scores page step 4 of `docs/dashboard-revision-plan.md` inserted at position 8.
+"Class" pages carry a head selector; the others do not.
 
 | # | page | source | new artifacts? |
 |---|---|---|---|
@@ -359,8 +364,13 @@ Nine, in sidebar order. "Class" pages carry a head selector; the others do not.
 | 5 | **Box-score components** | ✅ `views/components.py` over the generic renderer, shipped 2026-08-10 | no |
 | 6 | **Game length** | ✅ `views/game_length.py` over the generic renderer, shipped 2026-08-10 | no |
 | 7 | **Inputs beyond the heads** | ADP, injury capture, copula, serial correlation, bonus overdispersion | small |
-| 8 | **Tournament & strategy** | ✅ `views/tournament.py`, shipped 2026-08-10 | no |
-| 9 | **Draft board** | today's `draft_room.py`, as a page | no |
+| 8 | **Weekly scores** | ✅ `views/weekly.py` over `make weekly-scores`, shipped 2026-08-10 — Gate A at the scoring period | **six**, from a new emitter |
+| 9 | **Tournament & strategy** | ✅ `views/tournament.py`, shipped 2026-08-10 | no |
+| 10 | **Draft board** | today's `draft_room.py`, as a page | no |
+
+**Inserting page 8 moved the last two rows and moved no `url_path`.** That is the whole
+reason `app.VIEWS` declares each path rather than deriving it from the title or the
+position: a link into `/tournament` written before the insertion still resolves after it.
 
 ### Pages 3–6 — the model detail views, and the head selector
 

@@ -6242,4 +6242,93 @@ REGISTRY: tuple[Decision, ...] = (
         date="2026-08-10",
         tags=("dashboard", "palette"),
     ),
+    Decision(
+        id="weekly-scores-are-gate-a-at-the-unit-the-lineup-is-set-at",
+        topic="simulations",
+        claim="`make weekly-scores` scores observed against simulated `dk_pts` **per "
+              "player per scoring period**, on train and validation, and page 8 of the "
+              "dashboard draws it. Gate A's four bars are all at the season or the game; "
+              "**nothing scored dk_pts at the week**, which is the unit DK seats the best "
+              "7 of 16 in and therefore the unit every weekly max, round total and "
+              "elimination cut is a function of.",
+        because="A head is only a model at the unit it was scored at — the lesson "
+                "`make minutes-unification` already paid for, where one posterior cleared "
+                "its floor per team-game and failed it per season. Changing the unit "
+                "needed **no re-simulation**: the tensor's second axis already IS the "
+                "scoring period, so the whole target is a reduction plus `make "
+                "model-cards`' own binning helpers by import, and it runs in 1.3 s over "
+                "30,780 player-periods. What it found: the simulator is **-2.93 dk_pts a "
+                "week on train and -2.26 on validation**, R^2 0.396 / 0.455 against 0.59-0.63 "
+                "at the season total, and the bias is concentrated at the **start** of the "
+                "season — -5.28 in week 1 sliding to -0.70 by week 17. The spread, which "
+                "is what a max over sixteen players is most sensitive to, comes in at "
+                "**0.92-0.95x** the observed, and about **a fifth of player-weeks score "
+                "nothing at all** against 15-18% simulated. Three of the twenty periods "
+                "are DOUBLE weeks (Rounds 2-4), so every panel is faceted by period "
+                "length rather than pooled: a two-week total in a distribution of one-week "
+                "ones is a right tail that is a calendar fact. The KS distance is reported "
+                "and never thresholded, the rule the model pages already carry; the only "
+                "bars are on the 500 simulated seasons behind each panel, re-read on two "
+                "interleaved halves.",
+        status="built",
+        reproduce="make weekly-scores → outputs/predictions/weekly_score_index.csv, "
+                  "outputs/predictions/weekly_score_period.csv, "
+                  "outputs/predictions/weekly_score_quantile.csv",
+        source="docs/dashboard-revision-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "simulations", "provenance"),
+    ),
+    Decision(
+        id="the-training-pair-is-the-last-two-four-round-seasons",
+        topic="simulations",
+        claim="The training side of the weekly readout is **2018-19 and 2021-22**, not the "
+              "last two training seasons. Two seasons rather than all twenty-five, to "
+              "match the validation pair; and those two rather than 2020-21 and 2021-22, "
+              "because a season that does not carry DK's whole four-round structure "
+              "contributes structural zeros rather than evidence.",
+        because="Measured before committing to the run rather than after reading a "
+                "surprising panel. **2020-21 has no Round 4 at all** — the COVID season "
+                "started on 21 December 2020 and ran out of weeks, so tensor slot 19 "
+                "carries 0 games and every player's Round-4 total is exactly zero on both "
+                "sides. **2019-20's Round 4 is the Orlando bubble**: 293 players against "
+                "373 in Round 3, so a fifth of the pool has an observed zero that is a "
+                "schedule fact rather than an availability outcome — worse than an absence, "
+                "because it looks like data. `assert_covers_the_tensor` refuses a season "
+                "with an empty slot rather than scoring it, so the decision is enforced "
+                "instead of remembered. Cost was sized first as the plan asked: one season "
+                "is ~78 s and ~80 MB at 2,000 sims, measured at `--n-sims 20` before the "
+                "full run. `season.allowed_seasons` already permitted a training season "
+                "through `held_out.selection_split`, so nothing needed unlocking and a "
+                "test season still refuses.",
+        status="settled",
+        reproduce="make simulate-season → data/features/sim_tensor_2018-19.npz, "
+                  "data/features/sim_tensor_2021-22.npz, "
+                  "outputs/predictions/sim_season_gate_a.csv",
+        source="docs/dashboard-revision-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("simulations", "provenance"),
+    ),
+    Decision(
+        id="gate-a-merges-by-season-rather-than-clobbering",
+        topic="simulations",
+        claim="`make simulate-season` merges its Gate A rows into "
+              "`sim_season_gate_a.csv` **by season**, replacing only the seasons it just "
+              "ran.",
+        because="`--season` is a real flag and a partial run is the normal workflow — "
+                "simulating one training season used to write a one-season file and "
+                "silently drop the record for every other season, including the two "
+                "validation ones the layer is scored on. It is the mistake `make "
+                "posteriors`' manifest already avoids by merging on `head`, for the same "
+                "reason: the expensive artifact is per unit. Re-running a season replaces "
+                "its own rows rather than appending, so the file cannot end up holding two "
+                "readings of one season and leaving a consumer to pick.",
+        status="built",
+        reproduce="make simulate-season → outputs/predictions/sim_season_gate_a.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("simulations", "provenance"),
+    ),
 )

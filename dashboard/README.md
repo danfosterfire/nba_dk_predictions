@@ -1,16 +1,17 @@
 # The dashboard
 
-Data visualizations over the artifacts the pipeline wrote. Nine pages, and the expansion
-`docs/dashboard-plan.md` specifies is complete as of 2026-08-10 — the Overview, the PCA
-player-style fingerprint, all four model detail pages (Availability, Minutes, Box-score
+Data visualizations over the artifacts the pipeline wrote. **Ten pages** — the nine the
+expansion `docs/dashboard-plan.md` specifies, complete as of 2026-08-10 (the Overview, the
+PCA player-style fingerprint, all four model detail pages (Availability, Minutes, Box-score
 components, Game length), the inputs beyond the heads, the tournament & strategy page, and
-the live draft board — inside a multipage `st.navigation` shell. Run it with
-`make dashboard`.
+the live draft board), plus **Weekly scores** at position 8, which step 4 of
+`docs/dashboard-revision-plan.md` added the same day — inside a multipage `st.navigation`
+shell. Run it with `make dashboard`.
 
-Seven of the nine are views. **The draft board is a tool**, drives a live draft under a
-thirty-second clock, and ships twice: as page 9 and as its own app under `make draft-room`,
-off one `render()`. **The Overview is prose**, and is exempt — see below. Everything that
-says "a view" means the other seven.
+Eight of the ten are views. **The draft board is a tool**, drives a live draft under a
+thirty-second clock, and ships twice: as page 10 and as its own app under
+`make draft-room`, off one `render()`. **The Overview is prose**, and is exempt — see
+below. Everything that says "a view" means the other eight.
 
 **The dashboard shows data. Prose about the project belongs in `docs/`.** The nine-tab
 project walkthrough that used to live here was documentation rendered as an app, and every
@@ -61,7 +62,7 @@ cannot refit anything. Everything it computes lives in `src/sim/draft_room.py`; 
 is the surface. Registered as `draft-room-imports-src-sim`.
 
 **The keys are paths, not basenames**, and that is what stopped the exemption widening when
-the room joined the navigation on 2026-08-10. Page 9's row is owned by
+the room joined the navigation on 2026-08-10. The room's row is owned by
 `views/draft_room.py`, which shares a basename with the exempt file and would have
 inherited the exemption by existing. It is held to the ordinary rule instead: it imports
 nothing from `src/`, and it defers even its import of the room to inside `render()`, so a
@@ -116,13 +117,17 @@ dashboard/
     beyond_heads.py   page 7 — the three families of input that are not a fitted
                       coefficient: the capture programs as an alarm, ADP and what
                       dating it costs, and the four calibrated simulator inputs
+    weekly.py         page 8 — Gate A at the scoring period: observed against
+                      simulated dk_pts per player per week, on train and validation,
+                      faceted by period length because three of the twenty are
+                      double weeks
     tournament.py     the contest structure, the strategy sweep, simulated against
                       realized, and the paired gaps
-    draft_room.py     page 9's row — three lines that defer to the room below
-  draft_room.py   the live draft room — page 9 *and* its own app (`make draft-room`),
+    draft_room.py     page 10's row — three lines that defer to the room below
+  draft_room.py   the live draft room — page 10 *and* its own app (`make draft-room`),
                   off one `render()`, and the one file that imports src/ (see above)
   overview.py     page 1's pure layer — the eight sources, the five hero readings, the
-                  five pipeline stages and the eight routes, each a lookup rather than
+                  five pipeline stages and the nine routes, each a lookup rather than
                   a constant
   pca.py          the fingerprint view's pure layer — orientation, SD scaling, loadings,
                   neighbours
@@ -138,9 +143,15 @@ dashboard/
   inputs.py       page 7's pure layer — the ADP panel's dating and what it costs, the
                   capture calendar and its per-program recovery policy, and the four
                   calibrated simulator inputs at each of the three fit windows
+  weekly.py       page 8's pure layer — the period structure, the Gate-A metric board at
+                  the weekly unit, the three model spreads against the observed one, the
+                  per-period profile, and the ribbon / density / residual reshapes that
+                  feed the SAME four figures the model pages draw
   charts.py       fig_radar / fig_loadings, the five tournament figures, the eight
-                  model-page figures, the six a single model page owns, the four
-                  page 7 owns, and fig_pipeline — the one figure that plots no data
+                  model-page figures — four of which page 8 reuses UNMODIFIED, since
+                  its emitter bins with the model cards' own helpers — the six a single
+                  model page owns, the four page 7 owns, the one page 8 owns, and
+                  fig_pipeline, the one figure that plots no data
   theme.py        SERIES, THEMES, ALL_PAIRS_CAP, theme(), apply_theme(), ordinal_colors(),
                   and the page chrome: CHROME_ROLES / SIDEBAR_ROLES, streamlit_theme(),
                   config_toml() — what `make dashboard-config` writes
@@ -374,6 +385,14 @@ running page:
   and only a rendered PNG can confirm it. How much room is enough depends on the *label*, so
   `_bar_text_range` takes it as an argument — a `+10.5%` and a `200.28 minutes` do not need
   the same margin.
+- **A horizontal legend and `make_subplots`' titles live in the same strip too, and that one
+  does not depend on the data at all.** `apply_theme` puts the legend at paper `y = 1.02`
+  and subplot titles are paper-referenced annotations just above each subplot's domain, so
+  a legend of four or five entries runs straight *through* the first subplot's title —
+  found on the ECDF ribbon's five, which four model pages and the weekly page all draw.
+  Nothing in the trace says so and `AppTest` counts the same elements either way.
+  `charts._legend_above_titles` lifts it to 1.11 with the matching top margin, applied
+  after `apply_theme` since that is what sets the default.
 - **A reference line's label and the legend live in the same strip, and whether they collide
   depends on the data.** The legend sits above the plot area at `y=1.02`; a `_reference_line`
   label anchored at the top of the paper sits at the line's own x, so it lands on the legend

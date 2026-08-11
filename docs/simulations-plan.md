@@ -1508,6 +1508,76 @@ count, seed, the composition variant, and the player-season sigma with its sourc
   reported.
 - **Mid-season trades are still not modelled**, inherited from the prediction layer.
 
+#### Gate A at the weekly unit ✅ `make weekly-scores`, 2026-08-10
+
+Added by step 4 of [dashboard-revision-plan.md](dashboard-revision-plan.md), and it belongs
+here rather than there because it is a **fifth Gate A row**, not a picture. The four bars
+above are at the season total, the games-played pmf, the per-game bonus rate and the
+season-total minutes spread. **None of them is `dk_pts` at the scoring period**, which is
+the unit DK seats the best 7 of 16 in — so every weekly max, round total and elimination cut
+this layer computes is a function of a distribution nothing had scored. `src/sim/weekly.py`
+reduces the existing tensors along their own second axis, so it needs no re-simulation and
+runs in **1.3 s** over **30,780** player-periods.
+
+Two structural facts before the numbers. Three of the twenty periods are **double weeks**
+(Rounds 2–4), so the readout is faceted by period length rather than pooled — a two-week
+total inside a distribution of one-week ones is a right tail that is a calendar fact. And
+the training side is **2018-19 and 2021-22**, the last two training seasons carrying the
+whole four-round structure: 2020-21 has **no Round 4 at all** (0 games in slot 19) and
+2019-20's is the Orlando bubble, 293 players against 373 in Round 3.
+
+| facet | split | n | observed | predicted | MAE | bias | R² | CRPS |
+|---|---|---|---|---|---|---|---|---|
+| one week | train | 13,022 | 52.74 | 49.81 | 30.07 | **−2.93** | 0.3957 | 20.39 |
+| one week | validation | 13,141 | 53.40 | 51.14 | 29.06 | **−2.26** | 0.4549 | 19.63 |
+| double week | train | 2,298 | 93.24 | 89.63 | 50.48 | −3.61 | 0.4615 | 34.37 |
+| double week | validation | 2,319 | 98.51 | 97.31 | 52.90 | −1.21 | 0.4216 | 36.18 |
+
+**The season-total bias is a weekly bias, and it is front-loaded.** Gate A reads −21.9 to
+−71.6 dk_pts on a season and this says where it comes from: about −2 to −3 a week,
+concentrated at the **start** of the season. Pooled over the two validation seasons the
+per-period bias runs **−5.28** in week 1, −4.99 in week 2, −3.27 in week 3, and is inside
+one point by week 13 (−1.08) and −0.70 by week 17. That is a real shape and not noise — it
+is monotone over the first six weeks on both splits — and the natural suspect is the
+availability chain's early-season behaviour rather than the component rates, since the
+same components on realized minutes are calibrated to within 1.5% on the bonus.
+
+**The spread is the good news, and it is the statistic that matters most here.** A best-ball
+week is a max over sixteen players, so the weekly *spread* decides more of a lineup's score
+than the weekly mean does. Pooled over every row and draw the simulated sd is **0.920–0.954×**
+the observed on all four facets. Three spreads are emitted and only one of them is
+comparable: the spread of the per-row posterior *means* (28.89 against an observed 49.05 on
+one-week train) is narrower **by construction**, because a mean over draws has averaged its
+own noise away, and reporting that one would claim a defect that was never measured.
+
+**About a fifth of player-weeks score nothing at all** — 20.7% / 19.9% observed on the
+one-week facets against 16.9% / 18.2% simulated — and a season total averages that away
+completely. It is the clearest argument for scoring this unit: a zero week is survivable
+under a best-7-of-16 rule and a *cluster* of them is not, which is exactly what the spell
+process exists to produce.
+
+Calibration is read as a distance and never as a verdict, the rule the model pages already
+carry. KS distances span **0.0265–0.0639**; the QQ curve is S-shaped away from the diagonal
+and the binned quartile lines sit **0.103–0.131** off their own levels, both of which say
+the predictive is slightly *too narrow* — the same finding the 0.92× spread ratio gives from
+the other direction. The rank-transformed panel adds what a single KS cannot see: all three
+quartile lines slide **upward** across the predicted range, i.e. the simulator over-predicts
+the player-weeks it ranks lowest and under-predicts the ones it ranks highest.
+
+The only bars in the target are on the **budget** rather than on the model: the 95% ribbon
+and the KS distance are each re-read on two interleaved halves of the 500 simulated seasons
+behind a panel, at `ECDF_BAND_TOL` / `KS_MC_TOL` = 0.02. Worst shipped readings are 0.0061
+and 0.0027. That budget was measured rather than assumed — at 250 / 500 / 1,000 / 2,000
+simulated seasons the ribbon statistic falls as 1/√D (0.0057 → 0.0044 → 0.0020 → 0.0014 on
+one-week train) while the KS distance itself moves by **≤ 0.0016**, so 500 buys the picture
+and the remaining 1,500 buy a third of a pixel at four times the peak memory.
+
+**One mechanism changed in `season.py` to make this affordable.** Gate A rows now merge into
+`sim_season_gate_a.csv` **by season** rather than replacing the file, the way
+`make posteriors`' manifest merges by head — `--season` is a real flag, and simulating one
+training season used to write a one-season file and silently drop the record for the
+validation seasons the layer is actually scored on.
+
 ### `src/sim/draft.py` — the draft simulator
 
 A snake draft over 12 entries and 16 rounds. Opponents autodraft off recalibrated-DK ADP with

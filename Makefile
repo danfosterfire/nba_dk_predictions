@@ -14,7 +14,7 @@ PIP    := .venv/bin/pip
         stan stan-availability stan-minutes stan-components stan-composition \
         stan-substitution season-terms games-played stan-games-played \
         stan-game-length posteriors model-cards minutes-unification composition-effects \
-        scoring-periods draft-pool simulate-season bracket draft-sim \
+        scoring-periods draft-pool simulate-season weekly-scores bracket draft-sim \
         draft-room draft-room-prep strategy-sweep final-evaluation
 
 venv:
@@ -366,6 +366,26 @@ draft-pool:
 # CmdStan. Defaults to the two VALIDATION seasons; `--season` and `--n-sims` override.
 simulate-season:
 	$(PYTHON) -m src.sim.season
+
+# Gate A at the unit the LINEUP is set at. `make simulate-season` scores the season total,
+# the games-played pmf, the per-game bonus rate and the season-total minutes spread —
+# nothing scores dk_pts at the scoring period, which is where DK seats the best 7 of 16 and
+# therefore where every weekly max, round total and elimination cut downstream comes from.
+# A head is only a model at the unit it was scored at; this is that check one level down
+# from Gate A's own headline row.
+#
+# NO re-simulation: the tensor's second axis already IS the scoring period, so the whole
+# target is a reduction plus the model-card binning helpers, by import, and runs in ~2 s.
+# It reads four tensors — the two validation seasons plus 2018-19 and 2021-22, which are
+# the last two TRAINING seasons carrying DK's whole four-round structure (2020-21 has no
+# Round 4 at all and 2019-20's is the Orlando bubble). Build the training pair first:
+#
+#   $(PYTHON) -m src.sim.season --season 2018-19 --season 2021-22
+#
+# `--draws` moves the number of simulated seasons behind each panel and `--no-write` gates
+# without writing, which is how that budget was measured rather than assumed.
+weekly-scores:
+	$(PYTHON) -m src.sim.weekly
 
 # The contest itself: best 7 of 16 by slot each scoring period, the four-round advance
 # chain, the cascading tie-break, wildcards and payouts. Every structural number — round

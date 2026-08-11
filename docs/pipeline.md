@@ -175,6 +175,26 @@ make minutes-unification
                        #   what makes the injection shippable: sigma_train = 0.450 against
                        #   the validation grid's 0.375.
 
+make weekly-scores     # Gate A at the unit a LINEUP is set at: observed against
+                       #   simulated dk_pts per player per scoring period, on train and
+                       #   validation → outputs/predictions/weekly_score_{index,period,
+                       #   ecdf,calibration,quantile}.csv + weekly_score_sample.parquet,
+                       #   and page 8 of the dashboard. `make simulate-season` scores the
+                       #   season total, the games-played pmf, the per-game bonus rate and
+                       #   the minutes spread — nothing scored dk_pts at the week, which
+                       #   is where DK seats the best 7 of 16. NO re-simulation: the
+                       #   tensor's second axis already IS the scoring period, so the whole
+                       #   target is a reduction plus `make model-cards`' binning helpers
+                       #   by import, in ~2 s. Reads four tensors: the two validation
+                       #   seasons plus 2018-19 and 2021-22, which are the last two
+                       #   TRAINING seasons carrying DK's whole four-round structure —
+                       #   2020-21 has no Round 4 at all and 2019-20's is the bubble, and
+                       #   a season with an empty slot is REFUSED rather than scored as
+                       #   zeros. Build the training pair first with
+                       #   `python -m src.sim.season --season 2018-19 --season 2021-22`
+                       #   (~78 s and ~80 MB each). `--draws` moves the simulated-season
+                       #   budget and `--no-write` gates without writing.
+
 make composition-effects
                        # item 3d — the per-(player, season) random effect fitted as
                        #   `sigma_u` in composition_glm.stan, and a team-context block

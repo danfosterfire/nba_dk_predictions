@@ -24,7 +24,7 @@ import plotly.graph_objects as go
 import pytest
 
 from dashboard import (audit, charts, decisions, economics, inputs, model_cards,
-                       overview, pca, strategy, theme)
+                       overview, pca, strategy, theme, weekly)
 
 ROOT = Path(__file__).resolve().parent.parent
 FEATURES = ROOT / "data" / "features"
@@ -4420,3 +4420,228 @@ def test_the_entrypoint_publishes_the_pages_it_navigates_with():
     calls = [c for c in ast.walk(main) if isinstance(c, ast.Call)]
     assert sum(1 for c in calls if getattr(c.func, "id", "") == "pages") == 1
     assert any(getattr(c.func, "attr", "") == "publish_pages" for c in calls)
+
+
+# ── The weekly-scores page ────────────────────────────────────────────────────
+#
+# The pure layer over `make weekly-scores`' six artifacts. Everything asserted here is a
+# *reshape* — the emitter computed every metric, distance and band — so what is worth
+# pinning is the small set of reshapes whose failure is silent: a facet quietly pooled, a
+# spread statistic quietly swapped for the wrong one of three, a per-period point quietly
+# averaged rather than row-weighted, and a threshold quoted in a caption that has drifted
+# from the build that enforces it.
+
+def _weekly_index() -> pd.DataFrame:
+    """Two facets x two splits, in `weekly_score_index.csv`'s shape."""
+    rows = []
+    for period_type, label, periods, weeks in (("week", "One week", 17, 1),
+                                               ("double_week", "Double week", 3, 2)):
+        for split, seasons in (("train", "2018-19,2021-22"),
+                               ("validation", "2022-23,2023-24")):
+            rows.append({
+                "period_type": period_type, "period_label": label, "split": split,
+                "seasons": seasons, "n_seasons": 2, "n_periods": periods, "weeks": weeks,
+                "n_players": 550, "n_player_seasons": 766, "team_games": 1689,
+                "response_label": "dk_pts in one scoring period",
+                "sim_draws": 500, "n_sims": 2000, "n_posterior_draws": 1000,
+                "fit_window": "train", "ecdf_band_mc": 0.004, "ecdf_band_gated": True,
+                "ks": 0.05, "ks_mc": 0.001, "ks_gated": True, "quantile_seed": 1,
+                "n": 13022, "mae": 30.0, "rmse": 38.0, "r2": 0.4, "bias": -2.9,
+                "crps": 20.0, "observed_mean": 52.7, "observed_sd": 49.0,
+                "predicted_mean": 49.8, "point_sd": 28.9, "predictive_sd": 32.8,
+                "pooled_sd": 45.3, "zero_share": 0.21, "predicted_zero_share": 0.17})
+    return pd.DataFrame(rows)
+
+
+def test_the_facets_are_ordered_with_the_weekly_one_first():
+    """The page is called Weekly scores, so a double week is the exception it declares."""
+    index = _weekly_index()
+    assert weekly.period_types(index) == ["week", "double_week"]
+    assert weekly.period_label(index, "double_week") == "Double week"
+
+
+def test_an_unknown_facet_sorts_after_the_two_the_page_knows():
+    """A new period length must appear rather than vanish — the panels are the contract."""
+    index = pd.concat([_weekly_index(),
+                       _weekly_index().head(1).assign(period_type="triple_week")])
+    assert weekly.period_types(index) == ["week", "double_week", "triple_week"]
+
+
+def test_the_structure_table_states_that_the_two_facets_are_not_equal_units():
+    """The one thing the page owes before any distribution.
+
+    Seventeen one-week periods against three two-week ones: a reader comparing their
+    spreads without that is being misled, which is the same argument the model pages make
+    about their fitting unit one level up.
+    """
+    table = weekly.structure(_weekly_index())
+    assert list(table["Periods per season"]) == [17, 17, 3, 3]
+    assert list(table["Weeks each"]) == [1, 1, 2, 2]
+    assert set(table["Split"]) == {"Train", "Validation"}
+
+
+def test_the_spread_board_compares_the_pooled_sd_and_not_the_point_prediction():
+    """**The one substitution that would report a defect that was never measured.**
+
+    `point_sd` is the spread of the per-row posterior means and is narrower than the data
+    by construction — a mean over draws has averaged its own noise away. Printed as "the
+    simulated spread" it reads as a model far too narrow. `pooled_sd` is the marginal the
+    simulator implies over every row and draw, which is the one the observed sd answers.
+    """
+    board = weekly.spread_board(_weekly_index())
+    assert board["Ratio"].iloc[0] == pytest.approx(45.3 / 49.0)
+    assert board["Point prediction"].iloc[0] == 28.9
+    assert board["Simulated sd (pooled)"].iloc[0] == 45.3
+
+
+def test_the_gate_board_carries_the_same_metric_names_gate_a_reports():
+    board = weekly.gate_board(_weekly_index())
+    assert {"MAE", "Bias", "R²", "CRPS"} <= set(board.columns)
+    assert len(board) == 4
+
+
+def test_the_season_total_row_is_read_from_gate_a_rather_than_restated():
+    gate = pd.DataFrame({"season": ["2023-24", "2022-23"],
+                         "check": ["season_total_dk", "season_total_dk"],
+                         "n": [387, 386], "mae": [407.9, 402.1], "bias": [-63.3, -21.9],
+                         "r2": [0.659, 0.648], "crps": [281.0, 280.5]})
+    table = weekly.season_total_row(gate)
+    assert list(table["Season"]) == ["2022-23", "2023-24"]
+    assert weekly.season_total_row(None).empty
+    assert weekly.season_total_row(gate[gate["check"] == "nothing"]).empty
+
+
+def _weekly_period() -> pd.DataFrame:
+    """Two seasons of unequal size, so a mean of means and a row-weighted mean differ."""
+    rows = []
+    for season, n, observed in (("2022-23", 100, 40.0), ("2023-24", 300, 60.0)):
+        rows.append({"split": "validation", "season": season, "slot": 0,
+                     "tournament_round": 1, "period_type": "week",
+                     "period_label": "One week", "weeks": 1, "team_games": 50,
+                     "start": "2022-10-17", "end": "2022-10-23",
+                     "observed_mean": observed, "observed_games": 2.0,
+                     "predicted_mean": observed - 2.0, "n": n, "mae": 30.0, "rmse": 38.0,
+                     "r2": 0.4, "bias": -2.0, "crps": 20.0})
+    return pd.DataFrame(rows)
+
+
+def test_a_period_point_is_row_weighted_across_its_seasons():
+    """A season with more scorable players carries more of the point.
+
+    A mean of means would read 50.0 here; the weighted mean is 55.0, and the emitter ships
+    each season's own `n` for exactly this.
+    """
+    panel = weekly.profile_panel(_weekly_period(), "validation")
+    assert panel["observed"].iloc[0] == pytest.approx(55.0)
+    assert panel["n"].iloc[0] == 400 and panel["seasons"].iloc[0] == 2
+
+
+def test_an_absent_split_gives_an_empty_profile_rather_than_raising():
+    assert weekly.profile_panel(_weekly_period(), "train").empty
+
+
+def test_the_period_axis_labels_carry_the_unit_change():
+    """`W1`..`W17` then `R2`/`R3`/`R4`: a bare 1..20 would say the last three are weeks."""
+    assert weekly.slot_label(0, 1, "week") == "W1"
+    assert weekly.slot_label(16, 1, "week") == "W17"
+    assert weekly.slot_label(17, 2, "double_week") == "R2"
+    assert weekly.slot_label(19, 4, "double_week") == "R4"
+
+
+def _weekly_ecdf() -> pd.DataFrame:
+    grid = np.linspace(0.0, 100.0, 8)
+    rows = []
+    for period_type in ("week", "double_week"):
+        for split in ("train", "validation"):
+            for i, value in enumerate(grid):
+                share = (i + 1) / len(grid)
+                rows.append({"period_type": period_type, "split": split,
+                             "grid_index": i, "value": value,
+                             "observed": share, "q50": share - 0.02,
+                             "q2.5": share - 0.05, "q97.5": share + 0.05,
+                             "grid_kind": "quantile", "n_rows": 13022, "n_draws": 500})
+    return pd.DataFrame(rows)
+
+
+def test_the_band_reading_is_a_distance_from_the_median_replicate():
+    """The rule `model_cards.band_distance` already carries, at a second unit.
+
+    At these sample sizes the ribbon is one to two ECDF points wide and an honest model
+    leaves it somewhere, so in-or-out would report failure everywhere. `inside_95` ships
+    beside the distance as a footnote rather than as the reading.
+    """
+    distance = weekly.band_distance(_weekly_ecdf(), _weekly_index())
+    assert len(distance) == 4
+    assert distance["max_gap"].max() == pytest.approx(0.02)
+    assert (distance["inside_95"] == 1.0).all()
+
+
+def test_the_calibration_grid_is_one_row_per_facet_and_two_split_columns():
+    """`fig_calibration` builds `len(panel_labels)` rows by the two splits.
+
+    The two facets are on different `dk_pts` scales and must not share an axis range;
+    train and validation inside a facet must, which is the whole reason they are drawn
+    side by side.
+    """
+    keys = weekly.calibration_keys(_weekly_index())
+    assert list(keys) == ["week", "double_week"]
+    assert keys["double_week"] == "Double week"
+
+
+def test_the_caption_threshold_mirrors_the_build_that_enforces_it():
+    """A hand-typed bar in a caption is a claim about a build that can move without it.
+
+    The same pinning `model_cards.KS_MC_TOL` gets against the emitter's, one page over.
+    """
+    from src.models.model_cards import ECDF_BAND_TOL, KS_MC_TOL
+
+    assert weekly.KS_MC_TOL == KS_MC_TOL
+    assert weekly.ECDF_BAND_TOL == ECDF_BAND_TOL
+
+
+def test_the_weekly_page_names_its_own_artifacts_so_the_audit_credits_them():
+    """`audit.py` counts an artifact as read when a string literal in `dashboard/` names it.
+
+    Six new files landed in `outputs/predictions/` with this page; if the pure layer held
+    them as anything but literals the orphan count would rise and the page would still
+    render perfectly.
+    """
+    from src.sim.weekly import ARTIFACTS
+
+    named = {weekly.INDEX_FILE, weekly.PERIOD_FILE, weekly.ECDF_FILE,
+             weekly.CALIBRATION_FILE, weekly.QUANTILE_FILE, weekly.SAMPLE_FILE}
+    assert named == set(ARTIFACTS)
+
+
+def test_the_split_vocabulary_is_the_one_the_model_pages_use():
+    assert weekly.SPLITS == model_cards.SPLITS
+    assert weekly.SPLIT_LABELS == model_cards.SPLIT_LABELS
+
+
+def test_the_weekly_page_sits_between_the_inputs_and_the_contest():
+    """Position is the argument: heads and their inputs above, the contest that consumes
+    the tensor below. The pinned `url_path`s did **not** move when it was inserted, which
+    is why they are declared rather than derived from the order."""
+    from dashboard import app
+    paths = [view.url_path for view in app.VIEWS]
+    assert paths.index("weekly") == paths.index("inputs") + 1
+    assert paths.index("tournament") == paths.index("weekly") + 1
+    assert paths[-1] == "draft-room"
+
+
+def test_a_legend_over_subplot_titles_is_lifted_clear_of_them():
+    """Caught by a rendered PNG, which is the only layer that can see it.
+
+    `apply_theme` puts a horizontal legend at y=1.02 and `make_subplots` writes its titles
+    into the same paper-referenced strip, so the ECDF ribbon's five entries ran straight
+    through the first subplot's title. Nothing in the trace says so.
+    """
+    from dashboard.charts import LEGEND_ABOVE_TITLES, fig_ecdf
+
+    panel = _weekly_ecdf()
+    panel = panel[(panel["period_type"] == "week") & (panel["split"] == "train")]
+    panel = panel.assign(**{"q10": panel["q2.5"], "q90": panel["q97.5"],
+                            "q25": panel["q2.5"], "q75": panel["q97.5"]})
+    fig = fig_ecdf({"Train": panel, "Validation": panel}, theme.theme("light"), "dk_pts")
+    assert fig.layout.legend.y == LEGEND_ABOVE_TITLES > 1.02
+    assert fig.layout.margin.t > 48

@@ -780,6 +780,22 @@ def fig_coefficients(panel: pd.DataFrame, th: dict, title: str = "",
 _ECDF_BANDS = ((("q2.5", "q97.5"), "95%"), (("q10", "q90"), "80%"),
                (("q25", "q75"), "50%"))
 
+#: Where a horizontal legend sits on a figure that *also* carries subplot titles, and the
+#: top margin that makes room for it. `apply_theme`'s default 1.02 puts the legend in the
+#: same strip `make_subplots` writes its titles into: both are paper-referenced just above
+#: the plot area, so a legend of four or five entries runs straight through the first
+#: subplot's title. Invisible in the trace and obvious in a rendered PNG, which is the
+#: layer that found it — on this project's longest legend, the ECDF ribbon's five.
+LEGEND_ABOVE_TITLES = 1.11
+LEGEND_TITLE_MARGIN = 78
+
+
+def _legend_above_titles(fig: go.Figure) -> go.Figure:
+    """Lift the legend clear of the subplot-title strip. Call **after** `apply_theme`."""
+    fig.update_layout(legend=dict(y=LEGEND_ABOVE_TITLES),
+                      margin=dict(t=LEGEND_TITLE_MARGIN))
+    return fig
+
 
 def fig_ecdf(panels: dict, th: dict, value_label: str, title: str = "",
              height: int = 420) -> go.Figure:
@@ -832,7 +848,7 @@ def fig_ecdf(panels: dict, th: dict, value_label: str, title: str = "",
     fig.update_xaxes(title=value_label)
     fig.update_yaxes(title="F(x)", range=[0, 1.02], tickformat=".0%", col=1)
     fig.update_layout(title=title)
-    return apply_theme(fig, th, height)
+    return _legend_above_titles(apply_theme(fig, th, height))
 
 
 #: Room left around a calibration panel's own grid, as a share of its span.
@@ -982,7 +998,7 @@ def fig_qq(panels: dict, th: dict, title: str = "", height: int = 400) -> go.Fig
     fig.update_xaxes(title="expected uniform quantile", range=[-0.02, 1.02])
     fig.update_yaxes(title="scaled residual", range=[-0.02, 1.02], col=1)
     fig.update_layout(title=title)
-    return apply_theme(fig, th, height)
+    return _legend_above_titles(apply_theme(fig, th, height))
 
 
 def _excess_heatmap(cells: pd.DataFrame, th: dict, colorbar: bool) -> go.Heatmap:
@@ -1091,7 +1107,7 @@ def fig_quantile_residual(cells: dict, lines: dict, points: dict, th: dict,
     fig.update_xaxes(title="predicted, rank-transformed", range=[0, 1])
     fig.update_yaxes(title="scaled residual", range=[0, 1], col=1)
     fig.update_layout(title=title)
-    return apply_theme(fig, th, height)
+    return _legend_above_titles(apply_theme(fig, th, height))
 
 
 # ── The two figures a model page owns for itself ──────────────────────────────
@@ -1208,6 +1224,76 @@ def fig_class_counts(panel: pd.DataFrame, th: dict, value_label: str = "games",
     fig.update_layout(title=title, barmode="group", bargap=0.3, bargroupgap=0.08)
     return apply_theme(fig, th,
                        height=max(260, len(classes) * len(series) * row_height + 130))
+
+
+# ── The one figure the weekly-scores page owns ────────────────────────────────
+#
+# Everything else that page draws is reused *unmodified* from the model pages above —
+# `fig_ecdf`, `fig_calibration`, `fig_qq` and `fig_quantile_residual`, because
+# `make weekly-scores` cuts its artifacts with `src/models/model_cards.py`'s own binning
+# helpers and hands back the same frame shapes. This is the one question those four cannot
+# answer: they pool seventeen weeks into one distribution, and "does the simulator drift
+# *through* the season" is a reading along the period axis rather than across it.
+
+#: Where the seventeen one-week periods end and the three double weeks begin. Drawn as a
+#: divider rather than left to the tick labels, because the unit changes there: the last
+#: three points are two weeks of games each and are roughly twice the height for that
+#: reason alone.
+UNIT_BREAK_WIDTH = 1
+
+
+def fig_period_profile(panels: dict, th: dict, value_label: str = "mean dk_pts per player",
+                       title: str = "", height: int = 380) -> go.Figure:
+    """Observed against simulated mean `dk_pts`, period by period, one subplot per split.
+
+    `panels` maps a split label to `weekly.profile_panel()`. Two series per subplot, which
+    is inside `ALL_PAIRS_CAP`, and both are read off a labelled axis with a table twin in
+    the view — the relief rule, which matters here because the whole content is the *gap*
+    between two lines.
+
+    **The x axis is not a number line.** Seventeen one-week periods are followed by three
+    double weeks, so the ticks read `W1`…`W17` then `R2`/`R3`/`R4` and a divider is drawn
+    where the unit changes. A bare 1…20 would invite reading the step up at the end as a
+    model artifact when it is the calendar.
+    """
+    names = list(panels)
+    fig = make_subplots(rows=1, cols=max(len(names), 1), subplot_titles=names,
+                        shared_yaxes=True, horizontal_spacing=0.06)
+
+    for col, name in enumerate(names, start=1):
+        part = panels[name]
+        first = col == 1
+        if part is None or not len(part):
+            continue
+        breaks = part.index[part["period_type"] != part["period_type"].iloc[0]]
+        for index, (column, label, color) in enumerate(
+                (("observed", "observed", th["ink"]),
+                 ("predicted", "simulated", th["series"][0]))):
+            # `mode` is explicit for the reason every `go.Scatter` here sets it: plotly
+            # infers `lines+markers` at 20 points or fewer and takes the marker colour from
+            # its own default colorway, and this trace is exactly 20 points.
+            fig.add_trace(go.Scatter(
+                x=part["label"], y=part[column], mode="lines+markers", name=label,
+                legendgroup=label, showlegend=first,
+                line=dict(color=color, width=2, dash="solid"),
+                marker=dict(size=6, color=color),
+                customdata=np.stack([part["games"], part["n"]], axis=-1),
+                hovertemplate=f"%{{x}}<br>{label} %{{y:.1f}} dk_pts"
+                              "<br>%{customdata[0]:.2f} games played, "
+                              "%{customdata[1]:,} rows<extra></extra>"),
+                row=1, col=col)
+        if len(breaks):
+            # Between the last one-week tick and the first double week, so it separates the
+            # two units rather than sitting on a data point.
+            fig.add_vline(x=float(breaks[0]) - 0.5, line=dict(
+                color=th["axis"], width=UNIT_BREAK_WIDTH, dash="dot"), row=1, col=col)
+
+    for annotation in fig.layout.annotations:
+        annotation.font = dict(family=FONT, size=12, color=th["ink2"])
+    fig.update_xaxes(title="scoring period", type="category")
+    fig.update_yaxes(title=value_label, rangemode="tozero", col=1)
+    fig.update_layout(title=title)
+    return _legend_above_titles(apply_theme(fig, th, height))
 
 
 # ── The four figures the minutes page owns ────────────────────────────────────

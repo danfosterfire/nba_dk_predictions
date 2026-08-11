@@ -29,21 +29,27 @@ to the relevant docs for the task at hand. The docs are:
   - dashboard-plan.md: Plan and notes for the streamlit dashboard. As of 
   2026-08-08 the dashboard is a **data-visualization surface**, not a project 
   walkthrough — read this before adding or editing a view. Its nine-page 
-  "expansion" shipped 2026-08-10; the "Charter amendment 2026-08-10" subsection 
+  "expansion" shipped 2026-08-10 and the revision round below added a tenth page 
+  the same day; the "Charter amendment 2026-08-10" subsection 
   sets the three bounds the one page of prose (the Overview) exists under, and 
   each step has a "Step N, as built" section. `dashboard-build-prompts.md`, the 
   ten one-per-session build prompts, was ephemeral scaffolding and was deleted 
   when the expansion landed.
   - dashboard-revision-plan.md: The round *after* the expansion, planned 
   2026-08-10 — five one-per-session steps (appearance, which availability head 
-  ships, DHARMa-style quantile residuals, a round-unit dk_pts page, and the 
-  Overview as a paper). It inherits every rule `dashboard-plan.md` set; read that 
+  ships, DHARMa-style quantile residuals, a dk_pts page at the unit the contest is 
+  decided at, and the Overview as a paper). It inherits every rule 
+  `dashboard-plan.md` set; read that 
   one first. Three of the five items turned out to have different answers than the 
-  request assumed, and the doc records why. Steps 1-3 shipped 2026-08-10 and each 
+  request assumed, and the doc records why. Steps 1-4 shipped 2026-08-10 and each 
   has an "as built" section: the appearance is now Streamlit's own setting, with 
   the page chrome generated into `.streamlit/config.toml` by `make 
-  dashboard-config`; every head declares its role in the shipped chain; and block 6 
-  of the model pages is a scaled quantile residual rather than a raw one. Its 
+  dashboard-config`; every head declares its role in the shipped chain; block 6 
+  of the model pages is a scaled quantile residual rather than a raw one; and the 
+  dashboard has a tenth page, **Weekly scores**, which is Gate A at the scoring 
+  period (`make weekly-scores`, `src/sim/weekly.py`). Step 4's unit moved from the 
+  tournament round to the **week** mid-session at the user's request, and the doc 
+  records both the request and what the change cost. Its 
   prompts appendix is ephemeral scaffolding, to be deleted when the round lands.
   - data-quirks.md: Notes and findings in exploring the raw data.
   - dk_best_ball_rules.md: Copy of the tournament rules for draft kings best 

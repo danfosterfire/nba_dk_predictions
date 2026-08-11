@@ -54,7 +54,7 @@ documentation again. All are from `dashboard/README.md` and `docs/dashboard-plan
 | 1 | [Appearance reaches the whole page](#step-1--the-appearance-mode-reaches-the-whole-page) ✅ | 4 | none | global chrome; every later step is then verified once, under the real theme |
 | 2 | [The availability page says which head ships](#step-2--the-availability-page-says-which-head-ships) ✅ | 2 | one column on `model_card_index.csv` | small, self-contained, and it corrects a claim now on the page |
 | 3 | [Scaled quantile residuals](#step-3--scaled-quantile-residuals-in-block-6) ✅ | 3 | one artifact from the existing predictive | touches all four model pages through one renderer |
-| 4 | [dk_pts at the tournament round](#step-4--dk_pts-at-the-tournament-round-the-new-page) | 5 | an emitter, plus training-season tensors | the large step; it also adds a page, which moves the route table |
+| 4 | [dk_pts at the tournament round](#step-4--dk_pts-at-the-tournament-round-the-new-page) ✅ — **shipped at the *weekly* unit**, see [as built](#step-4-as-built--dk_pts-at-the-unit-a-lineup-is-set-at) | 5 | an emitter, plus training-season tensors | the large step; it also adds a page, which moves the route table |
 | 5 | [The Overview as a paper](#step-5--the-overview-rewritten-as-a-paper) | 1 | none | last, because step 4 gives it a ninth route — the same reason it was built last the first time |
 
 ---
@@ -288,7 +288,14 @@ and register the decision.
 
 ## Step 4 · dk_pts at the tournament round — the new page
 
-**User item 5.** A page between "Inputs beyond the heads" and "Tournament & strategy",
+**User item 5. ✅ Shipped 2026-08-10, at the *weekly* unit rather than the round** — the
+user changed the unit mid-session, after the training tensors had been built and before the
+emitter was written. See
+[Step 4, as built](#step-4-as-built--dk_pts-at-the-unit-a-lineup-is-set-at); everything
+below is the design as it stood, and almost all of it survived the change, because the
+round and the week are two groupings of the same tensor axis.
+
+A page between "Inputs beyond the heads" and "Tournament & strategy",
 comparing observed against simulated `dk_pts` per player per tournament round, on train and
 validation.
 
@@ -826,6 +833,202 @@ disagreements.
 `model-card-ribbon-budget-is-measured-not-assumed` are both untouched and are the two rules
 the shared draw and the re-measured budget preserve — this entry extends the second with the
 KS's own half-sample check rather than replacing it.
+
+---
+
+## Step 4, as built — dk_pts at the unit a lineup is set at
+
+**2026-08-10.** Shipped as page 8, **Weekly scores**, between "Inputs beyond the heads" and
+"Tournament & strategy". `make weekly-scores` (`src/sim/weekly.py`) writes six artifacts and
+`dashboard/views/weekly.py` draws them. The step's own scaffolding held: the tensor already
+carried the period axis, so the emitter re-simulates nothing and runs in **1.3 s** over
+**30,780** player-periods.
+
+### The unit changed mid-step, and the design mostly survived it
+
+The request was the **tournament round**; partway through — after the two training tensors
+were built and before the emitter existed — the user asked for the **weekly** dk_pts
+instead. That is a smaller change than it sounds, because the round and the week are two
+groupings of one tensor axis: the round is a sum over slots and the week *is* a slot, so the
+emitter got simpler rather than different. What changed in substance is three things.
+
+**The facet is period length rather than round.** DK's Round 1 is seventeen weekly periods
+and Rounds 2–4 are two weeks each, which `src/sim/season.scoring_slots` collapses onto twenty
+slots. So the second axis is weekly for seventeen of its twenty slots and **fortnightly for
+the other three**, and a double week carries about twice the games and twice the `dk_pts`.
+Pooling them would put a right tail on every panel that is a calendar fact, and a reader
+would see a model that over-predicts. The step's own instruction — *state that Round 1 is
+seventeen weeks and Rounds 2–4 are two each, so the four panels are not four equal units* —
+survives verbatim, one level down: it is now the reason the page has two facets rather than
+one, and block 1 states it before any distribution.
+
+**The row count went up by 5×** — a round-unit page would have been ~3,000 rows a split and
+this is 15,000 — which is what makes the 30 × 30 calibration grid inherited from
+`model_cards.CAL_BINS` the right resolution rather than a stretch. The smallest facet here
+is 2,298 rows against the model pages' smallest at 751.
+
+**Round 4 stopped being a panel and became a scope constraint.** It is still the reason two
+seasons are absent, which is the next section.
+
+### Measure before you commit to a run — and the measurement moved the scope
+
+The step said to time one training season at a small `--n-sims` first. Done: **3.1 s at 20
+sims** for each of 2018-19, 2020-21 and 2021-22, i.e. ~2.4 s of context build plus 0.038 s a
+sim, so ~78 s and ~76–80 MB at the shipped 2,000. Cheap, as sized.
+
+**The same probe killed the season pair the step named.** It specified "the last two
+(`2020-21`, `2021-22`)", and 2020-21 does not carry DK's fourth round *at all*: the COVID
+season began on 21 December 2020 and ran out of weeks, so slot 19 holds **0 games** and every
+player's Round-4 and last-double-week total is exactly zero on both sides of the comparison.
+The obvious substitute is worse: **2019-20's Round 4 is the Orlando bubble** — 293 players
+against 373 in Round 3, so a fifth of the pool carries an observed zero that is a schedule
+fact rather than an availability outcome, which is worse than an absence because it looks
+like data. So the training pair is **2018-19 and 2021-22**, the last two training seasons
+carrying the whole four-round structure, and `assert_covers_the_tensor` **refuses** a season
+with an empty slot rather than scoring it — the decision is enforced rather than remembered.
+
+Neither needed an unlock: `season.allowed_seasons` derives its legal set through
+`held_out.selection_split`, so a training season was already permitted and a test season
+still refuses.
+
+### What shipped
+
+Six artifacts under `outputs/predictions/`, **4 rows to 8,000**, all keyed by
+`period_type × split`:
+
+| artifact | grain | rows | what it feeds |
+|---|---|---|---|
+| `weekly_score_index.csv` | facet | 4 | the metric board, the spread board, the tiles and every caption's provenance |
+| `weekly_score_period.csv` | season × slot | 80 | the per-period profile — the reading along the calendar |
+| `weekly_score_ecdf.csv` | facet × grid point | 330 | the observed ECDF over the predictive ribbon |
+| `weekly_score_calibration.csv` | facet × 2-D bin | 2,192 | observed against predicted, as density |
+| `weekly_score_quantile.csv` | facet × panel × row | 920 | the QQ-uniform and the rank-transformed residual |
+| `weekly_score_sample.parquet` | facet × row | 8,000 | the bounded overlay on both densities |
+
+**Every binning helper is `src/models/model_cards.py`'s, by import** — `ecdf_rows`,
+`band_stability`, `calibration_rows`, `calibration_edges`, `sample_frame`,
+`scaled_residuals`, `rank_uniform`, `quantile_tables`, `ks_stability` — and the metric set is
+`season.marginal_metrics`, renamed from `_metrics` and made public so Gate A's season-total
+row and this page's weekly rows are the same arithmetic rather than two definitions. The
+consequence the step asked for lands in full: **the page draws `fig_ecdf`, `fig_calibration`,
+`fig_qq` and `fig_quantile_residual` unmodified**, so it added exactly **one** figure builder
+(`fig_period_profile`) and the reader meets four encodings they already know.
+
+The build gate is five checks, each raising rather than writing:
+
+1. **`dk_pts` is `compute_dk_pts`** — the stored column re-derived from the box score it came
+   from, which is the difference between reusing a function and trusting a column name;
+2. **the slot map is a partition** — no empty slot, no slot spanning two rounds, no slot
+   spanning a third number of weeks, and the tensor's own `tournament_round` array equal to
+   `scoring_periods.parquet`;
+3. **the periods reconstruct the season total** `season.realized_frame` computes, to 1e-3
+   dk_pts — the strongest check available, because the other side of it is a *different*
+   function summing the same games by season rather than by period;
+4. **provenance** — every tensor at the `train` fit window, every season inside
+   `selection_split`;
+5. **the budget** — the ribbon and the KS distance re-read on two interleaved halves.
+
+### The draw budget, measured rather than inherited
+
+500 simulated seasons a panel, thinned across the 2,000 in the tensor. Unlike
+`make model-cards`' 200 draws this budget is free in *simulation* terms — the seasons already
+exist — so the constraint is memory and the CRPS sort, and the question is only whether 500
+is enough. Re-run at 250 / 500 / 1,000 / 2,000 on the one-week training facet:
+
+| statistic | 250 | **500 (shipped)** | 1,000 | 2,000 |
+|---|---|---|---|---|
+| 95% ribbon half-sample | 0.0057 | **0.0044** | 0.0020 | 0.0014 |
+| KS distance | 0.0649 | **0.0639** | 0.0633 | 0.0636 |
+
+The ribbon statistic falls as 1/√D, which is the confirmation it is measuring Monte Carlo
+error; the KS distance is flat to **±0.0016**. So the remaining 1,500 seasons buy a third of
+a pixel at four times the peak memory, and 500 ships. Worst gated readings across the four
+facets are **0.0061** on the ribbon and **0.0027** on the KS, against 0.02 bars.
+
+### What the page shows
+
+The measurements are in
+[simulations-plan.md](simulations-plan.md#gate-a-at-the-weekly-unit--make-weekly-scores-2026-08-10),
+because they are a fifth Gate A row rather than a dashboard fact. The three worth naming
+here, because each is a thing no *existing* page could have shown:
+
+- **the season-total bias is a weekly bias, and it is front-loaded** — −5.28 dk_pts in week
+  1 sliding monotonically to −0.70 by week 17;
+- **the weekly spread comes in at 0.920–0.954× the observed**, which is the statistic a max
+  over sixteen players is most sensitive to and the one a season total cannot report;
+- **a fifth of player-weeks score nothing at all** (20.7% observed against 16.9% simulated),
+  which a season total averages away completely.
+
+Three spreads ship rather than one, and that is the emitter's own correction: `point_sd` —
+the spread of the per-row posterior *means* — is narrower than the data **by construction**,
+and a page printing it beside the observed sd would report a model far too narrow when
+nothing of the sort had been measured. `pooled_sd` is the one the observed column answers.
+A test pins the substitution.
+
+### What the browser and the PNG caught
+
+**A five-entry legend runs straight through the first subplot's title**, and it is not
+data-dependent. `apply_theme` puts a horizontal legend at paper `y = 1.02` and
+`make_subplots` writes its titles into the same paper-referenced strip, so the ECDF ribbon's
+"95% band / 80% band / 50% band / median replicate / observed" overlapped "Train". Found by
+rendering, invisible in the trace, and `AppTest` counts the same elements either way. Fixed
+at the source — `charts._legend_above_titles`, applied after `apply_theme` since that is what
+sets the default — so **the four model pages got the fix too**, which is the upside of this
+page reusing their figures rather than copying them.
+
+The same layer settled the panel layout. Four facets in one figure gave a 1 × 4 grid whose
+first two titles sat under the legend; **one figure per period type, two split columns** is
+both the fix and the shape a model page already draws, so the ECDF, the QQ and the residual
+are each drawn twice rather than once wide. And `fig_calibration`'s height is now per *row*
+rather than a constant, because two rows at one row's height puts the second subplot's title
+on the first's axis label.
+
+One thing was left as it renders: the calibration density is dominated by a dark band along
+`observed = 0`, because a fifth of player-weeks are zeros. That is the densest cell and it is
+*the* feature of this unit, so the encoding is left alone and the caption says what the band
+is rather than the colour scale being bent around it.
+
+### Verification, as run
+
+**The build gate.** `make weekly-scores` green — 4 seasons, 4 facets, 30,780 player-periods,
+six artifacts, 1.3 s. Gate 3 (the season-total reconstruction) and gate 1 (the scoring
+function) both run on every season on every build.
+
+**`AppTest`**, both appearance modes × all **ten** pages: **0 exceptions in 20 runs**, with
+identical element counts in the two modes and no literal `undefined` or `nan`. The new page
+reports 8 charts / 12 tiles / 8 tables in both.
+
+**Kaleido**, both new-to-this-page figure arrangements plus the reshaped shared ones, in both
+modes. This is the layer that caught the legend collision and the 1 × 4 layout, and that
+confirmed the per-period profile's axis carries the unit change (`W1`…`W17`, then `R2`/`R3`/
+`R4`, with a divider where the unit changes) rather than a bare 1…20 that would read the step
+up at the right as a model artifact.
+
+**The live page in Chrome**, 1440×900, both appearance modes as `prefers-color-scheme`,
+driving the sidebar nav link rather than `page.goto`. 8 plotly charts, 12 metric tiles, plot
+surfaces `rgb(252, 252, 251)` and `rgb(26, 26, 25)`, header and chrome in the palette, every
+expected string present (`One week`, `Double week`, `W17`, `R4`, `Gate A at this unit`,
+`KS distance`), and no `undefined` or `nan` anywhere. It also confirmed the Overview's route
+block picked the page up — the first browser run failed on a *strict-mode violation*, two
+links named "Weekly", which is the sidebar's and the Overview's.
+
+**Tests.** 31 new in `tests/test_sim_weekly.py` and 16 new in `tests/test_dashboard.py`.
+`.venv/bin/python -m pytest tests/` passes, **1,484 tests** (from 1,437).
+
+**`make dashboard-audit`: 0 orphans in, 0 out.** The six new artifacts are named as string
+literals in `dashboard/weekly.py`, and the two new tensors are credited by the existing
+`sim_tensor_` literal. `make docs-audit` re-run green, 0 disagreements.
+
+### Registry
+
+Three entries, all `simulations`:
+`weekly-scores-are-gate-a-at-the-unit-the-lineup-is-set-at` (`built`) is the page and what it
+found; `the-training-pair-is-the-last-two-four-round-seasons` (`settled`) is the scope
+decision and the two seasons it excludes;
+`gate-a-merges-by-season-rather-than-clobbering` (`built`) is the one mechanism this step
+changed in `src/sim/season.py` — `--season` is a real flag, and a partial run used to write a
+one-season `sim_season_gate_a.csv` and silently drop the validation record. Nothing is
+withdrawn.
 
 ---
 

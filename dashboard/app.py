@@ -58,7 +58,8 @@ import streamlit as st
 
 from dashboard import model_cards, shell
 from dashboard.views import (availability, beyond_heads, components, draft_room,
-                             fingerprints, game_length, minutes, overview, tournament)
+                             fingerprints, game_length, minutes, overview, tournament,
+                             weekly)
 
 
 class View(NamedTuple):
@@ -103,6 +104,12 @@ VIEWS: tuple[View, ...] = (
     model_view(game_length.render, game_length.CLASS_KEY),
     View(beyond_heads.render, "Inputs beyond the heads", ":material/inventory_2:",
          "inputs"),
+    # Between the inputs and the contest, because that is where it sits in the argument:
+    # the heads and their inputs are above it, the tournament that consumes its output is
+    # below, and the page itself is Gate A at the unit the contest is decided at. Adding it
+    # moved the last two rows to 9 and 10; **the `url_path`s did not move**, which is the
+    # whole reason they are pinned here rather than derived from the title or the order.
+    View(weekly.render, "Weekly scores", ":material/calendar_view_week:", "weekly"),
     View(tournament.render, "Tournament & strategy", ":material/trophy:", "tournament"),
     # Last, and the one row whose page is also its own app: `make draft-room` launches
     # `dashboard/draft_room.py` directly for draft night. The row costs nothing until it is
