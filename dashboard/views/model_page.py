@@ -24,18 +24,26 @@ The seven blocks, in the order the plan fixes them:
    grouped under their `term_family`.
 5. **Predictive calibration** — the observed ECDF over the posterior-predictive ribbon,
    train beside validation, read as a *distance* rather than as a verdict.
-6. **Predicted against observed, and residuals** — four panels of binned density with the
-   bounded sample overlaid for texture.
+6. **Predicted against observed, and the scaled quantile residual** — the binned density
+   with its bounded sample overlaid, then DHARMa's residual: a QQ-uniform with a pointwise
+   envelope, and the residual against **rank-transformed** predicted with its quartile
+   lines. The raw residual-against-predicted panel this replaced was not readable across
+   the four classes, since a negative binomial's residual on a season total and a
+   beta-geometric's on a spell length are not on one scale. A quantile residual is uniform
+   iff calibrated whatever the likelihood, which is what one shared renderer needs.
 7. **Diagnostics** — the two sampler runs behind the card, and the four build-time checks
    `make model-cards` had to pass before it was allowed to write it.
 
 Every number on the page is read from an artifact `make model-cards`, `make posteriors` or
 `make stan` wrote. Nothing here imports `src/`, and nothing here computes a model quantity:
-the two derived readings on the page — the ribbon's distance from its median, and the
-binned panel means — are computed in `model_cards.py`, from the same cells the figure
-beside them draws.
+the three derived readings on the page — the ribbon's distance from its median, the binned
+panel means, and how far a quantile line sits from its own level — are computed in
+`model_cards.py`, from the same cells the figure beside them draws. The KS distance itself
+is *not* one of them: it is a model quantity, so `make model-cards` computes it through
+`stan_utils.ks_uniform` and this page reads it off the artifact.
 """
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -43,7 +51,8 @@ from dashboard import model_cards as mc
 from dashboard import shell
 from dashboard.artifacts import ROOT, load_cfg, optional, predictions_dir, rel
 from dashboard.charts import (fig_calibration, fig_coefficients, fig_correlation,
-                              fig_ecdf, fig_features, fig_joint)
+                              fig_ecdf, fig_features, fig_joint, fig_qq,
+                              fig_quantile_residual)
 
 #: Features past this many are behind an expander rather than drawn on arrival. The
 #: composition's 25 columns are seven rows of small multiples, which is a lot of figure to
@@ -55,7 +64,7 @@ FEATURE_GRID_LIMIT = 8
 
 @st.cache_data(show_spinner="Reading the model cards…")
 def load_cards() -> dict[str, pd.DataFrame] | None:
-    """The eight model-card artifacts, or `None` once a missing one has been named."""
+    """The nine model-card artifacts, or `None` once a missing one has been named."""
     directory = predictions_dir()
     frames = {}
     for key, name in (("index", mc.INDEX_FILE),
@@ -65,6 +74,7 @@ def load_cards() -> dict[str, pd.DataFrame] | None:
                       ("density", mc.DENSITY_FILE),
                       ("ecdf", mc.ECDF_FILE),
                       ("calibration", mc.CALIBRATION_FILE),
+                      ("quantile", mc.QUANTILE_FILE),
                       ("sample", mc.SAMPLE_FILE)):
         frame = optional(directory / name, target=mc.MAKE_CARDS)
         if frame is None:
@@ -361,7 +371,7 @@ def calibration_block(cards: dict, row: pd.Series, head: str, th: dict) -> None:
             hide_index=True, width="stretch")
 
 
-# ── Block 6 · predicted against observed, and residuals ───────────────────────
+# ── Block 6 · predicted against observed, and the scaled quantile residual ────
 
 def residuals_block(cards: dict, row: pd.Series, head: str, th: dict) -> None:
     cells = {(panel, split): mc.calibration_panel(cards["calibration"], head, panel, split)
@@ -383,18 +393,122 @@ def residuals_block(cards: dict, row: pd.Series, head: str, th: dict) -> None:
         f"cell, with empty cells left transparent; the dots are a bounded subsample laid "
         f"over it for texture. Binned rather than per row because a panel of this head's "
         f"{int(row['n_fit']):,} rows is a copy of the data rather than a picture of it. "
-        f"Both splits of a panel share one grid **and one axis range**, which is what "
+        f"Both splits share one grid **and one axis range**, which is what "
         f"makes them comparable — the range spans the pooled 0.5–99.5% of the values with "
-        f"the tails clipped into the end bins, so one heavy-tailed residual cannot "
+        f"the tails clipped into the end bins, so one heavy-tailed value cannot "
         f"collapse the grid and a handful of overlay points sit outside the view. The "
         f"predicted axis is **{source}** (`fitted_source` in the index says which).")
 
-    with st.expander("Table view — each panel's binned means"):
+    with st.expander("Table view — the panel's binned means"):
         st.caption("Weighted off the same cells the panels draw, so the figure and the "
                    "table are two readings of one object. Binned, therefore approximate "
                    "to the width of a cell.")
         st.dataframe(mc.calibration_summary(cards["calibration"], head).round(3),
                      hide_index=True, width="stretch")
+
+    quantile_block(cards, row, head, th)
+
+
+def quantile_block(cards: dict, row: pd.Series, head: str, th: dict) -> None:
+    """The scaled quantile residual — the half of block 6 that used to be a raw residual.
+
+    Two panels, because they answer different questions: the QQ-uniform says whether the
+    residual is uniform *overall*, and the residual against rank-transformed predicted says
+    whether it is uniform *everywhere along the fit*. A head can pass the first and drift
+    badly on the second, which is exactly what a marginal statistic cannot see.
+    """
+    st.markdown("**Scaled quantile residuals**")
+    note = mc.quantile_note(row)
+    if note:
+        # Declared out of scope by the emitter rather than silently absent. A wrong panel
+        # here would be a good-looking uniform cloud, which is worse than no panel.
+        st.info(f"This head ships no quantile residual: {note}")
+        return
+
+    qq = {mc.SPLIT_LABELS[split]: mc.qq_panel(cards["quantile"], head, split)
+          for split in mc.SPLITS}
+    qq = {name: part for name, part in qq.items() if not part.empty}
+    if not qq:
+        st.info("No quantile residual was cut for this head.")
+        return
+
+    distance = mc.quantile_distance(cards["quantile"], head)
+    tiles = [(f"KS distance · {part['label'].lower()}", f"{part['ks']:.3f}",
+              f"How far the {int(part['n']):,} scaled residuals sit from uniform, at their "
+              f"furthest point. A distance in probability units — never a pass or a fail")
+             for _, part in distance.iterrows()]
+    tiles.append(("Furthest quantile line",
+                  " / ".join(f"{p['line_gap']:.3f}" if np.isfinite(p["line_gap"]) else "—"
+                             for _, p in distance.iterrows()),
+                  "The largest gap between a binned 0.25 / 0.5 / 0.75 line and its own "
+                  "level, train / validation — where a KS distance says how much, this "
+                  "says where"))
+    for col, (label, value, helptext) in zip(st.columns(max(len(tiles), 3)), tiles):
+        col.metric(label, value, help=helptext)
+
+    st.plotly_chart(fig_qq(qq, th, title=""), width="stretch", key=f"qq-{head}",
+                    config={"displayModeBar": False})
+    st.caption(
+        f"**DHARMa's residual, on this project's own draws.** Each row's residual is its "
+        f"randomized quantile inside its own {int(row['predictive_draws'])}-draw replicate "
+        f"distribution — `below + U·at`, randomized across the probability mass at the "
+        f"observed value because the plain quantile of a *discrete* predictive is not "
+        f"uniform even under a perfect model, and every response on these pages is "
+        f"discrete. Uniform iff calibrated, **whatever the head's likelihood is**, which is "
+        f"what makes one panel readable across four model pages where a raw residual is not. "
+        f"R's DHARMa simulates at the fitted point estimate; these draws integrate over the "
+        f"posterior, so this is a Bayesian PIT residual — the same reading, carrying "
+        f"parameter uncertainty rather than conditioning it away.")
+
+    residual = {mc.SPLIT_LABELS[split]: mc.residual_cells(cards["quantile"], head, split)
+                for split in mc.SPLITS}
+    residual = {name: part for name, part in residual.items() if not part.empty}
+    if residual:
+        lines = {mc.SPLIT_LABELS[split]: mc.quantile_lines(cards["quantile"], head, split)
+                 for split in mc.SPLITS}
+        overlay = {mc.SPLIT_LABELS[split]: mc.sample_points(cards["sample"], head, split)
+                   for split in mc.SPLITS}
+        st.plotly_chart(
+            fig_quantile_residual(residual, lines, overlay, th, mc.QUANTILE_LEVELS,
+                                  title=""),
+            width="stretch", key=f"quantile-{head}", config={"displayModeBar": False})
+        st.caption(
+            "**Predicted is rank-transformed**, which is what makes this panel comparable "
+            "between a count head on a season total and a conversion head on a rate — the "
+            "predicted values share no axis and their ranks do. Both axes are then [0, 1] "
+            "by construction, so the two splits are on one grid without being put there. "
+            "The three lines are the binned 0.25 / 0.5 / 0.75 quantiles of the residual "
+            "and are **flat at those levels iff calibrated**; the dashed references are "
+            "the levels themselves, and a bin with too few rows for a quartile is a gap "
+            "rather than a line drawn through three points. The shading is the *departure* "
+            "from an even spread rather than the mass — a calibrated residual fills this "
+            "square evenly by construction, so red is where rows pile up and blue is where "
+            "they thin out.")
+
+    ungated = ("" if bool(row["quantile_ks_gated"]) else
+               ", and is reported rather than gated because this head has too few rows for "
+               "the statistic to mean anything")
+    st.caption(
+        f"**The KS distance is a distance.** At {int(distance['n'].max()):,} rows a strict "
+        f"uniformity test rejects every head in this project, so it is tiled as a size and "
+        f"never as a verdict — the same rule block 5's ribbon is read under. What *is* "
+        f"gated is the draw budget behind it: `{mc.MAKE_CARDS}` re-reads the distance on "
+        f"two interleaved halves of the draws and fails the build if the two disagree by "
+        f"more than {mc.KS_MC_TOL}, because at {int(row['predictive_draws'])} draws a row "
+        f"with no replicate landing on its observed value carries a residual quantized to "
+        f"1/{int(row['predictive_draws'])}. This head reads "
+        f"{float(row['quantile_ks_mc']):.4f}{ungated}.")
+
+    with st.expander("Table view — the distance, per split"):
+        st.dataframe(
+            distance.rename(columns={
+                "label": "Split", "ks": "KS distance from uniform", "n": "Rows",
+                "line_gap": "Furthest quantile line from its level",
+                "n_bins": "Bins with enough rows to draw"})
+            .drop(columns="split")
+            .round({"KS distance from uniform": 4,
+                    "Furthest quantile line from its level": 4}),
+            hide_index=True, width="stretch")
 
 
 # ── Block 7 · diagnostics ─────────────────────────────────────────────────────
@@ -499,7 +613,7 @@ def render(class_key: str, extra: dict | None = None) -> None:
                                       "posterior says it should have produced.",
          lambda: calibration_block(cards, row, head, th)),
         (6, "Predicted against observed", "Where the fit lands, and what it leaves "
-                                          "behind, on both splits.",
+                                          "behind on a scale every head shares.",
          lambda: residuals_block(cards, row, head, th)),
         (7, "Diagnostics", "What the sampler did, and what the build checked.",
          lambda: diagnostics_block(row, head)),

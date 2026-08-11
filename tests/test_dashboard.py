@@ -1888,7 +1888,10 @@ def _index(**overrides) -> pd.DataFrame:
         n_predictive_validation=100, predictive_rows_capped=False,
         predictive_weighted=False, fitted_source="head_predict",
         predictive_check="mean", predictive_bias=0.002, ecdf_band_mc=0.01,
-        ecdf_band_gated=True, player_season_sigma=0.0, git_sha="abcdef123456",
+        ecdf_band_gated=True, player_season_sigma=0.0,
+        quantile_scope="drawn", quantile_reason="", quantile_ks_train=0.02,
+        quantile_ks_validation=0.06, quantile_ks_mc=0.004, quantile_ks_gated=True,
+        quantile_weighting="unweighted", git_sha="abcdef123456",
         built_at="2026-08-10T00:00:00+00:00")
     return pd.DataFrame([{**base, **overrides}])
 
@@ -1995,7 +1998,7 @@ def _ecdf(head: str = "synthetic", offset: float = 0.0) -> pd.DataFrame:
 
 def _calibration(head: str = "synthetic") -> pd.DataFrame:
     rows = []
-    for panel in ("fitted_observed", "residual_fitted"):
+    for panel in model_cards.PANELS:
         for split, n in (("train", 900), ("validation", 100)):
             for i, (count, y) in enumerate([(90, 0.0), (10, 10.0)]):
                 rows.append({
@@ -2006,10 +2009,44 @@ def _calibration(head: str = "synthetic") -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _quantile(head: str = "synthetic", bins: int = 4, drift: float = 0.0) -> pd.DataFrame:
+    """The three panels of one head's scaled residual, shaped like the artifact.
+
+    `drift` tilts the quantile lines off their own levels, which is what a head that is
+    calibrated on average and wrong at one end of its own fit looks like here.
+    """
+    rows = []
+    edges = np.linspace(0.0, 1.0, bins + 1)
+    for split, n, ks in (("train", 900, 0.02), ("validation", 100, 0.06)):
+        stamp = {"head": head, "split": split, "ks": ks, "n": n}
+        for k in range(bins):
+            expected = (k + 1) / (bins + 1)
+            rows.append({**stamp, "panel": "qq", "x_index": k, "y_index": -1,
+                         "x": expected, "y": min(1.0, expected + 0.01),
+                         "lo": max(0.0, expected - 0.05), "hi": min(1.0, expected + 0.05)})
+        for i in range(bins):
+            for j in range(bins):
+                rows.append({**stamp, "panel": "residual", "x_index": i, "y_index": j,
+                             "x": float((edges[i] + edges[i + 1]) / 2),
+                             "y": float((edges[j] + edges[j + 1]) / 2),
+                             "x_left": edges[i], "x_right": edges[i + 1],
+                             "y_left": edges[j], "y_right": edges[j + 1],
+                             "count": 10 + i + j,
+                             "density": (10 + i + j) / (bins * bins * 12.0)})
+        for i in range(bins):
+            for level in model_cards.QUANTILE_LEVELS:
+                rows.append({**stamp, "panel": "quantile", "x_index": i, "y_index": -1,
+                             "x": float((edges[i] + edges[i + 1]) / 2),
+                             "y": level + drift * i, "level": level,
+                             "x_left": edges[i], "x_right": edges[i + 1],
+                             "count": n // bins})
+    return pd.DataFrame(rows)
+
+
 def _sample(head: str = "synthetic") -> pd.DataFrame:
     return pd.DataFrame([
         {"head": head, "split": split, "row": i, "fitted": 1.0 + i,
-         "observed": 2.0 + i, "residual": 1.0}
+         "observed": 2.0 + i, "u": 0.1 * (i + 1), "predicted_rank": 0.1 * (i + 2)}
         for split in ("train", "validation") for i in range(5)])
 
 
@@ -2017,7 +2054,7 @@ def _cards() -> dict:
     return {"index": _index(), "coefficients": _coefficients(),
             "features": _feature_rows(), "correlations": _correlations(),
             "density": _density(), "ecdf": _ecdf(), "calibration": _calibration(),
-            "sample": _sample()}
+            "quantile": _quantile(), "sample": _sample()}
 
 
 # ── Which heads make a page ───────────────────────────────────────────────────
@@ -2268,6 +2305,65 @@ def test_the_binned_summary_weights_by_the_cell_counts_it_draws():
 def test_the_sample_overlay_is_filtered_to_its_own_split():
     points = model_cards.sample_points(_sample(), "synthetic", "validation")
     assert len(points) == 5 and set(points["split"]) == {"validation"}
+    # One subsample, four coordinates: two panels read the same rows, so a point in the
+    # calibration density and a point in the residual panel are the same player-season.
+    assert {"fitted", "observed", "u", "predicted_rank"} <= set(points.columns)
+
+
+# ── Block 6 · the scaled quantile residual ────────────────────────────────────
+
+def test_the_qq_panel_is_named_rather_than_handed_over_as_x_and_y():
+    """A figure builder taking `x`/`y`/`lo`/`hi` cannot say which is which, and the axis
+    titles are the entire content of a QQ plot."""
+    panel = model_cards.qq_panel(_quantile(), "synthetic", "train")
+    assert list(panel.columns) == ["expected", "observed", "lo", "hi", "n"]
+    assert panel["expected"].is_monotonic_increasing
+    assert (panel["lo"] <= panel["hi"]).all()
+    assert model_cards.qq_panel(_quantile(), "synthetic", "test").empty
+
+
+def test_the_residual_cells_carry_the_centres_the_heatmap_builder_expects():
+    """Same frame shape `calibration_panel` returns, so one builder draws both densities."""
+    cells = model_cards.residual_cells(_quantile(), "synthetic", "validation")
+    assert np.allclose(cells["x_center"], (cells["x_left"] + cells["x_right"]) / 2)
+    assert np.allclose(cells["y_center"], (cells["y_left"] + cells["y_right"]) / 2)
+    assert set(cells["split"]) == {"validation"}
+
+
+def test_the_ks_distance_is_the_reading_and_the_line_gap_says_where():
+    """A head can sit close to uniform overall and drift across its own predicted range,
+    which is exactly what one KS cannot see and the rank-transformed panel exists for."""
+    flat = model_cards.quantile_distance(_quantile(), "synthetic")
+    assert list(flat["split"]) == ["train", "validation"]
+    assert flat.iloc[0]["ks"] == pytest.approx(0.02)
+    assert flat.iloc[0]["line_gap"] == pytest.approx(0.0)
+    assert flat.iloc[0]["n"] == 900
+
+    drifting = model_cards.quantile_distance(_quantile(drift=0.05), "synthetic")
+    assert drifting.iloc[0]["ks"] == pytest.approx(0.02)      # unchanged
+    assert drifting.iloc[0]["line_gap"] == pytest.approx(0.15)
+
+
+def test_a_head_out_of_scope_says_why_rather_than_rendering_an_empty_panel():
+    """`make model-cards` declares it; the page prints the reason. An absent panel with no
+    reason beside it is the same defect the emitter's own rule exists to prevent."""
+    assert model_cards.quantile_note(_index().iloc[0]) == ""
+    out = _index(quantile_scope="not_applicable",
+                 quantile_reason="its response is a linear predictor").iloc[0]
+    assert model_cards.quantile_note(out) == "its response is a linear predictor"
+    assert model_cards.quantile_note(
+        _index(quantile_scope="not_applicable", quantile_reason=float("nan")).iloc[0]
+    ) == "no reason recorded"
+
+
+def test_the_dashboards_quoted_budget_bar_is_the_emitters_own():
+    """The page prints the bar in a caption; a second hand-typed constant would drift."""
+    from src.models import model_cards as emitter
+
+    assert model_cards.KS_MC_TOL == emitter.KS_MC_TOL
+    assert model_cards.QUANTILE_LEVELS == emitter.QUANTILE_LEVELS
+    assert (model_cards.QQ_PANEL, model_cards.RESIDUAL_PANEL,
+            model_cards.LINE_PANEL) == emitter.QUANTILE_PANELS
 
 
 # ── Block 7 ───────────────────────────────────────────────────────────────────
@@ -2354,6 +2450,15 @@ def _model_figures(th: dict) -> list:
              for p in model_cards.PANELS for s in model_cards.SPLITS}
     points = {(p, s): model_cards.sample_points(cards["sample"], "synthetic", s)
               for p in model_cards.PANELS for s in model_cards.SPLITS}
+    qq = {model_cards.SPLIT_LABELS[s]: model_cards.qq_panel(cards["quantile"],
+                                                            "synthetic", s)
+          for s in model_cards.SPLITS}
+    residual = {model_cards.SPLIT_LABELS[s]: model_cards.residual_cells(
+        cards["quantile"], "synthetic", s) for s in model_cards.SPLITS}
+    lines = {model_cards.SPLIT_LABELS[s]: model_cards.quantile_lines(
+        cards["quantile"], "synthetic", s) for s in model_cards.SPLITS}
+    overlay = {model_cards.SPLIT_LABELS[s]: model_cards.sample_points(
+        cards["sample"], "synthetic", s) for s in model_cards.SPLITS}
     return [
         charts.fig_features(panel, th, title="features"),
         charts.fig_correlation(square, th, title="corr"),
@@ -2364,6 +2469,9 @@ def _model_figures(th: dict) -> list:
         charts.fig_ecdf(ecdf, th, "games played", title="ecdf"),
         charts.fig_calibration(grids, points, th, model_cards.PANEL_AXES,
                                model_cards.PANEL_LABELS, title="calibration"),
+        charts.fig_qq(qq, th, title="qq"),
+        charts.fig_quantile_residual(residual, lines, overlay, th,
+                                     model_cards.QUANTILE_LEVELS, title="residual"),
     ]
 
 
@@ -2427,9 +2535,9 @@ def test_the_ribbon_draws_three_nested_bands_under_one_observed_curve():
     assert all(t.line.color == th["ink"] for t in observed)
 
 
-def test_the_four_calibration_panels_share_a_colourbar_only_because_each_is_relative():
-    """Four panels on four absolute scales under one legend would label three of them
-    wrongly — a 100-row validation panel puts far more share in a cell than a 900-row one."""
+def test_the_calibration_panels_share_a_colourbar_only_because_each_is_relative():
+    """Panels on absolute scales under one legend would label the others wrongly — a
+    100-row validation panel puts far more share in a cell than a 900-row one."""
     th = theme.theme("light")
     cards = _cards()
     grids = {(p, s): model_cards.calibration_panel(cards["calibration"], "synthetic", p, s)
@@ -2439,11 +2547,26 @@ def test_the_four_calibration_panels_share_a_colourbar_only_because_each_is_rela
     fig = charts.fig_calibration(grids, points, th, model_cards.PANEL_AXES,
                                  model_cards.PANEL_LABELS)
     heatmaps = [t for t in fig.data if t.type == "heatmap"]
-    assert len(heatmaps) == 4
+    assert len(heatmaps) == len(model_cards.PANELS) * len(model_cards.SPLITS)
     assert sum(t.showscale for t in heatmaps) == 1
     for heat in heatmaps:
         assert np.nanmax(np.asarray(heat.z, dtype=float)) == pytest.approx(1.0)
         assert np.nanmax(np.asarray(heat.customdata, dtype=float)) < 1.0   # the raw share
+
+
+def test_the_calibration_grid_is_one_row_per_panel_rather_than_a_fixed_two_by_two():
+    """It drew four panels until the residual half moved to the quantile figure; a
+    hard-coded 2 x 2 would leave two empty cells and a figure twice as tall as its content,
+    which `AppTest` counts identically either way."""
+    th = theme.theme("light")
+    cards = _cards()
+    grids = {(p, s): model_cards.calibration_panel(cards["calibration"], "synthetic", p, s)
+             for p in model_cards.PANELS for s in model_cards.SPLITS}
+    fig = charts.fig_calibration(grids, {}, th, model_cards.PANEL_AXES,
+                                 model_cards.PANEL_LABELS)
+    panels = len(model_cards.PANELS) * len(model_cards.SPLITS)
+    assert len(fig.layout.annotations) == panels
+    assert len([k for k in fig.layout if k.startswith("xaxis")]) == panels
 
 
 def test_both_splits_of_a_calibration_panel_are_drawn_on_one_axis_range():
@@ -2454,13 +2577,83 @@ def test_both_splits_of_a_calibration_panel_are_drawn_on_one_axis_range():
     grids = {(p, s): model_cards.calibration_panel(cards["calibration"], "synthetic", p, s)
              for p in model_cards.PANELS for s in model_cards.SPLITS}
     wild = pd.DataFrame([{"head": "synthetic", "split": "train", "row": 0,
-                          "fitted": 900.0, "observed": 900.0, "residual": 0.0}])
+                          "fitted": 900.0, "observed": 900.0, "u": 0.5,
+                          "predicted_rank": 0.5}])
     points = {(p, s): wild for p in model_cards.PANELS for s in model_cards.SPLITS}
     fig = charts.fig_calibration(grids, points, th, model_cards.PANEL_AXES,
                                  model_cards.PANEL_LABELS)
-    axes = [fig.layout[f"xaxis{'' if i == 1 else i}"].range for i in range(1, 5)]
-    assert axes[0] == axes[1] and axes[2] == axes[3]       # train against validation
+    axes = [fig.layout[f"xaxis{'' if i == 1 else i}"].range
+            for i in range(1, len(model_cards.PANELS) * len(model_cards.SPLITS) + 1)]
+    assert axes[0] == axes[1]                              # train against validation
     assert max(axes[0]) < 10                               # the 900 point did not set it
+
+
+def test_the_qq_panel_draws_the_envelope_the_diagonal_and_the_points_in_that_order():
+    """The diagonal is the claim, so it cannot be inferred from the points — and the
+    envelope is background rather than a third data series."""
+    th = theme.theme("light")
+    panels = {model_cards.SPLIT_LABELS[s]: model_cards.qq_panel(_quantile(), "synthetic", s)
+              for s in model_cards.SPLITS}
+    fig = charts.fig_qq(panels, th)
+    names = [t.name for t in fig.data]
+
+    assert names.count("95% pointwise envelope") == 2
+    assert names.count("uniform") == names.count("observed residual") == 2
+    assert sum(t.showlegend for t in fig.data) == 3        # one legend for both subplots
+    # Every trace names its mode: plotly infers `lines+markers` under 20 points and takes
+    # the marker colour from its own colorway, which is in no palette this project
+    # validated — and a two-point QQ is exactly what `game_length_ot` ships.
+    assert all(t.mode is not None for t in fig.data)
+    observed = [t for t in fig.data if t.name == "observed residual"]
+    assert all(t.mode == "markers" and t.marker.color == th["ink"] for t in observed)
+    # Both axes are the unit square, pinned rather than scaled to the data, so two heads'
+    # QQ panels mean the same thing.
+    assert fig.layout.yaxis.range == (-0.02, 1.02)
+
+
+def test_the_residual_panel_draws_its_quantile_lines_against_their_own_levels():
+    """"Flat at 0.25 / 0.5 / 0.75" has to be readable off the panel, not asserted in a
+    caption — so each empirical line has a dashed reference at its own level."""
+    th = theme.theme("light")
+    quantile = _quantile()
+    cells = {model_cards.SPLIT_LABELS[s]: model_cards.residual_cells(quantile,
+                                                                     "synthetic", s)
+             for s in model_cards.SPLITS}
+    lines = {model_cards.SPLIT_LABELS[s]: model_cards.quantile_lines(quantile,
+                                                                     "synthetic", s)
+             for s in model_cards.SPLITS}
+    points = {model_cards.SPLIT_LABELS[s]: model_cards.sample_points(_sample(),
+                                                                     "synthetic", s)
+              for s in model_cards.SPLITS}
+    fig = charts.fig_quantile_residual(cells, lines, points, th,
+                                       model_cards.QUANTILE_LEVELS)
+
+    empirical = [t for t in fig.data if t.name == "empirical quantile"]
+    expected = [t for t in fig.data if t.name == "expected level"]
+    assert len(empirical) == len(expected) == 2 * len(model_cards.QUANTILE_LEVELS)
+    assert {tuple(t.y) for t in expected} == {(lv, lv) for lv in
+                                              model_cards.QUANTILE_LEVELS}
+    # Two colours, not five: `ALL_PAIRS_CAP` is three, and each line's level is legible
+    # from the reference under it and from the hover rather than from its colour.
+    assert len({t.line.color for t in empirical}) == 1
+    assert all(t.line.dash == "dash" for t in expected)
+    assert len([t for t in fig.data if t.type == "heatmap"]) == 2
+    # One legend entry per series across both subplots, not one per line per panel.
+    assert sum(bool(t.showlegend) for t in fig.data) == 2
+    assert fig.layout.yaxis.range == (0, 1) and fig.layout.xaxis.range == (0, 1)
+
+
+def test_a_head_with_no_drawable_quantile_bins_still_builds_both_figures():
+    """`game_length_ot`'s two validation cells: a two-point QQ and no quartile lines."""
+    th = theme.theme("light")
+    tiny = _quantile(bins=2)
+    empty = tiny[tiny["panel"] != "quantile"]
+    fig = charts.fig_quantile_residual(
+        {"Train": model_cards.residual_cells(empty, "synthetic", "train")},
+        {"Train": model_cards.quantile_lines(empty, "synthetic", "train")},
+        {}, th, model_cards.QUANTILE_LEVELS)
+    assert not [t for t in fig.data if t.name == "empirical quantile"]
+    assert len([t for t in fig.data if t.type == "heatmap"]) == 1
 
 
 def test_every_model_figure_carries_an_explicit_title_and_the_pinned_surface():
@@ -2552,6 +2745,30 @@ def test_every_shipped_pair_menu_has_its_density_on_disk():
             set(zip(drawn["feature_x"], drawn["feature_y"])), row["head"]
 
 
+def _draw_quantile_block(cards: dict, head: str, th: dict) -> pd.DataFrame:
+    """Block 6's quantile half over one real head, exactly as the view assembles it.
+
+    Returned so a caller can assert on the distance; called by all three end-to-end passes,
+    so every carded head's residual panels are built at least once against the real
+    artifact rather than against the synthetic one above.
+    """
+    qq = {model_cards.SPLIT_LABELS[s]: model_cards.qq_panel(cards["quantile"], head, s)
+          for s in model_cards.SPLITS}
+    charts.fig_qq({name: part for name, part in qq.items() if not part.empty}, th)
+    charts.fig_quantile_residual(
+        {model_cards.SPLIT_LABELS[s]: model_cards.residual_cells(cards["quantile"], head, s)
+         for s in model_cards.SPLITS},
+        {model_cards.SPLIT_LABELS[s]: model_cards.quantile_lines(cards["quantile"], head, s)
+         for s in model_cards.SPLITS},
+        {model_cards.SPLIT_LABELS[s]: model_cards.sample_points(cards["sample"], head, s)
+         for s in model_cards.SPLITS},
+        th, model_cards.QUANTILE_LEVELS)
+    distance = model_cards.quantile_distance(cards["quantile"], head)
+    assert len(distance) == 2, head
+    assert distance["ks"].between(0.0, 1.0).all(), head
+    return distance
+
+
 def test_the_shipped_index_lets_every_availability_head_render_all_seven_blocks():
     """One end-to-end pass over the real artifacts, block by block, without a runtime."""
     cards = {key: _card(name) for key, name in (
@@ -2562,6 +2779,7 @@ def test_the_shipped_index_lets_every_availability_head_render_all_seven_blocks(
         ("density", model_cards.DENSITY_FILE),
         ("ecdf", model_cards.ECDF_FILE),
         ("calibration", model_cards.CALIBRATION_FILE),
+        ("quantile", model_cards.QUANTILE_FILE),
         ("sample", model_cards.SAMPLE_FILE))}
     th = theme.theme("light")
     for head in model_cards.heads_of(cards["index"], "availability"):
@@ -2582,7 +2800,8 @@ def test_the_shipped_index_lets_every_availability_head_render_all_seven_blocks(
         charts.fig_coefficients(panel, th)
         distance = model_cards.band_distance(cards["ecdf"], head)
         assert len(distance) == 2 and (distance["max_gap"] < 0.5).all()
-        assert len(model_cards.calibration_summary(cards["calibration"], head)) == 4
+        assert len(model_cards.calibration_summary(cards["calibration"], head)) == 2
+        _draw_quantile_block(cards, head, th)
         assert len(model_cards.build_checks(row)) == 4
 
 
@@ -2924,6 +3143,7 @@ def test_the_shipped_index_lets_every_component_and_game_length_head_render():
         ("correlations", model_cards.CORRELATION_FILE),
         ("ecdf", model_cards.ECDF_FILE),
         ("calibration", model_cards.CALIBRATION_FILE),
+        ("quantile", model_cards.QUANTILE_FILE),
         ("sample", model_cards.SAMPLE_FILE))}
     th = theme.theme("light")
     widths = {}
@@ -2946,10 +3166,17 @@ def test_the_shipped_index_lets_every_component_and_game_length_head_render():
             charts.fig_ecdf(
                 {model_cards.SPLIT_LABELS[s]: model_cards.ecdf_panel(cards["ecdf"], head, s)
                  for s in model_cards.SPLITS}, th, str(row["response_label"]))
+            _draw_quantile_block(cards, head, th)
             assert len(model_cards.build_checks(row)) == 4
     # The two degenerate widths pages 5 and 6 are the first to exercise: one column, and
     # none. Both reach the renderer's own branches rather than a figure builder.
     assert widths["game_length_ot"] == 1 and widths["game_length_depth"] == 0
+    # `game_length_ot`'s validation split is two season cells, so its QQ is two points and
+    # every bin of its residual panel is under `QUANTILE_MIN_ROWS`. The figure still builds
+    # and the lines are simply absent — the case that would otherwise raise on an empty
+    # frame or draw a quartile through two rows.
+    assert model_cards.quantile_lines(cards["quantile"], "game_length_ot",
+                                      "validation").empty
 
 
 # ── The minutes page's own blocks · one posterior, two units ──────────────────
@@ -3331,6 +3558,7 @@ def test_the_shipped_index_lets_both_minutes_heads_render_all_seven_blocks():
         ("correlations", model_cards.CORRELATION_FILE),
         ("ecdf", model_cards.ECDF_FILE),
         ("calibration", model_cards.CALIBRATION_FILE),
+        ("quantile", model_cards.QUANTILE_FILE),
         ("sample", model_cards.SAMPLE_FILE))}
     th = theme.theme("light")
     for head in model_cards.heads_of(cards["index"], "minutes"):
@@ -3347,7 +3575,15 @@ def test_the_shipped_index_lets_both_minutes_heads_render_all_seven_blocks():
         charts.fig_ecdf(
             {model_cards.SPLIT_LABELS[s]: model_cards.ecdf_panel(cards["ecdf"], head, s)
              for s in model_cards.SPLITS}, th, str(row["response_label"]))
+        _draw_quantile_block(cards, head, th)
         assert len(model_cards.build_checks(row)) == 4
+    # **The composition ships a quantile residual**, which the step that built this panel
+    # expected it not to: `predictive_check = none` is about its *fitted* value, and `u` is
+    # a function of the draws and the observed, which its `predict_samples` puts on the
+    # minutes scale. Its own `score_samples` computes the same statistic.
+    assert model_cards.quantile_note(
+        model_cards.head_row(cards["index"], "composition")) == ""
+    assert not model_cards.qq_panel(cards["quantile"], "composition", "train").empty
     # The composition is the widest head in the project and the reason block 2 has a limit.
     assert len(model_cards.feature_order(cards["features"], "composition")) == 25
     # Its dispersion is role-graded, which is why block 4 tiles four of them and not one.

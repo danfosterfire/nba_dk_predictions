@@ -847,16 +847,20 @@ def test_the_band_stability_statistic_is_zero_on_identical_halves_and_falls_with
     assert M.band_stability(noisy) > M.band_stability(calm) > 0.0
 
 
+def _summary(**overrides) -> dict:
+    """A passing predictive summary, for the gates to be pushed off one at a time."""
+    return {"predictive_bias": 0.0, "ecdf_band_mc": 0.001, "ecdf_band_gated": True,
+            "predictive_draws": 200, "quantile_ks_mc": 0.001,
+            "quantile_ks_gated": True, **overrides}
+
+
 def test_a_ribbon_that_is_monte_carlo_noise_fails_the_build():
     with pytest.raises(AssertionError, match="Monte"):
-        M.check_predictive("synthetic", {"predictive_bias": 0.0, "ecdf_band_mc": 0.2,
-                                         "ecdf_band_gated": True,
-                                         "predictive_draws": 200})
+        M.check_predictive("synthetic", _summary(ecdf_band_mc=0.2))
     # Under `BAND_MIN_ROWS` the statistic is the frame rather than the budget, and the
     # emitter reports it instead of failing: two validation cells give an ECDF of three
     # values, where a half-sample gap of 0.5 is arithmetic.
-    M.check_predictive("synthetic", {"predictive_bias": 0.0, "ecdf_band_mc": 0.5,
-                                     "ecdf_band_gated": False, "predictive_draws": 200})
+    M.check_predictive("synthetic", _summary(ecdf_band_mc=0.5, ecdf_band_gated=False))
 
 
 # ── Calibration ───────────────────────────────────────────────────────────────
@@ -900,33 +904,223 @@ def test_both_splits_share_one_calibration_grid_because_comparing_them_is_the_po
     assert set(rows["panel"]) == set(M.PANELS)
 
 
-def test_the_residual_panel_is_the_residual_and_not_a_second_copy_of_the_observed():
+def test_the_raw_residual_panel_is_gone_rather_than_shipped_and_never_drawn():
+    """`residual_fitted` was replaced by the scaled quantile residual on 2026-08-10.
+
+    An artifact half that no page reads is drift, and the raise names its replacement — a
+    caller reaching for the old panel gets the reason rather than an empty frame.
+    """
     fitted = np.linspace(1.0, 100.0, 500)
     observed = fitted + 7.0
     rows = pd.DataFrame(M.calibration_rows(
         "synthetic", {"train": (fitted, observed), "validation": (fitted, observed)}))
 
-    residual = rows[rows["panel"] == "residual_fitted"]
-    assert residual["y_left"].min() <= 7.0 <= residual["y_right"].max()
-    assert residual["y_right"].max() < 20.0          # residuals, not observations
+    assert set(rows["panel"]) == {"fitted_observed"} == set(M.PANELS)
+    with pytest.raises(KeyError, match="model_card_quantile"):
+        M._panel_values("residual_fitted", fitted, observed)
+
+
+# ── The scaled quantile residual ──────────────────────────────────────────────
+#
+# Every failure mode here renders as a good-looking picture, which is the reason each one
+# gets a case: a QQ that is uniform because the residual was computed against the wrong
+# thing, a seed that moves the panel on every rebuild, a rank transform taken inside the
+# 2,000-row overlay rather than over the frame it is drawn on, a quartile line through three
+# rows, a KS distance that is quietly a reading of the draw budget.
+
+def _calibrated(n: int = 4_000, draws: int = 200, seed: int = 5,
+                shift: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
+    """`(draws x rows, observed)` from a Poisson whose observed comes from the same law.
+
+    `shift` moves the *observed* off the predictive, which is what a miscalibrated head
+    looks like from here — the residual should then pile up at one end.
+    """
+    rng = np.random.default_rng(seed)
+    rate = rng.gamma(6.0, 1.5, n)
+    return (rng.poisson(rate[None, :], (draws, n)).astype(float),
+            rng.poisson(rate + shift).astype(float))
+
+
+def test_a_calibrated_head_puts_its_scaled_residual_on_the_uniform_diagonal():
+    """The property the whole block rests on, and it is a property of the arithmetic."""
+    draws, observed = _calibrated()
+    u = M.scaled_residuals(draws, observed, M.quantile_seed("synthetic", "train"))
+
+    assert u.min() >= 0.0 and u.max() <= 1.0
+    assert M.ks_uniform(u) < 0.03
+    rows = pd.DataFrame(M.qq_rows(u))
+    assert np.abs(rows["x"] - rows["y"]).max() < 0.05
+    # The envelope is the exact Beta band on each order statistic, so it brackets the
+    # diagonal rather than the data — a band fitted to the points would never flag anything.
+    assert (rows["lo"] <= rows["x"]).all() and (rows["hi"] >= rows["x"]).all()
+
+
+def test_a_head_predicting_the_wrong_level_leaves_the_diagonal_rather_than_hiding():
+    """A residual that cannot see a miss is worse than no panel; this one is the control."""
+    draws, observed = _calibrated(shift=4.0)
+    u = M.scaled_residuals(draws, observed, M.quantile_seed("synthetic", "train"))
+
+    assert M.ks_uniform(u) > 0.2
+    assert u.mean() > 0.6                       # observed above the predictive, so u is high
+
+
+def test_the_randomization_is_seeded_per_head_and_split_so_a_rebuild_does_not_move_it():
+    """Otherwise a reader cannot tell a refit from an RNG — the whole point of `_seed`."""
+    draws, observed = _calibrated(n=500)
+    seed = M.quantile_seed("synthetic", "train")
+
+    assert np.array_equal(M.scaled_residuals(draws, observed, seed),
+                          M.scaled_residuals(draws, observed, seed))
+    assert M.quantile_seed("synthetic", "train") != M.quantile_seed("synthetic",
+                                                                    "validation")
+    # And a different stream from the draws themselves: `u`'s uniforms must not be the same
+    # sequence the replicate datasets came from.
+    assert M.quantile_seed("synthetic", "train") != M._seed("synthetic", "train")
+
+
+def test_the_randomization_is_what_keeps_a_discrete_predictive_from_looking_miscalibrated():
+    """DHARMa's own reason for randomizing, as a measurement rather than a docstring.
+
+    The non-randomized quantile of a discrete predictive is not uniform even under a perfect
+    model — it is biased low, because every tie is counted as a miss.
+    """
+    draws, observed = _calibrated(n=4_000)
+    seed = M.quantile_seed("synthetic", "train")
+    randomized = M.scaled_residuals(draws, observed, seed)
+    plain = (draws < observed[None, :]).mean(axis=0)
+
+    assert M.ks_uniform(plain) > 3 * M.ks_uniform(randomized)
+
+
+def test_the_ks_stability_statistic_is_the_draw_budget_and_falls_with_draws():
+    """The one bar on this half, so it has to bite — and it has to be about the budget."""
+    seed = M.quantile_seed("synthetic", "train")
+    noisy = M.ks_stability(*_calibrated(n=2_000, draws=8), seed=seed)
+    calm = M.ks_stability(*_calibrated(n=2_000, draws=800), seed=seed)
+
+    assert noisy > calm >= 0.0
+    assert np.isnan(M.ks_stability(np.zeros((2, 5)), np.zeros(5), seed))
+
+
+def test_a_quantile_residual_that_is_monte_carlo_noise_fails_the_build():
+    with pytest.raises(AssertionError, match="quantized"):
+        M.check_predictive("synthetic", _summary(quantile_ks_mc=0.3))
+    # Ungated below `BAND_MIN_ROWS`, the same rule the ribbon follows: the overtime-onset
+    # head's two validation cells make the statistic a property of the frame.
+    M.check_predictive("synthetic", _summary(quantile_ks_mc=0.5, quantile_ks_gated=False))
+    # And the KS distance ITSELF is never a bar — a head can sit far from uniform and still
+    # ship, because at these sample sizes a uniformity test rejects everything.
+    M.check_predictive("synthetic", _summary(quantile_ks_mc=0.001))
+
+
+def test_the_rank_transform_is_uniform_by_construction_and_averages_its_ties():
+    """What makes one panel comparable across a count head and a conversion head."""
+    rank = M.rank_uniform(np.array([10.0, 20.0, 30.0, 40.0]))
+    assert np.allclose(rank, [0.125, 0.375, 0.625, 0.875])
+
+    # Three ties take the average of ranks 1, 2 and 3, so all three sit at (2 − 0.5)/4 —
+    # one column of cells rather than an arbitrary ordering of equals spread across three.
+    tied = M.rank_uniform(np.array([5.0, 5.0, 5.0, 9.0]))
+    assert np.allclose(tied[:3], 0.375) and tied[3] == 0.875
+
+
+def test_both_axes_of_the_residual_panel_are_the_unit_square_on_both_splits():
+    """The one panel in the contract with no pooled edge set — the transform IS the scale."""
+    rng = np.random.default_rng(4)
+    train = pd.DataFrame(M.residual_rows(rng.random(3_000), rng.random(3_000)))
+    val = pd.DataFrame(M.residual_rows(rng.random(200), rng.random(200)))
+
+    for part in (train, val):
+        assert part["x_left"].min() == 0.0 and part["x_right"].max() == 1.0
+        assert part["y_left"].min() >= 0.0 and part["y_right"].max() <= 1.0
+        assert np.isclose(part["density"].sum(), 1.0)
+    assert set(train["x_left"]) >= set(val["x_left"])       # one grid, not two
+
+
+def test_every_row_lands_in_exactly_one_residual_cell_including_the_two_extremes():
+    u = np.array([0.0, 1.0, 0.5, 0.5])
+    rows = pd.DataFrame(M.residual_rows(u, np.array([0.0, 1.0, 0.25, 0.75])))
+    assert rows["count"].sum() == 4
+
+
+def test_the_quantile_lines_are_flat_at_their_levels_when_the_residual_is_uniform():
+    rng = np.random.default_rng(9)
+    u, rank = rng.random(20_000), rng.random(20_000)
+    lines = pd.DataFrame(M.quantile_lines(u, rank))
+
+    assert set(lines["level"]) == set(M.QUANTILE_LEVELS)
+    assert np.abs(lines["y"] - lines["level"]).max() < 0.05
+    assert lines["x_index"].nunique() == M.RESIDUAL_BINS
+
+
+def test_a_bin_with_too_few_rows_is_a_gap_rather_than_a_line_through_three_points():
+    rng = np.random.default_rng(10)
+    # Everything in the left tenth of the x axis except five rows on the right.
+    rank = np.concatenate([rng.uniform(0, 0.1, 500), rng.uniform(0.9, 1.0, 5)])
+    lines = pd.DataFrame(M.quantile_lines(rng.random(len(rank)), rank))
+
+    assert lines["x_index"].max() < M.RESIDUAL_BINS - 1
+    assert (lines["count"] >= M.QUANTILE_MIN_ROWS).all()
+
+
+def test_the_three_panels_share_one_head_split_and_ks_so_a_page_reads_them_together():
+    rng = np.random.default_rng(12)
+    u, rank = rng.random(2_000), rng.random(2_000)
+    rows, ks = M.quantile_tables("synthetic", "validation", u, rank)
+    frame = pd.DataFrame(rows)
+
+    assert set(frame["panel"]) == set(M.QUANTILE_PANELS)
+    assert (frame["ks"] == ks).all() and (frame["n"] == 2_000).all()
+    assert set(frame["split"]) == {"validation"}
+
+
+def test_a_head_is_declared_out_of_scope_rather_than_drawn_wrongly():
+    """The mechanism, exercised against an empty declaration — see `QUANTILE_OUT_OF_SCOPE`.
+
+    The composition is the head this was opened for and it is **in** scope: `u` is a
+    function of the draws and the observed, and its `predict_samples` draws minutes in a
+    team-game. `predictive_check = none` is about its *fitted* value and does not decide
+    this.
+    """
+    assert M.quantile_scope("composition") == ("drawn", "")
+    assert M.RESPONSES["composition"].check == "none"
+
+    reason = "its response is a linear predictor and not the observable"
+    M.QUANTILE_OUT_OF_SCOPE["synthetic"] = reason
+    try:
+        assert M.quantile_scope("synthetic") == ("not_applicable", reason)
+    finally:
+        del M.QUANTILE_OUT_OF_SCOPE["synthetic"]
 
 
 # ── The bounded sample ────────────────────────────────────────────────────────
 
-def test_the_sample_is_bounded_carries_the_residual_and_spans_the_frame():
+def test_the_sample_carries_both_panels_coordinates_and_spans_the_frame():
     fitted = np.arange(10_000.0)
     observed = fitted + 3.0
-    sample = M.sample_frame("synthetic", "train", fitted, observed, cap=250)
+    u = np.linspace(0.0, 1.0, 10_000)
+    sample = M.sample_frame("synthetic", "train", fitted, observed, u,
+                            M.rank_uniform(fitted), cap=250)
 
     assert len(sample) == 250
     assert sample["row"].iloc[0] == 0 and sample["row"].iloc[-1] == 9_999
-    assert np.allclose(sample["residual"], 3.0)
-    assert sample["fitted"].dtype == np.float32
+    # `u` and the rank are taken at the SAME thinned rows as the fitted value, so a point in
+    # the calibration panel and a point in the residual panel are one row of the frame.
+    assert np.allclose(sample["u"], u[sample["row"]], atol=1e-6)
+    assert np.allclose(sample["predicted_rank"],
+                       (sample["row"] + 0.5) / 10_000, atol=1e-6)
+    assert sample["fitted"].dtype == np.float32 and sample["u"].dtype == np.float32
 
 
-def test_a_frame_smaller_than_the_cap_is_kept_whole():
+def test_a_head_out_of_quantile_scope_still_ships_its_sample_with_empty_columns():
+    """A missing column would change the parquet's shape per head; NaN does not."""
     fitted, observed = np.arange(40.0), np.arange(40.0)
-    assert len(M.sample_frame("synthetic", "validation", fitted, observed, cap=250)) == 40
+    sample = M.sample_frame("synthetic", "validation", fitted, observed, cap=250)
+
+    assert len(sample) == 40
+    assert set(sample.columns) == {"head", "split", "row", "fitted", "observed", "u",
+                                   "predicted_rank"}
+    assert sample["u"].isna().all() and sample["predicted_rank"].isna().all()
 
 
 # ── The shipped artifacts ─────────────────────────────────────────────────────
@@ -1043,7 +1237,7 @@ def test_every_shipped_coefficient_row_belongs_to_a_carded_head():
     assert all({"intercept", "dispersion"} <= r for r in roles)
 
 
-def test_every_carded_head_ships_all_three_predictive_artifacts():
+def test_every_carded_head_ships_all_four_predictive_artifacts():
     index = _shipped("model_card_index.csv")
     heads = set(index["head"])
     for name in ("model_card_ecdf.csv", "model_card_calibration.csv"):
@@ -1051,6 +1245,10 @@ def test_every_carded_head_ships_all_three_predictive_artifacts():
     assert set(_shipped_parquet("model_card_sample.parquet")["head"]) == heads
     assert (index["response_label"].str.len() > 0).all()
     assert set(index["fitted_source"]) <= {"head_predict", "predictive_mean"}
+    # The quantile artifact carries every head declared in scope, and only those.
+    drawn = set(index.loc[index["quantile_scope"] == "drawn", "head"])
+    assert set(_shipped("model_card_quantile.csv")["head"]) == drawn
+    assert set(index["quantile_scope"]) <= {"drawn", "not_applicable"}
 
 
 def test_the_shipped_ecdf_is_a_monotone_curve_under_an_ordered_band():
@@ -1095,8 +1293,10 @@ def test_the_shipped_predictive_stays_inside_its_row_and_draw_budget():
     assert (index["n_predictive_validation"] <= M.PRED_ROWS * 1.2).all()
     assert index.loc["composition", "predictive_rows_capped"]
     assert (sample.groupby(["head", "split"]).size() <= M.SAMPLE_ROWS).all()
-    assert np.allclose(sample["residual"], sample["observed"] - sample["fitted"],
-                       atol=1e-2)
+    # The overlay's four coordinates: two for the calibration density, two for the residual
+    # panel, on the same rows. Both of the latter are transforms onto [0, 1].
+    assert sample["u"].between(0.0, 1.0).all()
+    assert sample["predicted_rank"].between(0.0, 1.0).all()
 
 
 def test_the_shipped_calibration_counts_every_row_it_was_given():
@@ -1108,3 +1308,38 @@ def test_the_shipped_calibration_counts_every_row_it_was_given():
     assert (totals["counted"] == totals["n"]).all()
     assert set(calibration["panel"]) == set(M.PANELS)
     assert (calibration["count"] > 0).all()           # empty cells are dropped, not shipped
+
+
+def test_the_shipped_quantile_residual_is_bounded_and_carries_all_three_panels():
+    quantile = _shipped("model_card_quantile.csv")
+    index = _shipped("model_card_index.csv").set_index("head")
+
+    for (head, split), part in quantile.groupby(["head", "split"]):
+        assert set(part["panel"]) >= {"qq", "residual"}, (head, split)
+        # A scaled residual is a probability and a rank transform is a share of the frame:
+        # both axes are [0, 1] everywhere, which is what puts twenty differently-scaled
+        # heads on one pair of panels.
+        assert part["x"].between(0.0, 1.0).all(), (head, split)
+        assert part["y"].between(0.0, 1.0).all(), (head, split)
+        cells = part[part["panel"] == "residual"]
+        assert cells["count"].sum() == part["n"].iloc[0], (head, split)
+        assert (index.loc[head, f"quantile_ks_{split}"]
+                == pytest.approx(part["ks"].iloc[0], abs=1e-6)), (head, split)
+
+
+def test_every_gated_head_ships_a_ks_distance_that_is_stable_at_the_draw_budget():
+    """The bar is on the budget, never on the distance — see `quantile_tables`."""
+    index = _shipped("model_card_index.csv")
+    gated = index[index["quantile_ks_gated"]]
+
+    assert len(gated) == len(index) - 1               # only overtime onset is too small
+    assert (gated["quantile_ks_mc"] <= M.KS_MC_TOL).all()
+    # The distances themselves are unconstrained, and several heads sit far from uniform:
+    # `fg2m_given_fg2a` reads 0.15 on validation and ships, because a uniformity test at
+    # these sample sizes rejects everything and the reading is the size of the miss.
+    assert index["quantile_ks_validation"].max() > 0.1
+    assert set(index["quantile_weighting"]) == {"unweighted", "expanded"}
+    # The two collapsed-cell heads are the expanded ones: their frames are cells carrying a
+    # multiplicity, so the residual is one row per spell rather than one per cell.
+    assert set(index.loc[index["quantile_weighting"] == "expanded", "head"]) == {
+        "gp_duration", "game_length_depth"}

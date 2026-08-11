@@ -38,12 +38,13 @@ to the relevant docs for the task at hand. The docs are:
   2026-08-10 — five one-per-session steps (appearance, which availability head 
   ships, DHARMa-style quantile residuals, a round-unit dk_pts page, and the 
   Overview as a paper). It inherits every rule `dashboard-plan.md` set; read that 
-  one first. Two of the five items turned out to have different answers than the 
-  request assumed, and the doc records why. Step 1 shipped 2026-08-10 and has a 
-  "Step 1, as built" section; the appearance is now Streamlit's own setting, with 
+  one first. Three of the five items turned out to have different answers than the 
+  request assumed, and the doc records why. Steps 1-3 shipped 2026-08-10 and each 
+  has an "as built" section: the appearance is now Streamlit's own setting, with 
   the page chrome generated into `.streamlit/config.toml` by `make 
-  dashboard-config`. Its prompts appendix is ephemeral scaffolding, to be deleted 
-  when the round lands.
+  dashboard-config`; every head declares its role in the shipped chain; and block 6 
+  of the model pages is a scaled quantile residual rather than a raw one. Its 
+  prompts appendix is ephemeral scaffolding, to be deleted when the round lands.
   - data-quirks.md: Notes and findings in exploring the raw data.
   - dk_best_ball_rules.md: Copy of the tournament rules for draft kings best 
   ball tournaments **always read this**.
@@ -69,7 +70,10 @@ to the relevant docs for the task at hand. The docs are:
   Since 2026-08-10 every head also declares a **`chain_role`** — what the simulator 
   does with it, in a closed vocabulary, pinned against `src/sim/` by a test rather 
   than merely written down. Sixteen of the twenty heads are in the draw path; 
-  `gp_entry`, `gp_exit`, `gp_onset` and the marginal `minutes` head are not.
+  `gp_entry`, `gp_exit`, `gp_onset` and the marginal `minutes` head are not. The 
+  ninth artifact, `model_card_quantile.csv`, is DHARMa's scaled quantile residual 
+  and **replaced** the calibration file's raw-residual panel; its KS distance is 
+  reported and never thresholded.
   - minutes-composition-plan.md: Plan and notes for the production version of 
   the minutes-played model. Work completed and mostly archival at this point.
   - model-development-notes.md: Detailed notes and findings developed during

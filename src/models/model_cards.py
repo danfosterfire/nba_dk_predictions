@@ -11,7 +11,7 @@ arbitrary frame. A dashboard holding that is a dashboard that can silently disag
 fit it is describing.
 
 So this module stands between them. It reads the pickles and each head's **own variant
-ladder**, and writes long-format tables the dashboard reads and nothing else. All eight the
+ladder**, and writes long-format tables the dashboard reads and nothing else. All nine the
 contract names land here:
 
 | artifact | grain | what it is for |
@@ -22,8 +22,9 @@ contract names land here:
 | `model_card_feature_corr.csv` | head × split × feature × feature | the correlation heatmap, and which pairs earn a density |
 | `model_card_feature_density.parquet` | head × pair × split × 2-D bin | the joint behind the heatmap, for the pairs that earn one |
 | `model_card_ecdf.csv` | head × split × grid point | the observed ECDF over a posterior-predictive ribbon |
-| `model_card_calibration.csv` | head × split × 2-D bin | fitted-vs-observed and residual-vs-fitted, as density |
-| `model_card_sample.parquet` | head × split × row | a bounded subsample, for texture over that density |
+| `model_card_calibration.csv` | head × split × 2-D bin | fitted-against-observed, as density |
+| `model_card_quantile.csv` | head × split × panel × row | the scaled quantile residual — a QQ-uniform and the residual against rank-transformed predicted |
+| `model_card_sample.parquet` | head × split × row | a bounded subsample, for texture over both densities |
 
 ## Three rules this module inherits, and the mechanism for each
 
@@ -65,6 +66,12 @@ the head's own reported mean** (`predictive_bias`), which is what catches a miss
 a wrong trials column or a link applied twice — the three ways a plausible-looking ribbon can
 describe a different model from the one the coefficients above it came from.
 
+Two further bars in `check_predictive` are about the **draw budget** rather than the head,
+and the difference matters: `ecdf_band_mc` and `quantile_ks_mc` each read their statistic on
+two interleaved halves of the draws and raise if the two disagree. Neither thresholds a
+*fit* statistic — the ribbon's distance and the residual's KS are reported and never
+rendered as a verdict.
+
 Nothing here refits and nothing here samples from Stan, so `make model-cards` needs no
 CmdStan — only the head modules, for their variant ladders and their own predictive.
 
@@ -88,7 +95,7 @@ import yaml
 from src.models.held_out import selection_split
 from src.models.posteriors import (DESIGN_TOL, team_game_probe, load_all, posteriors_dir,
                                    require_window)
-from src.models.stan_utils import thin
+from src.models.stan_utils import ks_uniform, pit_from_samples, thin
 
 # The only window whose coefficients may describe a validation row. See the module
 # docstring; deliberately a constant rather than a flag, because there is no second
@@ -165,9 +172,85 @@ BAND_MIN_ROWS = 500
 # rather than 900, and the edges span the pooled 0.5-99.5% range with the tails clipped INTO
 # the end bins — one heavy-tailed residual would otherwise collapse the grid to a single cell
 # while nothing was formally lost.
+#
+# **One panel, since 2026-08-10.** This file used to carry `residual_fitted` beside it; the
+# raw residual against the fitted value is what `model_card_quantile.csv` replaced, because
+# the raw residual of a negative binomial on a season total and of a beta-binomial on a rate
+# are not on one scale and cannot be read the same way. The scaled quantile residual is.
 CAL_BINS = 30
 CAL_SPAN = (0.005, 0.995)
-PANELS = ("fitted_observed", "residual_fitted")
+PANELS = ("fitted_observed",)
+
+# ── The scaled quantile residual ──────────────────────────────────────────────
+#
+# DHARMa's device, in this repo's own functions: simulate replicate responses from the fitted
+# model (`draw_predictive`, already there for the ribbon), take each observation's quantile
+# inside its own replicate distribution, and randomize across the probability mass AT the
+# observed value (`stan_utils.pit_from_samples`, `below + U*at`), because the non-randomized
+# quantile of a discrete predictive is not uniform even under a perfect model. Every response
+# on these pages is discrete, so the randomization is required rather than optional.
+#
+# One difference from R's DHARMa, worth stating on the page: DHARMa simulates at the fitted
+# model's point estimate, and these draws integrate over the posterior. The residual is
+# therefore a Bayesian PIT residual — the same reading, carrying parameter uncertainty rather
+# than conditioning it away.
+
+# Order statistics drawn on the QQ panel. A grid rather than every row for the reason the
+# whole contract is binned: at 20,000 rows the sorted `u` is 20,000 points that overplot into
+# a line. A head with fewer distinct positions than this gets one point per order statistic.
+QQ_POINTS = 100
+
+# The residual-against-rank grid. Much coarser than the calibration's 30, and **the smallest
+# split sets it rather than the largest**: both axes are [0, 1] by construction — the rank
+# transform on x, the PIT on y — so a calibrated head spreads its rows evenly over every cell
+# instead of concentrating them on a diagonal, and the panel is read for *departures* from
+# that. At 20 x 20 a 742-row validation split puts 1.9 rows in a cell and the picture is
+# Poisson noise drawn as structure; at 10 x 10 it puts 7.4, and the quantile lines below get
+# 74 rows a bin rather than 37. Measured by rendering it, which is the only layer that can
+# see the difference. This is also the one panel in the contract that needs no pooled edge
+# set: the transform IS the shared scale, so train and validation are on one grid without
+# being put there.
+RESIDUAL_BINS = 10
+
+# The three lines DHARMa draws, and the rows a bin needs before its quantiles are worth
+# drawing. Below this a "quartile" is two rows and a line drawn through it is noise wearing
+# the shape of a finding — the bin is dropped and the line has a gap instead.
+QUANTILE_LEVELS = (0.25, 0.5, 0.75)
+QUANTILE_MIN_ROWS = 10
+
+# The disagreement the KS distance may show between two interleaved halves of the draws, in
+# the units the tile is printed in. Same device and same bar as `ECDF_BAND_TOL`, and gated on
+# the same `BAND_MIN_ROWS`, because it is the same question one statistic over: is the number
+# on the page a reading of the head or of the draw budget? Measured worst at the shipped 200
+# draws is 0.0105 (`gp_entry`, validation); `game_length_ot` reads 0.04 on a two-cell
+# validation split and is reported rather than gated, exactly as its ribbon is.
+KS_MC_TOL = 0.02
+
+#: Heads whose drawn predictive is not on the observed value's own scale, so a quantile
+#: residual would be a picture of nothing — mapped to the reason, which the index carries.
+#:
+#: **Empty today, and the composition is the head it was opened for.** That head reports
+#: `response = eta`, the linear predictor of one *step* in a sequential allocation, and
+#: `predictive_check = none` because there is no scale to compare that mean on. Neither fact
+#: reaches the quantile residual: `u` is a function of the **draws** and the observed, and
+#: `StanComposition.predict_samples` draws minutes in a team-game — the same column
+#: `RESPONSES` declares as its observable and the same draws the ribbon is already cut from.
+#: `stan_composition.score_samples` settles it, since the head's own scoring computes
+#: `ks_uniform(pit_from_samples(samples, y, seed))` — this exact statistic, on this exact
+#: predictive. `predictive_check` governs the *fitted* value, not the draws, and does not
+#: decide scope.
+#:
+#: It exists because the failure it guards is silent: a residual drawn against a response on
+#: the wrong scale is a perfectly good-looking uniform-ish cloud. Prefer declaring a head
+#: here over shipping a panel that is quietly wrong.
+QUANTILE_OUT_OF_SCOPE: dict[str, str] = {}
+
+#: The randomization gets its own stream per (head, split), namespaced off the draw's. Same
+#: rule as `_seed`: `u` and the draws it is computed from must not share a sequence, and a
+#: rebuild must not move the picture — a reader cannot tell a refit from an RNG.
+QUANTILE_STREAM = "quantile"
+
+QUANTILE_PANELS = ("qq", "residual", "quantile")
 
 # Points kept for the scatter overlay. Past a couple of thousand a scatter is a blob, so this
 # is a legibility cap as much as a size one; `thin` spreads it through the frame.
@@ -187,7 +270,8 @@ PRED_SEED = 42
 ARTIFACTS = ("model_card_index.csv", "model_card_coefficients.csv",
              "model_card_features.csv", "model_card_feature_corr.csv",
              "model_card_feature_density.parquet", "model_card_ecdf.csv",
-             "model_card_calibration.csv", "model_card_sample.parquet")
+             "model_card_calibration.csv", "model_card_quantile.csv",
+             "model_card_sample.parquet")
 
 
 # ── What each head is, declared rather than derived ───────────────────────────
@@ -1539,9 +1623,11 @@ def _panel_values(panel: str, fitted: np.ndarray,
                   observed: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     if panel == "fitted_observed":
         return fitted, observed
-    if panel == "residual_fitted":
-        return fitted, observed - fitted
-    raise KeyError(f"unknown calibration panel {panel!r}")       # pragma: no cover
+    raise KeyError(
+        f"unknown calibration panel {panel!r}. `residual_fitted` was removed on "
+        f"2026-08-10 — the raw residual against the fitted value is what "
+        f"`model_card_quantile.csv` replaced, on a scale four differently-distributed "
+        f"heads can actually be read on.")
 
 
 def calibration_rows(head: str, panels: dict[str, tuple[np.ndarray, np.ndarray]],
@@ -1579,19 +1665,213 @@ def calibration_rows(head: str, panels: dict[str, tuple[np.ndarray, np.ndarray]]
 
 
 def sample_frame(head: str, split: str, fitted: np.ndarray, observed: np.ndarray,
+                 u: np.ndarray | None = None, rank: np.ndarray | None = None,
                  cap: int = SAMPLE_ROWS) -> pd.DataFrame:
-    """A bounded subsample of real points, for texture over the binned density.
+    """A bounded subsample of real points, for texture over the binned densities.
 
     `thin` rather than a random sample, so the overlay spans the frame and re-running the
     emitter does not move the points around under a reader. `float32` because these are
     coordinates on a scatter and the parquet is 80,000 rows of them.
+
+    **`u` and `predicted_rank` ride here rather than in the quantile artifact**, for the
+    reason the fitted and observed pair already does: the artifact is binned so that a
+    631,158-row panel is a picture rather than a copy of the data, and the overlay is the
+    bounded exception. Both are taken at the *same* thinned rows as `fitted`, and the rank is
+    computed over the **whole** predictive frame before the thinning — a rank recomputed
+    inside a 2,000-row subsample would be a different transform from the one the panel
+    underneath it is binned on. `None` on a head declared out of quantile scope, which ships
+    the columns as NaN rather than dropping them and changing the file's shape per head.
     """
     idx = thin(len(fitted), min(cap, len(fitted)))
+    empty = np.full(len(fitted), np.nan)
     return pd.DataFrame({
         "head": head, "split": split, "row": idx.astype(np.int32),
         "fitted": fitted[idx].astype(np.float32),
         "observed": observed[idx].astype(np.float32),
-        "residual": (observed[idx] - fitted[idx]).astype(np.float32)})
+        "u": (empty if u is None else np.asarray(u, dtype=float))[idx].astype(np.float32),
+        "predicted_rank": (empty if rank is None
+                           else np.asarray(rank, dtype=float))[idx].astype(np.float32)})
+
+
+# ── The scaled quantile residual ──────────────────────────────────────────────
+
+def quantile_scope(head: str) -> tuple[str, str]:
+    """`(scope, reason)` — whether this head admits a quantile residual at all.
+
+    `drawn` for every head today. The alternative is `not_applicable` with the reason on the
+    index, which is the shape this takes rather than a missing head: a page that finds no
+    rows for a head cannot tell "out of scope" from "the build broke", and an absent panel
+    with no reason beside it is the same defect one level up. See `QUANTILE_OUT_OF_SCOPE`.
+    """
+    reason = QUANTILE_OUT_OF_SCOPE.get(head)
+    return ("not_applicable", reason) if reason else ("drawn", "")
+
+
+def quantile_seed(head: str, split: str) -> int:
+    """The randomization's own stream, namespaced off the draw's `_seed`."""
+    return _seed(f"{head}/{QUANTILE_STREAM}", split)
+
+
+def scaled_residuals(draws: np.ndarray, observed: np.ndarray, seed: int) -> np.ndarray:
+    """`u` per row — `stan_utils.pit_from_samples`, verbatim and by import.
+
+    Named rather than inlined so the panel below and the KS beside it are visibly one
+    quantity, and *not* reimplemented for the same reason `compute_dk_pts` is never
+    reimplemented: `below + U*at` is the whole of DHARMa's scaled residual, this repo already
+    had it, and a second copy is a second thing to keep right.
+    """
+    return pit_from_samples(draws, observed, seed)
+
+
+def ks_stability(draws: np.ndarray, observed: np.ndarray, seed: int) -> float:
+    """|KS(half) − KS(other half)| on two **interleaved** halves of the draws.
+
+    `band_stability`'s device, one statistic over, and it answers the question the draw
+    budget actually raises here: at `PRED_DRAWS` draws a row with no replicate landing
+    exactly on its observed value has `at = 0`, so its `u` is `below` alone — a multiple of
+    1/D rather than a continuous number. Two independent D/2 readings disagreeing by less
+    than `KS_MC_TOL` is the evidence that the tile on the page is a reading of the head and
+    not of the budget.
+
+    Interleaved rather than split down the middle, because the draws arrive chain-major. The
+    **same** seed on both halves, so the randomization is held fixed and what moves is the
+    draws.
+    """
+    if draws.shape[0] < 4:
+        return float("nan")
+    return float(abs(ks_uniform(pit_from_samples(draws[0::2], observed, seed))
+                     - ks_uniform(pit_from_samples(draws[1::2], observed, seed))))
+
+
+def rank_uniform(values: np.ndarray) -> np.ndarray:
+    """`(rank − 0.5) / n` — DHARMa's rank transform of the predicted value.
+
+    What makes the residual panel comparable across heads: a count head's predicted season
+    rebounds and a conversion head's predicted makes share no axis, and their ranks do. Ties
+    take the average rank, so a head whose fitted values are a handful of cells reads as a
+    few columns rather than as an arbitrary ordering of equals.
+    """
+    values = np.asarray(values, dtype=float)
+    if not values.size:                                            # pragma: no cover
+        return values
+    return (pd.Series(values).rank(method="average").to_numpy() - 0.5) / len(values)
+
+
+def qq_rows(u: np.ndarray, points: int = QQ_POINTS) -> list[dict]:
+    """The QQ-uniform panel: order statistics against their expected uniform quantiles.
+
+    **The envelope is exact and pointwise**: the k-th of n order statistics of a uniform
+    sample is `Beta(k, n − k + 1)`, so `lo`/`hi` are that distribution's 2.5 and 97.5
+    percentiles rather than a simulated band. Pointwise, which is the reading it has to be
+    given: about 5 of 100 grid points fall outside a pointwise 95% envelope under a *correct*
+    model, and the composition's rows are not independent inside a team-game either. It is a
+    sense of scale beside the curve, never a test — the same rule `band_distance` carries.
+    """
+    from scipy.stats import beta
+
+    u = np.asarray(u, dtype=float)
+    u = u[np.isfinite(u)]
+    n = u.size
+    if not n:                                                      # pragma: no cover
+        return []
+    order = np.unique(np.clip(np.rint(np.linspace(1, n, min(points, n))), 1, n)
+                      ).astype(int)
+    values = np.sort(u)[order - 1]
+    # k/(n+1) rather than k/n: the expectation of the k-th order statistic, so the last point
+    # sits below 1 instead of pinning the top of the panel to the largest observation.
+    expected = order / (n + 1.0)
+    lo = beta.ppf(0.025, order, n - order + 1)
+    hi = beta.ppf(0.975, order, n - order + 1)
+    return [{"panel": "qq", "x_index": int(i), "y_index": -1,
+             "x": float(expected[i]), "y": float(values[i]),
+             "lo": float(lo[i]), "hi": float(hi[i])}
+            for i in range(len(order))]
+
+
+def _bin_index(values: np.ndarray, bins: int) -> np.ndarray:
+    """Which of `bins` equal cells on [0, 1] each value falls in, top bin closed."""
+    edges = np.linspace(0.0, 1.0, bins + 1)
+    return np.clip(np.digitize(values, edges[1:-1], right=False), 0, bins - 1)
+
+
+def residual_rows(u: np.ndarray, rank: np.ndarray,
+                  bins: int = RESIDUAL_BINS) -> list[dict]:
+    """The scaled residual against rank-transformed predicted, as a binned density.
+
+    Both axes are `[0, 1]` by construction, which is why this is the one panel in the
+    contract with no pooled edge set to compute: the rank transform and the PIT *are* the
+    shared scale, so train and validation are already on one grid. Empty cells are dropped,
+    as everywhere else.
+    """
+    keep = np.isfinite(u) & np.isfinite(rank)
+    xs, ys = np.asarray(rank)[keep], np.asarray(u)[keep]
+    counts = np.zeros((bins, bins), dtype=np.int64)
+    np.add.at(counts, (_bin_index(xs, bins), _bin_index(ys, bins)), 1)
+    total = max(int(counts.sum()), 1)
+    edges = np.linspace(0.0, 1.0, bins + 1)
+    return [{"panel": "residual", "x_index": int(i), "y_index": int(j),
+             "x": float((edges[i] + edges[i + 1]) / 2),
+             "y": float((edges[j] + edges[j + 1]) / 2),
+             "x_left": float(edges[i]), "x_right": float(edges[i + 1]),
+             "y_left": float(edges[j]), "y_right": float(edges[j + 1]),
+             "count": int(counts[i, j]), "density": float(counts[i, j]) / total}
+            for i, j in np.argwhere(counts > 0)]
+
+
+def quantile_lines(u: np.ndarray, rank: np.ndarray, bins: int = RESIDUAL_BINS,
+                   levels: tuple[float, ...] = QUANTILE_LEVELS,
+                   min_rows: int = QUANTILE_MIN_ROWS) -> list[dict]:
+    """The 0.25 / 0.5 / 0.75 quantiles of `u` inside each column of that panel.
+
+    **Flat at their own levels iff calibrated**, which is the quantitative half of the
+    picture: a density can look reasonable while its middle drifts, and three lines against
+    three references say so in the units the axis is already in. Binned on the density's own
+    x edges, so the lines and the cells beneath them cannot disagree.
+
+    A column with fewer than `min_rows` rows is left out rather than drawn, so a line has a
+    gap where the evidence does — a quartile of three rows is noise in the shape of a
+    finding.
+    """
+    keep = np.isfinite(u) & np.isfinite(rank)
+    xs, ys = np.asarray(rank)[keep], np.asarray(u)[keep]
+    cells = _bin_index(xs, bins)
+    edges = np.linspace(0.0, 1.0, bins + 1)
+    rows = []
+    for i in range(bins):
+        inside = ys[cells == i]
+        if inside.size < min_rows:
+            continue
+        for level, value in zip(levels, np.quantile(inside, levels)):
+            rows.append({"panel": "quantile", "x_index": int(i), "y_index": -1,
+                         "x": float((edges[i] + edges[i + 1]) / 2),
+                         "y": float(value), "level": float(level),
+                         "x_left": float(edges[i]), "x_right": float(edges[i + 1]),
+                         "count": int(inside.size)})
+    return rows
+
+
+def quantile_tables(head: str, split: str, u: np.ndarray,
+                    rank: np.ndarray) -> tuple[list[dict], float]:
+    """`(rows, ks)` — the three panels of one head's residual, and its KS distance.
+
+    One long table with a `panel` column, the way `model_card_calibration.csv` carries its
+    own: every row is a location `(x, y)` on that panel's axes, with the columns a panel does
+    not have left empty. `ks` is repeated on every row — the same deliberate repetition
+    `model_card_features.csv` makes, so a page filtering to one head and split gets the panel
+    *and* the number printed above it from one read.
+
+    **The KS distance is a distance.** `ks_uniform` over the scaled residuals, reported and
+    never thresholded: at n ≈ 10⁴ a strict uniformity test rejects everything, so a page
+    rendering in-or-out would report that twenty heads out of twenty fail. The only bar in
+    this module's quantile half is `KS_MC_TOL`, and that one is about the *draw budget*
+    rather than about the head.
+    """
+    finite = np.isfinite(u)
+    ks = ks_uniform(np.asarray(u)[finite]) if finite.any() else float("nan")
+    stamp = {"head": head, "split": split, "ks": float(ks), "n": int(finite.sum())}
+    return ([{**stamp, **row} for row in
+             qq_rows(u) + residual_rows(u, rank) + quantile_lines(u, rank)],
+            float(ks))
 
 
 def predictive_tables(head: str, art, frames: HeadFrames, cfg: dict,
@@ -1609,8 +1889,9 @@ def predictive_tables(head: str, art, frames: HeadFrames, cfg: dict,
             f"ECDF *of* — a page cannot label an axis it has to guess at, and a head with no "
             f"declared observable would silently ship an empty ribbon.")
 
-    ecdf, calibration, samples, panels = [], [], [], {}
-    counts, band, bias = {}, {}, {}
+    ecdf, calibration, quantile, samples, panels = [], [], [], [], {}
+    counts, band, bias, ks, ks_mc = {}, {}, {}, {}, {}
+    scope, reason = quantile_scope(head)
     for split in SPLITS:
         frame, capped = predictive_frame(head, spec, frames.design[split], cap)
         observed = frame[spec.observed].to_numpy(dtype=float)
@@ -1619,7 +1900,20 @@ def predictive_tables(head: str, art, frames: HeadFrames, cfg: dict,
 
         rows, band[split] = ecdf_rows(head, split, observed, draws)
         ecdf.extend(rows)
-        samples.append(sample_frame(head, split, fitted, observed))
+
+        u = rank = None
+        if scope == "drawn":
+            # The randomization and the draws are one object here: `u` is computed from the
+            # draws the ribbon above was cut from, so a page cannot show a ribbon and a QQ
+            # that describe two different predictives.
+            seed = quantile_seed(head, split)
+            u = scaled_residuals(draws, observed, seed)
+            rank = rank_uniform(fitted)
+            rows, ks[split] = quantile_tables(head, split, u, rank)
+            quantile.extend(rows)
+            ks_mc[split] = ks_stability(draws, observed, seed)
+
+        samples.append(sample_frame(head, split, fitted, observed, u, rank))
         panels[split] = (fitted, observed)
         counts[split] = (len(frame), capped)
         bias[split] = predictive_bias(art, spec, frame, draws, fitted)
@@ -1636,8 +1930,11 @@ def predictive_tables(head: str, art, frames: HeadFrames, cfg: dict,
         from src.models.minutes_unification import shipped_sigma
 
         sigma = float(shipped_sigma(cfg))
+    gated_ks = [ks_mc[split] for split in ks_mc
+                if np.isfinite(ks_mc[split]) and counts[split][0] >= BAND_MIN_ROWS]
     return {
-        "ecdf": ecdf, "calibration": calibration, "sample": samples,
+        "ecdf": ecdf, "calibration": calibration, "quantile": quantile,
+        "sample": samples,
         "summary": {
             "response_label": spec.label,
             "predictive_draws": int(keep),
@@ -1655,6 +1952,22 @@ def predictive_tables(head: str, art, frames: HeadFrames, cfg: dict,
             "ecdf_band_mc": max(finite_band) if finite_band else float("nan"),
             "ecdf_band_gated": bool(gated),
             "player_season_sigma": sigma,
+            # The quantile half. Both splits' distances ship because both are read on the
+            # page — unlike `predictive_bias`, which is one gate collapsed to its worst
+            # split — and `quantile_ks_mc` is the only bar here, on the draw budget rather
+            # than on the head.
+            "quantile_scope": scope,
+            "quantile_reason": reason,
+            "quantile_ks_train": ks.get("train", float("nan")),
+            "quantile_ks_validation": ks.get("validation", float("nan")),
+            "quantile_ks_mc": max(gated_ks) if gated_ks else (
+                max(ks_mc.values(), key=abs) if ks_mc else float("nan")),
+            "quantile_ks_gated": bool(gated_ks),
+            # How a collapsed-cell frame's multiplicity enters: `predictive_frame` expands
+            # it BEFORE the draw, so the residual is one row per spell and the KS is
+            # unweighted over spells. The alternative — one residual per cell, weighted —
+            # would put 1,861 games' worth of mass on four `u` values.
+            "quantile_weighting": "expanded" if spec.weight else "unweighted",
         },
     }
 
@@ -1680,6 +1993,18 @@ def check_predictive(head: str, summary: dict) -> None:
             f"{head}: the 95% ECDF ribbon moves by {band:.4f} between two halves of the "
             f"{summary['predictive_draws']} draws (bar {ECDF_BAND_TOL}). The band is Monte "
             f"Carlo noise at this budget; raise `PRED_DRAWS` rather than shipping it.")
+    # The third bar, and the only one on the quantile half. **Not** a bar on the KS distance
+    # itself — that is reported and never thresholded — but on whether the distance is a
+    # reading of the head or of the draw budget, which is what the 1/D quantization of `u`
+    # puts in question.
+    ks_mc = summary["quantile_ks_mc"]
+    if summary["quantile_ks_gated"] and np.isfinite(ks_mc) and ks_mc > KS_MC_TOL:
+        raise AssertionError(
+            f"{head}: the KS distance of the scaled quantile residual moves by {ks_mc:.4f} "
+            f"between two halves of the {summary['predictive_draws']} draws (bar "
+            f"{KS_MC_TOL}). At this budget a row with no replicate at its observed value "
+            f"carries a `u` quantized to 1/{summary['predictive_draws']}; raise "
+            f"`PRED_DRAWS` rather than printing a tile that is measuring the sampler.")
 
 
 # ── The index ─────────────────────────────────────────────────────────────────
@@ -1748,7 +2073,12 @@ def index_row(head: str, art, frames: HeadFrames, check: dict,
             ("fitted_source", ""),
             ("predictive_check", ""), ("predictive_bias", float("nan")),
             ("ecdf_band_mc", float("nan")), ("ecdf_band_gated", False),
-            ("player_season_sigma", 0.0))},
+            ("player_season_sigma", 0.0),
+            ("quantile_scope", ""), ("quantile_reason", ""),
+            ("quantile_ks_train", float("nan")),
+            ("quantile_ks_validation", float("nan")),
+            ("quantile_ks_mc", float("nan")), ("quantile_ks_gated", False),
+            ("quantile_weighting", ""))},
         "git_sha": provenance.get("git_sha", ""),
         "built_at": provenance.get("built_at", ""),
     }
@@ -1758,7 +2088,7 @@ def index_row(head: str, art, frames: HeadFrames, check: dict,
 
 def run(cfg: dict, heads: tuple[str, ...] | None = None,
         write: bool = True) -> dict[str, Path]:
-    """Card every head on disk, verify each one, and write the eight artifacts.
+    """Card every head on disk, verify each one, and write the nine artifacts.
 
     `heads` is a **verification** subset, not a rebuild subset, which is why `write`
     defaults off with it at the CLI. Unlike `make posteriors` — a day of sampler time,
@@ -1790,7 +2120,7 @@ def run(cfg: dict, heads: tuple[str, ...] | None = None,
     frames = build_frames(cfg, artifacts)
 
     index, coefficients, features, correlations, densities = [], [], [], [], []
-    ecdf, calibration, samples = [], [], []
+    ecdf, calibration, quantile, samples = [], [], [], []
     print(f"\n── verifying the recipe against each head's variant ladder, and drawing "
           f"{PRED_DRAWS} predictive\n   draws per head over at most {PRED_ROWS:,} rows a "
           f"split ──")
@@ -1809,6 +2139,7 @@ def run(cfg: dict, heads: tuple[str, ...] | None = None,
         check_predictive(head, predictive["summary"])
         ecdf.extend(predictive["ecdf"])
         calibration.extend(predictive["calibration"])
+        quantile.extend(predictive["quantile"])
         samples.extend(predictive["sample"])
 
         index.append(index_row(head, art, head_frames, check, len(terms),
@@ -1838,6 +2169,14 @@ def run(cfg: dict, heads: tuple[str, ...] | None = None,
               f"{'' if summary['ecdf_band_gated'] else ' (ungated)'} · mean "
               f"{f'{bias:+.2%}' if np.isfinite(bias) else 'not checkable'}"
               f" ({summary['predictive_check']})")
+        if summary["quantile_scope"] == "drawn":
+            print(f"  {'':<18s} quantile residual KS "
+                  f"{summary['quantile_ks_train']:.4f} train / "
+                  f"{summary['quantile_ks_validation']:.4f} val — a DISTANCE, never a "
+                  f"pass/fail · half-sample {summary['quantile_ks_mc']:.4f}"
+                  f"{'' if summary['quantile_ks_gated'] else ' (ungated)'}")
+        else:
+            print(f"  {'':<18s} quantile residual NOT DRAWN — {summary['quantile_reason']}")
 
     tables = {
         "model_card_index.csv": pd.DataFrame(index),
@@ -1847,6 +2186,7 @@ def run(cfg: dict, heads: tuple[str, ...] | None = None,
         "model_card_feature_density.parquet": pd.DataFrame(densities),
         "model_card_ecdf.csv": pd.DataFrame(ecdf),
         "model_card_calibration.csv": pd.DataFrame(calibration),
+        "model_card_quantile.csv": pd.DataFrame(quantile),
         "model_card_sample.parquet": pd.concat(samples, ignore_index=True),
     }
     leading = {"model_card_coefficients.csv": ["head", "term", "term_family", "term_role"],
@@ -1856,7 +2196,9 @@ def run(cfg: dict, heads: tuple[str, ...] | None = None,
                                                       "split", "x_index", "y_index"],
                "model_card_ecdf.csv": ["head", "split", "grid_index", "value"],
                "model_card_calibration.csv": ["head", "split", "panel", "x_index",
-                                              "y_index"]}
+                                              "y_index"],
+               "model_card_quantile.csv": ["head", "split", "panel", "x_index",
+                                           "y_index", "x", "y"]}
 
     paths = {}
     print()
@@ -1908,6 +2250,22 @@ def run(cfg: dict, heads: tuple[str, ...] | None = None,
           f"{', '.join(ungated) or 'no head'} sits under {BAND_MIN_ROWS:,} rows and is "
           f"reported rather than gated,\nand {', '.join(unchecked) or 'no head'} reports a "
           f"mean the drawn predictive cannot be compared against.")
+
+    drawn_ks = [r for r in index if r["quantile_scope"] == "drawn"]
+    ks_values = [r[column] for r in drawn_ks
+                 for column in ("quantile_ks_train", "quantile_ks_validation")
+                 if np.isfinite(r[column])]
+    worst_ks_mc = max((r["quantile_ks_mc"] for r in drawn_ks
+                       if r["quantile_ks_gated"] and np.isfinite(r["quantile_ks_mc"])),
+                      default=float("nan"))
+    out_of_scope = sorted(r["head"] for r in index if r["quantile_scope"] != "drawn")
+    span = (f"{min(ks_values):.4f}–{max(ks_values):.4f}" if ks_values else "no head")
+    print(f"Quantile residuals: {len(drawn_ks)} of {len(index)} heads drawn "
+          f"({', '.join(out_of_scope) or 'no head'} out of scope); KS distance spans "
+          f"{span} across heads and splits and is "
+          f"REPORTED, never\nthresholded — at these sample sizes a uniformity test rejects "
+          f"every head. The one bar is on the draw budget: worst half-sample KS "
+          f"disagreement {worst_ks_mc:.4f} against a {KS_MC_TOL} bar.")
     return paths
 
 

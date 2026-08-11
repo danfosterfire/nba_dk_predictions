@@ -400,7 +400,12 @@ was explicit that scrolling is fine and cramming is not:
    ECDF quantiles (50 / 80 / 95%), train and validation side by side.
 6. **Predicted vs observed, and residuals** — four panels: fitted-vs-observed and
    residual-vs-fitted, each for train and validation, drawn from the binned density with a
-   bounded subsample overlaid for texture.
+   bounded subsample overlaid for texture. **Superseded 2026-08-10 by step 3 of
+   `docs/dashboard-revision-plan.md`**: the raw residual-vs-fitted half is replaced by a
+   scaled quantile residual (a QQ-uniform and the residual against rank-transformed
+   predicted), because a raw residual is not on one scale across the four classes this one
+   renderer serves and a quantile residual is uniform iff calibrated whatever the
+   likelihood. `model_card_calibration.csv` carries one panel from that date.
 7. **Diagnostics** — R̂, ESS bulk/tail, divergences, treedepth saturation, draws, wall clock,
    CmdStan version and git SHA, read from the existing `stan_*_diagnostics.csv` and the
    posteriors manifest. No new artifact.
@@ -502,8 +507,9 @@ composition scatter is not an artifact, it is a copy of the data.
 | `model_card_feature_corr.csv` | head × feature × feature | ~5,000 | ✅ **8,920** — the sketch omitted the split, and both are emitted |
 | *(unsketched)* `model_card_feature_density.parquet` | head × pair × split × 2-D bin | — | ✅ **93,608** — the sketch flagged the pairs and never binned one; added by step 4 |
 | `model_card_ecdf.csv` | head × split × grid point | ~8,000 — observed ECDF and predictive quantile band | ✅ **2,977** — the grid follows the observed quantiles, so it is denser where the curve moves and shorter overall |
-| `model_card_calibration.csv` | head × split × 2-D bin | ~4,000 — fitted vs observed density, and residual density | ✅ **28,709** — the sketch omitted the panel; two panels on a 30 × 30 grid with empty cells dropped |
-| `model_card_sample.parquet` | head × split × row | ~200,000 capped — bounded subsample carrying fitted, observed, residual | ✅ **54,375** — 2,000 per head and split, which is where a scatter stops being a scatter |
+| `model_card_calibration.csv` | head × split × 2-D bin | ~4,000 — fitted vs observed density, and residual density | ✅ **28,709** — the sketch omitted the panel; two panels on a 30 × 30 grid with empty cells dropped. **11,689 since 2026-08-10**, when the residual panel moved to the artifact below |
+| *(unsketched)* `model_card_quantile.csv` | head × split × panel × row | — | ✅ **8,768** — the scaled quantile residual that replaced the raw one; added by step 3 of `docs/dashboard-revision-plan.md` |
+| `model_card_sample.parquet` | head × split × row | ~200,000 capped — bounded subsample carrying fitted, observed, residual | ✅ **54,375** — 2,000 per head and split, which is where a scatter stops being a scatter. Carries `u` and `predicted_rank` in place of `residual` since 2026-08-10 |
 
 Three things the emitter must do that are easy to get wrong. All three held, and the first
 two are now gates rather than intentions:

@@ -3,13 +3,17 @@
 This is the artifact contract `docs/dashboard-plan.md` promised when step 3 of the expansion
 was built. It is a planning-and-contract doc, not a measurement report.
 
-**All eight artifacts ship as of 2026-08-10.** Session 3a landed the index, the
+**All nine artifacts ship as of 2026-08-10.** Session 3a landed the index, the
 coefficients, the features and the feature correlations; **session 3b landed the predictive
 half** — `model_card_ecdf.csv`, `model_card_calibration.csv` and
 `model_card_sample.parquet` — and added the fifth build-time check that goes with them.
 **Session 4 added the eighth**, `model_card_feature_density.parquet`, which is the half of
 `feature-correlation-not-pair-plots` the first two sessions left open: the correlation file
-flags which pairs earn a joint density, and nothing had binned one.
+flags which pairs earn a joint density, and nothing had binned one. **Step 3 of
+`docs/dashboard-revision-plan.md` added the ninth**, `model_card_quantile.csv` — DHARMa's
+scaled quantile residual — and *replaced* rather than extended: the calibration file's
+`residual_fitted` panel is gone, because a raw residual is not a thing four differently
+distributed heads can be read on and a quantile residual is.
 
 ---
 
@@ -75,7 +79,7 @@ that drifted would leave the coefficients describing one population and the hist
 describing another — and both files would look perfectly well-formed.
 
 So `verify` runs four checks per head and raises on any of them, and the predictive half
-adds a fifth in `check_predictive`:
+adds a fifth in `check_predictive` (plus two Monte-Carlo bars, below):
 
 | # | check | what it catches |
 |---|---|---|
@@ -100,7 +104,7 @@ its 5% bar, and nineteen of twenty heads are under 1%. Registered as
 
 ## What is on disk
 
-All eight under `outputs/predictions/`, all long-format, all keyed by `head`. The six CSVs
+All nine under `outputs/predictions/`, all long-format, all keyed by `head`. The seven CSVs
 are written with six significant digits — the per-feature statistics repeat on every bin row
 deliberately (a page groups by feature and gets the histogram *and* the summary table from
 one read), and full float64 repr tripled the largest file for precision no histogram can
@@ -108,16 +112,18 @@ draw.
 
 | artifact | grain | rows | size | what it feeds |
 |---|---|---|---|---|
-| `model_card_index.csv` | head | **20** | 16 KB | the head selector, the *unit* every page must state, and each head's role in the shipped chain |
+| `model_card_index.csv` | head | **20** | 17 KB | the head selector, the *unit* every page must state, and each head's role in the shipped chain |
 | `model_card_coefficients.csv` | head × term | **311** | 45 KB | the sorted credible-interval panel (block 4) |
 | `model_card_features.csv` | head × feature × split × bin | **14,892** | 2.1 MB | the small-multiple histograms and the n/mean/sd/missing table (block 2) |
 | `model_card_feature_corr.csv` | head × split × feature × feature | **8,920** | 767 KB | the correlation heatmap and the pairs that earn a density (block 3) |
 | `model_card_feature_density.parquet` | head × pair × split × 2-D bin | **93,608** | 536 KB | the on-demand joint density beside that heatmap (block 3) |
 | `model_card_ecdf.csv` | head × split × grid point | **2,977** | 328 KB | the observed ECDF over the predictive ribbon (block 5) |
-| `model_card_calibration.csv` | head × split × panel × 2-D bin | **28,709** | 2.4 MB | fitted-vs-observed and residual-vs-fitted, as density (block 6) |
-| `model_card_sample.parquet` | head × split × row | **54,375** | 782 KB | the bounded scatter overlaid on that density (block 6) |
+| `model_card_calibration.csv` | head × split × panel × 2-D bin | **11,689** | 973 KB | fitted-against-observed, as density (block 6) |
+| `model_card_quantile.csv` | head × split × panel × row | **8,768** | 724 KB | the QQ-uniform and the residual against rank-transformed predicted (block 6) |
+| `model_card_sample.parquet` | head × split × row | **54,375** | 1.0 MB | the bounded scatter overlaid on both of those densities (block 6) |
 
-**8.7 MB in total** (`du`), against the 7.4 MB the seven-artifact contract cost. Twenty
+**7.5 MB in total** (`du`), *below* the 8.7 MB the eight-artifact contract cost: the quantile
+half adds 724 KB and the `residual_fitted` panel it replaced was 1.5 MB. Twenty
 heads across four classes — availability
 (5), minutes (2), box-score components (11), game length (2) — carrying 268 coefficients, 20
 intercepts and 23 dispersion terms over 92 distinct features. `make model-cards` runs in
@@ -135,10 +141,17 @@ Carries the head's identity (`head`, `label`, `model_class`, `class_label`), its
 `n_features`, `n_terms`, `n_density_pairs`), its
 **sampler provenance** (`max_rhat`, `divergences`, `converged`, `git_sha`, `built_at`), its
 **verification** (`recipe_design_error`, `roundtrip_prediction_error`, `design_check`,
-`verified`) and — added by session 3b — its **predictive** (`response_label`,
+`verified`), — added by session 3b — its **predictive** (`response_label`,
 `predictive_draws`, `n_predictive_train`, `n_predictive_validation`,
 `predictive_rows_capped`, `predictive_weighted`, `fitted_source`, `predictive_check`,
-`predictive_bias`, `ecdf_band_mc`, `ecdf_band_gated`, `player_season_sigma`).
+`predictive_bias`, `ecdf_band_mc`, `ecdf_band_gated`, `player_season_sigma`) and — added by
+step 3 of `docs/dashboard-revision-plan.md` — its **quantile residual** (`quantile_scope`,
+`quantile_reason`, `quantile_ks_train`, `quantile_ks_validation`, `quantile_ks_mc`,
+`quantile_ks_gated`, `quantile_weighting`). 55 columns.
+
+**Both splits' KS distances ship as their own columns, which `predictive_bias` does not
+do**, and the difference is what each is for: the bias is a *gate* and collapses to its worst
+split, while the KS is a *reading* the page tiles per split beside the panel it belongs to.
 
 That last block exists so a page can state what it drew rather than implying it drew
 everything. Three of those columns are load-bearing and none is derivable from the other
@@ -447,6 +460,13 @@ cells, so its ECDF takes three values and a half-sample gap of 0.5 is the frame 
 the budget. `ecdf_band_gated` marks it, and heads under `BAND_MIN_ROWS = 500` are excluded
 from the gate rather than from the file.
 
+**The same budget carries the quantile residual, and that is a decision rather than an
+inheritance.** It was re-measured on its own statistic before being reused — see
+`model_card_quantile.csv` below — and 200 draws holds it. Keeping one budget keeps the rule
+this whole half rests on: the ribbon, the density and the residual are cut from **one** draw
+per head per split, so a page cannot show a ribbon and a QQ that describe two different
+predictives.
+
 ### `model_card_ecdf.csv` — the ribbon
 
 `head × split × grid point`, with `observed` and seven quantiles of the per-draw ECDF
@@ -470,26 +490,133 @@ from `q50`: **0.037** for availability, **0.055** for minutes, **0.051** for the
 and **0.080** for `gp_onset`. A page that renders in-or-out as a verdict will report that
 every head fails.
 
-### `model_card_calibration.csv` — the two density panels
+### `model_card_calibration.csv` — the density panel
 
-`head × split × panel × 2-D bin` over a 30 × 30 grid, `panel` ∈ {`fitted_observed`,
-`residual_fitted`}, **empty cells dropped** — 28,709 rows against the 72,000 a dense grid
-would carry. Binned rather than per-row for the reason the whole contract is binned: the
-composition's scatter is 631,158 points per panel, which is not an artifact but a copy of the
-data.
+`head × split × panel × 2-D bin` over a 30 × 30 grid, **empty cells dropped** — 11,689 rows
+against the 36,000 a dense grid would carry. Binned rather than per-row for the reason the
+whole contract is binned: the composition's scatter is 631,158 points per panel, which is not
+an artifact but a copy of the data.
 
 Edges span the **pooled 0.5–99.5%** range of each axis with the tails **clipped into** the
-end bins, so one heavy-tailed residual cannot collapse the grid to a single cell and nothing
+end bins, so one heavy-tailed value cannot collapse the grid to a single cell and nothing
 is dropped — the per-panel counts sum to `n`, and a test pins that. Both splits share one
 edge set per panel, for the same reason the feature histograms do.
+
+**`panel` is a one-value vocabulary since 2026-08-10** and stays a column rather than being
+dropped: `fitted_observed` is what remains after `residual_fitted` moved to the quantile
+artifact, and `_panel_values` raises by name — pointing at the replacement — rather than
+returning an empty frame for a caller that still asks for the old one.
+
+### `model_card_quantile.csv` — the scaled quantile residual
+
+DHARMa's residual, cut from the *same* draws as the ribbon and the density above. `head ×
+split × panel × row`, `panel` ∈ {`qq`, `residual`, `quantile`}, 8,768 rows. Every row is a
+location `(x, y)` on that panel's own axes, with the columns a panel does not have left
+empty — one long table rather than three files, because a page reads all three together and
+the KS beside them:
+
+| panel | rows | what one row is | its own columns |
+|---|---|---|---|
+| `qq` | 3,828 | one order statistic against its expected uniform quantile | `lo`, `hi` — the pointwise envelope |
+| `residual` | 3,800 | one cell of the 10 × 10 density over (rank-transformed predicted, residual) | `x_left`/`x_right`/`y_left`/`y_right`, `count`, `density` |
+| `quantile` | 1,140 | one binned quantile line point | `level`, `count` |
+
+`ks` and `n` repeat on **every** row of a (head, split) — the same deliberate repetition
+`model_card_features.csv` makes, so a page filtering to one head gets the panels and the
+number printed above them from one read.
+
+**The whole of it is `stan_utils`, by import.** `pit_from_samples` is the scaled residual
+(`below + U·at`) and `ks_uniform` the distance; neither is reimplemented here, the same
+convention that governs `compute_dk_pts`. What this module adds is the binning, the envelope
+and the rank transform.
+
+Five things about it were easy to get wrong, every one of which renders as a good-looking
+picture, and each is answered by a mechanism rather than by care:
+
+- **The randomization is seeded per (head, split)**, through `quantile_seed` — `_seed`
+  namespaced with `/quantile`, so it is deterministic across rebuilds *and* a different
+  stream from the draws it is computed from. Without the first a reader cannot tell a refit
+  from an RNG; without the second the residual's uniforms are the sequence that produced the
+  replicates.
+- **200 draws quantizes `u`, and the quantization is measured rather than argued.** A row
+  with no replicate landing exactly on its observed value has `at = 0`, so its `u` is
+  `below` — a multiple of 1/200. That is most rows on some heads: at the shipped budget the
+  share of rows with *any* tie is 0.96 on `gp_duration` and only 0.18 on `minutes`, so four
+  minutes rows in five carry a quantized residual. It costs nothing readable. Re-run at 100
+  / 200 / 400 / 800 draws, the KS distance moves by **≤ 0.001** on the heads where it moves
+  at all (`gp_duration` train 0.0111 → 0.0081 → 0.0070 → 0.0070; `minutes` train 0.0317 →
+  0.0302 → 0.0306 → 0.0309), and the drift has a **known direction**: extra Monte-Carlo
+  noise in `below` blurs `u` toward uniform, so a small budget *understates* the miss and the
+  reading converges upward — `composition` train reads 0.0472 / 0.0511 / 0.0533 at 100 / 200
+  / 400. Against distances of 0.03–0.15 that is under the third digit, so the residual keeps
+  the shipped budget and stays cut from the same draws as the ribbon.
+- **The bar is `ks_stability`, not the KS.** `KS_MC_TOL = 0.02` on the disagreement between
+  the KS read on two interleaved halves of the draws — `band_stability`'s device one
+  statistic over, gated on the same `BAND_MIN_ROWS = 500`. Worst gated reading is **0.0105**
+  (`gp_entry`, validation). `game_length_ot` reads 0.0400 on a two-cell validation split and
+  is reported rather than gated, exactly as its ribbon is.
+- **`gp_duration` and `game_length_depth` carry a weight, and it enters by expansion.**
+  `predictive_frame` expands a collapsed-cell frame by its multiplicity *before* the draw, so
+  the residual is one row per spell and the KS is unweighted over spells. `quantile_weighting`
+  says `expanded` for those two heads and `unweighted` for the other eighteen. The
+  alternative — one residual per cell, weighted afterwards — would put 1,861 overtime games'
+  worth of mass on four `u` values.
+- **The KS distance is a distance and never a pass/fail**, the rule `band_distance` already
+  carries for block 5 and for the same arithmetic reason: at n ≈ 10⁴ a uniformity test
+  rejects every head in the project. It is tiled per split with the size of the miss, and no
+  threshold is applied to it anywhere in the emitter or on the page.
+
+#### The composition is in scope, and the step that asked was wrong about why
+
+`QUANTILE_OUT_OF_SCOPE` is the mechanism for declaring a head undrawable — head → reason,
+emitted as `quantile_scope` / `quantile_reason` so a page prints *why* rather than rendering
+nothing. **It is empty**, and the composition is the head it was opened for.
+
+The suspicion was that a head reporting `response = eta` with `predictive_check = none`
+cannot have a quantile residual. It can: `u` is a function of the **draws** and the observed,
+and `StanComposition.predict_samples` draws minutes in a team-game — the same column
+`RESPONSES` declares as its observable, and the same draws the ribbon is already cut from.
+`predictive_check` governs the *fitted* value, which is what has no scale, and does not decide
+this. The decisive evidence is one level down: `stan_composition.score_samples` computes
+`ks_uniform(pit_from_samples(samples, y, seed))` on that predictive as the head's **own**
+calibration statistic, so the card is reading a quantity the head already reports.
+
+#### What the first drawing shows
+
+Not claims this doc is making, and the same stance as the games-played note below: nothing
+had drawn these residuals before and a page reader will see them.
+
+**The KS distances span 0.008 to 0.33.** Tightest is `gp_duration` (0.0080 train / 0.0169
+validation); widest among the gated heads are `fg2m_given_fg2a` (0.0315 / 0.1542) and
+`gp_onset` (0.0320 / 0.1491). `game_length_ot` reads 0.1262 / 0.3300 on 26 and 2 rows, which
+is its frame rather than its fit.
+
+**The second panel finds things the first cannot, which is the argument for shipping both.**
+`minutes` is nearly uniform overall — KS 0.0302 on train — and its quartile lines are
+**0.29** off their own levels: in the lowest-predicted decile the three lines sit at 0.08 /
+0.21 / 0.46 against 0.25 / 0.50 / 0.75, so the head over-predicts the players it predicts
+fewest minutes for, and the median crosses back above 0.5 through the middle of the range.
+`gp_onset` is the cleanest version of the same shape — a monotone slide from ~0.9 down to
+~0.2 across the predicted range, i.e. it under-predicts the low group and over-predicts the
+high one, which is a predictive that is too *spread out* rather than one that is off centre.
+That is the same head the ECDF note below already flags for over-predicting its own
+observable, seen from a second direction.
 
 ### `model_card_sample.parquet` — the texture
 
 `head × split × row`, capped at 2,000 rows per head and split — 54,375 rows, `float32`,
-782 KB. Past a couple of thousand a scatter is a blob, so the cap is a legibility decision as
+1.0 MB. Past a couple of thousand a scatter is a blob, so the cap is a legibility decision as
 much as a size one, and the rows are taken by `thin` rather than at random so the overlay
 spans the frame and does not move under a reader between builds. Parquet rather than CSV
-because it is the one artifact that is three float columns and nothing else.
+because it is the one artifact that is four float columns and nothing else.
+
+**Four columns, two panels, one set of rows.** `fitted`/`observed` overlay the calibration
+density and `u`/`predicted_rank` overlay the quantile residual, taken at the *same* thinned
+rows — so a point in one panel is the same player-season as the point in the other. The rank
+is computed over the whole predictive frame **before** the thinning, because a rank
+recomputed inside a 2,000-row subsample is a different transform from the one the panel
+underneath it is binned on. A head out of quantile scope ships the two columns as NaN rather
+than dropping them, so the file's shape does not vary per head.
 
 ### What the first drawing of these heads already shows
 
@@ -513,7 +640,7 @@ is the measurement that would settle it.
 ```
 make stan          fits every head, writes metrics/diagnostics, THROWS THE DRAWS AWAY
 make posteriors    refits once per head at its shipped variant, persists draws + recipe
-make model-cards   ← here. Reads those pickles. No refit, no CmdStan, ~12 s
+make model-cards   ← here. Reads those pickles. No refit, no CmdStan, ~13 s
                      → outputs/predictions/model_card_*.csv, model_card_sample.parquet
                        and model_card_feature_density.parquet
 dashboard          reads those artifacts and only those artifacts
@@ -537,8 +664,9 @@ is the expensive half:
 
 ## Tests
 
-`tests/test_model_cards.py`, plain `assert` with synthetic builders, **80 tests** (34 from
-session 3a, 31 from 3b, 9 from session 4's density, 6 from the chain role). The heads are real `PosteriorArtifact`s with their draws **injected**
+`tests/test_model_cards.py`, plain `assert` with synthetic builders, **95 tests** (34 from
+session 3a, 31 from 3b, 9 from session 4's density, 6 from the chain role, 15 from the
+quantile residual). The heads are real `PosteriorArtifact`s with their draws **injected**
 rather than sampled — the same stance `tests/test_posteriors.py` takes, and for the same
 reason: the emitter refits nothing either. The one exception is the rehydration test, which
 builds a real `StanCount` around injected draws and asserts that `draw_predictive` returns
@@ -549,30 +677,42 @@ The coverage is one case per way this module can be wrong *silently*, because ev
 those renders as a good-looking picture: a histogram drawn on the wrong edges, a
 missing-share that resolves to zero because the flag sits under a third name, a correlation
 that reports 0 for a constant column, a split label outside the vocabulary, a spline basis
-drawn as six unrelated bars, a collapsed cell frame drawn one row per cell, a residual panel
-that is a second copy of the observed one, an ECDF band pooled across draws instead of read
-per draw, a calibration grid collapsed by one outlier, a joint density whose two splits are
-binned on their own grids, a menu of pairs the density does not carry. The checks that would
-fail loudly —
-the population anchor, the design tolerance, the drawn-mean scale and the band's own stability
-— get one test each for the raise.
+drawn as six unrelated bars, a collapsed cell frame drawn one row per cell, an ECDF band pooled across draws instead of
+read per draw, a calibration grid collapsed by one outlier, a joint density whose two splits
+are binned on their own grids, a menu of pairs the density does not carry, a quantile
+residual whose seed moves under a rebuild, a rank transform taken inside the 2,000-row
+overlay rather than over the frame it is drawn on, a quartile line through three rows. The
+checks that would fail loudly —
+the population anchor, the design tolerance, the drawn-mean scale, the band's own stability
+and the residual's — get one test each for the raise.
 
-**Fourteen tests read the shipped artifacts**, keeping a *derived* quantity honest against the
+**The quantile half's own coverage has a positive control and a negative one**, because a
+residual that cannot see a miss is worse than no panel: a Poisson predictive drawn against
+its own law lands on the diagonal with KS < 0.03, and the same predictive against an observed
+shifted by 4 leaves it with KS > 0.2. A third measures the randomization itself — the
+*non*-randomized quantile of the same discrete predictive is more than 3× further from
+uniform, which is DHARMa's own reason for randomizing, checked rather than quoted.
+
+**Sixteen tests read the shipped artifacts**, keeping a *derived* quantity honest against the
 artifact it came from: no split outside the vocabulary, no fit span past 2021-22, every head
 verified with `recipe_design_error ≤ 1e-9` and a declared unit, feature counts agreeing across
 the index, the features file and the square of the correlation file, term counts agreeing
 between the index and the coefficients — and, from 3b, every carded head appearing in all
-three predictive artifacts, every shipped ECDF curve monotone under an ordered band, every
+four predictive artifacts, every shipped ECDF curve monotone under an ordered band, every
 gated head's ribbon inside `ECDF_BAND_TOL`, every checkable head's drawn mean inside
 `PREDICTIVE_BIAS_TOL`, every calibration panel counting all its rows, and the row and draw
 budgets holding; and, from session 4, every head's density covering exactly its own flagged
 pairs at the count the index reports, and every density panel counting all of its own rows;
 and, from the chain role, every head shipping all four of its columns with `in_draw_path`
-agreeing with `draw_path_heads()`. They skip rather than fail on a fresh checkout, since `make model-cards`
-needs `make posteriors` first.
+agreeing with `draw_path_heads()`; and, from the quantile residual, every panel bounded on
+`[0, 1]` with its cells counting all its rows and its KS agreeing with the index's, and every
+gated head inside `KS_MC_TOL` **while the distances themselves are unconstrained** — that
+last test asserts a head at 0.15 ships, because a bar on the distance is the failure mode
+this whole reading exists to avoid. They skip rather than fail on a fresh checkout, since
+`make model-cards` needs `make posteriors` first.
 
 **The chain role adds the one test here that reads a *different* part of the repo.** The
-other seventy-nine hold this module against itself or against its own artifacts;
+others hold this module against itself or against its own artifacts;
 `test_the_declared_draw_path_is_what_the_simulator_actually_reads` holds it against
 `src/sim/`, because that is where the claim's truth lives.
 

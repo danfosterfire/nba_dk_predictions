@@ -73,6 +73,12 @@ interpretation carries a machine-checkable anchor so it cannot silently invert. 
 head is a share and that one a shooting percentage" to a design column the artifact has to
 carry.
 
+**A number a caption quotes is an interpretation too, and takes the same treatment.** Block
+6's caption cites the build bar behind its KS tile; `model_cards.KS_MC_TOL` mirrors the
+emitter's constant and a test asserts the two are equal, the way `POSTERIOR_WINDOW` mirrors
+`WINDOW`. A second hand-typed threshold in a caption is a claim about a build that can move
+without it.
+
 **The third anchor points *outside* the artifacts, because that is where its claim lives.**
 `model_card_index.csv` carries a `chain_role` per head — what `make simulate-season` does
 with it, in a closed vocabulary of six, with `in_draw_path` as the boolean half. A head
@@ -126,12 +132,13 @@ dashboard/
   model_cards.py  the model pages' pure layer — the class table (which heads make a
                   page, in which order), the seven blocks as frames, where each
                   head's `make stan` diagnostics row lives, the blocks a single
-                  page owns, and the two anchored interpretations: `COMPONENT_BASIS`
+                  page owns, the scaled quantile residual's three panels and its
+                  distance, and the two anchored interpretations: `COMPONENT_BASIS`
                   and the chain-role sentence `chain_role_phrase` builds
   inputs.py       page 7's pure layer — the ADP panel's dating and what it costs, the
                   capture calendar and its per-program recovery policy, and the four
                   calibrated simulator inputs at each of the three fit windows
-  charts.py       fig_radar / fig_loadings, the five tournament figures, the six
+  charts.py       fig_radar / fig_loadings, the five tournament figures, the eight
                   model-page figures, the six a single model page owns, the four
                   page 7 owns, and fig_pipeline — the one figure that plots no data
   theme.py        SERIES, THEMES, ALL_PAIRS_CAP, theme(), apply_theme(), ordinal_colors(),
@@ -339,11 +346,23 @@ running page:
   reachable from an artifact rather than from a typo: a discrete feature's bin edges are its
   own values, so `bin_left == bin_right`, and the width has to be *derived* from the gap to
   the next value. `model_cards.histogram_panel` does it, and a test pins it.
-- **A colourbar over more than one panel is a claim that they share a scale.** Four
-  calibration panels binned as *shares of their own split* do not — a 751-row validation
+- **A colourbar over more than one panel is a claim that they share a scale.** Calibration
+  panels binned as *shares of their own split* do not — a 751-row validation
   panel puts an order of magnitude more into each cell than an 8,232-row training one — so
   each panel is scaled to its own densest cell and the colourbar says so, with the raw share
   in the hover. Only visible by rendering the figure.
+- **A density of something that is uniform *by construction* has nothing to show, and a
+  sequential ramp shows it anyway.** The scaled quantile residual against a rank-transformed
+  predicted fills the unit square evenly when the head is calibrated, so a
+  share-of-the-densest-cell ramp painted a wall of near-equal blue in which the quartile
+  lines were invisible and Poisson noise between cells read as structure. The fix is the
+  *departure* from an even spread on the diverging scale with its neutral midpoint —
+  `_excess_heatmap` — which makes the background the panel's own claim instead of decoration.
+  Two consequences found with it: the grid resolution has to be set by the **smallest** split
+  it will be read on (a 742-row validation split puts 1.9 rows in each of 400 cells and 7.4
+  in each of 100), and lines drawn over a diverging field take `ink` rather than a series
+  colour, since a mid-scale colour vanishes at one end of it. Every one of those is invisible
+  in the code and obvious in a PNG.
 - **A `go.Scatter` of 20 points or fewer gets `lines+markers` — in plotly's *own* default
   colorway.** The mode is inferred from the point count and the marker colour from the
   default palette, so a short posterior-predictive ribbon drew stray cyan and red dots on a

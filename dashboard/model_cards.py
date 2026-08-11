@@ -1,6 +1,6 @@
 """The model pages' pure layer — one head's card, cut into the seven blocks a page draws.
 
-`src/models/model_cards.py` (`make model-cards`) writes eight flat artifacts describing
+`src/models/model_cards.py` (`make model-cards`) writes nine flat artifacts describing
 every fitted head: what it is, what it was fed, what it learned, and how well it predicts.
 This module reshapes those into the frames `dashboard/views/model_page.py` hands to
 `charts.py`, and **nothing else**. It fits nothing, refits nothing and draws no posterior —
@@ -50,12 +50,14 @@ the page never has to know it.
 
 ## The one reading this module insists on
 
-**Block 5 is a distance, not a verdict.** At n ≈ 10⁴ a posterior-predictive ribbon is one to
-two ECDF points wide and every head in this project falls outside it somewhere — the
-observed curve is inside the 95% band at 22% of grid points for `availability` and 7% for
+**Blocks 5 and 6 report distances, not verdicts.** At n ≈ 10⁴ a posterior-predictive ribbon
+is one to two ECDF points wide and every head in this project falls outside it somewhere —
+the observed curve is inside the 95% band at 22% of grid points for `availability` and 7% for
 the composition. `band_distance` therefore reports the largest vertical gap from `q50`
 *and* the coverage share, in that order, because a page that renders in-or-out as a pass/fail
-will report that every head fails. See `docs/model-cards-plan.md`, "the predictive half".
+will report that every head fails. `quantile_distance` is the same rule one block down: a KS
+distance of the scaled residual from uniform is a *size*, and the same sample sizes make any
+uniformity test reject everything. See `docs/model-cards-plan.md`, "the predictive half".
 """
 
 from dataclasses import dataclass
@@ -72,6 +74,7 @@ CORRELATION_FILE = "model_card_feature_corr.csv"
 DENSITY_FILE = "model_card_feature_density.parquet"
 ECDF_FILE = "model_card_ecdf.csv"
 CALIBRATION_FILE = "model_card_calibration.csv"
+QUANTILE_FILE = "model_card_quantile.csv"
 SAMPLE_FILE = "model_card_sample.parquet"
 
 #: `make posteriors` writes this beside the pickles the dashboard may not open. It is a flat
@@ -599,15 +602,16 @@ def band_distance(ecdf: pd.DataFrame, head: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-# ── Block 6 · predicted against observed, and residuals ───────────────────────
+# ── Block 6 · predicted against observed, and the scaled quantile residual ────
 
-#: The four panels, as (artifact panel, split) — two panels each on two splits. Order is
-#: row-major: fitted-vs-observed on both splits, then residual-vs-fitted on both.
-PANELS = ("fitted_observed", "residual_fitted")
-PANEL_LABELS = {"fitted_observed": "Predicted against observed",
-                "residual_fitted": "Residual against predicted"}
-PANEL_AXES = {"fitted_observed": ("Predicted", "Observed"),
-              "residual_fitted": ("Predicted", "Observed − predicted")}
+#: The calibration artifact's panels, as (artifact panel, split). **One panel since
+#: 2026-08-10**: `residual_fitted` — the raw residual against the fitted value — was replaced
+#: by the scaled quantile residual below, because a negative binomial's residual on a season
+#: rebound total and a beta-binomial's on a conversion count are not on one scale, so the
+#: same-looking panel meant different things on four pages that share a renderer.
+PANELS = ("fitted_observed",)
+PANEL_LABELS = {"fitted_observed": "Predicted against observed"}
+PANEL_AXES = {"fitted_observed": ("Predicted", "Observed")}
 
 
 def calibration_panel(calibration: pd.DataFrame, head: str, panel: str,
@@ -623,7 +627,12 @@ def calibration_panel(calibration: pd.DataFrame, head: str, panel: str,
 
 
 def sample_points(sample: pd.DataFrame, head: str, split: str) -> pd.DataFrame:
-    """The bounded subsample that goes over the density, for texture."""
+    """The bounded subsample that goes over either density, for texture.
+
+    Four columns and two panels: `fitted`/`observed` for the calibration density, and
+    `u`/`predicted_rank` for the quantile residual. One subsample rather than two, taken at
+    the same thinned rows, so a point in one panel is the same row as the point in the other.
+    """
     part = sample[(sample["head"] == head) & (sample["split"] == split)]
     return part.reset_index(drop=True)
 
@@ -654,6 +663,122 @@ def calibration_summary(calibration: pd.DataFrame, head: str) -> pd.DataFrame:
                                                        weights=weight))),
             })
     return pd.DataFrame(rows)
+
+
+# ── Block 6 · the scaled quantile residual ────────────────────────────────────
+#
+# DHARMa's residual, cut by `make model-cards` from the same draws block 5's ribbon is:
+# each observation's randomized quantile inside its own replicate distribution, which is
+# uniform on [0, 1] iff the head is calibrated *whatever its likelihood is*. That property is
+# the whole reason it replaced the raw residual panel — one renderer serves four model pages,
+# and a negative binomial on a season total, a beta-binomial on a rate and a beta-geometric on
+# a spell length do not share a residual scale. They share this one.
+#
+# One difference from R's DHARMa, which the page states in a line: DHARMa simulates at the
+# fitted model's point estimate and these draws integrate over the posterior, so this is a
+# Bayesian PIT residual — the same reading, carrying parameter uncertainty rather than
+# conditioning it away.
+
+QQ_PANEL = "qq"
+RESIDUAL_PANEL = "residual"
+LINE_PANEL = "quantile"
+
+#: The levels `make model-cards` bins, and what a calibrated head puts them at. A page draws
+#: the empirical lines against these, so "flat at 0.25 / 0.5 / 0.75" is read off the axis
+#: rather than asserted in a caption.
+QUANTILE_LEVELS = (0.25, 0.5, 0.75)
+
+#: The build gate the page cites when it says the tiled distance is a reading of the head
+#: rather than of the draw budget. Mirrors `src/models/model_cards.KS_MC_TOL`, the way
+#: `POSTERIOR_WINDOW` mirrors that module's `WINDOW`; a test holds the two together.
+KS_MC_TOL = 0.02
+
+
+def _quantile_part(quantile: pd.DataFrame, head: str, panel: str,
+                   split: str) -> pd.DataFrame:
+    part = quantile[(quantile["head"] == head) & (quantile["panel"] == panel)
+                    & (quantile["split"] == split)]
+    return part.sort_values(["x_index", "y_index"]).reset_index(drop=True)
+
+
+def qq_panel(quantile: pd.DataFrame, head: str, split: str) -> pd.DataFrame:
+    """The QQ-uniform curve: expected quantile, observed order statistic, envelope.
+
+    Renamed off the artifact's generic `(x, y)` grammar rather than passed through, because
+    a figure builder taking `x`/`y`/`lo`/`hi` cannot say which is which and the axis titles
+    are the entire content of a QQ plot.
+    """
+    part = _quantile_part(quantile, head, QQ_PANEL, split)
+    if part.empty:
+        return part
+    return pd.DataFrame({
+        "expected": part["x"].to_numpy(dtype=float),
+        "observed": part["y"].to_numpy(dtype=float),
+        "lo": part["lo"].to_numpy(dtype=float),
+        "hi": part["hi"].to_numpy(dtype=float),
+        "n": part["n"].to_numpy(dtype=int),
+    })
+
+
+def residual_cells(quantile: pd.DataFrame, head: str, split: str) -> pd.DataFrame:
+    """The binned density of the scaled residual against rank-transformed predicted.
+
+    `x_center` / `y_center` are aliases of the artifact's own `x` / `y`, so this frame is the
+    same shape `calibration_panel` returns and one heatmap builder draws both.
+    """
+    part = _quantile_part(quantile, head, RESIDUAL_PANEL, split)
+    if part.empty:
+        return part
+    out = part.copy()
+    out["x_center"] = out["x"]
+    out["y_center"] = out["y"]
+    return out
+
+
+def quantile_lines(quantile: pd.DataFrame, head: str, split: str) -> pd.DataFrame:
+    """The 0.25 / 0.5 / 0.75 lines through that panel, one row per (bin, level).
+
+    Binned on the density's own x edges by the emitter, and a bin with too few rows for a
+    quartile is absent rather than drawn — so a line has a gap where the evidence does.
+    """
+    part = _quantile_part(quantile, head, LINE_PANEL, split)
+    return part.sort_values(["level", "x_index"]).reset_index(drop=True)
+
+
+def quantile_distance(quantile: pd.DataFrame, head: str) -> pd.DataFrame:
+    """The KS distance per split, and how far the three lines sit from their own levels.
+
+    **A distance, never a verdict**, which is the same rule `band_distance` carries one block
+    up and for the same arithmetic reason: at n ≈ 10⁴ a strict uniformity test rejects every
+    head in this project, so a page rendering in-or-out would report twenty failures. `ks` is
+    in the units of the residual's own CDF — 0.03 means the residual's distribution is never
+    more than 3 percentage points of probability from uniform.
+
+    `line_gap` is the second reading and the one that says *where* a miss is: the largest
+    absolute deviation of a binned quantile line from its nominal level. A head can sit close
+    to uniform overall and still drift across the predicted range, which is exactly what the
+    rank-transformed panel exists to show and what a single KS cannot.
+    """
+    rows = []
+    for split in SPLITS:
+        part = _quantile_part(quantile, head, QQ_PANEL, split)
+        if part.empty:
+            continue
+        lines = quantile_lines(quantile, head, split)
+        gap = float((lines["y"] - lines["level"]).abs().max()) if len(lines) else float("nan")
+        rows.append({
+            "split": split, "label": SPLIT_LABELS[split],
+            "ks": float(part["ks"].iloc[0]), "n": int(part["n"].iloc[0]),
+            "line_gap": gap, "n_bins": int(lines["x_index"].nunique()),
+        })
+    return pd.DataFrame(rows)
+
+
+def quantile_note(row: pd.Series) -> str:
+    """Why a head has no residual panel, or an empty string when it has one."""
+    if str(row.get("quantile_scope", "drawn")) == "drawn":
+        return ""
+    return text(row.get("quantile_reason"), "no reason recorded")
 
 
 # ── Block 7 · diagnostics ─────────────────────────────────────────────────────

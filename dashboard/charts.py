@@ -858,21 +858,25 @@ def _panel_range(cells: dict, panel: str) -> tuple[tuple[float, float],
 
 def fig_calibration(cells: dict, points: dict, th: dict, axis_labels: dict,
                     panel_labels: dict, title: str = "",
-                    height: int = 760) -> go.Figure:
-    """Four panels: predicted-vs-observed and residual-vs-predicted, on both splits.
+                    height: int = 420) -> go.Figure:
+    """Predicted against observed, train beside validation — one row per panel type.
 
     `cells` and `points` are keyed by `(panel, split)` — the binned density from
     `model_cards.calibration_panel()` and the bounded subsample from
     `model_cards.sample_points()`. The density carries the mass, which a 631,158-point
     scatter cannot; the sample carries the texture, which a 30 × 30 grid cannot.
 
-    Each panel gets its reference where one exists: the identity line on the
-    predicted-against-observed panels, zero on the residual ones. Without it a reader has
-    to infer the target line from the data, which is precisely the bias the panel is for.
+    Each panel gets the identity line as its reference. Without it a reader has to infer the
+    target line from the data, which is precisely the bias the panel is for.
+
+    **The grid is `len(panel_labels)` rows by two splits rather than a fixed 2 × 2.** It drew
+    four panels until 2026-08-10, when the residual half moved to `fig_quantile_residual`;
+    a hard-coded two rows would have left two empty cells and a figure twice as tall as its
+    content, which `AppTest` cannot see and a rendered PNG can.
     """
     keys = [(panel, split) for panel in panel_labels for split in ("train", "validation")]
     titles = [f"{panel_labels[panel]} · {split}" for panel, split in keys]
-    fig = make_subplots(rows=2, cols=2, subplot_titles=titles,
+    fig = make_subplots(rows=max(len(panel_labels), 1), cols=2, subplot_titles=titles,
                         vertical_spacing=0.11, horizontal_spacing=0.08)
     # One axis range per panel *type*, spanning the grid both splits share. Two reasons,
     # and the first was caught by rendering the figure rather than by reading the code: the
@@ -904,23 +908,19 @@ def fig_calibration(cells: dict, points: dict, th: dict, axis_labels: dict,
 
         sample = points.get(key)
         if sample is not None and len(sample):
-            y = (sample["observed"] if panel == "fitted_observed"
-                 else sample["residual"])
             fig.add_trace(go.Scatter(
-                x=sample["fitted"], y=y, mode="markers", showlegend=False,
+                x=sample["fitted"], y=sample["observed"], mode="markers",
+                showlegend=False,
                 marker=dict(size=OVERLAY_SIZE, color=_translucent(th["ink"],
                                                                  OVERLAY_ALPHA)),
                 hovertemplate=f"{x_label} %{{x:.3g}}<br>{y_label} %{{y:.3g}}"
                               "<extra>one row</extra>"), row=row, col=col)
 
         x_range, y_range = ranges[panel]
-        if panel == "fitted_observed":
-            span = [max(x_range[0], y_range[0]), min(x_range[1], y_range[1])]
-            fig.add_trace(go.Scatter(
-                x=span, y=span, mode="lines", showlegend=False, hoverinfo="skip",
-                line=dict(color=th["ink2"], width=1)), row=row, col=col)
-        else:
-            fig.add_hline(y=0.0, line=dict(color=th["ink2"], width=1), row=row, col=col)
+        span = [max(x_range[0], y_range[0]), min(x_range[1], y_range[1])]
+        fig.add_trace(go.Scatter(
+            x=span, y=span, mode="lines", showlegend=False, hoverinfo="skip",
+            line=dict(color=th["ink2"], width=1)), row=row, col=col)
         fig.update_xaxes(title=x_label, range=list(x_range), row=row, col=col)
         fig.update_yaxes(title=y_label, range=list(y_range), row=row, col=col)
 
@@ -928,6 +928,170 @@ def fig_calibration(cells: dict, points: dict, th: dict, axis_labels: dict,
         annotation.font = dict(family=FONT, size=12, color=th["ink2"])
     fig.update_layout(title=title)
     return apply_theme(fig, th, height, legend=False)
+
+
+#: Marker size on the QQ panel. Smaller than a scatter's, because 100 order statistics on a
+#: 400 px square is one point every 4 px and anything larger reads as a band.
+QQ_MARKER = 4
+
+
+def fig_qq(panels: dict, th: dict, title: str = "", height: int = 400) -> go.Figure:
+    """The scaled quantile residual against the uniform it should be, one panel per split.
+
+    `panels` maps a split label to `model_cards.qq_panel()`. **A correct model puts the
+    points on the diagonal whatever its likelihood is**, which is the property that lets one
+    renderer draw a negative binomial count head and a beta-geometric spell head on the same
+    axes — and the reason this panel replaced the raw residual one.
+
+    The envelope is the emitter's pointwise Beta band on each order statistic, drawn as a
+    ribbon rather than as two lines so it reads as background. Pointwise: about 5 of 100
+    points sit outside a 95% pointwise envelope under a *correct* model, so it is a sense of
+    scale beside the curve rather than a test, and the KS distance is tiled beside the figure
+    as the actual reading.
+    """
+    names = list(panels)
+    fig = make_subplots(rows=1, cols=max(len(names), 1), subplot_titles=names,
+                        shared_yaxes=True, horizontal_spacing=0.06)
+    ribbon = th["series"][0]
+
+    for col, name in enumerate(names, start=1):
+        part = panels[name]
+        first = col == 1
+        # `mode` is explicit on every trace here: plotly infers `lines+markers` for a trace
+        # of 20 points or fewer and takes the marker colour from its own default colorway,
+        # and the overtime-onset head's validation QQ is two points.
+        fig.add_trace(go.Scatter(
+            x=list(part["expected"]) + list(part["expected"])[::-1],
+            y=list(part["hi"]) + list(part["lo"])[::-1], mode="lines", fill="toself",
+            fillcolor=_translucent(ribbon, 0.20), line=dict(width=0), hoverinfo="skip",
+            name="95% pointwise envelope", legendgroup="band", showlegend=first),
+            row=1, col=col)
+        fig.add_trace(go.Scatter(
+            x=[0, 1], y=[0, 1], mode="lines", name="uniform", legendgroup="uniform",
+            showlegend=first, hoverinfo="skip",
+            line=dict(color=th["ink2"], width=1, dash="dash")), row=1, col=col)
+        fig.add_trace(go.Scatter(
+            x=part["expected"], y=part["observed"], mode="markers",
+            name="observed residual", legendgroup="observed", showlegend=first,
+            marker=dict(size=QQ_MARKER, color=th["ink"]),
+            hovertemplate="expected %{x:.3f}<br>observed %{y:.3f}<extra></extra>"),
+            row=1, col=col)
+
+    for annotation in fig.layout.annotations:
+        annotation.font = dict(family=FONT, size=12, color=th["ink2"])
+    fig.update_xaxes(title="expected uniform quantile", range=[-0.02, 1.02])
+    fig.update_yaxes(title="scaled residual", range=[-0.02, 1.02], col=1)
+    fig.update_layout(title=title)
+    return apply_theme(fig, th, height)
+
+
+def _excess_heatmap(cells: pd.DataFrame, th: dict, colorbar: bool) -> go.Heatmap:
+    """A binned density coloured by its **departure from an even spread**, not by its mass.
+
+    The sequential ramp every other density here uses is the wrong encoding for this one,
+    and rendering it is what showed why: a calibrated scaled residual against a rank
+    transform fills the unit square *evenly by construction*, so a share-of-the-densest-cell
+    ramp paints a wall of near-equal blue in which nothing is legible and Poisson noise
+    between cells reads as structure. What the panel is for is the departure — a genuinely
+    signed quantity, which takes the diverging scale with its neutral midpoint at "exactly
+    its share", the same rule a correlation heatmap follows.
+
+    `z` is `density x cells - 1`: 0 where a cell holds exactly its share, +1 where it holds
+    double, clamped at ±1 so one dense corner cannot flatten the rest. Empty cells stay NaN
+    and paint nothing, because a zero here would read as "an even spread" rather than as
+    "no rows landed".
+    """
+    x_values = np.sort(cells["x_center"].unique())
+    y_values = np.sort(cells["y_center"].unique())
+    x_index = {v: i for i, v in enumerate(x_values)}
+    y_index = {v: i for i, v in enumerate(y_values)}
+    share = np.full((len(y_values), len(x_values)), np.nan)
+    for x, y, value in zip(cells["x_center"], cells["y_center"], cells["density"]):
+        share[y_index[y], x_index[x]] = value
+    n_cells = len(x_values) * len(y_values)
+    return go.Heatmap(
+        z=share * n_cells - 1.0, x=x_values, y=y_values, customdata=share,
+        colorscale=th["diverging"], zmin=-1.0, zmax=1.0, zmid=0.0,
+        hoverongaps=False, showscale=colorbar,
+        colorbar=dict(title=dict(text="against an\neven spread",
+                                 font=dict(color=th["ink2"], size=11)),
+                      tickformat="+.0%", tickfont=dict(color=th["muted"], size=10),
+                      thickness=12, outlinewidth=0, len=0.85),
+        hovertemplate="rank of predicted %{x:.2f}<br>scaled residual %{y:.2f}"
+                      "<br>%{customdata:.2%} of this panel's rows, %{z:+.0%} against an "
+                      "even spread<extra></extra>")
+
+
+def fig_quantile_residual(cells: dict, lines: dict, points: dict, th: dict,
+                          levels: tuple[float, ...], title: str = "",
+                          height: int = 420) -> go.Figure:
+    """The scaled residual against rank-transformed predicted, one panel per split.
+
+    Three objects on one panel and each answers a different question: the binned density
+    says where the rows sit *against an even spread*, the bounded subsample carries the
+    texture, and the three quantile lines carry the number — **flat at 0.25 / 0.5 / 0.75 iff
+    calibrated**, drawn against dashed references at those levels so "flat" is read off the
+    axis rather than judged by eye.
+
+    The x axis is a rank transform, which is what makes this panel comparable between a count
+    head on a season total and a conversion head on a rate: the predicted values themselves
+    share no axis and their ranks do. Both axes are [0, 1] by construction, so the two splits
+    are on one grid without needing to be put there.
+
+    **The empirical lines are drawn in `ink` rather than in a series colour**, which is a
+    legibility fix rather than a preference: over a diverging field a mid-scale line is
+    invisible at one end of it, and these three lines are the panel's quantitative content.
+    All three share one colour and all three references another — `theme.ALL_PAIRS_CAP` is 3
+    — and each line's level is legible from the reference directly under it and from the
+    hover, so nothing here is reachable by colour alone.
+    """
+    names = list(cells)
+    fig = make_subplots(rows=1, cols=max(len(names), 1), subplot_titles=names,
+                        shared_yaxes=True, horizontal_spacing=0.06)
+
+    for col, name in enumerate(names, start=1):
+        first = col == 1
+        grid = cells[name]
+        if grid is not None and len(grid):
+            fig.add_trace(_excess_heatmap(grid, th, colorbar=first), row=1, col=col)
+        sample = points.get(name)
+        if sample is not None and len(sample):
+            fig.add_trace(go.Scatter(
+                x=sample["predicted_rank"], y=sample["u"], mode="markers",
+                showlegend=False,
+                marker=dict(size=OVERLAY_SIZE,
+                            color=_translucent(th["ink"], OVERLAY_ALPHA)),
+                hovertemplate="rank of predicted %{x:.3f}<br>scaled residual %{y:.3f}"
+                              "<extra>one row</extra>"), row=1, col=col)
+
+        for level in levels:
+            fig.add_trace(go.Scatter(
+                x=[0, 1], y=[level, level], mode="lines", hoverinfo="skip",
+                name="expected level", legendgroup="expected",
+                showlegend=first and level == levels[0],
+                line=dict(color=th["ink2"], width=1, dash="dash")), row=1, col=col)
+        line = lines.get(name)
+        if line is not None and len(line):
+            for index, level in enumerate(levels):
+                part = line[line["level"] == level]
+                if part.empty:
+                    continue
+                fig.add_trace(go.Scatter(
+                    x=part["x"], y=part["y"], mode="lines+markers",
+                    name="empirical quantile", legendgroup="empirical",
+                    showlegend=first and index == 0,
+                    line=dict(color=th["ink"], width=2.5),
+                    marker=dict(size=5, color=th["ink"]),
+                    customdata=[level] * len(part),
+                    hovertemplate="rank of predicted %{x:.2f}<br>%{customdata:.0%} "
+                                  "quantile %{y:.3f}<extra></extra>"), row=1, col=col)
+
+    for annotation in fig.layout.annotations:
+        annotation.font = dict(family=FONT, size=12, color=th["ink2"])
+    fig.update_xaxes(title="predicted, rank-transformed", range=[0, 1])
+    fig.update_yaxes(title="scaled residual", range=[0, 1], col=1)
+    fig.update_layout(title=title)
+    return apply_theme(fig, th, height)
 
 
 # ── The two figures a model page owns for itself ──────────────────────────────

@@ -5311,6 +5311,53 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("dashboard",),
     ),
     Decision(
+        id="quantile-residuals-replace-the-raw-residual-panel",
+        topic="problem",
+        claim="Block 6's residual-against-predicted panel is a **scaled quantile residual** "
+              "— DHARMa's, computed by `stan_utils.pit_from_samples` and scored by "
+              "`ks_uniform`, both used by import. The raw residual panel is **removed** "
+              "from the emitter rather than left unread, so `model_card_calibration.csv` "
+              "carries one panel and the contract got smaller: 8.7 MB → 7.5 MB.",
+        because="Four model pages are one renderer, and a raw residual means a different "
+                "thing on each of them: a negative binomial's on a season rebound total, a "
+                "beta-binomial's on a conversion count and a beta-geometric's on a spell "
+                "length share no scale, so the same-looking panel was four different "
+                "pictures. A randomized quantile residual is uniform iff calibrated "
+                "**whatever the likelihood is**, which is exactly what one renderer over "
+                "twenty heads needs — and the randomization is required rather than "
+                "optional here, because every response on these pages is discrete and the "
+                "plain quantile of a discrete predictive is not uniform even under a "
+                "perfect model. It is cut from the SAME draws as the ribbon above it, so a "
+                "page cannot show a QQ and a ribbon describing two different predictives. "
+                "**The KS distance is reported and never thresholded**, the rule "
+                "`band_distance` already carries one block up: at n ~ 10^4 a uniformity "
+                "test rejects every head in the project. The one bar is on the draw budget "
+                "— `ks_stability` re-reads the distance on two interleaved halves of the "
+                "draws, worst gated 0.0105 against 0.02 — because at 200 draws a row with "
+                "no replicate at its observed value carries a residual quantized to 1/200, "
+                "which is four rows in five on `minutes`. Measured at 100 / 200 / 400 / "
+                "800 draws the KS moves by <= 0.001, and it moves *upward*, so the shipped "
+                "budget understates the miss rather than inventing one. **Two panels ship "
+                "rather than one because the second finds what the first cannot**: "
+                "`minutes` is nearly uniform overall at KS 0.0302 and its quartile lines "
+                "sit 0.29 off their own levels across the predicted range. The composition "
+                "was expected to be out of scope and is not — `u` is a function of the "
+                "draws and the observed, its `predict_samples` draws minutes, and "
+                "`stan_composition.score_samples` already computes this exact statistic; "
+                "`predictive_check` governs the fitted value and does not decide it. "
+                "`QUANTILE_OUT_OF_SCOPE` exists anyway, empty and tested, because a wrong "
+                "panel is worse than an absent one and an absent one with no reason beside "
+                "it is worse than both.",
+        status="built",
+        reproduce="make model-cards → outputs/predictions/model_card_quantile.csv, "
+                  "outputs/predictions/model_card_index.csv, "
+                  "outputs/predictions/model_card_sample.parquet",
+        source="docs/dashboard-revision-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard", "provenance"),
+    ),
+    Decision(
         id="model-card-density-is-parquet-not-csv",
         topic="problem",
         claim="The joint-density artifact ships as **parquet**, which is the second "

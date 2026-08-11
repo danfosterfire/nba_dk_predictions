@@ -53,7 +53,7 @@ documentation again. All are from `dashboard/README.md` and `docs/dashboard-plan
 |---|---|---|---|---|
 | 1 | [Appearance reaches the whole page](#step-1--the-appearance-mode-reaches-the-whole-page) ✅ | 4 | none | global chrome; every later step is then verified once, under the real theme |
 | 2 | [The availability page says which head ships](#step-2--the-availability-page-says-which-head-ships) ✅ | 2 | one column on `model_card_index.csv` | small, self-contained, and it corrects a claim now on the page |
-| 3 | [Scaled quantile residuals](#step-3--scaled-quantile-residuals-in-block-6) | 3 | one artifact from the existing predictive | touches all four model pages through one renderer |
+| 3 | [Scaled quantile residuals](#step-3--scaled-quantile-residuals-in-block-6) ✅ | 3 | one artifact from the existing predictive | touches all four model pages through one renderer |
 | 4 | [dk_pts at the tournament round](#step-4--dk_pts-at-the-tournament-round-the-new-page) | 5 | an emitter, plus training-season tensors | the large step; it also adds a page, which moves the route table |
 | 5 | [The Overview as a paper](#step-5--the-overview-rewritten-as-a-paper) | 1 | none | last, because step 4 gives it a ninth route — the same reason it was built last the first time |
 
@@ -210,7 +210,9 @@ either way.
 ## Step 3 · Scaled quantile residuals in block 6
 
 **User item 3 — "how feasible is this?" Answer: high, and most of it is already in the
-repo.** This is an artifact plus two figures, not a method.
+repo. ✅ Shipped 2026-08-10** — see
+[Step 3, as built](#step-3-as-built--the-residual-that-four-model-pages-can-share). This is
+an artifact plus two figures, not a method.
 
 ### Why it is nearly free
 
@@ -650,6 +652,180 @@ entry naming its own evidence rather than a count being cleared for its own sake
 `a-head-declares-its-role-in-the-shipped-chain`, `built`, topic `problem`, tagged
 `dashboard` / `provenance` / `simulations`. No existing entry is withdrawn: nothing here
 reverses a decision, it names one that was never written down.
+
+---
+
+## Step 3, as built — the residual that four model pages can share
+
+**2026-08-10.** Built as specified and the step's own estimate held: the method was already
+in the repo, and the work was an artifact, two figures and five ways of being quietly wrong.
+`stan_utils.pit_from_samples` and `ks_uniform` are used **by import and unmodified**, so
+there is no second implementation of either — the `compute_dk_pts` convention.
+
+### What shipped
+
+A ninth artifact, `model_card_quantile.csv` — **8,768 rows, 724 KB**, `head × split × panel ×
+row` over three panels (`qq`, `residual`, `quantile`), with `ks` and `n` repeated on every row
+so a page gets the panels and the number above them from one read. Seven new columns on
+`model_card_index.csv` (44 → 48 → **55**): `quantile_scope`, `quantile_reason`,
+`quantile_ks_train`, `quantile_ks_validation`, `quantile_ks_mc`, `quantile_ks_gated`,
+`quantile_weighting`. Two new columns on `model_card_sample.parquet` — `u` and
+`predicted_rank`, at the same thinned rows as `fitted`/`observed`, so a point in one block-6
+panel is the same player-season as the point in the other.
+
+**It replaced rather than extended, which is the half worth stating.** The user asked to
+replace residual-against-predicted, so `model_card_calibration.csv`'s `residual_fitted` panel
+is *gone* from the emitter and not merely undrawn — an artifact half no page reads is drift,
+and this repo has an orphan check for exactly that one level up. `PANELS` is now a one-value
+vocabulary, `_panel_values` raises by name pointing at the replacement, `sample.residual` is
+gone, and `fig_calibration` derives its subplot rows from the panel count rather than
+hard-coding 2 × 2. The contract got **smaller**: 8.7 MB → **7.5 MB**, because the panel
+removed was 1.5 MB and the one added is 724 KB.
+
+The argument for the swap is the one the shared renderer forces. Four model pages are one
+`views/model_page.py`, and a raw residual means a different thing on each — a negative
+binomial's on a season rebound total, a beta-binomial's on a conversion count and a
+beta-geometric's on a spell length share no scale, so the same-looking panel was four
+different pictures. A scaled quantile residual is uniform iff calibrated **whatever the
+likelihood**, which is exactly what one renderer over twenty heads needs.
+
+### The five things that were easy to get wrong
+
+Each got a mechanism, and two of them changed what shipped.
+
+**1 · The seed.** `quantile_seed(head, split)` is `_seed` namespaced with `/quantile`:
+deterministic across rebuilds so a reader cannot mistake an RNG for a refit, and a *different*
+stream from the draws it is computed from.
+
+**2 · The 1/200 quantization of `u`, which is real and costs nothing readable.** A row with no
+replicate landing exactly on its observed value carries `u = below`, a multiple of 1/200 —
+and that is most rows on some heads: the share with any tie is 0.96 on `gp_duration` and
+**0.18** on `minutes`, so four minutes rows in five are un-randomized. Measured at 100 / 200 /
+400 / 800 draws rather than argued: the KS moves by **≤ 0.001** where it moves at all
+(`gp_duration` train 0.0111 → 0.0081 → 0.0070 → 0.0070, `minutes` train 0.0317 → 0.0302 →
+0.0306 → 0.0309), and the drift has a known direction — extra noise in `below` blurs `u`
+*toward* uniform, so a small budget understates the miss and the reading converges upward
+(`composition` train 0.0472 / 0.0511 / 0.0533). Against distances of 0.03–0.15 that is under
+the third digit. **So the residual keeps the shipped 200 draws**, which also keeps the rule
+the predictive half rests on: ribbon, density and residual are cut from one draw per head per
+split, and a separate budget would let a page show a ribbon and a QQ describing two different
+predictives. What ships as the bar is `ks_stability` — the KS read on two interleaved halves
+of the draws, `band_stability`'s device one statistic over, at `KS_MC_TOL = 0.02` and gated on
+the same `BAND_MIN_ROWS = 500`. Worst gated reading **0.0105** (`gp_entry`, validation);
+`game_length_ot` reads 0.0400 on a two-cell validation split and is reported rather than
+gated, exactly as its ribbon is.
+
+**3 · The composition is in scope, and the step's premise for doubting it was wrong.** The
+suspicion was that `response = eta` and `predictive_check = none` rule out a quantile
+residual. They do not: `u` is a function of the **draws** and the observed, and
+`StanComposition.predict_samples` draws minutes in a team-game — the same column `RESPONSES`
+declares as its observable and the same draws the ribbon is already cut from.
+`predictive_check` governs the *fitted* value, which is what has no scale. The decisive
+evidence was one level down: `stan_composition.score_samples` already computes
+`ks_uniform(pit_from_samples(samples, y, seed))` as the head's **own** calibration statistic,
+so the card reads a quantity the head reports. The mechanism the step asked for exists anyway
+— `QUANTILE_OUT_OF_SCOPE` maps a head to a reason, emitted as `quantile_scope` /
+`quantile_reason`, and the page prints the reason instead of rendering nothing — and it is
+**empty**, with a test that exercises the branch. That is the third of the round's premises to
+turn out differently than the request assumed, and like the other two it came out of reading
+the code rather than the docs.
+
+**4 · The weight enters by expansion, before the draw.** `predictive_frame` already expands a
+collapsed-cell frame by its multiplicity, so the residual is one row per spell and the KS is
+unweighted over spells; `quantile_weighting` says `expanded` for `gp_duration` and
+`game_length_depth` and `unweighted` for the other eighteen. Weighting one residual per cell
+afterwards would have put 1,861 overtime games' worth of mass on four `u` values.
+
+**5 · The KS is reported and never thresholded.** No bar is applied to it in the emitter, in
+the pure layer or on the page; the one bar in the quantile half is on the *draw budget*. The
+distinction is stated in the build log, in the caption and in a test that asserts a head at
+0.15 ships.
+
+### What the browser and the PNG caught that nothing else could
+
+**The first drawing of the residual panel was a wall of blue.** Both of its axes are uniform
+by construction — a rank transform on x, a PIT on y — so a share-of-the-densest-cell
+sequential ramp, the encoding every other density in this contract uses, painted 400 near-equal
+cells in which the quartile lines were invisible and Poisson noise read as structure. Two
+fixes, both from looking at the rendered figure:
+
+- the density is now the **departure from an even spread** on the diverging scale with its
+  neutral midpoint (`_excess_heatmap`, `density × cells − 1` clamped to ±1), which makes the
+  background the panel's claim rather than decoration;
+- the grid went **20 × 20 → 10 × 10**, because the resolution has to be set by the smallest
+  split it will be read on: a 742-row validation split puts 1.9 rows in each of 400 cells and
+  7.4 in each of 100, and the quantile lines below get 74 rows a bin rather than 37.
+
+And the empirical quantile lines are drawn in `ink` rather than a series colour, since a
+mid-scale colour disappears at one end of a diverging field.
+
+### What the panels show, which is why both of them ship
+
+Not claims this round is making — nothing had drawn these residuals before — but the reason
+the second panel exists rather than only the QQ.
+
+KS distances span **0.0080** (`gp_duration` train) to **0.33** (`game_length_ot` validation,
+which is two rows and therefore its frame rather than its fit). Among gated heads the widest
+are `fg2m_given_fg2a` (0.0315 train / **0.1542** validation) and `gp_onset` (0.0320 /
+**0.1491**).
+
+**The rank-transformed panel finds what the KS cannot.** `minutes` is nearly uniform overall
+at KS 0.0302 on train, and its quartile lines sit **0.29** off their own levels: in the
+lowest-predicted decile they read 0.08 / 0.21 / 0.46 against 0.25 / 0.50 / 0.75, so the head
+over-predicts the players it predicts fewest minutes for, and the median crosses back above
+0.5 through the middle of the range. `gp_onset` is the cleanest case of the same shape — a
+monotone slide from ~0.9 to ~0.2 across the predicted range, i.e. under-predicting the low
+group and over-predicting the high one, which is a predictive that is too *spread out* rather
+than one that is off centre. That head is already flagged in `docs/model-cards-plan.md` for
+over-predicting its own observable at the row mean; this is the same finding from a second
+direction, and it is logged there rather than chased here.
+
+### Verification, as run
+
+**The build gate.** `make model-cards` green — 20 heads, 55 index columns, worst recipe design
+error 0.0e+00 against 1e-09, worst drawn-mean gap +1.20% against 5%, worst ribbon half-sample
+0.0145 against 0.02, worst KS half-sample 0.0105 against 0.02, 13 s. The run now prints the
+KS per split per head with "a DISTANCE, never a pass/fail" beside it, so the reading is in the
+build log and not only in the caption.
+
+**`AppTest`**, both appearance modes × all nine pages: **0 exceptions in 18 runs**, identical
+element counts in the two modes. A second pass drove the head selector on all four model
+pages through **all twenty heads** and asserted two KS tiles, the line-gap tile and the
+quantile heading on each, with no literal `undefined` or `nan`: 20/20 clean.
+
+**Kaleido**, 30 PNGs — both new figures and the reshaped calibration figure, in both modes,
+over five heads chosen for their edges: the widest-n head, the composition, the worst KS,
+`game_length_ot` (26 train rows and 2 validation) and `gp_duration` (weight-expanded). This is
+the layer that caught the wall of blue, and it is also what confirmed the degenerate cases
+render honestly rather than raising — a two-point QQ under a very wide envelope, and a
+residual panel with no quantile lines at all because no bin clears `QUANTILE_MIN_ROWS`.
+
+**The live page in Chrome**, 1440×900, both appearance modes as `prefers-color-scheme`,
+driving the nav link rather than `page.goto`. Availability and Minutes: two KS tiles reading
+`0.028` / `0.093` and `0.030` / `0.075`, the line-gap tile reading `0.062 / 0.181` and
+`0.290 / 0.310`, both new axis titles present, plot surfaces `rgb(252, 252, 251)` and
+`rgb(26, 26, 25)` as before, and no `undefined` or `nan` anywhere. 0 failures.
+
+**Tests.** 15 new in `tests/test_model_cards.py` (95 total) and 12 new or rewritten in
+`tests/test_dashboard.py`, including a positive and a negative control on the residual itself
+— a Poisson predictive against its own law lands on the diagonal at KS < 0.03, and against an
+observed shifted by 4 it leaves at KS > 0.2 — and a third measuring the randomization: the
+*non*-randomized quantile of the same discrete predictive is more than 3× further from
+uniform, which is DHARMa's own reason for randomizing, checked rather than quoted.
+`.venv/bin/python -m pytest tests/` passes, 1,437 tests.
+
+**`make dashboard-audit`: 0 orphans in, 0 out** — the new artifact is named in
+`dashboard/model_cards.py`, so it is credited as read. `make docs-audit` re-run green, 0
+disagreements.
+
+### Registry
+
+`quantile-residuals-replace-the-raw-residual-panel`, `built`, topic `problem`, tagged
+`dashboard` / `provenance`. Nothing is withdrawn:
+`model-card-predictive-is-the-heads-own-draw` and
+`model-card-ribbon-budget-is-measured-not-assumed` are both untouched and are the two rules
+the shared draw and the re-measured budget preserve — this entry extends the second with the
+KS's own half-sample check rather than replacing it.
 
 ---
 
