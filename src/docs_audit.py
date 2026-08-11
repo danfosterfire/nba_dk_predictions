@@ -1074,22 +1074,39 @@ def _availability() -> list[Claim]:
     C += _minutes_pre_lock_claims(AVAIL)
 
     # ── the Stan availability port ────────────────────────────────────────────
-    ports = [("beta_binomial", "10.0057", "0.3736", "0.0939", "0.2806"),
-             ("stan_plug_in", "10.0063", "0.3736", "0.0939", "0.2808"),
-             ("stan_posterior", "10.0071", "0.3736", "0.0939", "0.2808")]
+    # Four arms since 2026-08-11, not three: the head fits a 2012-13 window with a
+    # role-graded rho, so BOTH point MLEs are refitted on the windowed rows and the
+    # role-graded one is scored beside them. Its two CRPS figures also reproduce
+    # `availability_window.csv`'s selected arms, which is a third-party check on the port.
+    ports = [("beta_binomial", "9.8444", "0.3889", "0.0632", "0.2627"),
+             ("beta_binomial_role_rho", "9.8247", "0.3889", "0.0588", "0.2627"),
+             ("stan_plug_in", "9.8136", "0.3894", "0.0679", "0.2595"),
+             ("stan_posterior", "9.8155", "0.3893", "0.0690", "0.2595")]
     for model, crps, r2, ks, rho in ports:
         for quoted, name in [(crps, "crps_games"), (r2, "r2_gp_share"),
                              (ks, "pit_ks_distance"), (rho, "dispersion_rho")]:
             add(_c(quoted, STAN_AV_M,
                    lambda m=model, n=name: metric(STAN_AV_M, m, n),
                    f"stan {model} {name}"))
-    add(_c("1.0019", STAN_AV_D, lambda: cell(STAN_AV_D, "max_rhat"), "stan R-hat"))
-    add(_c("2,314", STAN_AV_D, lambda: cell(STAN_AV_D, "min_ess_bulk"), "stan min ESS"))
-    add(_c("196", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
+    add(_c("1.0050", STAN_AV_D, lambda: cell(STAN_AV_D, "max_rhat"), "stan R-hat"))
+    add(_c("2,382", STAN_AV_D, lambda: cell(STAN_AV_D, "min_ess_bulk"), "stan min ESS"))
+    add(_c("94", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
            "stan wall clock"))
-    add(_c("223", STAN_AV_B,
+    add(_c("297", STAN_AV_B,
            lambda: cell(STAN_AV_B, "shared_beta_sd", n_players=883),
            "shared-beta sd, full board"))
+    # The full-window, shared-rho head, kept beside the windowed one it became. Presence
+    # only: the point of keeping them is that the window is a trade and the board term is
+    # the side of it that got worse.
+    for quoted, label in [("10.0057", "MLE CRPS"), ("10.0063", "plug-in CRPS"),
+                          ("10.0071", "posterior CRPS"), ("0.3736", "R2"),
+                          ("0.0939", "PIT KS"), ("0.2806", "MLE rho"),
+                          ("0.2808", "stan rho"), ("0.00335", "coefficient gap"),
+                          ("0.085", "largest gap in sds"), ("1.0019", "R-hat"),
+                          ("2,314", "min ESS"), ("196", "wall clock"),
+                          ("222.8", "board shared-beta sd"), ("6.7%", "board inflation")]:
+        add(_c(quoted, STAN_AV_M, lambda: float("nan"),
+               f"pre-window full-sample availability head: {label}", historical=True))
     # The held-out port check, preserved beside the validation one it became. Presence-only:
     # these are the pre-lock figures, and the point of keeping them is that a reversal is the
     # most useful thing in this file.
@@ -2149,27 +2166,31 @@ def _predictions() -> list[Claim]:
             f"poisson {head} NLL gain")
 
     # ── the built Stan block (negative binomial) ──────────────────────────────
-    add("10.0063", STAN_AV_M, lambda: metric(STAN_AV_M, "stan_plug_in", "crps_games"),
+    add("9.8136", STAN_AV_M, lambda: metric(STAN_AV_M, "stan_plug_in", "crps_games"),
         "stan availability CRPS")
-    add("10.0057", STAN_AV_M,
+    add("9.8444", STAN_AV_M,
         lambda: metric(STAN_AV_M, "beta_binomial", "crps_games"), "MLE CRPS")
-    add("0.2808", STAN_AV_M,
+    add("0.2595", STAN_AV_M,
         lambda: metric(STAN_AV_M, "stan_plug_in", "dispersion_rho"), "stan rho")
-    add("0.2806", STAN_AV_M,
+    add("0.2627", STAN_AV_M,
         lambda: metric(STAN_AV_M, "beta_binomial", "dispersion_rho"), "MLE rho")
-    add("1.0019", STAN_AV_D, lambda: cell(STAN_AV_D, "max_rhat"), "stan R-hat")
-    add("196", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
+    add("1.0050", STAN_AV_D, lambda: cell(STAN_AV_D, "max_rhat"), "stan R-hat")
+    add("94", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
         "stan wall clock")
-    add("0.2%", STAN_AV_B,
+    add("0.5%", STAN_AV_B,
         lambda: cell(STAN_AV_B, "inflation", n_players=15) - 1.0,
         "board inflation, 15 players")
-    add("6.7%", STAN_AV_B,
+    add("12.3%", STAN_AV_B,
         lambda: cell(STAN_AV_B, "inflation", n_players=883) - 1.0,
         "board inflation, all 883")
     for quoted in ("10.7947", "10.7952", "0.2759", "0.2757", "1.0025", "254",
                    "6.4%", "911"):
         add(quoted, STAN_AV_M, lambda: float("nan"),
             f"pre-lock held-out availability port: {quoted}", historical=True)
+    # The full-window, shared-rho head this replaced on 2026-08-11.
+    for quoted in ("10.0063", "10.0057", "0.2808", "0.2806", "1.0019", "196", "6.7%"):
+        add(quoted, STAN_AV_M, lambda: float("nan"),
+            f"pre-window full-sample availability head: {quoted}", historical=True)
     add("−17.5", STAN_MIN_M,
         lambda: (cell(STAN_MIN_M, "val_crps", variant="logit_own_spline")
                  - cell(STAN_MIN_M, "val_crps", variant="carry_forward")),
@@ -3362,21 +3383,21 @@ def _established_facts() -> list[Claim]:
         "gate 0 sampler minutes")
 
     # the availability port and the board decomposition
-    for model, crps, rho in [("beta_binomial", "10.0057", "0.2806"),
-                             ("stan_plug_in", "10.0063", "0.2808"),
-                             ("stan_posterior", "10.0071", "0.2808")]:
+    for model, crps, rho in [("beta_binomial", "9.8444", "0.2627"),
+                             ("stan_plug_in", "9.8136", "0.2595"),
+                             ("stan_posterior", "9.8155", "0.2595")]:
         add(crps, STAN_AV_M, lambda m=model: metric(STAN_AV_M, m, "crps_games"),
             f"stan {model} CRPS")
         add(rho, STAN_AV_M,
             lambda m=model: metric(STAN_AV_M, m, "dispersion_rho"),
             f"stan {model} rho")
-    add("1.0019", STAN_AV_D, lambda: cell(STAN_AV_D, "max_rhat"), "stan R-hat")
-    add("2,314", STAN_AV_D, lambda: cell(STAN_AV_D, "min_ess_bulk"), "stan min ESS")
-    add("196", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
+    add("1.0050", STAN_AV_D, lambda: cell(STAN_AV_D, "max_rhat"), "stan R-hat")
+    add("2,382", STAN_AV_D, lambda: cell(STAN_AV_D, "min_ess_bulk"), "stan min ESS")
+    add("94", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
         "stan wall clock")
-    board_rows = [(12, "69.9", "4.2", "0.2%"), (15, "78.0", "5.0", "0.2%"),
-                  (30, "110.3", "8.8", "0.3%"), (150, "246.4", "39.1", "1.2%"),
-                  (883, "597.8", "222.8", "6.7%")]
+    board_rows = [(12, "68.0", "6.1", "0.4%"), (15, "75.8", "7.2", "0.5%"),
+                  (30, "107.2", "12.3", "0.7%"), (150, "239.4", "52.5", "2.4%"),
+                  (883, "581.4", "297.2", "12.3%")]
     for n, indep, shared, infl in board_rows:
         add(indep, STAN_AV_B,
             lambda k=n: cell(STAN_AV_B, "independent_sd", n_players=k),
@@ -3392,6 +3413,13 @@ def _established_facts() -> list[Claim]:
                    "219.1", "6.4%", "911"):
         add(quoted, STAN_AV_M, lambda: float("nan"),
             f"pre-lock held-out availability port: {quoted}", historical=True)
+    # The full-window, shared-rho head this replaced on 2026-08-11. Its board row is the
+    # side of the window trade that got worse, so it is kept rather than dropped.
+    for quoted in ("10.0063", "10.0071", "10.0057", "0.2806", "0.2808", "0.00335",
+                   "0.085", "1.0019", "2,314", "196", "69.9", "4.2", "597.8",
+                   "222.8", "6.7%"):
+        add(quoted, STAN_AV_M, lambda: float("nan"),
+            f"pre-window full-sample availability head: {quoted}", historical=True)
 
     # the minutes head — validation only since the 2026-08-06 re-run under the lock
     minutes = [("carry_forward", "161.45", "0.8536", "213.13", "+23.91"),
@@ -4349,7 +4377,7 @@ def _readme() -> list[Claim]:
     add("10.4%", TERM_SPREAD,
         lambda: term_spread(15, "year") - 1.0,
         "year-effect roster spread at 15 players")
-    add("0.2%", STAN_AV_B,
+    add("0.5%", STAN_AV_B,
         lambda: cell(STAN_AV_B, "inflation", n_players=15) - 1.0,
         "shared-beta roster spread at 15 players")
 

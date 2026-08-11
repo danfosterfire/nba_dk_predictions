@@ -20,7 +20,7 @@ from src.models.season_terms import (SEASON_TREND, _finalize, add_role_terms, ad
                                      apply_override, availability_arms,
                                      coverage_from_pmf, coverage_from_samples,
                                      oracle_override, realized_season_dk, season_arms)
-from src.models.stan_utils import YearTerm, year_block
+from src.models.stan_utils import YearTerm, rho_block, year_block
 
 
 def _has_cmdstan() -> bool:
@@ -468,8 +468,12 @@ def test_S_zero_nests_exactly_inside_the_year_effect_model(name):
     if name == "betabinomial_glm":
         data = {"N": N, "K": K, "X": X, "n": np.full(N, 30).tolist(),
                 "y": rng.binomial(30, 0.5, N).tolist(),
-                "beta_scale": 1.0, "intercept_scale": 5.0}
-        pars = {"alpha": 0.3, "beta": [0.5, -0.2], "rho": 0.12}
+                "beta_scale": 1.0, "intercept_scale": 5.0,
+                # The shared-dispersion block, the same way `year_block()` gives the
+                # no-year-effect one: this test is about the year term, so the dispersion
+                # is held at the arm every head but availability fits.
+                **rho_block(N)}
+        pars = {"alpha": 0.3, "beta": [0.5, -0.2], "rho": [0.12]}
     else:
         data = {"N": N, "K": K, "X": X, "y": rng.poisson(4.0, N).tolist(),
                 "exposure": np.full(N, 100.0).tolist(), "beta_scale": 1.0,

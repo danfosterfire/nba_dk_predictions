@@ -128,8 +128,9 @@ way `docs/availability-plan.md` was.
 ## Status: what exists, and what (b) actually is
 
 `src/models/stan_availability.py` + `src/stan/betabinomial_glm.stan` ship the season-level
-beta-binomial posterior, verified against the point MLE (21/21 coefficients inside the 95%
-interval, 254 s, 0 divergences, held-out CRPS **10.795** games on 911 rows).
+beta-binomial posterior, verified against the point MLE (24/24 terms inside the 95%
+interval, 94 s, 0 divergences, validation CRPS **9.8155** games on 883 rows; the recorded
+21/21, 254 s and held-out **10.795** on 911 rows are the pre-lock, pre-window readings).
 
 **The spell simulator does not exist — not one line.** An exhaustive search for
 `spell|hazard|markov|onset|duration|simulator` across `src/`, `configs/`, `Makefile` and

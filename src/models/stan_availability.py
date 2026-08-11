@@ -42,6 +42,31 @@ Measured on this design the two nearly cancel (+0.046 against -0.082 games^2, ve
 against the pmf to 1.3e-10). The marginal width is a red herring; see
 `board_correlation` for the quantity that is not.
 
+## What ships, since 2026-08-11: a 2012-13 fitting window and a role-graded dispersion
+
+`make availability-window` laddered the fitting window against a season term against the
+dispersion's grading, and `three_point_era__none__role` won: validation CRPS **9.8247**
+against the incumbent's 10.0057, a paired gap of −0.181 with a 95% interval of
+[−0.257, −0.103], PIT KS 0.0588 against 0.0939, and boundary error cut 43%. Both halves are
+defaults here — `first_season="2012-13"` and `role_rho=True` — so every consumer of this
+head gets the shipped configuration by loading it rather than by remembering to ask.
+`docs/availability-window-plan.md` is the evidence and should not be re-litigated here.
+
+Two things about that are worth stating where the code is, because both are easy to get
+wrong:
+
+**The window is applied to the FITTING rows, inside `fit`, and nowhere else.**
+`availability_design` is imported by `stan_minutes`, `stan_composition`,
+`stan_games_played`, `model_cards`, `sim/season`, `season_terms` and `final_evaluation`,
+and filtering it would silently re-scope six heads that never asked for a window. Scoring
+stays on the full frame it is handed: a shorter fitting window is a bias-variance trade on
+the fit, not a claim about which rows may be predicted.
+
+**A season trend is a measured NULL, and the reason is worth keeping.** The trend is the
+only instrument that closes both tails, and it does so by shifting the whole distribution
+down — so the body blows out and both CRPS and PIT degrade. A location instrument cannot
+fix a shape defect. Do not add one back.
+
 ## The trap that carries over, and the one that does not
 
 **`n = max(team_games, gp)` is still required.** 13 traded player-seasons (0.12%) have
@@ -88,6 +113,8 @@ import pandas as pd
 import yaml
 from scipy.stats import betabinom
 
+from src.data.fetch import _season_start_year
+from src.eda.season_effects import ROLE_EDGES, ROLE_LABELS
 from src.features.availability import build_panel, season_availability
 from src.models.availability import (EPS, FEATURE_COLS, RHO_MAX, RHO_MIN,
                                      AvailabilityModel, BetaBinomialGLM,
@@ -95,10 +122,28 @@ from src.models.availability import (EPS, FEATURE_COLS, RHO_MAX, RHO_MIN,
                                      pit_table, season_start_dates)
 from src.models.held_out import selection_split
 from src.models.stan_utils import (YearTerm, compile_model, diagnostics_frame,
-                                   posterior, prior_sd_for_l2, sample,
+                                   posterior, prior_sd_for_l2, rho_block, sample,
                                    standardized, thin, warn_if_unconverged)
 
 MODEL = "betabinomial_glm"
+
+# ── The shipped configuration ────────────────────────────────────────────────────────
+# Mirrored in `configs/default.yaml`'s `stan.availability` block, which is what `run`
+# reads. These are the CLASS defaults so that every other consumer of the head —
+# `posteriors`, `model_cards`, `season_terms`, `final_evaluation` — gets what ships
+# without having to remember to pass it. `docs/availability-window-plan.md` §4 is the
+# evidence; `None` / `False` recover the incumbent exactly.
+
+# First season kept in the FITTING rows. 2012-13 is `availability_window.WINDOWS`'s
+# `three_point_era`, which won the ladder on CRPS, PIT and boundary coverage at once.
+# Deliberately not 2017-18, where the sup-F scan puts the break: the break's location and
+# the best fitting window are different questions, and five target seasons is too few.
+FIRST_SEASON = "2012-13"
+
+# One dispersion per prior-MPG role bucket rather than one for every player. Milder than
+# the composition head's 2.07x — 1.26x on the full window, 1.47x on this one — and it
+# never hurt a single metric in the ladder.
+ROLE_RHO = True
 
 # Draws kept for the posterior-predictive mixture. Each draw costs one (rows x games+1)
 # beta-binomial evaluation, so this trades wall clock against Monte Carlo error in the
@@ -166,6 +211,53 @@ def availability_design(cfg: dict) -> pd.DataFrame:
     return assert_binomial_support(design)
 
 
+def restrict_window(frame: pd.DataFrame, first_season: str | None) -> pd.DataFrame:
+    """The fitting rows, cut to a recent suffix of seasons.
+
+    **Applied to the fitting rows only, and never to `availability_design`.** Six other
+    modules import that builder and a filter inside it would silently re-scope the minutes
+    head, the composition head, the games-played spell process and the simulator, none of
+    which asked for a window and none of which would raise.
+
+    The design is still *built* over every season regardless of this, because the lag
+    columns reach back three seasons — trimming the frame earlier would drop the window's
+    own first cohort instead of windowing it.
+
+    `availability_window.restrict_window` is the same cut keyed on a start year; this one
+    takes the season label the config carries, so `first_season: 2012-13` is written the
+    way every other season in this repo is written.
+    """
+    if first_season is None:
+        return frame
+    first_year = _season_start_year(str(first_season))
+    years = frame["season"].astype(str).map(_season_start_year).to_numpy()
+    return frame[years >= first_year]
+
+
+def role_bins(frame: pd.DataFrame, role_rho: bool = ROLE_RHO) -> np.ndarray:
+    """1-based prior-MPG role bucket per row — the `rho_bin` the Stan source gathers on.
+
+    `season_effects.ROLE_EDGES` are constants rather than quantiles of anything, so there
+    is no split concern and a validation row lands in the same bucket it would have landed
+    in during fitting. Role is **prior-season** MPG: known before opening night, so this
+    grades the dispersion on information the head already holds rather than on the target.
+
+    `role_rho=False` returns all-ones, which with `n_rho = 1` is the shared-dispersion head
+    exactly.
+
+    A row outside the edges — no prior minutes at all, or an implausible one above the top
+    edge — falls into the **lowest** bucket. That is the same rule
+    `docs/availability-ship-plan.md` decision 2 sets for the no-prior population, and it is
+    the conservative direction: the fringe bucket carries the widest dispersion. Today the
+    design has no such row, so this is a guard rather than a live branch.
+    """
+    if not role_rho:
+        return np.ones(len(frame), dtype=int)
+    mpg = frame["minutes_per_game_lag1"].to_numpy(dtype=float)
+    idx = pd.cut(mpg, ROLE_EDGES, labels=False)
+    return np.nan_to_num(np.asarray(idx, dtype=float), nan=0.0).astype(int) + 1
+
+
 class StanAvailability(AvailabilityModel):
     """Beta-binomial availability head, fitted by NUTS.
 
@@ -178,7 +270,9 @@ class StanAvailability(AvailabilityModel):
                  pmf_mode: str = "posterior", name: str | None = None,
                  chains: int = 4, warmup: int = 1000, samples: int = 1000,
                  seed: int = 42, predictive_draws: int = PREDICTIVE_DRAWS,
-                 year_column: str | None = None, metric: str | None = None):
+                 year_column: str | None = None, metric: str | None = None,
+                 first_season: str | None = FIRST_SEASON,
+                 role_rho: bool = ROLE_RHO):
         if pmf_mode not in ("posterior", "plug_in"):
             raise ValueError(f"pmf_mode must be 'posterior' or 'plug_in'; got {pmf_mode!r}")
         self.l2 = l2
@@ -188,16 +282,46 @@ class StanAvailability(AvailabilityModel):
         self.chains, self.warmup, self.samples, self.seed = chains, warmup, samples, seed
         self.predictive_draws = predictive_draws
         self.metric = metric
+        self.first_season = first_season
+        self.role_rho = bool(role_rho)
         self.year = YearTerm(year_column, seed=seed, stream=self.name)
+
+    # ── The dispersion bins ───────────────────────────────────────────────────
+
+    @property
+    def n_rho(self) -> int:
+        return len(ROLE_LABELS) if self.role_rho else 1
+
+    @property
+    def rho_labels(self) -> list[str]:
+        return list(ROLE_LABELS) if self.role_rho else ["shared"]
+
+    def bins(self, df: pd.DataFrame) -> np.ndarray:
+        return role_bins(df, self.role_rho)
+
+    def fitting_rows(self, train: pd.DataFrame) -> pd.DataFrame:
+        """The rows this head fits on — the window, applied here and nowhere upstream."""
+        return restrict_window(train, self.first_season)
 
     # ── Fitting ───────────────────────────────────────────────────────────────
 
     def fit(self, train: pd.DataFrame) -> "StanAvailability":
+        # The window bites FIRST, so the scaler, the year block and the dispersion bins
+        # are all built from the rows that are actually fitted. Announced rather than
+        # silent: a head that quietly drops two thirds of its training rows is exactly the
+        # failure `availability_design` must never be allowed to have.
+        n_offered = len(train)
+        train = self.fitting_rows(train)
+        if len(train) != n_offered:
+            print(f"  window {self.first_season}+: fitting on {len(train):,} of "
+                  f"{n_offered:,} player-seasons (scoring is unfiltered)")
         assert_binomial_support(train)
         (X,), self.scaler = standardized(train, [train], self.features)
         y = train["gp"].to_numpy(int)
         n = train["team_games"].to_numpy(int)
 
+        bins = self.bins(train)
+        self.bin_counts = np.bincount(bins, minlength=self.n_rho + 1)[1:]
         data = {
             "N": len(train), "K": X.shape[1], "X": X,
             "n": n.tolist(), "y": y.tolist(),
@@ -208,11 +332,14 @@ class StanAvailability(AvailabilityModel):
             "beta_scale": prior_sd_for_l2(self.l2),
             "intercept_scale": INTERCEPT_SCALE,
             **self.year.data(train),
+            **rho_block(len(train), bins, self.n_rho),
         }
         share = float(np.clip(y.sum() / max(n.sum(), 1), EPS, 1 - EPS))
         inits = {"alpha": float(np.log(share / (1 - share))),
                  "beta": np.zeros(X.shape[1]).tolist(),
-                 "rho": 0.23}      # the measured overdispersion, as a starting point
+                 # The measured overdispersion, as a starting point — one per bin, since
+                 # `rho` is a vector[n_rho] even when the vector has one entry.
+                 "rho": [0.23] * self.n_rho}
 
         model = compile_model(MODEL)
         fit, self.diagnostics = sample(
@@ -224,12 +351,19 @@ class StanAvailability(AvailabilityModel):
         draws = posterior(fit, ["alpha", "beta", "rho"])
         self.alpha_draws = draws["alpha"].reshape(-1)
         self.beta_draws = draws["beta"].reshape(len(self.alpha_draws), -1)
-        self.rho_draws = draws["rho"].reshape(-1)
+        # (draws x n_rho), and (draws x 1) when the dispersion is shared — so every
+        # consumer indexes it the same way in both arms rather than branching.
+        self.rho_draws = draws["rho"].reshape(len(self.alpha_draws), -1)
 
         # Posterior means, in the same layout as `BetaBinomialGLM.beta` (intercept first)
         # so the two coefficient vectors can be diffed element-wise.
         self.beta = np.r_[self.alpha_draws.mean(), self.beta_draws.mean(axis=0)]
-        self.rho = float(self.rho_draws.mean())
+        self.rho_by_bin = dict(zip(self.rho_labels, self.rho_draws.mean(axis=0)))
+        # `self.rho` stays a SCALAR because `availability.evaluate` and the season-term
+        # ablation both read it as one. Row-weighted over the fitting rows, so it is the
+        # average dispersion the head actually applies — and exactly `rho_draws.mean()`
+        # when the dispersion is shared.
+        self.rho = float(np.average(self.rho_draws.mean(axis=0), weights=self.bin_counts))
         self.year.absorb(fit)
         return self
 
@@ -241,12 +375,23 @@ class StanAvailability(AvailabilityModel):
 
     def mu_draws(self, df: pd.DataFrame, keep: int | None = None) -> tuple[np.ndarray,
                                                                           np.ndarray]:
-        """(draws x rows) mean and the matching rho draws."""
+        """(draws x rows) mean and (draws x rows) dispersion.
+
+        `rho` is returned already **gathered by each row's own bin**, matching `mu`'s
+        shape, so a caller pairs the two element-wise and cannot silently apply one
+        bucket's dispersion to another bucket's player. Under a shared dispersion every
+        column of the returned matrix is the same number, which is what the scalar it
+        replaced used to be.
+        """
         idx = thin(len(self.alpha_draws), keep or self.predictive_draws)
         # (rows x K) @ (K x draws) -> (rows x draws), then transposed to draws-major.
         eta = (self._design(df) @ self.beta_draws[idx].T
                + self.alpha_draws[idx][None, :] + self.year.shift(idx)[None, :])
-        return _sigmoid(eta).T, self.rho_draws[idx]
+        return _sigmoid(eta).T, self.rho_draws[np.ix_(idx, self.bins(df) - 1)]
+
+    def rho_row(self, df: pd.DataFrame) -> np.ndarray:
+        """Posterior-mean dispersion per row — the plug-in counterpart of `mu_draws`."""
+        return self.rho_draws.mean(axis=0)[self.bins(df) - 1]
 
     def predict_mean(self, df: pd.DataFrame) -> np.ndarray:
         """Posterior mean of mu, or mu at the posterior mean, depending on the mode.
@@ -263,7 +408,7 @@ class StanAvailability(AvailabilityModel):
         n = df["team_games"].to_numpy(int)
         k = np.arange(int(max_games) + 1)
         if self.pmf_mode == "plug_in":
-            return _plug_in_pmf(n, self.predict_mean(df), self.rho, k)
+            return _plug_in_pmf(n, self.predict_mean(df), self.rho_row(df), k)
 
         # The predictive properly integrated over the posterior: a mixture of one
         # beta-binomial per draw, not one beta-binomial at the average parameter. This is
@@ -271,8 +416,7 @@ class StanAvailability(AvailabilityModel):
         mus, rhos = self.mu_draws(df)
         out = np.zeros((len(df), len(k)))
         for lo in range(0, len(mus), CHUNK):
-            block, rho_block = mus[lo:lo + CHUNK], rhos[lo:lo + CHUNK]
-            a, b = _shapes(block, rho_block[:, None])
+            a, b = _shapes(mus[lo:lo + CHUNK], rhos[lo:lo + CHUNK])
             pmf = betabinom.pmf(k[None, None, :], n[None, :, None],
                                 a[:, :, None], b[:, :, None])
             out += np.nan_to_num(pmf).sum(axis=0)
@@ -285,22 +429,33 @@ def _shapes(mu: np.ndarray, rho: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return mu * scale, (1.0 - mu) * scale
 
 
-def _plug_in_pmf(n: np.ndarray, mu: np.ndarray, rho: float, k: np.ndarray) -> np.ndarray:
-    a, b = _shapes(np.asarray(mu, dtype=float), np.asarray(float(rho)))
+def _plug_in_pmf(n: np.ndarray, mu: np.ndarray, rho: np.ndarray | float,
+                 k: np.ndarray) -> np.ndarray:
+    """`rho` is per row, so the plug-in view carries the grading the posterior one does."""
+    a, b = _shapes(np.asarray(mu, dtype=float), np.asarray(rho, dtype=float))
     return np.nan_to_num(betabinom.pmf(k[None, :], n[:, None], a[:, None], b[:, None]))
 
 
 # ── The port check ────────────────────────────────────────────────────────────
 
 def coefficient_comparison(mle: BetaBinomialGLM, stan: StanAvailability,
-                           features: list[str]) -> pd.DataFrame:
+                           features: list[str],
+                           rho_mle: dict[str, float] | None = None) -> pd.DataFrame:
     """MLE optimum against the posterior, coefficient by coefficient.
 
-    Both are fitted on the identical standardized design, so the vectors are directly
-    comparable entry for entry. `z_from_mle` — how many posterior standard deviations the
-    MLE sits from the posterior mean — is the column that matters: agreement means the
-    port is faithful, and a large value on any single coefficient localizes a
-    discrepancy that an aggregate norm would average away.
+    Both are fitted on the identical standardized design — the **windowed** rows, or the
+    comparison would be between two different models rather than two fits of one — so the
+    vectors are directly comparable entry for entry. `z_from_mle` — how many posterior
+    standard deviations the MLE sits from the posterior mean — is the column that matters:
+    agreement means the port is faithful, and a large value on any single coefficient
+    localizes a discrepancy that an aggregate norm would average away.
+
+    The dispersion contributes one row **per bin**. `rho_mle` supplies the point-MLE value
+    per bin label — `availability_window.RoleGradedBetaBinomial.rho_by_role` — and falls
+    back to the shared scalar, which is the right reference when `n_rho = 1`. The
+    agreement is looser here than for the coefficients and expected to be: that estimate
+    re-fits each bucket's dispersion holding the mean fixed, a two-stage profile, where
+    Stan samples the whole vector jointly with `beta`.
     """
     names = ["intercept"] + list(features)
     posterior_sd = np.r_[stan.alpha_draws.std(ddof=1),
@@ -316,12 +471,16 @@ def coefficient_comparison(mle: BetaBinomialGLM, stan: StanAvailability,
     out["difference"] = out["posterior_mean"] - out["mle"]
     out["z_from_mle"] = out["difference"] / out["posterior_sd"].replace(0, np.nan)
     out["mle_inside_95"] = (out["mle"] >= out["q2_5"]) & (out["mle"] <= out["q97_5"])
+    rho_mle = rho_mle or {}
     rho = pd.DataFrame([{
-        "term": "rho", "mle": mle.rho, "posterior_mean": stan.rho,
-        "posterior_sd": float(stan.rho_draws.std(ddof=1)),
-        "q2_5": float(np.percentile(stan.rho_draws, 2.5)),
-        "q97_5": float(np.percentile(stan.rho_draws, 97.5)),
-    }])
+        "term": f"rho[{label}]",
+        "mle": float(rho_mle.get(label, mle.rho)),
+        "posterior_mean": float(stan.rho_draws[:, j].mean()),
+        "posterior_sd": float(stan.rho_draws[:, j].std(ddof=1)),
+        "q2_5": float(np.percentile(stan.rho_draws[:, j], 2.5)),
+        "q97_5": float(np.percentile(stan.rho_draws[:, j], 97.5)),
+        "n_fit_rows": int(stan.bin_counts[j]),
+    } for j, label in enumerate(stan.rho_labels)])
     rho["difference"] = rho["posterior_mean"] - rho["mle"]
     rho["z_from_mle"] = rho["difference"] / rho["posterior_sd"]
     rho["mle_inside_95"] = (rho["mle"] >= rho["q2_5"]) & (rho["mle"] <= rho["q97_5"])
@@ -370,7 +529,7 @@ def board_correlation(stan: StanAvailability, frame: pd.DataFrame,
     """
     mus, rhos = stan.mu_draws(frame)
     n = frame["team_games"].to_numpy(float)
-    conditional = n * mus * (1.0 - mus) * (1.0 + (n - 1.0) * rhos[:, None])
+    conditional = n * mus * (1.0 - mus) * (1.0 + (n - 1.0) * rhos)
     means = n * mus                                     # E[Y_i | theta], per draw per player
 
     rng = np.random.default_rng(seed)
@@ -401,33 +560,64 @@ def board_correlation(stan: StanAvailability, frame: pd.DataFrame,
 # ── The measurement, on whichever pair of frames it is handed ─────────────────
 
 def fit_and_score(train: pd.DataFrame, frame: pd.DataFrame, max_games: int,
-                  cfg_stan: dict, l2: float, seed: int) -> dict:
-    """Fit the MLE and the Stan head on `train`, score both plus the plug-in on `frame`.
+                  cfg_stan: dict, l2: float, seed: int,
+                  first_season: str | None = FIRST_SEASON,
+                  role_rho: bool = ROLE_RHO) -> dict:
+    """Fit the point MLEs and the Stan head on `train`, score all four on `frame`.
 
     Split-agnostic on purpose. `run` hands it `(train, validation)`; when the workflow is
     finished `src/final_evaluation.py` hands it `(train + validation, test)`. The held-out
     number is therefore produced by *this* code rather than by a second implementation of
     it that could drift — the same reason the port check imports `evaluate` and `crps` from
     the MLE module instead of reimplementing them.
-    """
-    print("\nFitting the point MLE (the reference this ports)...")
-    mle = BetaBinomialGLM(l2).fit(train)
-    print(f"  converged={mle.converged}, rho={mle.rho:.4f}")
 
-    print(f"\nFitting in Stan ({cfg_stan.get('chains', 4)} chains x "
-          f"{cfg_stan.get('samples', 1000)} draws)...")
+    **Both point MLEs are fitted on the same windowed rows the Stan head fits**, obtained
+    from the head's own `fitting_rows` rather than re-derived here. A port check against a
+    reference fitted on a different population is not a port check; it is a comparison of
+    two models, and it would read as a failure of the port when it was a difference in the
+    data. Scoring is on the whole of `frame` for all four.
+
+    Two references rather than one, because the shipped head changed two things at once:
+
+    - `beta_binomial` — one shared dispersion, the incumbent likelihood on the new window.
+      Reproduces the ladder's `three_point_era__none__shared`.
+    - `beta_binomial_role_rho` — the dispersion graded by prior-MPG bucket, which is the
+      arm `docs/availability-window-plan.md` §4 actually selected
+      (`three_point_era__none__role`). This is what the Stan head is a port *of*, so the
+      two should agree, and the ladder's own CRPS is a third-party check on both.
+    """
     stan = StanAvailability(
         l2=l2, pmf_mode="posterior", chains=int(cfg_stan.get("chains", 4)),
         warmup=int(cfg_stan.get("warmup", 1000)),
         samples=int(cfg_stan.get("samples", 1000)), seed=seed,
-        predictive_draws=int(cfg_stan.get("predictive_draws",
-                                          PREDICTIVE_DRAWS))).fit(train)
+        predictive_draws=int(cfg_stan.get("predictive_draws", PREDICTIVE_DRAWS)),
+        first_season=first_season, role_rho=role_rho)
+    fit_rows = stan.fitting_rows(train)
+
+    print(f"\nFitting the point MLEs on the same {len(fit_rows):,} windowed rows "
+          f"(the reference this ports)...")
+    mle = BetaBinomialGLM(l2).fit(fit_rows)
+    print(f"  shared rho: converged={mle.converged}, rho={mle.rho:.4f}")
+    role_mle = None
+    if role_rho:
+        # Imported here rather than at module scope: `availability_window` imports
+        # `season_terms`, which imports this module, so a top-level import is a cycle.
+        from src.models.availability_window import RoleGradedBetaBinomial
+        role_mle = RoleGradedBetaBinomial(l2).fit(fit_rows)
+        print("  role-graded rho: "
+              + ", ".join(f"{k} {v:.4f}" for k, v in role_mle.rho_by_role.items())
+              + f" ({role_mle.rho_spread:.2f}x spread)")
+
+    print(f"\nFitting in Stan ({cfg_stan.get('chains', 4)} chains x "
+          f"{cfg_stan.get('samples', 1000)} draws)...")
+    stan.fit(train)
     d = stan.diagnostics
     print(f"  max R-hat {d['max_rhat']:.4f}, min ESS "
           f"{min(d['min_ess_bulk'], d['min_ess_tail']):.0f}, "
           f"{d['divergences']} divergences, {d['wall_clock_s']:.1f}s wall clock "
           f"({d['cmdstan']})")
-    print(f"  posterior mean rho {stan.rho:.4f} against the MLE's {mle.rho:.4f}")
+    print("  posterior mean rho by bin: "
+          + ", ".join(f"{k} {v:.4f}" for k, v in stan.rho_by_bin.items()))
 
     # The plug-in view shares the fit; only the predictive differs.
     plug_in = StanAvailability(l2=l2, pmf_mode="plug_in", predictive_draws=1)
@@ -435,16 +625,19 @@ def fit_and_score(train: pd.DataFrame, frame: pd.DataFrame, max_games: int,
                              if k not in ("pmf_mode", "name")})
 
     rows, pit_frames, prediction_frames = [], [], []
-    for model in (mle, plug_in, stan):
+    for model in [m for m in (mle, role_mle, plug_in, stan) if m is not None]:
         model_rows, predictions = evaluate(model, frame, max_games, seed)
         rows += model_rows
         prediction_frames.append(predictions)
         pit_frames.append(pit_table(predictions["pit"].to_numpy(), model.name))
 
     return {
-        "mle": mle, "stan": stan, "plug_in": plug_in,
+        "mle": mle, "role_mle": role_mle, "stan": stan, "plug_in": plug_in,
+        "fit_rows": fit_rows,
         "metrics": pd.DataFrame(rows),
-        "coefficients": coefficient_comparison(mle, stan, stan.features),
+        "coefficients": coefficient_comparison(
+            mle, stan, stan.features,
+            rho_mle=getattr(role_mle, "rho_by_role", None)),
         "board": board_correlation(stan, frame),
         "pit": pd.concat(pit_frames, ignore_index=True),
         "predictions": pd.concat(prediction_frames, ignore_index=True),
@@ -459,9 +652,12 @@ def run(cfg: dict) -> dict[str, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     cfg_av = cfg.get("features", {}).get("availability", {})
     cfg_stan = cfg.get("stan", {})
+    cfg_head = cfg_stan.get("availability", {})
     test_seasons = int(cfg_av.get("test_seasons", 2))
     seed = int(cfg_stan.get("seed", cfg_av.get("seed", 42)))
     l2 = float(cfg_av.get("glm_l2", 1.0))
+    first_season = cfg_head.get("first_season", FIRST_SEASON)
+    role_rho = bool(cfg_head.get("role_rho", ROLE_RHO))
 
     design = availability_design(cfg)
     train, val = selection_split(design, test_seasons)
@@ -477,8 +673,14 @@ def run(cfg: dict) -> dict[str, Path]:
           f"player-seasons with gp > team_games would otherwise make the summed\n"
           f"  log-likelihood non-finite at every rho, which under HMC poisons the "
           f"trajectory rather than just stopping an optimizer.")
+    print(f"  Shipped configuration: fitting window {first_season or 'full'}+, "
+          f"dispersion {'graded by prior-MPG role' if role_rho else 'shared'} "
+          f"— docs/availability-window-plan.md §4.\n"
+          f"  The window cuts the FITTING rows only; `availability_design` is untouched, "
+          f"because six other\n  modules import it and would be silently re-scoped.")
 
-    scored = fit_and_score(train, val, max_games, cfg_stan, l2, seed)
+    scored = fit_and_score(train, val, max_games, cfg_stan, l2, seed,
+                           first_season=first_season, role_rho=role_rho)
     mle, stan, plug_in = scored["mle"], scored["stan"], scored["plug_in"]
 
     metrics = scored["metrics"]
@@ -491,7 +693,8 @@ def run(cfg: dict) -> dict[str, Path]:
 
     coefs = scored["coefficients"]
     worst = coefs.loc[coefs["z_from_mle"].abs().idxmax()]
-    print(f"\nPort check — MLE optimum against the posterior ({len(coefs)} terms):")
+    print(f"\nPort check — MLE optimum against the posterior ({len(coefs)} terms), both "
+          f"fitted on\n  the same {len(scored['fit_rows']):,} windowed rows:")
     print(f"  max |posterior mean - MLE| = "
           f"{coefs['difference'].abs().max():.5f}")
     print(f"  largest gap in posterior sds: {worst['term']} at "
@@ -500,6 +703,21 @@ def run(cfg: dict) -> dict[str, Path]:
           f"{int(coefs['mle_inside_95'].sum())}/{len(coefs)} terms")
     print("  The prior is normal(0, 1/sqrt(2*l2)), so the posterior MODE is exactly the\n"
           "  penalized MLE — agreement here is a defined check, not a coincidence.")
+    if role_rho:
+        print("  Under a GRADED rho that identity holds for the model but not for this\n"
+              "  reference: the point estimate profiles each bucket's dispersion against a\n"
+              "  fixed mean rather than optimizing jointly, so the two agree closely rather\n"
+              "  than exactly, and they differ most on the intercept. The exact nesting is\n"
+              "  pinned where it can be — `n_rho = 1` against the shared-rho target, in\n"
+              "  tests/test_stan_heads.py.")
+
+    dispersion = coefs[coefs["term"].str.startswith("rho[")]
+    print("\n  The dispersion, bin by bin (point MLE against the posterior):")
+    print(dispersion[["term", "n_fit_rows", "mle", "posterior_mean", "posterior_sd",
+                      "z_from_mle"]].round(4).to_string(index=False))
+    print("  Looser agreement than the coefficients is expected: the point estimate "
+          "re-fits each\n  bucket's rho holding the mean fixed, where Stan samples the "
+          "whole vector jointly.")
 
     crps_mle = float(table.loc[mle.name, "crps_games"])
     crps_plug = float(table.loc[plug_in.name, "crps_games"])
@@ -509,6 +727,13 @@ def run(cfg: dict) -> dict[str, Path]:
           f"({crps_post - crps_mle:+.4f})")
     print("  The marginal metric was never the argument — at ~10,000 rows against 20\n"
           "  parameters the posterior is sharp, so this is expected to be a wash.")
+    role_mle = scored["role_mle"]
+    if role_mle is not None:
+        crps_role = float(table.loc[role_mle.name, "crps_games"])
+        print(f"  Against the ladder: the shared-rho MLE on this window scores "
+              f"{crps_mle:.4f} where\n  `make availability-window` read 9.8444, and the "
+              f"role-graded one {crps_role:.4f} against 9.8247.\n  Two independent "
+              f"reproductions of the arm this head ports.")
 
     board = scored["board"]
     print("\nWhat the posterior actually buys — shared-beta correlation, by portfolio size:")

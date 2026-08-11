@@ -82,8 +82,8 @@ from src.models.stan_availability import availability_design
 from src.models.stan_utils import (YearTerm, compile_model, crps_from_samples,
                                    diagnostics_frame, ks_uniform,
                                    pit_from_samples, posterior,
-                                   prior_sd_for_l2, sample, standardized, thin,
-                                   warn_if_unconverged)
+                                   prior_sd_for_l2, rho_block, sample, standardized,
+                                   thin, warn_if_unconverged)
 
 MODEL = "betabinomial_glm"
 OWN = "logit_share_lag1"
@@ -280,11 +280,18 @@ class StanMinutes:
             model,
             {"N": len(train), "K": X.shape[1], "X": X, "n": n.tolist(), "y": y.tolist(),
              "beta_scale": prior_sd_for_l2(self.l2),
-             "intercept_scale": INTERCEPT_SCALE, **self.year.data(train)},
+             "intercept_scale": INTERCEPT_SCALE, **self.year.data(train),
+             # One dispersion for every row: `rho_block()` with no bins is the shared-rho
+             # model exactly. The graded arm is availability's alone — see
+             # docs/availability-window-plan.md and §6 for the same question here, which
+             # is measured but not yet laddered.
+             **rho_block(len(train))},
             chains=self.chains, warmup=self.warmup, samples=self.samples,
             seed=self.seed, label=self.name, metric=self.metric,
+            # `rho` is a vector[n_rho] in the Stan source, so its init is a list even
+            # when the vector has one entry.
             inits={"alpha": float(np.log(share / (1 - share))),
-                   "beta": np.zeros(X.shape[1]).tolist(), "rho": 0.05})
+                   "beta": np.zeros(X.shape[1]).tolist(), "rho": [0.05]})
         warn_if_unconverged(self.diagnostics)
 
         draws = posterior(fit, ["alpha", "beta", "rho"])

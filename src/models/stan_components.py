@@ -88,8 +88,8 @@ from src.models.held_out import selection_split
 from src.models.stan_utils import (YearTerm, compile_model, crps_from_samples,
                                    diagnostics_frame, ks_uniform,
                                    pit_from_samples, posterior,
-                                   prior_sd_for_l2, sample, standardized, thin,
-                                   warn_if_unconverged)
+                                   prior_sd_for_l2, rho_block, sample, standardized,
+                                   thin, warn_if_unconverged)
 
 COUNT_MODEL = "negbinomial_glm"
 CONVERSION_MODEL = "betabinomial_glm"
@@ -281,11 +281,16 @@ class StanConversion:
             model,
             {"N": len(live), "K": X.shape[1], "X": X, "n": n.tolist(), "y": y.tolist(),
              "beta_scale": prior_sd_for_l2(self.l2),
-             "intercept_scale": INTERCEPT_SCALE, **self.year.data(live)},
+             "intercept_scale": INTERCEPT_SCALE, **self.year.data(live),
+             # One dispersion for every row: `rho_block()` with no bins is the shared-rho
+             # model exactly, which is what these four conversion heads have always fitted.
+             **rho_block(len(live))},
             chains=self.chains, warmup=self.warmup, samples=self.samples,
             seed=self.seed, label=self.name, metric=self.metric,
+            # `rho` is a vector[n_rho] in the Stan source, so its init is a list even
+            # when the vector has one entry.
             inits={"alpha": float(np.log(share / (1 - share))),
-                   "beta": np.zeros(X.shape[1]).tolist(), "rho": 0.01})
+                   "beta": np.zeros(X.shape[1]).tolist(), "rho": [0.01]})
         warn_if_unconverged(self.diagnostics)
 
         draws = posterior(fit, ["alpha", "beta", "rho"])

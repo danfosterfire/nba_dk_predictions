@@ -619,7 +619,7 @@ happens to be, but it describes the seasons scored, not the component.
 > **Why this outranks the shared-β correlation the Stan work was built for.** A league shift
 > is **perfectly correlated across every player**, so it does not diversify away: a −7% error
 > on free throws is −7% on a whole roster's free-throw points. The shared-β parameter
-> uncertainty measured in `stan_availability.board_correlation` is worth **+0.2%** on a
+> uncertainty measured in `stan_availability.board_correlation` is worth **+0.5%** on a
 > 15-man roster. Season effects are the larger non-diversifiable risk by an order of
 > magnitude, and they are currently modelled as exactly zero.
 >
@@ -634,7 +634,10 @@ happens to be, but it describes the seasons scored, not the component.
 > were measured on the 791-player *test* board. The comparison is unchanged in kind — a
 > league shift still does not diversify and shared-β still does — but quote the validation
 > figures, and note the shared-β side (+0.2% / +6.4%) is itself measured on a different
-> board again, so the ratio is indicative rather than exact.
+> board again, so the ratio is indicative rather than exact. It moved again on 2026-08-11,
+> when the availability head took a 2012-13 window and its board figures roughly doubled to
+> +0.5% / +12.3%; the conclusion is unchanged, since a year effect is still worth ~20× the
+> shared-β term on a roster, but do not read the ratio to a significant figure.
 
 **One piece is genuinely knowable at prediction time and should not be lumped in with the
 rest.** Rule changes and points of emphasis are announced in the summer, before opening
@@ -1080,18 +1083,24 @@ player-seasons, scored on validation (2022-23/23-24). Three results bind on ever
 > `.gitignore` already covers, so no binary is committed and no generated `.hpp` lands in
 > the source tree.
 >
-> **Availability** ports the validated point MLE and reproduces it: validation CRPS 10.0063
-> against 10.0057, ρ 0.2808 against 0.2806, and the MLE inside the 95% credible interval for
-> **21/21** coefficients. The prior is set to `normal(0, 1/sqrt(2·l2))` precisely so the
-> posterior *mode* is the penalized MLE, making that a defined check. R̂ 1.0019, 0
-> divergences, 196 s. What the posterior adds is `Var_θ(Σ_i E[Y_i|θ])` — exactly 0 for any
+> **Availability** ports the validated point MLE and reproduces it: validation CRPS 9.8136
+> against 9.8444, ρ 0.2595 against 0.2627, and the MLE inside the 95% credible interval for
+> **24/24** terms. The prior is set to `normal(0, 1/sqrt(2·l2))` precisely so the
+> posterior *mode* is the penalized MLE, making that a defined check. R̂ 1.0050, 0
+> divergences, 94 s. What the posterior adds is `Var_θ(Σ_i E[Y_i|θ])` — exactly 0 for any
 > point estimate — but **its size depends on the portfolio**, and this plan's framing
 > oversold it. The independent term grows as sqrt(N) and the shared-β term as N, so measured
-> on the validation board the spread inflation is **+0.2% on a 15-player roster** and **+6.7%
+> on the validation board the spread inflation is **+0.5% on a 15-player roster** and **+12.3%
 > across all 883**. Real for board-wide exposure across many lineups; near-irrelevant for one
 > drafted team. This matters for the "joint / correlation modeling across teammates" section
 > below: shared *parameter* uncertainty is not the correlation source a single roster needs —
 > shared **team state** and the shared `min` draw still are.
+>
+> ⚙️ **Both figures are the 2026-08-11 head**, which fits a 2012-13 window with a role-graded
+> ρ (`docs/availability-window-plan.md` §4). The full-window, shared-ρ head it replaced read
+> CRPS 10.0063 against 10.0057, ρ 0.2808 against 0.2806, 21/21 terms, R̂ 1.0019, 196 s, and
+> +0.2% / **+6.7%** board inflation. The board term roughly doubled because 4,027 fitting
+> rows leave a wider posterior on β than 9,478 do — the one place the window costs something.
 >
 > ⚠️ **The port check and the board table were held-out measurements until 2026-08-05**,
 > reading CRPS 10.7947 against 10.7952, ρ 0.2759 against 0.2757, R̂ 1.0025, 254 s, and +0.2%

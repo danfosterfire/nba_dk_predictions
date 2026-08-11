@@ -157,12 +157,19 @@ def _availability(cfg: dict, out_dir: Path) -> pd.DataFrame:
     is worth having beside the validation one it is calibrated from.
     """
     from src.models.availability import FEATURE_COLS
-    from src.models.stan_availability import availability_design, fit_and_score
+    from src.models.stan_availability import (FIRST_SEASON, ROLE_RHO,
+                                              availability_design, fit_and_score)
 
     cfg_av = cfg.get("features", {}).get("availability", {})
     cfg_stan = cfg.get("stan", {})
+    cfg_head = cfg_stan.get("availability", {})
     seed = int(cfg_stan.get("seed", cfg_av.get("seed", 42)))
     l2 = float(cfg_av.get("glm_l2", 1.0))
+    # The shipped window and dispersion grading, read the same way `stan_availability.run`
+    # reads them — the final evaluation is that measurement on the other frame, so the
+    # head's configuration must not be able to differ between the two.
+    first_season = cfg_head.get("first_season", FIRST_SEASON)
+    role_rho = bool(cfg_head.get("role_rho", ROLE_RHO))
 
     design = availability_design(cfg)
     full_train, test = final_split(design, int(cfg_av.get("test_seasons", 2)))
@@ -172,7 +179,8 @@ def _availability(cfg: dict, out_dir: Path) -> pd.DataFrame:
           f"{len(test):,} test rows "
           f"({', '.join(sorted(test['season'].unique()))}), {len(FEATURE_COLS)} features")
 
-    scored = fit_and_score(full_train, test, max_games, cfg_stan, l2, seed)
+    scored = fit_and_score(full_train, test, max_games, cfg_stan, l2, seed,
+                           first_season=first_season, role_rho=role_rho)
     wide = (scored["metrics"][scored["metrics"]["group"] == "all"]
             .pivot_table(index="model", columns="metric", values="value"))
     rows = [{"head": "availability", "arm": name,

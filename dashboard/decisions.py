@@ -3235,6 +3235,40 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("head", "calibration"),
     ),
     Decision(
+        id="availability-head-ships-windowed-role-graded-rho",
+        topic="availability",
+        claim="**The availability head now fits a 2012-13 window with a role-graded "
+              "`rho`**, and the ladder's winning arm is what `make stan-availability` "
+              "ships rather than a point estimate that resembles it.",
+        because="`src/stan/betabinomial_glm.stan` carries `rho` as a vector indexed by a "
+                "bin supplied as data — the pattern transplanted from "
+                "`composition_glm.stan` — and **`n_rho = 1` with all-ones bins is the "
+                "shared-`rho` model exactly**, asserted on Stan's own `log_prob` rather "
+                "than argued, so the other four heads sharing that file are unchanged. On "
+                "883 validation player-seasons the posterior reads CRPS **9.8155** "
+                "(plug-in 9.8136) against the incumbent's 10.0071, with the dispersion "
+                "fitted jointly at **0.3176** for `<12 mpg` against **0.2064** for `30+ "
+                "mpg`, a **1.54×** spread. Both point MLEs, refitted on the same 4,027 "
+                "windowed rows, reproduce `availability_window.csv` to four decimals "
+                "(**9.8444** shared, **9.8247** role-graded), which is a third-party check "
+                "that the port fits the arm the ladder selected. **The window has one "
+                "price and it is not CRPS**: whole-board shared-β spread rose from 222.8 "
+                "to **297.2** games and board inflation from +6.7% to **+12.3%**, because "
+                "4,027 fitting rows leave a wider posterior on β than 9,478 do — more "
+                "honest rather than worse, still +0.5% on a 15-man roster, but any "
+                "consumer of the board figure is now reading a number twice as large. The "
+                "window cuts the head's own fitting rows only; `availability_design` is "
+                "untouched, because six other modules import it.",
+        status="built",
+        reproduce="make stan-availability → "
+                  "outputs/predictions/stan_availability_metrics.csv, "
+                  "outputs/predictions/stan_availability_board.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-11",
+        date="2026-08-11",
+        tags=("head", "calibration"),
+    ),
+    Decision(
         id="spell-simulator-not-built",
         topic="simulations",
         claim="~~The residual copula over a shared `min` draw is not built.~~ **Both halves "

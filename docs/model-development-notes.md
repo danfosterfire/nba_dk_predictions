@@ -499,11 +499,22 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     hopeful comparison.** An L2 penalty of `l2` on standardized coefficients *is* a
     `normal(0, 1/sqrt(2·l2))` prior, so the posterior **mode** is exactly the penalized
     optimum `BetaBinomialGLM` finds — `stan_utils.prior_sd_for_l2` is that identity. Measured
-    on 9,478 train / 883 **validation**: CRPS **10.0063** (Stan plug-in) / **10.0071**
-    (posterior) against the MLE's **10.0057**, ρ **0.2808** vs **0.2806**, max coefficient gap
-    **0.00335**, largest gap **0.085 posterior sd**, and the MLE inside the 95% credible
-    interval for **21/21** terms. R̂ **1.0019**, min ESS 2,314, **0 divergences**, 196 s
-    wall clock over 4 chains.
+    on the 4,027 **windowed** fitting rows / 883 **validation**: CRPS **9.8136** (Stan
+    plug-in) / **9.8155** (posterior) against the MLE's **9.8444**, ρ **0.2595** vs
+    **0.2627**, max coefficient gap **0.09352**, largest gap **1.658 posterior sd**, and the
+    MLE inside the 95% credible interval for **24/24** terms. R̂ **1.0050**, min ESS 2,382,
+    **0 divergences**, 94 s wall clock over 4 chains.
+    - **⚙️ The head took a 2012-13 fitting window and a role-graded ρ on 2026-08-11**
+      (`docs/availability-window-plan.md` §4). Both point MLEs are refitted on the same
+      windowed rows, or the port check would be comparing two populations rather than two
+      fits. The full-window shared-ρ block read CRPS 10.0063 / 10.0071 against 10.0057, ρ
+      0.2808 vs 0.2806, gap 0.00335 at 0.085 sd, 21/21 terms, R̂ 1.0019, min ESS 2,314, 196 s.
+      **The looser coefficient agreement is the comparison changing, not the port
+      degrading**: under a shared ρ the posterior mode *is* the penalized MLE, while
+      `RoleGradedBetaBinomial` profiles each bucket's dispersion against a fixed mean instead
+      of optimizing jointly, so the two differ most on the intercept — where the mean and the
+      dispersion trade. The exact claim is pinned where it can be exact: `n_rho = 1`
+      reproduces the shared-ρ target bit for bit on Stan's own `log_prob`.
     - **⚠️ This block was measured on the held-out seasons until 2026-08-05 and read
       10.7947 / 10.7953 / 10.7952, ρ 0.2759 vs 0.2757, gap 0.0127 / 0.095 sd, R̂ 1.0025,
       min ESS 2,402, 254 s.** The port check moved to validation with every other head
@@ -523,15 +534,23 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
 
     | players | independent sd | shared-β sd | inflation |
     |---|---|---|---|
-    | 12 | 69.9 | 4.2 | **+0.2%** |
-    | 15 | 78.0 | 5.0 | +0.2% |
-    | 30 | 110.3 | 8.8 | +0.3% |
-    | 150 | 246.4 | 39.1 | +1.2% |
-    | **883 (whole board)** | 597.8 | 222.8 | **+6.7%** |
+    | 12 | 68.0 | 6.1 | **+0.4%** |
+    | 15 | 75.8 | 7.2 | +0.5% |
+    | 30 | 107.2 | 12.3 | +0.7% |
+    | 150 | 239.4 | 52.5 | +2.4% |
+    | **883 (whole board)** | 581.4 | 297.2 | **+12.3%** |
 
     So it is real for **board-wide exposure across many lineups** and near-irrelevant for a
-    single 15-man team. Quoting the 223-game figure as if it applied to one roster is the
+    single 15-man team. Quoting the 297-game figure as if it applied to one roster is the
     over-claim to avoid — it was made and corrected in the session that built this.
+    - **⚙️ The 2012-13 window roughly doubled the shared-β term, and it is the one place the
+      window is not free.** The full-window head read 69.9 / 4.2 / +0.2% at 12 players and
+      597.8 / **222.8** / **+6.7%** across the board. Fewer fitting rows leave a wider
+      posterior on β, so the term that is *exactly* the whole-board co-movement grows. That
+      is more honest rather than worse — the uncertainty was always there and 9,478 rows were
+      understating it — and on a roster it is still a rounding error. But a consumer reading
+      the board figure as "how far could the entire league move at once" is now reading a
+      number twice as large, and any simulator input derived from it moves with it.
     - **The board is a SIMULATOR INPUT, so validation is where it belongs**, not merely
       where the lock put it. "How much does my whole board move together" is a number the
       simulator is *given*; calibrating it on the seasons the simulator is later backtested

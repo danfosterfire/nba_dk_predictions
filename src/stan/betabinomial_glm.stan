@@ -1,5 +1,5 @@
-// Beta-binomial GLM: y successes out of n trials, logit-linear mean, one shared
-// dispersion rho.
+// Beta-binomial GLM: y successes out of n trials, logit-linear mean, and a dispersion
+// rho that is either shared or graded over bins supplied as data.
 //
 // THREE of this project's heads are this same likelihood with different data, and that
 // is the factorization argument made concrete rather than asserted:
@@ -24,6 +24,25 @@
 // reproduces the MLE" is a check with a defined answer rather than a vague expectation.
 // For the same reason `beta_scale` is passed in rather than hard-coded — the caller sets
 // it to 1/sqrt(2*l2) to match that head's L2 penalty exactly.
+//
+// ── The dispersion bins ──────────────────────────────────────────────────────────────
+//
+// `rho` is a VECTOR indexed by a bin supplied as data, transplanted from
+// composition_glm.stan where the same device grades the allocation step's dispersion by
+// prior minutes share. **n_rho = 1 with rho_bin all-ones is EXACTLY the shared-rho
+// model** — one parameter, one value of `s` per row, the identical target — which is the
+// same nesting discipline `S = 0` uses for the year effect above. A test pins it, because
+// that nesting is what makes this an addition rather than a silent change to five heads
+// that never asked for a graded dispersion.
+//
+// On availability the bins are prior-season MPG role buckets
+// (`src/eda/season_effects.ROLE_EDGES`), where one rho for every player is measurably too
+// tight for fringe players and too wide for stars — 0.3084 against 0.2456 fitted at the
+// point MLE, a 1.26x spread on the full window and 1.47x on the shipped 2012-13 one. It
+// is milder than the composition head's 2.07x and it is a consistent, nearly free win;
+// see docs/availability-window-plan.md §4. Bins are a property of the ROW, known before
+// the season starts, so this grades on information the head already has rather than on
+// the target.
 // ── The optional year-level random effect ────────────────────────────────────────────
 //
 // A season FIXED effect is unusable at prediction time — there is no dummy for a season
@@ -45,6 +64,8 @@ data {
   array[N] int<lower=0> y;            // successes, y <= n on every row
   real<lower=0> beta_scale;           // 1/sqrt(2*l2) reproduces an L2 penalty of l2
   real<lower=0> intercept_scale;
+  int<lower=1> n_rho;                 // 1 is the shared dispersion, exactly
+  array[N] int<lower=1, upper=n_rho> rho_bin;   // bin edges from TRAIN rows only
   int<lower=0> S;                     // training seasons; 0 disables the year effect
   array[N] int<lower=0> season_idx;   // 1..S, ignored (and all zero) when S == 0
   real<lower=0> year_sd_scale;        // half-normal scale on sigma_year
@@ -59,7 +80,8 @@ parameters {
   // and n, which is never a useful forecast and is numerically nasty (the shape
   // parameters both go to 0); at rho -> 0 they both diverge. Fitted values land near
   // 0.28 on availability and far lower elsewhere, so neither bound binds.
-  real<lower=1e-6, upper=0.95> rho;
+  // Length n_rho: one dispersion per bin, and n_rho = 1 is the shared-rho model exactly.
+  vector<lower=1e-6, upper=0.95>[n_rho] rho;
   real alpha;
   vector[K] beta;
   vector[S] year_z;                   // zero-length when S == 0
@@ -70,7 +92,10 @@ model {
   // saving it would write N x draws numbers to disk (~40M on the availability head) for
   // a quantity every consumer recomputes from alpha/beta anyway.
   vector[N] eta = alpha + X * beta;
-  real s = (1 - rho) / rho;
+  // Per-row dispersion by bin, still one vectorized beta_binomial call below: multiple
+  // indexing (`rho[rho_bin]`) gathers the right rho for every row at once. With n_rho = 1
+  // every entry is the same number, which is the scalar `s` this line used to be.
+  vector[N] s = (1 - rho[rho_bin]) ./ rho[rho_bin];
 
   alpha ~ normal(0, intercept_scale);
   beta ~ normal(0, beta_scale);
@@ -86,5 +111,5 @@ model {
   // rejected; `inv_logit(-eta)` stays positive until eta ~ 745. Same model, ~20 orders of
   // magnitude more headroom, and it removes essentially all of the warmup rejections that
   // a wide-open linear predictor otherwise produces.
-  y ~ beta_binomial(n, s * inv_logit(eta), s * inv_logit(-eta));
+  y ~ beta_binomial(n, s .* inv_logit(eta), s .* inv_logit(-eta));
 }

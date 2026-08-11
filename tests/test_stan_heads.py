@@ -517,6 +517,206 @@ def test_negbinomial_source_offsets_by_log_exposure_in_transformed_data():
     assert "X * beta" in source and "exposure * beta" not in source
 
 
+# ── The role-graded dispersion ───────────────────────────────────────────────
+#
+# Two levels. These first three go through the head's own python — the bins it builds and
+# the predictive it gathers them into — and need no sampler. The three after them evaluate
+# the Stan target itself with `log_prob`, which is the only way to check that the `.stan`
+# file nests rather than merely that the wrapper does.
+
+def _role_frame(mpg, team_games=82, gp=None):
+    frame = pd.DataFrame({"minutes_per_game_lag1": np.asarray(mpg, dtype=float)})
+    frame["team_games"] = team_games
+    frame["gp"] = team_games if gp is None else gp
+    return frame
+
+
+def test_role_bins_are_one_based_and_follow_the_measured_edges():
+    """`ROLE_EDGES` = [0, 12, 24, 30, 60], right-closed, so 12.0 is still the low bucket."""
+    from src.models.stan_availability import role_bins
+
+    frame = _role_frame([1.0, 12.0, 12.1, 24.0, 27.5, 30.0, 36.0])
+    assert list(role_bins(frame)) == [1, 1, 2, 2, 3, 3, 4]
+    # Disabled is all-ones, which with n_rho = 1 is the shared-dispersion head exactly.
+    assert set(role_bins(frame, role_rho=False)) == {1}
+
+
+def test_a_row_outside_the_edges_falls_into_the_widest_bucket():
+    """No prior minutes at all, or an implausible value above the top edge.
+
+    The fringe bucket carries the LARGEST dispersion, so this is the conservative
+    direction: an unknown player is treated as the most variable rather than the least.
+    Silently landing in `30+ mpg` would hand him the model's most reliable availability.
+    """
+    from src.models.stan_availability import role_bins
+
+    assert list(role_bins(_role_frame([np.nan, 0.0, 99.0, 35.0]))) == [1, 1, 1, 4]
+
+
+def test_the_head_gathers_each_rows_own_dispersion_into_its_predictive():
+    """`rho_bin` has to reach the predictive, not just the fit.
+
+    Built without a sampler by writing known per-bin draws onto a fitted-shaped head: a
+    fringe player and a star with the SAME mean must come back with different spreads, and
+    the spread each gets must be his own bucket's. If the gather were dropped, both rows
+    would take column 0 and this reads as a single beta-binomial.
+    """
+    from src.models.availability import predictive_pmf
+    from src.models.stan_availability import StanAvailability
+
+    head = StanAvailability(features=["minutes_per_game_lag1"], first_season=None)
+    frame = _role_frame([6.0, 18.0, 27.0, 36.0])
+    # A fitted head, assembled by hand: zero slopes so every row shares one mean, and one
+    # posterior draw so the mixture is a single beta-binomial per row.
+    head.scaler = type("I", (), {"transform": staticmethod(lambda x: np.zeros_like(x))})()
+    head.alpha_draws = np.zeros(1)
+    head.beta_draws = np.zeros((1, 1))
+    head.rho_draws = np.array([[0.30, 0.25, 0.20, 0.15]])
+    head.predictive_draws = 1
+
+    mus, rhos = head.mu_draws(frame)
+    assert np.allclose(mus, 0.5)
+    assert np.allclose(rhos, [[0.30, 0.25, 0.20, 0.15]])
+    assert np.allclose(head.rho_row(frame), [0.30, 0.25, 0.20, 0.15])
+
+    pmf = head.predict_pmf(frame, 82)
+    grid = np.arange(83)
+    variance = (pmf * grid ** 2).sum(axis=1) - ((pmf * grid).sum(axis=1)) ** 2
+    # Strictly decreasing spread across the four buckets, and each row equals the
+    # beta-binomial at its OWN rho rather than at any shared one.
+    assert np.all(np.diff(variance) < 0)
+    for row, rho in enumerate([0.30, 0.25, 0.20, 0.15]):
+        expected = predictive_pmf(np.array([82]), np.array([0.5]), rho, 82)
+        assert np.allclose(pmf[row], expected[0], atol=1e-10)
+
+
+def test_the_window_cuts_fitting_rows_and_leaves_scoring_alone():
+    """The trap this whole change is arranged around.
+
+    `availability_design` is imported by six other modules, so the window lives on the
+    head. `fitting_rows` is the only thing that applies it, and the frames handed to
+    `predict_*` are never touched — a shorter fitting window is a bias-variance trade on
+    the fit, not a claim about which rows may be predicted.
+    """
+    from src.models.stan_availability import restrict_window, StanAvailability
+
+    frame = pd.DataFrame({"season": ["2010-11", "2012-13", "2019-20", "2023-24"]})
+    assert list(restrict_window(frame, "2012-13")["season"]) == [
+        "2012-13", "2019-20", "2023-24"]
+    assert len(restrict_window(frame, None)) == 4
+    assert len(StanAvailability(first_season="2019-20").fitting_rows(frame)) == 2
+    assert len(StanAvailability(first_season=None).fitting_rows(frame)) == 4
+
+
+# ── The Stan target itself ───────────────────────────────────────────────────
+
+def _lp(model, data, params, **kwargs):
+    """One `target` evaluation. `jacobian=False` drops the bounded-parameter transform,
+    which is what makes two blocks of DIFFERENT dimension comparable at all."""
+    return float(model.log_prob(params, data, jacobian=False, sig_figs=18,
+                                **kwargs)["lp__"].iloc[0])
+
+
+def _betabinomial_fixture(seed=0, n_rows=40, n_bins=3):
+    rng = np.random.default_rng(seed)
+    X = rng.normal(size=(n_rows, 2))
+    data = {"N": n_rows, "K": 2, "X": X.tolist(),
+            "n": [82] * n_rows, "y": rng.integers(0, 83, n_rows).tolist(),
+            "beta_scale": 0.7, "intercept_scale": 5.0,
+            "S": 0, "season_idx": [0] * n_rows, "year_sd_scale": 0.25}
+    bins = rng.integers(1, n_bins + 1, n_rows)
+    params = {"alpha": 0.1, "beta": [0.2, -0.3], "year_z": [], "sigma_year": []}
+    return data, bins, params, X
+
+
+@needs_cmdstan
+def test_n_rho_one_nests_the_shared_rho_likelihood_exactly():
+    """The rollback guarantee, and the reason this was an addition rather than a change.
+
+    Five heads share `betabinomial_glm.stan` and only availability wants a graded
+    dispersion. `n_rho = 1` with all-ones bins must therefore be the model those other four
+    have always fitted — not approximately, exactly — which is the same discipline `S = 0`
+    uses for the year effect. Asserted as an identity on the target, because "the numbers
+    look similar" is what this test exists to refuse.
+    """
+    from src.models.stan_utils import compile_model
+
+    model = compile_model("betabinomial_glm")
+    data, bins, params, _ = _betabinomial_fixture()
+    rho = 0.23
+
+    shared = _lp(model, {**data, "n_rho": 1, "rho_bin": [1] * data["N"]},
+                 {**params, "rho": [rho]})
+    # The same number reached the other way: a three-bin block whose entries agree is the
+    # shared model too, for ANY bin assignment — so the gather cannot be secretly
+    # reordering rows.
+    graded = _lp(model, {**data, "n_rho": 3, "rho_bin": bins.tolist()},
+                 {**params, "rho": [rho] * 3})
+    assert shared == graded
+
+
+@needs_cmdstan
+def test_the_shared_arm_is_still_the_beta_binomial_it_always_was():
+    """`n_rho = 1` against scipy, at the level of the likelihood.
+
+    Differences between two values of `rho` are taken rather than the raw target, which
+    cancels the `alpha` and `beta` priors — `~` statements drop their normalizing
+    constants, so the absolute target is not a quantity scipy can reproduce.
+    """
+    from scipy.stats import betabinom
+
+    from src.models.stan_utils import compile_model
+
+    model = compile_model("betabinomial_glm")
+    data, _, params, X = _betabinomial_fixture()
+    block = {**data, "n_rho": 1, "rho_bin": [1] * data["N"]}
+
+    def scipy_loglik(rho_row):
+        mu = 1.0 / (1.0 + np.exp(-(params["alpha"] + X @ np.array(params["beta"]))))
+        s = (1.0 - rho_row) / rho_row
+        return betabinom.logpmf(np.array(data["y"]), 82, s * mu, s * (1.0 - mu)).sum()
+
+    stan_delta = (_lp(model, block, {**params, "rho": [0.31]})
+                  - _lp(model, block, {**params, "rho": [0.2]}))
+    scipy_delta = (scipy_loglik(np.full(data["N"], 0.31))
+                   - scipy_loglik(np.full(data["N"], 0.2)))
+    assert abs(stan_delta - scipy_delta) < 1e-6
+
+
+@needs_cmdstan
+def test_rho_bin_gathers_the_dispersion_of_each_rows_own_bin():
+    """The gather is row-wise and correct, checked against scipy per row.
+
+    A vectorized `rho[rho_bin]` is exactly the kind of expression that silently applies
+    `rho[1]` everywhere, or transposes the bins, and still produces a plausible posterior.
+    Moving two of three bins and holding the third fixed pins which rows moved and by how
+    much.
+    """
+    from scipy.stats import betabinom
+
+    from src.models.stan_utils import compile_model
+
+    model = compile_model("betabinomial_glm")
+    data, bins, params, X = _betabinomial_fixture()
+    block = {**data, "n_rho": 3, "rho_bin": bins.tolist()}
+    mu = 1.0 / (1.0 + np.exp(-(params["alpha"] + X @ np.array(params["beta"]))))
+
+    def scipy_loglik(rho_by_bin):
+        rho_row = np.asarray(rho_by_bin)[bins - 1]
+        s = (1.0 - rho_row) / rho_row
+        return betabinom.logpmf(np.array(data["y"]), 82, s * mu, s * (1.0 - mu)).sum()
+
+    graded, flat = [0.31, 0.2, 0.12], [0.2, 0.2, 0.2]
+    stan_delta = (_lp(model, block, {**params, "rho": graded})
+                  - _lp(model, block, {**params, "rho": flat}))
+    assert abs(stan_delta - (scipy_loglik(graded) - scipy_loglik(flat))) < 1e-6
+
+    # And the bins are not interchangeable: permuting the values across bins is a
+    # different model, unless the permutation happens to be the identity.
+    permuted = _lp(model, block, {**params, "rho": [0.12, 0.2, 0.31]})
+    assert permuted != _lp(model, block, {**params, "rho": graded})
+
+
 # ── End to end, with a real sampler ──────────────────────────────────────────
 
 @needs_cmdstan
@@ -546,8 +746,13 @@ def test_stan_posterior_mean_reproduces_the_penalized_mle():
     frame["gp"] = rng.binomial(82, rng.beta(mu * scale, (1 - mu) * scale))
 
     mle = BetaBinomialGLM(l2=1.0, features=features).fit(frame)
+    # The incumbent configuration explicitly: `BetaBinomialGLM` is a shared-dispersion
+    # model over every row it is given, so a windowed, role-graded head would not be a
+    # port of it. The shipped arm's own agreement with its own point MLE is checked by
+    # `make stan-availability` against `RoleGradedBetaBinomial`, on the real design.
     stan = StanAvailability(l2=1.0, features=features, warmup=750, samples=750,
-                            chains=4, predictive_draws=100).fit(frame)
+                            chains=4, predictive_draws=100,
+                            first_season=None, role_rho=False).fit(frame)
 
     assert stan.diagnostics["divergences"] == 0
     assert stan.diagnostics["max_rhat"] <= 1.01
@@ -577,7 +782,8 @@ def test_posterior_predictive_obeys_the_law_of_total_variance():
     frame["gp"] = rng.binomial(82, np.clip(frame["gp_share_lag1"], 0.05, 0.95))
 
     stan = StanAvailability(features=features, warmup=400, samples=400, chains=2,
-                            predictive_draws=200).fit(frame)
+                            predictive_draws=200, first_season=None,
+                            role_rho=False).fit(frame)
     plug_in = StanAvailability(features=features, pmf_mode="plug_in")
     plug_in.__dict__.update({k: v for k, v in stan.__dict__.items()
                              if k not in ("pmf_mode", "name")})
@@ -593,7 +799,9 @@ def test_posterior_predictive_obeys_the_law_of_total_variance():
 
     mus, rhos = stan.mu_draws(sub)
     n = sub["team_games"].to_numpy(float)
-    conditional = (n * mus * (1 - mus) * (1 + (n - 1) * rhos[:, None])).mean(axis=0)
+    # `rhos` comes back gathered per row, the same shape as `mus`, so the two pair up
+    # element-wise rather than by broadcasting a per-draw scalar across the board.
+    conditional = (n * mus * (1 - mus) * (1 + (n - 1) * rhos)).mean(axis=0)
     law = conditional + (n * mus).var(axis=0)
 
     mean = (mixed * grid).sum(axis=1)
@@ -620,7 +828,8 @@ def test_shared_beta_induces_board_correlation_a_point_estimate_cannot():
     frame["gp"] = rng.binomial(82, np.clip(frame["gp_share_lag1"], 0.05, 0.95))
 
     stan = StanAvailability(features=features, warmup=400, samples=400, chains=2,
-                            predictive_draws=200).fit(frame)
+                            predictive_draws=200, first_season=None,
+                            role_rho=False).fit(frame)
     board = board_correlation(stan, frame, sizes=(15, 150, None), n_subsets=50)
     assert (board["shared_beta_sd"] > 0).all()
     assert (board["inflation"] > 1.0).all()

@@ -556,7 +556,7 @@ base MAE across heads, and at most 4.97%. A trend moves bias in both directions 
 count heads rather than removing it, so its apparent win on the season total is
 cross-component cancellation. The minutes head is the single exception and adopts a year
 effect. What a year effect *is* worth is joint spread: **+10.4%** on a 15-man roster's
-season-total sd, against +0.2% from shared coefficient uncertainty.
+season-total sd, against +0.5% from shared coefficient uncertainty.
 
 **The drafting edge is large in the simulated world and the realized readout cannot confirm
 it — which is the result, not a caveat.** `make strategy-sweep`. Against a symmetric-field
@@ -587,11 +587,11 @@ and the execution axis".
 **The sampler behaved.** 37 component fits with 0 divergences and every fit clearing every
 convergence bar, 54 season-term fits with 0
 divergences and 0 treedepth saturation, and the availability port reproduces the point MLE
-with the MLE inside the 95% credible interval for 21 of 21 terms. Cost is concentrated
+with the MLE inside the 95% credible interval for 24 of 24 terms. Cost is concentrated
 entirely in the spline variants. Dropping the test side halved the component fit count from
 74 and cut sampler time from 305.0 to **137.4** minutes *while* raising every selection fit
 to full-length chains — which incidentally fixed the one fit that used to miss its R̂ bar.
-1,437 tests pass (`.venv/bin/python -m pytest tests/`).
+1,528 tests pass (`.venv/bin/python -m pytest tests/`).
 
 ---
 

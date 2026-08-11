@@ -120,8 +120,8 @@ from src.models.games_played import (allocate_spells, beta_shapes,
                                      variance_inflation)
 from src.models.stan_availability import availability_design
 from src.models.stan_utils import (compile_model, diagnostics_frame, posterior,
-                                   prior_sd_for_l2, sample, standardized, thin,
-                                   warn_if_unconverged)
+                                   prior_sd_for_l2, rho_block, sample, standardized,
+                                   thin, warn_if_unconverged)
 
 BINOMIAL_MODEL = "betabinomial_glm"
 DURATION_MODEL = "betageometric_duration"
@@ -327,14 +327,19 @@ class BetaBinomialHead:
             {"N": len(train), "K": X.shape[1], "X": X, "n": n.tolist(), "y": y.tolist(),
              "beta_scale": prior_sd_for_l2(self.l2),
              "intercept_scale": INTERCEPT_SCALE,
-             "S": 0, "season_idx": [0] * len(train), "year_sd_scale": 0.25},
+             "S": 0, "season_idx": [0] * len(train), "year_sd_scale": 0.25,
+             # One dispersion for every row: `rho_block()` with no bins is the shared-rho
+             # model exactly. Entry, exit and onset are counts over a schedule rather than
+             # over a role, so there is no bin variable here to grade on.
+             **rho_block(len(train))},
             chains=self.chains, warmup=self.warmup, samples=self.samples,
             seed=self.seed, label=self.name,
             # Every head here inits at the intercept-only solution with zero slopes:
             # Stan's uniform(-2, 2) default puts the starting linear predictor near
-            # 2*sqrt(K), which at K = 19 is already in the saturation region.
+            # 2*sqrt(K), which at K = 19 is already in the saturation region. `rho` is a
+            # vector[n_rho], so its init is a list even at length one.
             inits={"alpha": float(np.log(share / (1 - share))),
-                   "beta": np.zeros(X.shape[1]).tolist(), "rho": 0.2})
+                   "beta": np.zeros(X.shape[1]).tolist(), "rho": [0.2]})
         warn_if_unconverged(self.diagnostics)
 
         draws = posterior(fit, ["alpha", "beta", "rho"])

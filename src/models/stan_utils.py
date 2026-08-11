@@ -99,6 +99,38 @@ def year_block(n_rows: int, seasons: "pd.Series | np.ndarray | None" = None,
     return ({"S": len(order), "season_idx": idx, "year_sd_scale": float(scale)}, order)
 
 
+def rho_block(n_rows: int, bins: "np.ndarray | None" = None,
+              n_bins: int | None = None) -> dict:
+    """The dispersion-bin data block for `betabinomial_glm`.
+
+    That file declares `n_rho` and `rho_bin` unconditionally because Stan has no optional
+    data. Passing `bins=None` returns the **disabled** block — `n_rho = 1`, every row in
+    bin 1 — which is the shared-dispersion model exactly, in the same way `year_block`'s
+    `S = 0` is the no-year-effect model exactly. Every head that wants one scalar
+    dispersion gets it from here rather than hand-writing two keys, so "shared" has one
+    definition and the nesting is pinned in one place.
+
+    `bins` is **1-based** and must cover `1..n_bins` on the fitting rows; a bin with no
+    rows would leave its `rho` at the prior, which is uniform, and any row scored into it
+    later would get a dispersion drawn from nothing. That is a build failure rather than a
+    metric, so it raises.
+    """
+    if bins is None:
+        return {"n_rho": 1, "rho_bin": [1] * int(n_rows)}
+    idx = np.asarray(bins, dtype=int)
+    if len(idx) != int(n_rows):
+        raise ValueError(f"rho_bin has {len(idx)} entries for {n_rows} rows")
+    total = int(n_bins if n_bins is not None else idx.max())
+    if idx.min() < 1 or idx.max() > total:
+        raise ValueError(f"rho_bin must lie in 1..{total}; got {idx.min()}..{idx.max()}")
+    missing = sorted(set(range(1, total + 1)) - set(idx.tolist()))
+    if missing:
+        raise ValueError(
+            f"dispersion bins {missing} have no fitting rows — their rho would be drawn "
+            f"from the uniform prior and applied to real rows at prediction time")
+    return {"n_rho": total, "rho_bin": idx.tolist()}
+
+
 class YearTerm:
     r"""One implementation of the year random effect, held by all four head classes.
 

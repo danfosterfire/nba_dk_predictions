@@ -183,6 +183,27 @@ stan:
   select_warmup: 500
   select_samples: 500
 
+  availability:
+    # First season kept in the head's FITTING rows — the games-played head only.
+    # `make availability-window` laddered window x season term x dispersion and this arm
+    # won on CRPS, PIT and boundary coverage at once: validation CRPS 9.8247 against the
+    # full window's 10.0057, a paired gap of -0.181 [-0.257, -0.103]. Deliberately not
+    # 2017-18, where the sup-F break scan points: the break's LOCATION and the best
+    # fitting WINDOW are different questions, and five target seasons is too few rows.
+    # `null` restores the full 1996-97 window exactly. docs/availability-window-plan.md §4.
+    #
+    # ⚠️ This cuts the rows `stan_availability.StanAvailability.fit` fits on, and nothing
+    # else. It must never be pushed up into `availability_design`, which the minutes,
+    # composition and games-played heads, the model cards and the simulator all import —
+    # they would be silently re-scoped and nothing would raise.
+    first_season: 2012-13
+    # One beta-binomial dispersion per prior-season MPG role bucket
+    # (`src/eda/season_effects.ROLE_EDGES`) rather than one for every player. Fringe
+    # players are genuinely more variable than stars — 0.3084 against 0.2456 at the point
+    # MLE — and grading it never hurt a metric in the ladder. `false` is the shared scalar,
+    # which is `n_rho = 1` in `src/stan/betabinomial_glm.stan` and nests exactly.
+    role_rho: true
+
   minutes:
     # Prior-season total minutes required before a row is fitted. Matches the component
     # heads' qualification threshold, where reliability is already ~0.75.

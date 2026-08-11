@@ -251,9 +251,34 @@ grading, and too small to be the whole defect at 1.26–1.47×.
 
 ## 5. What this leaves, in order
 
-1. **Port `three_point_era__none__role` to `stan_availability.py`** and re-run the gates. It
-   wins CRPS with a clear interval, wins PIT, and cuts boundary error by 43% — without the
-   trend. This is the shippable arm.
+1. ~~**Port `three_point_era__none__role` to `stan_availability.py`**~~ ✅ **Done
+   2026-08-11.** `stan.availability` in `configs/default.yaml` carries `first_season:
+   2012-13` and `role_rho: true`; `betabinomial_glm.stan` now takes `rho` as a vector
+   indexed by a data-supplied bin, with `n_rho = 1` reproducing the shared-`rho` target bit
+   for bit (asserted on Stan's own `log_prob`, so the four other heads on that file are
+   untouched) — and setting `first_season: null` / `role_rho: false` refits the incumbent
+   posterior to within Monte Carlo error, which is the rollback path exercised rather than
+   asserted. The window cuts the head's **own fitting rows** inside `fit`, never
+   `availability_design`.
+
+   On validation the Stan posterior reads CRPS **9.8155** (plug-in 9.8136) against the
+   incumbent's 10.0071, and the dispersion comes back fitted **jointly** rather than
+   profiled: **0.3176** for `<12 mpg` against **0.2064** for `30+ mpg`, a **1.54×** spread
+   where the point MLE on the same rows gives 0.3147 / 0.2142 and 1.47×. Both point MLEs,
+   refitted on the same 4,027 windowed rows, reproduce this ladder to four decimals —
+   **9.8444** and **9.8247** — which is the check that the head fits the arm selected here
+   rather than something nearby.
+
+   Two things came out differently from the plan and are worth carrying forward. **The joint
+   fit trades a little calibration for a little sharpness**: it beats the profiled point
+   estimate on CRPS (9.8136 against 9.8247) and loses to it on PIT KS (0.0679 against
+   0.0588), grading `rho` slightly harder at both ends. And **the window has a price that is
+   not CRPS** — whole-board shared-β spread rose from 222.8 to **297.2** games and board
+   inflation from +6.7% to **+12.3%**, because 4,027 fitting rows leave a wider posterior on
+   β than 9,478 do. That is more honest rather than worse, and it is still +0.5% on a 15-man
+   roster, but every consumer of `stan_availability_board.csv` is now reading a number twice
+   as large. The gates that hold this head as a floor (`season-total`'s Gate E,
+   `stan-games-played`) have **not** been re-run yet.
 2. **Do not ship a season trend.** Recorded as a null so it is not rebuilt. `season_terms`
    already selected `trend` for `gp` on a 0.011 CRPS margin and did not adopt it; this
    explains *why* that was right and adds the reason — it is the wrong shape of instrument.

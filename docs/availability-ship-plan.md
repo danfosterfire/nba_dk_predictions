@@ -86,7 +86,22 @@ run at any point: it is the end-of-project reading.
 
 ---
 
-## Session 1 — the Stan source, the head, the config
+## Session 1 — the Stan source, the head, the config ✅ **landed 2026-08-11**
+
+> **What the next session inherits.** `StanAvailability` takes `first_season` and
+> `role_rho`, defaulting to the shipped configuration, so `posteriors`, `model_cards`,
+> `season_terms` and `final_evaluation` all pick the window up by loading the head. Three
+> things session 2 will hit:
+>
+> - **`self.rho_draws` is now `(draws × n_rho)`**, `self.rho` is a row-weighted scalar, and
+>   `mu_draws` returns `rho` **already gathered per row** — same shape as `mu`. `rho_by_bin`
+>   and `bin_counts` are on the fitted head; `role_bins(frame)` rebuilds the assignment from
+>   `minutes_per_game_lag1` alone, which is what the artifact recipe needs to persist.
+> - **`fit_and_score` returns a fourth arm**, `beta_binomial_role_rho`, and a `fit_rows` key.
+> - **The board term roughly doubled** (+6.7% → +12.3% across the board) because the window
+>   halves the fitting rows. Anything downstream that consumes board correlation moves.
+>
+> Cost was 94 s of sampler time, against 196 s at the full window.
 
 **Cost:** `make stan-availability` was 254 s at the full window; a 2012-13 window is smaller,
 so budget under 10 minutes including the MLE.

@@ -780,20 +780,63 @@ the tail has failed at the thing that matters.
 >
 > **The port is verified, not assumed.** The prior is set to `normal(0, 1/sqrt(2·l2))`,
 > which makes the posterior *mode* exactly the penalized MLE the existing head finds — so
-> agreement is a check with a defined answer. On 9,478 train / 883 **validation**:
+> agreement is a check with a defined answer.
 >
-> | | MLE | Stan plug-in | Stan posterior |
-> |---|---|---|---|
-> | CRPS (games) | **10.0057** | 10.0063 | 10.0071 |
-> | R² on `gp_share` | 0.3736 | 0.3736 | 0.3736 |
-> | PIT KS | 0.0939 | 0.0939 | 0.0939 |
-> | ρ | 0.2806 | 0.2808 | 0.2808 |
+> ⚙️ **Since 2026-08-11 the head fits a 2012-13 window with a role-graded ρ**
+> (`stan.availability` in `configs/default.yaml`, `docs/availability-window-plan.md` §4),
+> so the table below is that head. **Both point MLEs are fitted on the same 4,027 windowed
+> rows** — a port check against a reference fitted on a different population is not a port
+> check — and all four arms score the whole 883-row validation set.
 >
-> Max coefficient gap **0.00335**, largest gap **0.085 posterior sd**, and the MLE sits inside
-> the 95% credible interval for **21/21** terms. R̂ **1.0019**, min ESS 2,314, **0
-> divergences**, 196 s over 4 chains. Both `evaluate` and `crps` are imported from the MLE
-> module rather than reimplemented, so a metric difference could not have been a
+> | | MLE | MLE, role ρ | Stan plug-in | Stan posterior |
+> |---|---|---|---|---|
+> | CRPS (games) | **9.8444** | **9.8247** | 9.8136 | 9.8155 |
+> | R² on `gp_share` | 0.3889 | 0.3889 | 0.3894 | 0.3893 |
+> | PIT KS | 0.0632 | **0.0588** | 0.0679 | 0.0690 |
+> | ρ | 0.2627 | 0.2627 | 0.2595 | 0.2595 |
+>
+> **The two point-MLE columns reproduce `make availability-window`'s ladder to four
+> decimals** — 9.8444 for `three_point_era__none__shared` and 9.8247 for
+> `three_point_era__none__role` — which is a third-party check that the head fits the arm
+> the ladder selected rather than something nearby. The ρ column is the row-weighted
+> scalar; the vector is in the next block.
+>
+> Max coefficient gap **0.09352**, largest gap **1.658 posterior sd** (the intercept), and
+> the MLE sits inside the 95% credible interval for **24/24** terms. R̂ **1.0050**, min ESS
+> 2,382, **0 divergences**, 94 s over 4 chains. Both `evaluate` and `crps` are imported from
+> the MLE module rather than reimplemented, so a metric difference could not have been a
 > metric-implementation difference.
+>
+> ⚠️ **The coefficient agreement is looser than it was, and that is a property of the
+> comparison rather than a defect in the port.** Under a *shared* ρ the posterior mode is
+> exactly the penalized MLE, and the check read a max gap of 0.00335 at 0.085 sd. Under a
+> graded ρ the reference is `RoleGradedBetaBinomial`, which re-fits each bucket's dispersion
+> holding the mean fixed — a two-stage profile, not a joint optimum — so the two estimate
+> the same model by different routes and differ most where the mean and the dispersion trade
+> against each other, which is the intercept. Every term is still inside the interval. The
+> exact-nesting claim is pinned where it can be exact: `n_rho = 1` reproduces the shared-ρ
+> target bit for bit, asserted on Stan's own `log_prob` in `tests/test_stan_heads.py`.
+>
+> ⚠️ **Superseded, not wrong** — the full-window, shared-ρ head this replaced read CRPS
+> **10.0057** / 10.0063 / **10.0071**, R² 0.3736 across the board, PIT KS **0.0939**, ρ
+> 0.2806 / 0.2808, gap 0.00335 at 0.085 sd, R̂ 1.0019, min ESS 2,314, 196 s, on 9,478
+> fitting rows.
+>
+> **The dispersion vector, fitted jointly rather than profiled** (point MLE against the
+> posterior mean, on the 4,027 windowed rows):
+>
+> | bucket | fit rows | point MLE | posterior mean | posterior sd |
+> |---|---|---|---|---|
+> | `<12 mpg` | 608 | 0.3147 | **0.3176** | 0.0115 |
+> | `12-24` | 1,664 | 0.2688 | 0.2698 | 0.0065 |
+> | `24-30` | 868 | 0.2573 | 0.2532 | 0.0091 |
+> | `30+ mpg` | 887 | 0.2142 | **0.2064** | 0.0082 |
+>
+> A **1.54×** spread in the posterior against 1.47× at the point MLE, in the direction the
+> ladder measured: fringe players are more variable than stars. The joint fit grades it
+> slightly harder than the profile does, which is where its CRPS edge (9.8136 against
+> 9.8247) and its slightly worse PIT (0.0679 against 0.0588) both come from — it buys
+> sharpness at the cost of a little calibration, and the two point MLEs bracket it.
 >
 > ⚠️ **Measured on the held-out seasons until 2026-08-05**, where it read CRPS 10.7952 /
 > **10.7947** / 10.7953, R² 0.2831 / 0.2832 / 0.2832, PIT KS 0.0963 / 0.0952 / 0.0963, ρ
@@ -814,11 +857,19 @@ the tail has failed at the thing that matters.
 > ⚠️ **This plan oversold it, and the correction is measurable.** The independent term grows
 > as sqrt(N) and the shared-β term as N, so their ratio scales as sqrt(N) and the *size of
 > the portfolio* decides whether it matters at all. Measured on the 883-player **validation**
-> board with random subsets: **+0.2%** spread inflation on a 12- or 15-player roster,
-> +0.3% at 30, +1.2% at 150, **+6.7%** across the whole board. So "how wrong could my whole board be at
-> once" is a real question for **board-wide exposure across many lineups**, and very nearly
-> a non-question for one drafted team. The 223-game full-board figure must not be quoted as
-> if it applied to a 15-man roster.
+> board with random subsets: **+0.4%** spread inflation on a 12-player roster, +0.5% at 15,
+> +0.7% at 30, +2.4% at 150, **+12.3%** across the whole board. So "how wrong could my whole
+> board be at once" is a real question for **board-wide exposure across many lineups**, and
+> very nearly a non-question for one drafted team. The 297-game full-board figure must not be
+> quoted as if it applied to a 15-man roster.
+>
+> **The 2012-13 window roughly doubled that term, which is the one place the window is not
+> free.** Full-board shared-β sd rose from 222.8 to **297.2** and board inflation from +6.7%
+> to +12.3%, because 4,027 fitting rows leave a wider posterior on β than 9,478 do. It moves
+> in the right direction for honesty — the uncertainty was always there and the longer window
+> was understating it — and it barely touches a roster-sized portfolio (+0.2% → +0.5% at 15).
+> But it is a real cost of the trade, and any consumer reading the board figure as "how much
+> could the whole league move at once" is now reading a number twice as large.
 >
 > The board belongs on validation for a reason beyond the lock: it is a **simulator input**,
 > and calibrating one on the seasons the simulator is later backtested against is the leakage
@@ -1260,7 +1311,7 @@ progress lines, plain-`assert` tests with synthetic builders.
 | **E** | `src/models/availability.py` | `availability-model` | ✅ **done** — four baselines, CRPS/PIT. **The simulator was not built: see below.** |
 | **D2** | `src/eda/report_calibration.py` | `report-calibration` | ✅ **done** — the designation → `P(play)` transfer function, measured on the 2025-26 archive/backfill overlap. Unblocks nothing else; de-risks stage A's payoff. |
 | **G** | `src/models/season_total.py` | `season-total` | ✅ **done** — the downstream metric. Composes `gp × rate` with the rate model held fixed; the head is worth **−205 dk_pts MAE**. |
-| **H** | `src/models/stan_availability.py` | `stan-availability` | ✅ **done 2026-07-29** — the point MLE ported to Stan and verified against it (21/21 coefficients inside the 95% interval). Supplies the posterior the simulator needs. |
+| **H** | `src/models/stan_availability.py` | `stan-availability` | ✅ **done 2026-07-29**, windowed and role-graded 2026-08-11 — the point MLE ported to Stan and verified against it (24/24 terms inside the 95% interval; 21/21 before the window). Supplies the posterior the simulator needs. |
 | **H** | `src/models/stan_minutes.py` | `stan-minutes` | ✅ **done 2026-07-29**, re-run on validation 2026-08-06 — `min \| available` as successes out of real game length. Clears its no-fit floor by +0.030 R². |
 | **F** | dashboard tab | `dashboard` | Not started. A tenth tab over the availability artifacts, matching the existing read-only pattern. |
 
