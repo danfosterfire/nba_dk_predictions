@@ -32,7 +32,11 @@ to the relevant docs for the task at hand. The docs are:
   "expansion" shipped 2026-08-10 and the revision round below added a tenth page 
   the same day; the "Charter amendment 2026-08-10" subsection 
   sets the three bounds the one page of prose (the Overview) exists under, and 
-  each step has a "Step N, as built" section. `dashboard-build-prompts.md`, the 
+  each step has a "Step N, as built" section. **Bound 1 was amended 2026-08-10** 
+  when the Overview was rewritten as a paper — "opens above the fold, scrolls no 
+  further than one screen more", a measured ceiling — and bound 2 gained a half: 
+  a typed sentence on that page carries no digit at all. 
+  `dashboard-build-prompts.md`, the 
   ten one-per-session build prompts, was ephemeral scaffolding and was deleted 
   when the expansion landed.
   - dashboard-revision-plan.md: The round *after* the expansion, planned 
@@ -41,16 +45,18 @@ to the relevant docs for the task at hand. The docs are:
   decided at, and the Overview as a paper). It inherits every rule 
   `dashboard-plan.md` set; read that 
   one first. Three of the five items turned out to have different answers than the 
-  request assumed, and the doc records why. Steps 1-4 shipped 2026-08-10 and each 
+  request assumed, and the doc records why. **All five shipped 2026-08-10** and each 
   has an "as built" section: the appearance is now Streamlit's own setting, with 
   the page chrome generated into `.streamlit/config.toml` by `make 
   dashboard-config`; every head declares its role in the shipped chain; block 6 
-  of the model pages is a scaled quantile residual rather than a raw one; and the 
+  of the model pages is a scaled quantile residual rather than a raw one; the 
   dashboard has a tenth page, **Weekly scores**, which is Gate A at the scoring 
-  period (`make weekly-scores`, `src/sim/weekly.py`). Step 4's unit moved from the 
+  period (`make weekly-scores`, `src/sim/weekly.py`); and the Overview is now a 
+  four-section paper rather than five hero tiles, which cost a charter amendment. 
+  Step 4's unit moved from the 
   tournament round to the **week** mid-session at the user's request, and the doc 
-  records both the request and what the change cost. Its 
-  prompts appendix is ephemeral scaffolding, to be deleted when the round lands.
+  records both the request and what the change cost. Its prompts appendix was 
+  ephemeral scaffolding and was deleted when the round landed.
   - data-quirks.md: Notes and findings in exploring the raw data.
   - dk_best_ball_rules.md: Copy of the tournament rules for draft kings best 
   ball tournaments **always read this**.

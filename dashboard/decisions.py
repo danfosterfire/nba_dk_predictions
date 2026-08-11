@@ -5513,23 +5513,27 @@ REGISTRY: tuple[Decision, ...] = (
         id="dashboard-overview-page-exemption",
         topic="problem",
         claim="One page of prose — the **Overview** — is exempted from 'the dashboard "
-              "shows data, prose belongs in the docs', bounded at one screen, with every "
-              "*result* on it read from an artifact.",
+              "shows data, prose belongs in the docs', bounded to opening above the fold "
+              "and ending inside one more screen, with every *result* on it read from an "
+              "artifact.",
         because="The 2026-08-08 overhaul deleted a nine-tab walkthrough for being "
                 "documentation rendered as an app, and that reasoning stands. The "
                 "audience is what changed: the walkthrough served the project architect "
                 "and lost to `docs/`, while the Overview serves a portfolio reader who "
                 "arrives at a URL with no context and will not open a repository. No "
                 "document serves that reader, because they will not read one. The "
-                "exemption is bounded rather than granted: one screen, no decision "
+                "exemption is bounded rather than granted: a height bound, no decision "
                 "registry or provenance links, and typed prose may say what the project "
-                "does but may not state a result — a hero tile reads "
-                "`season_total_metrics.csv` like every other figure. That last bound is "
-                "the mechanism, since the walkthrough died of hand-typed claims drifting "
-                "from the documents that made them. **Shipped 2026-08-10** as "
+                "does but may not state a result — a sentence quoting the season-total "
+                "MAE reads `season_total_metrics.csv` like every other figure. That last "
+                "bound is the mechanism, since the walkthrough died of hand-typed claims "
+                "drifting from the documents that made them. **Shipped 2026-08-10** as "
                 "`dashboard/views/overview.py` over `dashboard/overview.py`, with all "
                 "three bounds met and the third one enforced by a test that greps both "
-                "modules — see [[overview-fits-one-screen-by-measurement]].",
+                "modules — see [[overview-fits-one-screen-by-measurement]]. The page was "
+                "rewritten as a four-section paper the same day and bound 1 was amended "
+                "with it, deliberately and to a hard ceiling: "
+                "[[overview-bound-one-amended-for-the-paper]].",
         status="settled",
         reproduce="make dashboard → dashboard/app.py",
         source="docs/dashboard-plan.md",
@@ -5540,25 +5544,68 @@ REGISTRY: tuple[Decision, ...] = (
     Decision(
         id="overview-fits-one-screen-by-measurement",
         topic="problem",
-        claim="The Overview's one-screen bound is a **browser measurement**, not an "
-              "intention: the first complete draft was **1,144 px on a 900 px viewport** "
-              "and it ships at **702 px**, with the same five tiles, five pipeline "
-              "stages and eight routes on it.",
-        because="`AppTest` has no DOM and reports the identical five tiles and eight "
-                "page links however they are laid out, so the bound the exemption was "
+        claim="The Overview's height bound is a **browser measurement**, not an "
+              "intention. Three readings at 1440x900: the first tile draft **1,144 px**, "
+              "the tile page as shipped **702 px**, and the four-section paper that "
+              "replaced it **1,036 px** (**1,161 px** at 1280x800).",
+        because="`AppTest` has no DOM and reports the identical tiles, headings and page "
+                "links however they are laid out, so the bound the exemption was "
                 "granted on is invisible to every layer of verification except a real "
                 "browser — which means a page that quietly became the walkthrough again "
-                "would have passed the suite. Measured in Chrome, the 442 px came off in "
-                "this order: ~150 px of Streamlit's defaults (6 rem of leading padding, "
-                "a 2.5 rem `h1`, 1 rem between blocks — chrome laid out for a scrolling "
-                "document), ~90 px of route blurbs cut from three lines to one, 50 px of "
-                "diagram, ~52 px of an intro that explained the contest twice, and 22 px "
-                "of caption. Nothing was removed to make it fit, which is the part worth "
-                "recording: the bound cost the page its verbosity and not its content. "
-                "The CSS that does it is scoped to the page rather than shared through "
-                "`shell.py`, because a model page is supposed to scroll.",
+                "would have passed the suite. On the tile draft, measured in Chrome, the "
+                "442 px came off in this order: ~150 px of Streamlit's defaults (6 rem of "
+                "leading padding, a 2.5 rem `h1`, 1 rem between blocks — chrome laid out "
+                "for a scrolling document), ~90 px of route blurbs cut from three lines "
+                "to one, 50 px of diagram, ~52 px of an intro that explained the contest "
+                "twice, and 22 px of caption. Nothing was removed to make it fit, which "
+                "is the part worth recording: the bound cost the page its verbosity and "
+                "not its content. The CSS that does it is scoped to the page rather than "
+                "shared through `shell.py`, because a model page is supposed to scroll. "
+                "**The paper is the third reading and it is the cheap one**: four "
+                "sections, the diagram and nine routes come in *below* the tile draft "
+                "that was rejected, because two sections to a row is both a readable "
+                "measure and half the height of a full-width column. Read off "
+                "`[data-testid=\"stMain\"]`'s `scrollHeight` — `document.body` reports 0 "
+                "here, since Streamlit scrolls its own container and not the document.",
         status="measured",
         reproduce="make dashboard → dashboard/views/overview.py",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-10",
+        date="2026-08-10",
+        tags=("dashboard",),
+    ),
+    Decision(
+        id="overview-bound-one-amended-for-the-paper",
+        topic="problem",
+        claim="Bound 1 of the Overview's exemption is amended from **one page, one "
+              "screen** to **opens above the fold, scrolls no further than one screen "
+              "more** — a ceiling of two viewports, still measured in a browser.",
+        because="The page was rewritten on 2026-08-10 from five hero tiles into "
+                "`README.md`'s four sections, because five numbers stacked in a row are "
+                "an overview of nothing — the reader gets figures with no argument around "
+                "them. Four sections of two-to-four sentences will not fit 900 px "
+                "alongside the pipeline diagram and nine route links, so the bound had to "
+                "move or the page did, and the only things left to cut were the diagram "
+                "(the one figure carrying the whole shape at a glance) and the routes "
+                "(the reason the page was built last). **Amending is the smaller loss, "
+                "and the bound's own reason survives it**: bound 1 existed because 'if it "
+                "scrolls it has become the walkthrough again', and the walkthrough was "
+                "nine tabs of rendered decision registry — four paragraphs that open "
+                "above the fold are not that, and a hard two-screen ceiling is what keeps "
+                "the difference enforceable rather than rhetorical. Measured on the way "
+                "out: **1,036 px on a 900 px viewport** (136 px past the fold) and "
+                "**1,161 px on 800 px** (361 px past), i.e. inside the new ceiling by 764 "
+                "and 439 px — and *below* the 1,144 px tile draft this bound rejected in "
+                "the first place. Above the fold at 1440x900 the reader gets the title, "
+                "the Introduction with its first artifact-read figure, the whole Methods "
+                "section, the pipeline diagram and both remaining headings. Bounds 2 and "
+                "3 do not move; bound 2 gains a half, since prose has room for a typed "
+                "number where a tile did not — a typed sentence now carries **no digit at "
+                "all**, and the contest's own rules are spelled in words. See "
+                "[[overview-fits-one-screen-by-measurement]] for the three readings and "
+                "[[dashboard-overview-page-exemption]] for the terms this amends.",
+        status="settled",
+        reproduce="make dashboard → dashboard/views/overview.py, dashboard/overview.py",
         source="docs/dashboard-plan.md",
         reviewed="2026-08-10",
         date="2026-08-10",

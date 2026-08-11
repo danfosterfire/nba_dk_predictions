@@ -43,16 +43,59 @@ repository. That reader is not served by any document, because they will not rea
 Three bounds make it a different object from the walkthrough, and they are the terms of the
 exemption:
 
-1. **One page, one screen.** If it scrolls, it has become the walkthrough again.
+1. ~~**One page, one screen.** If it scrolls, it has become the walkthrough again.~~
+   **Amended 2026-08-10, see below:** *opens above the fold, and scrolls no further than
+   one screen more.*
 2. **Every number on it is read from an artifact.** Typed prose may say *what the project
-   does*; it may not state a *result*. A hero tile showing 400.5 dk_pts of season-total MAE
+   does*; it may not state a *result*. A sentence quoting 400.5 dk_pts of season-total MAE
    reads `season_total_metrics.csv` like every other figure on the site. This is the
    mechanism, not a preference — a chart of an artifact cannot disagree with the artifact,
    and the walkthrough died of hand-typed claims drifting from the documents that made them.
+   **A typed sentence carries no digit at all**, which is the same bound one level down —
+   see the amendment below.
 3. **No decision registry, no provenance links, no reversal log.** Those are what made the
    walkthrough a documentation surface, and they stay in `decisions.py` and `docs/`.
 
 Registered as `dashboard-overview-page-exemption` in `dashboard/decisions.py`.
+
+#### The amendment to bound 1 — 2026-08-10, and it is a ceiling rather than a waiver
+
+The page was rewritten the same day into `README.md`'s four sections — Introduction,
+Methods, Results, Discussion — because five hero tiles are five numbers with no argument
+around them, which is an overview of nothing. Four sections of two-to-four sentences do not
+fit 900 px beside the pipeline diagram and nine route links, so **either the bound moved or
+the page did**, and the only things left to cut were the diagram (the one figure that
+carries the whole shape at a glance) and the route block (the reason the page was built
+last). Amending is the smaller loss, and it is taken here rather than silently:
+
+> **Bound 1, as amended.** The page **opens above the fold** — the title, the Introduction
+> and its first artifact-read figure are visible without scrolling — and **ends inside one
+> more screen**. Two viewports is a ceiling, not a target, and it is still a browser
+> measurement rather than an intention.
+
+The bound's own reason survives the change, which is why the ceiling is hard. "If it
+scrolls it has become the walkthrough again" was shorthand for a real failure: the
+walkthrough was nine tabs of rendered decision registry, and four paragraphs that open above
+the fold are not that. Two screens is close enough to the old bound that the page still
+cannot grow a registry, a reversal log or a fifth section without visibly breaking it, and
+far enough that the prose the rewrite asked for is affordable.
+
+**Measured on the way out, since that is what makes this a bound at all: 1,036 px on a
+900 px viewport and 1,161 px on a 1280×800 laptop** — inside the new ceiling by 764 and 439
+px, and *below* the 1,144 px first draft this bound rejected when the page was tiles. The
+paper is cheaper than the tile row it replaced because two sections to a row is both a
+readable measure and half the height of a full-width column.
+
+Bounds 2 and 3 do not move. Bound 2 **gains a half**, and it is the half the rewrite made
+necessary: a hero tile had nowhere to put a typed number — its value came from a lookup and
+its label was a label — while a paragraph has room for one mid-sentence, which is exactly
+how the walkthrough's claims drifted. So a typed fragment now carries **no digit at all**
+(`test_typed_prose_carries_no_digit`), and the contest's own rules are spelled in words:
+*sixteen players* is a rule, `46.4%` is a measurement, and on this page a digit means the
+second kind.
+
+Registered as `overview-bound-one-amended-for-the-paper`, with the three height readings on
+`overview-fits-one-screen-by-measurement`.
 
 What carries over unchanged: **every figure is read from an artifact a `make` target
 produced**, and **nothing in `dashboard/` imports from `src/`** (pinned by
@@ -357,7 +400,7 @@ weekly-scores page step 4 of `docs/dashboard-revision-plan.md` inserted at posit
 
 | # | page | source | new artifacts? |
 |---|---|---|---|
-| 1 | **Overview** | ✅ `views/overview.py`, hero tiles from existing metrics CSVs, shipped 2026-08-10 | no |
+| 1 | **Overview** | ✅ `views/overview.py`, figures read from existing metrics CSVs, shipped 2026-08-10 (hero tiles; rewritten as four sections of prose the same day) | no |
 | 2 | **Player fingerprints** | ✅ `views/fingerprints.py`, moved unchanged 2026-08-10 | no |
 | 3 | **Availability** | ✅ `views/availability.py` over the generic renderer, shipped 2026-08-10 | one — the joint density |
 | 4 | **Minutes** | ✅ `views/minutes.py` over the generic renderer plus `minutes_unification.csv`, shipped 2026-08-10 | no — step 3 had already written them |
@@ -599,12 +642,14 @@ responsiveness — measured the other way: the page is 0.46 s *faster* to first 
 cold `make draft-room`, and 0.31 s on a return. See
 [Step 7, as built](#step-7-as-built--the-draft-board-as-page-9).
 
-**Step 8 · Overview (page 1). ✅ Shipped 2026-08-10.** Last, on purpose: its hero tiles link
-into the pages, so it could not be written until they existed, and writing it first would
-have made it a table of contents for pages that did not. The three bounds all held, and the
-first one had to be *measured* rather than intended — the page came in at 1,144 px on a
-900 px viewport before it was cut to 702. See
-[Step 8, as built](#step-8-as-built--the-overview).
+**Step 8 · Overview (page 1). ✅ Shipped 2026-08-10.** Last, on purpose: it links into the
+pages, so it could not be written until they existed, and writing it first would have made
+it a table of contents for pages that did not. The three bounds all held, and the first one
+had to be *measured* rather than intended — the page came in at 1,144 px on a 900 px
+viewport before it was cut to 702. See
+[Step 8, as built](#step-8-as-built--the-overview), and the
+[amendment to bound 1](#the-amendment-to-bound-1--2026-08-10-and-it-is-a-ceiling-rather-than-a-waiver)
+taken when the page was rewritten as a paper later the same day.
 
 ## What each step owes on the way out
 
@@ -1651,6 +1696,15 @@ reads **262** and the suite **1,369**.
 
 ## Step 8, as built — the Overview
 
+> **Partly superseded 2026-08-10**, the same day, by step 5 of
+> `docs/dashboard-revision-plan.md`: the five hero tiles are now four sections of prose and
+> bound 1 is amended to "opens above the fold, scrolls no further than one screen more"
+> (see [the amendment](#the-amendment-to-bound-1--2026-08-10-and-it-is-a-ceiling-rather-than-a-waiver)).
+> Everything below is the record of what shipped first, and three of its four subsections
+> are untouched by the rewrite: `Spec` is unchanged, bound 3 is unchanged, and
+> `st.page_link` still needs the entrypoint's own page objects. What moved is the tile row
+> and the height.
+
 **2026-08-10, and the expansion lands with it.** `dashboard/overview.py` (the pure layer),
 `dashboard/views/overview.py` (the page), `charts.fig_pipeline`, a page registry in
 `shell.py`, one row at the **front** of `app.VIEWS`, and 19 new tests. No new artifact, no
@@ -1796,8 +1850,8 @@ with no context rather than a radial chart of a player-season they did not choos
 ```
 dashboard/
   README.md       # the rules a new view has to follow
-  overview.py     # page 1's pure layer — the five hero readings, the five pipeline
-                  #   stages and the eight routes, each as a lookup into an artifact
+  overview.py     # page 1's pure layer — the four sections' sentences, the five
+                  #   pipeline stages and the nine routes, each a lookup into an artifact
   __init__.py
   app.py          # the entrypoint — st.navigation, and VIEWS, the sidebar
   shell.py        # cross-page state: the appearance mode, current_theme(), the

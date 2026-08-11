@@ -25,21 +25,31 @@ a URL with no context and will not open a repository — a reader no document re
 they will not read one. Three bounds are the terms it was granted on, and each has a
 mechanism rather than an intention behind it:
 
-1. **One page, one screen.** If it scrolls it is the walkthrough again. Not assertable from
-   Python — `AppTest` has no DOM — so it is a browser measurement, and the first draft
-   failed it at 1,144 px on a 900 px viewport before being cut to 702.
+1. **It opens above the fold and scrolls no further than one screen more.** Amended
+   2026-08-10 from a flat one screen, when the page became a four-section paper — the
+   alternative was cutting the diagram or the routes to pay for the prose. Not assertable
+   from Python — `AppTest` has no DOM — so it is a browser measurement, and it is the bound
+   that has caught something every time: the tile page's first draft failed a one-screen
+   bound at 1,144 px on a 900 px viewport before being cut to 702, and the paper that
+   replaced it measures **1,036 px** at 1440×900 and **1,161 px** at 1280×800, i.e. below
+   the draft that was rejected. Read `[data-testid="stMain"]`'s `scrollHeight`;
+   `document.body` reports 0, since Streamlit scrolls its own container.
 2. **Every number on it is read from an artifact.** Typed prose may say what the project
    *does*; it may not state a *result*. `overview.Spec` is the mechanism: a reading is a
    `build` over the frames it `needs`, so the view holds layout and every figure is a
-   lookup. A tile showing season-total MAE reads `season_total_metrics.csv` like every other
-   figure on the site.
+   lookup. A sentence quoting season-total MAE reads `season_total_metrics.csv` like every
+   other figure on the site. **A typed sentence carries no digit at all**, which is the same
+   bound one level down and is what the rewrite made necessary: a tile had nowhere to put a
+   typed number and a paragraph does. So the contest's own rules are spelled in words —
+   *sixteen players* is a rule and `46.4%` is a measurement.
 3. **No decision registry, no provenance links, no reversal log.** Those are what made the
    walkthrough a documentation surface, and they stay in `decisions.py` and `docs/`. A test
    parses both modules for an import of `decisions` and for `docs/` in any string a reader
-   could see; the route labels are additionally held to carrying no digits, since eight
-   one-line labels beside eight links is where a headline would creep back in.
+   could see; the route labels are additionally held to carrying no digits, since nine
+   one-line labels beside nine links is where a headline would creep back in.
 
-Registered as `dashboard-overview-page-exemption`.
+Registered as `dashboard-overview-page-exemption`, with the amendment as
+`overview-bound-one-amended-for-the-paper`.
 
 ## The two rules
 
@@ -102,8 +112,9 @@ dashboard/
                   metric-tile type scale, the recall/remember pair, and the page
                   registry `st.page_link` rows come out of
   views/
-    overview.py       page 1 — the one exempt page: the problem, five hero tiles, the
-                      pipeline in one diagram, and the route into the other eight
+    overview.py       page 1 — the one exempt page, written as a paper: Introduction,
+                      Methods, the pipeline in one diagram, Results, Discussion, and
+                      the route into the other nine
     fingerprints.py   the PCA fingerprint page — controls, layout, render()
     availability.py   page 3 — one call that names a model class; its docstring says
                       which two of the five heads the shipped chain actually draws
@@ -126,9 +137,9 @@ dashboard/
     draft_room.py     page 10's row — three lines that defer to the room below
   draft_room.py   the live draft room — page 10 *and* its own app (`make draft-room`),
                   off one `render()`, and the one file that imports src/ (see above)
-  overview.py     page 1's pure layer — the eight sources, the five hero readings, the
-                  five pipeline stages and the nine routes, each a lookup rather than
-                  a constant
+  overview.py     page 1's pure layer — the ten sources, the four sections and their
+                  sentences, the five pipeline stages and the nine routes; a sentence
+                  that states a result is a lookup and a typed one carries no digit
   pca.py          the fingerprint view's pure layer — orientation, SD scaling, loadings,
                   neighbours
   strategy.py     the tournament view's pure layer — the contest summary, the hurdle

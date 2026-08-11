@@ -4144,10 +4144,14 @@ def test_the_shipped_calibrated_inputs_read_at_all_three_windows():
 #
 # The charter amendment in `docs/dashboard-plan.md` grants this page an exemption from "the
 # dashboard shows data, prose belongs in the docs" on three terms. Two of them are testable
-# here and one is not: bound 1 (one screen) is a browser measurement and lives in the plan
-# doc's verification section, bound 2 (every number read from an artifact) is what the
-# `Spec` table below makes structural, and bound 3 (no registry, no provenance links, no
-# reversal log) is a grep.
+# here and one is not: bound 1 (opens above the fold, ends inside one more screen) is a
+# browser measurement and lives in the plan doc's verification section, bound 2 (every
+# number read from an artifact) is what the `Spec` table below makes structural, and bound
+# 3 (no registry, no provenance links, no reversal log) is a grep.
+#
+# Bound 2 gained a second half on 2026-08-10, when the five hero tiles became four sections
+# of prose: a tile had nowhere to put a typed number and a sentence does, so a typed
+# fragment is now held to carrying no digit at all.
 
 def _overview_frames() -> dict:
     """A synthetic frame per source, shaped like the artifact and nothing like the data."""
@@ -4162,10 +4166,11 @@ def _overview_frames() -> dict:
             "share_of_variance": [0.464, 0.0003, float("nan")]}),
         "cards": pd.DataFrame({"head": ["a", "b", "c"], "divergences": [0, 0, 0]}),
         "season_total": pd.DataFrame({
-            "treatment": ["beta_binomial", "full_season", "beta_binomial"],
-            "group": ["all", "all", "rotation"],
-            "metric": ["mae_dk_total"] * 3,
-            "value": [400.0, 610.0, 451.0]}),
+            "treatment": ["beta_binomial", "full_season", "beta_binomial",
+                          "oracle_gp", "oracle_rate"],
+            "group": ["all", "all", "rotation", "all", "all"],
+            "metric": ["mae_dk_total"] * 5,
+            "value": [400.0, 610.0, 451.0, 214.0, 262.0]}),
         "components": pd.DataFrame({
             "head": ["fga", "blk", "fg3a", "ftm"],
             "kind": ["count", "count", "share", "share"],
@@ -4173,6 +4178,14 @@ def _overview_frames() -> dict:
             "val_r2": [0.95, 0.81, 0.13, 0.30]}),
         "simulation": pd.DataFrame({"season": ["2022-23", "2023-24"],
                                     "n_sims": [2000, 2000]}),
+        # Four rows, because the double-week facet is a second unit and the sentence reads
+        # exactly one of them — a builder carrying only the row that is read cannot catch
+        # a filter that stopped filtering.
+        "weekly": pd.DataFrame({
+            "period_type": ["week", "week", "double_week", "double_week"],
+            "split": ["train", "validation", "train", "validation"],
+            "zero_share": [0.2066, 0.1990, 0.1910, 0.1703],
+            "predicted_zero_share": [0.1686, 0.1823, 0.1467, 0.1539]}),
         "sweep": pd.DataFrame({"strategy": ["adp", "model_mean", "adp"]}),
         # A rate that is exactly the field null plus the lift, so the tile's three printed
         # numbers can be checked to add up rather than merely to be present.
@@ -4195,6 +4208,17 @@ def test_every_source_names_the_make_target_that_writes_it():
         assert source.target.startswith("make "), source
 
 
+def _overview_text(frames: dict) -> str:
+    """Everything a reader would see on the page, as one string.
+
+    The sections and the diagram together, because a figure that moved from a sentence into
+    a diagram box has not left the page and a test that watched only one half would call
+    that a loss.
+    """
+    return " ".join([para.text for para in overview.paragraphs(frames)]
+                    + [stage.figure for stage in overview.stage_readings(frames)])
+
+
 def test_every_reading_declares_the_sources_it_reads():
     """Bound 2, structurally: a figure cannot reach the page except through a `Spec`.
 
@@ -4203,47 +4227,119 @@ def test_every_reading_declares_the_sources_it_reads():
     protect. Every declared key has to be a real source.
     """
     keys = {source.key for source in overview.SOURCES}
-    for spec in overview.STAGE_SPECS + overview.TILE_SPECS:
+    assert overview.PROSE_SPECS, "the paper states no result at all"
+    for spec in overview.STAGE_SPECS + overview.PROSE_SPECS:
         assert spec.needs, spec
         assert set(spec.needs) <= keys, spec.needs
 
 
-def test_a_missing_artifact_costs_its_own_readings_and_no_others():
-    """The half-built repo. Eight CSVs, and no one of them may blank the page."""
+def test_the_paper_runs_introduction_methods_results_discussion():
+    """`README.md`'s structure, at a landing page's length.
+
+    Two to four sentences each is the brief and it is the whole defence of the rewrite: the
+    complaint the five tiles drew was that they were numbers with no argument, and a
+    section that grows past four sentences has started being the walkthrough's chapter
+    again rather than a paragraph.
+    """
+    assert [s.heading for s in overview.SECTIONS] == [
+        "Introduction", "Methods", "Results", "Discussion"]
+    for section in overview.SECTIONS:
+        assert 2 <= len(section.body) <= 4, section.heading
+
+
+def test_typed_prose_carries_no_digit():
+    """Bound 2 at the sentence, which is where it has to bite once the page is prose.
+
+    A hero tile had nowhere to put a typed number — its value came from a `Spec` and its
+    label was a label. A paragraph has room for one mid-sentence, which is exactly how the
+    walkthrough's claims drifted from the documents that made them. So a digit on this page
+    means "read from an artifact", and the contest's own rules are spelled in words:
+    *sixteen players* is a rule and `46.4%` is a measurement.
+    """
+    for section in overview.SECTIONS:
+        assert not any(ch.isdigit() for ch in section.heading), section.heading
+        for fragment in section.body:
+            if isinstance(fragment, str):
+                assert not any(ch.isdigit() for ch in fragment), fragment
+
+
+def test_a_missing_artifact_costs_its_own_sentences_and_no_others():
+    """The half-built repo. Ten CSVs, and no one of them may blank the page."""
     frames = _overview_frames()
-    assert len(overview.tile_readings(frames)) == len(overview.TILE_SPECS)
+    full = _overview_text(frames)
+    assert len(overview.paragraphs(frames)) == len(overview.SECTIONS)
     assert len(overview.stage_readings(frames)) == len(overview.STAGE_SPECS)
+    typed = [fragment for section in overview.SECTIONS for fragment in section.body
+             if isinstance(fragment, str)]
     for key in list(frames):
         short = {k: v for k, v in frames.items() if k != key}
-        readings = overview.tile_readings(short) + overview.stage_readings(short)
-        assert readings, f"dropping {key} emptied the page"
-        assert len(readings) < len(overview.TILE_SPECS) + len(overview.STAGE_SPECS)
-    assert overview.tile_readings({}) == [] and overview.stage_readings({}) == []
+        text = _overview_text(short)
+        assert text, f"dropping {key} emptied the page"
+        assert len(text) < len(full), f"dropping {key} cost the page nothing"
+        # The typed half does not depend on an artifact and must survive all ten losses.
+        for sentence in typed:
+            assert sentence in text, (key, sentence[:40])
+    assert overview.stage_readings({}) == []
+
+
+def test_a_section_of_pure_lookups_loses_its_heading_rather_than_standing_empty():
+    """`Results` is every-sentence-a-`Spec`, and a heading over nothing is worse than an
+    absent section. The other three keep typed sentences and survive a bare repo, which is
+    the asymmetry the drop rule has to get right rather than dropping on a count."""
+    bare = overview.paragraphs({})
+    assert [para.heading for para in bare] == ["Introduction", "Methods", "Discussion"]
+    assert all(para.text.strip() for para in bare)
 
 
 def test_every_figure_on_the_page_carries_a_digit_from_a_frame():
-    """The bound stated as an assertion: no tile and no stage may be a typed constant.
+    """The bound stated as an assertion: no lookup and no stage may be a typed constant.
 
     Weak on its own — a hard-coded string has digits too — which is why it sits beside the
     reading tests below, where each figure is checked to *move with* its frame.
     """
     frames = _overview_frames()
-    for reading in overview.tile_readings(frames) + overview.stage_readings(frames):
-        figure = getattr(reading, "value", None) or reading.figure
+    readings = [spec.build(frames) for spec in overview.PROSE_SPECS]
+    for reading in readings + overview.stage_readings(frames):
+        figure = getattr(reading, "text", None) or reading.figure
         assert any(ch.isdigit() for ch in figure), reading
 
 
-def test_the_tiles_read_the_values_their_frames_hold():
-    frames = _overview_frames()
-    tiles = {r.label: r for r in overview.tile_readings(frames)}
-    assert tiles["Season-total error"].value == "400.0 dk_pts"
-    # The comparison is the ladder's other end, differenced rather than typed.
-    assert tiles["Season-total error"].delta.startswith("-210.0")
-    assert tiles["Minutes, unknown at draft"].value == "46.4%"
-    assert tiles["Floor with nothing fitted"].value == "R² 0.81–0.95"
-    assert tiles["Divergences, 3 fits"].value == "0"
-    assert tiles["Round 1 advance rate"].value == "29.2%"
-    assert tiles["Round 1 advance rate"].delta == "+12.5% vs a 16.7% field"
+def test_the_sentences_read_the_values_their_frames_hold():
+    """Every figure in the prose, against the frame it came out of.
+
+    Read off the joined text rather than off each `Reading`, because the page is a
+    paragraph now: a sentence that built correctly and never made it into its section
+    would pass a per-reading check and show the reader nothing.
+    """
+    text = _overview_text(_overview_frames())
+    assert "**46.4%**" in text                      # introduction: the minutes share
+    assert "**3** persisted fits" in text           # methods: the sampler
+    assert "**0** divergences" in text
+    assert "**400.0**" in text and "**610.0**" in text     # results: the ladder's two ends
+    assert "**0.81–0.95**" in text                  # results: the count heads' floor
+    assert "**29.2%**" in text and "**16.7%**" in text     # results: rate against the null
+    assert "**2** validation seasons" in text
+    assert "**214.0**" in text and "**262.0**" in text     # discussion: the two oracles
+    assert "**19.9%**" in text and "**18.2%**" in text     # discussion: scoreless weeks
+
+
+def test_the_scoreless_share_reads_one_period_type_and_one_split():
+    """Three of the twenty scoring slots are **double** weeks carrying about twice the
+    games, so the two period types are two units — pooling them would report a calendar
+    fact as a model miss. The split is the one every other figure on the page is read on."""
+    weekly = _overview_frames()["weekly"]
+    assert overview.scoreless_weeks(weekly) == (0.1990, 0.1823)
+    with pytest.raises(overview.MissingRow):
+        overview.scoreless_weeks(weekly[weekly["period_type"] == "nothing"])
+
+
+def test_the_two_oracles_are_read_as_a_pair_from_the_same_ladder():
+    """The discussion sentence's whole claim is that these two disagree with the intuition
+    about which half is hard, so both come off `season_total_metrics.csv` — the same file
+    and the same `group`/`metric` filter the Results sentence uses."""
+    metrics = _overview_frames()["season_total"]
+    assert overview.season_total_mae(metrics, overview.ORACLE_GP_TREATMENT) == 214.0
+    assert overview.season_total_mae(metrics, overview.ORACLE_RATE_TREATMENT) == 262.0
 
 
 def test_the_floor_band_is_the_count_heads_and_not_the_conversions():
@@ -4257,8 +4353,8 @@ def test_the_floor_band_is_the_count_heads_and_not_the_conversions():
 
 
 def test_the_field_null_is_derived_so_the_three_numbers_add_up():
-    """The tile prints a rate, a lift and a null. Typing 1/6 in beside a rate read from an
-    artifact is how two of the three stop agreeing after a re-run."""
+    """The Results sentence prints a rate and a null in the same breath. Typing 1/6 in
+    beside a rate read from an artifact is how the two stop agreeing after a re-run."""
     got = overview.advance(_overview_frames()["shipped"])
     assert abs(got["rate"] - got["lift"] - got["null"]) < 1e-12
     assert abs(got["null"] - 1 / 6) < 1e-3

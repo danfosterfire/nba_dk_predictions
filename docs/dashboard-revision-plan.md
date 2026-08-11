@@ -55,7 +55,7 @@ documentation again. All are from `dashboard/README.md` and `docs/dashboard-plan
 | 2 | [The availability page says which head ships](#step-2--the-availability-page-says-which-head-ships) ✅ | 2 | one column on `model_card_index.csv` | small, self-contained, and it corrects a claim now on the page |
 | 3 | [Scaled quantile residuals](#step-3--scaled-quantile-residuals-in-block-6) ✅ | 3 | one artifact from the existing predictive | touches all four model pages through one renderer |
 | 4 | [dk_pts at the tournament round](#step-4--dk_pts-at-the-tournament-round-the-new-page) ✅ — **shipped at the *weekly* unit**, see [as built](#step-4-as-built--dk_pts-at-the-unit-a-lineup-is-set-at) | 5 | an emitter, plus training-season tensors | the large step; it also adds a page, which moves the route table |
-| 5 | [The Overview as a paper](#step-5--the-overview-rewritten-as-a-paper) | 1 | none | last, because step 4 gives it a ninth route — the same reason it was built last the first time |
+| 5 | [The Overview as a paper](#step-5--the-overview-rewritten-as-a-paper) ✅ | 1 | none | last, because step 4 gives it a ninth route — the same reason it was built last the first time |
 
 ---
 
@@ -377,8 +377,12 @@ differently-sized rounds comparable.
 
 ## Step 5 · The Overview, rewritten as a paper
 
-**User item 1.** "The random stats about the project in the current version come across as
-numbers-vomit rather than a concise overview."
+**User item 1. ✅ Shipped 2026-08-10** — see
+[Step 5, as built](#step-5-as-built--the-overview-as-a-paper). Bound 1 was amended, as
+recommended below, and the measurement that justified it also undercut the premise slightly:
+the paper is *shorter* than the tile draft the old bound rejected. "The random stats about
+the project in the current version come across as numbers-vomit rather than a concise
+overview."
 
 ### What to change and what not to
 
@@ -1032,183 +1036,154 @@ withdrawn.
 
 ---
 
-# Appendix · The five session prompts
+## Step 5, as built — the Overview as a paper
 
-**Ephemeral scaffolding.** Delete this appendix when the round lands, the way
-`docs/dashboard-build-prompts.md` was deleted when the expansion did. Each prompt is meant
-to be pasted into a fresh session on its own.
+**2026-08-10, and the round lands with it.** `dashboard/overview.py` and
+`dashboard/views/overview.py`, no new `make` target and no pipeline run. The five hero tiles
+are gone; the page is `README.md`'s four sections — Introduction, Methods, Results,
+Discussion — of three sentences each, with the figures inline in the prose, the pipeline
+diagram between the first pair of sections and the second, and the nine routes below.
 
----
+### What did not move, which is most of the file
 
-### Prompt 1 — the appearance mode
+`Spec`, `_resolve`, `STAGE_SPECS`, `wrap`/`NOTE_WIDTH`, `charts.fig_pipeline`,
+`shell.publish_pages`/`shell.page` and every bound-3 test are **untouched**. The step's own
+instruction held exactly: a figure still reaches the page only as a `build` over the frames
+it `needs`, so the rewrite is a change of surface and not of mechanism. `Reading` lost its
+`label`, `value` and `delta` and is now a one-field `text`, which is the only shape change
+in the pure layer.
 
-> Read `CLAUDE.md`, `docs/project-spec.md`, `dashboard/README.md` and
-> `docs/dashboard-revision-plan.md` (step 1). Do not read the other steps' sections; they
-> are other sessions' work.
->
-> The dashboard's light/dark radio changes only the plot surfaces — the page background,
-> text, sidebar and tables follow Streamlit's own appearance setting instead. Make the
-> appearance a single, coherent choice across the whole page.
->
-> Start from the finding in step 1: Streamlit 1.60 supports per-mode theme config
-> (`[theme.light]` / `[theme.dark]`, including `backgroundColor`, `textColor`,
-> `borderColor`, `dataframeHeaderBackgroundColor` and a sidebar sub-table), which the
-> current `.streamlit/config.toml` predates and deliberately declines to set. Build that
-> half first, from `dashboard/theme.THEMES` rather than retyped hex — the palette is the
-> validated reference instance and is used unmodified. Keep `headless = true`.
->
-> Then **measure in a browser, in both modes**, what still fails to follow the sidebar radio,
-> and settle the fork step 1 names: keep the radio and accept a documented boundary (option
-> A), or retire it in favour of Streamlit's own appearance setting, which
-> `shell.detected_mode()` already reads (option B). Decide on the measurement, not on
-> reasoning — record what you found either way.
->
-> Owed on the way out: the three verification layers (the browser one is mandatory and is
-> the only one that can see this — `AppTest` has no DOM); tests in `tests/test_dashboard.py`,
-> including one pinning `config.toml` against `theme.THEMES` if you generate one from the
-> other; a `dashboard/decisions.py` entry; a "Step 1, as built" section in
-> `docs/dashboard-revision-plan.md`; and `dashboard/README.md` updated if the sidebar's
-> contents change.
+The page reads **ten** sources rather than nine. The tenth is step 4's own
+`weekly_score_index.csv`, which is what the Discussion sentence about scoreless player-weeks
+comes off — the round's last step reading the round's largest one.
 
----
+### The complaint was not the count of numbers, and that is worth stating
 
-### Prompt 2 — which availability head ships
+The request was that the tiles read as numbers-vomit. **The paper carries more figures than
+the tile row did**, not fewer: thirteen in the prose against the tiles' eight (five values
+and three inside two deltas), plus the diagram's six either way. What changed is that each
+one now has a sentence around it saying what it is against — `400.5` against `610.8`,
+`29.4%` against a `16.7%` field, `214.4` against `261.9`. The tile row could not do that: a
+`delta` is about twenty-six characters before Streamlit truncates it mid-word, which is why
+`-210.3 vs a full season` was as much framing as the season-total tile could hold and why
+the fuller version had to live in a `help` tooltip nobody hovers.
 
-> Read `CLAUDE.md`, `docs/project-spec.md`, `dashboard/README.md`,
-> `docs/availability-plan.md`, `docs/games-played-plan.md` and
-> `docs/dashboard-revision-plan.md` (step 2).
->
-> The Availability page's class intro says "Two ways of predicting the same quantity", which
-> reads as two alternates where one ships. That is wrong in a specific way, established in
-> step 2 by reading `src/sim/season.py::_sim_one`: the simulator draws the games-played
-> **count** from the `availability` head and lays the misses out with
-> `games_played.allocate_spells` at `gp_duration`'s fitted spell shape. `gp_entry`,
-> `gp_exit` and `gp_onset` are never called at draw time — `season.py` states why it does
-> not call `HybridProcess.sequences` — but the tenure decomposition still produces
-> `stan_games_played_gp_pmf.csv`, which is one of Gate A's four bars.
->
-> Verify all of that yourself before building anything; if it has moved, follow the code.
->
-> Then make each head's role in the shipped chain visible **and read from an artifact**: a
-> chain-role column in a closed vocabulary, declared in `src/models/model_cards.py` beside
-> `HeadSpec` where the head is described, emitted on `model_card_index.csv`, and surfaced by
-> `dashboard/views/model_page.py` beside the unit so every model class gets it rather than
-> just this one. Rewrite `model_cards.CLASSES["availability"].intro` to describe the chain.
-> Do not delete the three heads.
->
-> Pin the claim with a test, the way `pca.orient()` and `COMPONENT_BASIS` pin theirs: a head
-> declared to be in the draw path that nothing in `src/sim/` reads is exactly the
-> interpretation that goes stale on the next refactor.
->
-> Owed on the way out: `make model-cards` re-run and its build gate green; the three
-> verification layers; tests; a `dashboard/decisions.py` entry; `docs/model-cards-plan.md`
-> updated for the new column; and a "Step 2, as built" section.
+Twelve sentences: **seven are lookups and five are typed**. Two lookups are new and neither
+needed a new emitter — the two season-total **oracles** (`oracle_gp` 214.4 against
+`oracle_rate` 261.9) were already sitting in `season_total_metrics.csv`, four rows from the
+figure the page had been quoting for a day, and the scoreless-week pair is one row of
+step 4's index.
 
----
+### Bound 1, renegotiated — and the measurement made the case for it twice
 
-### Prompt 3 — scaled quantile residuals
+Amended, as the step recommended, and written into `docs/dashboard-plan.md`'s charter
+section as its own subsection rather than taken in passing:
 
-> Read `CLAUDE.md`, `docs/project-spec.md`, `docs/model-cards-plan.md`,
-> `dashboard/README.md` and `docs/dashboard-revision-plan.md` (step 3).
->
-> Replace block 6's residual-against-predicted panel on the model pages with **scaled
-> quantile residuals**, following R's DHARMa. Keep the fitted-against-observed panel.
->
-> Most of this is already built and the step is an artifact plus two figures, not a method.
-> `model_cards.draw_predictive` already returns `(200 draws × rows)` per head per split
-> through each head's own `predict_samples`; `stan_utils.pit_from_samples` already computes
-> the randomized quantile residual (`below + U·at`) that DHARMa calls a scaled residual, and
-> `stan_utils.ks_uniform` the uniformity statistic. Reuse both verbatim — the same
-> convention that governs `compute_dk_pts`.
->
-> Emit a new long-format artifact following `docs/model-cards-plan.md`'s contract: binned
-> like `model_card_calibration.csv`, keyed by head and split, no test column, with the
-> per-row values riding on `model_card_sample.parquet` for the overlay. Draw two panels: a
-> QQ-uniform with an envelope and the KS distance as a tile, and the scaled residual against
-> **rank-transformed** predicted with the 0.25/0.5/0.75 quantile lines.
->
-> Step 3 lists five things that are easy to get wrong here, every one of which renders as a
-> good-looking picture — the seed, the 1/200 quantization of `u`, whether the composition
-> head's `eta` response admits a quantile residual at all, `gp_duration`'s weight, and the
-> rule that a KS distance is reported as a distance and never as a pass/fail. Handle each
-> explicitly, and prefer an artifact that declares a head out of scope over a panel that is
-> quietly wrong.
->
-> Owed on the way out: the emitter's build gate (a pipeline step owes a gate rather than a
-> browser, but this one also ships a page change, so it owes the three layers too); tests in
-> `tests/test_model_cards.py` and `tests/test_dashboard.py`; a `dashboard/decisions.py`
-> entry; `docs/model-cards-plan.md` and `dashboard/README.md` updated; and a "Step 3, as
-> built" section.
+> **The page opens above the fold and scrolls no further than one screen more.**
 
----
+The alternative was cutting the diagram or the route block to hold 900 px, and both are
+load-bearing — the diagram is the one figure carrying the whole shape at a glance, and the
+routes are the reason the page was built last in the first place. What survives the
+amendment is the *reason* bound 1 existed: the walkthrough was nine tabs of rendered
+decision registry, and four paragraphs that open above the fold are not that. Two viewports
+is a hard ceiling, close enough to the old bound that a fifth section or a reversal log
+would visibly break it.
 
-### Prompt 4 — dk_pts at the tournament round
+**Measured in Chrome, and the number is smaller than the step expected: 1,036 px on a
+900 px viewport** — 136 px past the fold, 764 px inside the new ceiling — **and 1,161 px at
+1280×800**. So the paper comes in *below* the **1,144 px** tile draft that the old bound
+rejected, and 334 px above the 702 px the tiles shipped at. The saving is the layout rather
+than the copy: **two sections to a row** is both a readable 65-to-75-character measure and
+half the height of a full-width column, and a full-width paragraph at 1440 px would have
+been a 150-character line as well as twice as tall.
 
-> Read `CLAUDE.md`, `docs/project-spec.md`, `docs/dk_best_ball_rules.md`,
-> `docs/simulations-plan.md`, `docs/model-cards-plan.md`, `dashboard/README.md` and
-> `docs/dashboard-revision-plan.md` (step 4). This is the largest step in the round.
->
-> Build a new page, between "Inputs beyond the heads" and "Tournament & strategy",
-> comparing **observed against simulated `dk_pts` per player per tournament round**, on both
-> the training and the validation splits. Frame it as Gate A at a unit Gate A does not
-> currently cover: the round is the unit the contest is decided at, and nothing scores
-> `dk_pts` there today.
->
-> Step 4 records what already exists and what does not. The tensor already carries
-> `tournament_round` per scoring period, so changing the unit is a grouped sum and needs no
-> re-simulation. What is missing is training-season tensors (only the two validation seasons
-> are on disk; `season.allowed_seasons` already permits train seasons through
-> `held_out.selection_split`), an observed per-player-per-round `dk_pts` artifact, and an
-> emitter — the dashboard may not open a 90 MB `.npz` and reduce it.
->
-> **Measure before you commit to a run.** Time one training season at a small `--n-sims`
-> first; each shipped tensor is ~90 MB. Take the last two training seasons to match the
-> validation pair rather than all 25, and say why in the doc.
->
-> Reuse rather than re-derive: `preprocess.compute_dk_pts` and
-> `features/scoring_periods.py`'s slot map for the observed side, and `model_cards`' binning
-> helpers for the panels, so this page's ECDF ribbon and binned scatter are the same objects
-> a model page draws and the reader learns the encoding once. Read the ribbon as a distance
-> from the median replicate, never as in-or-out. State that Round 1 is seventeen weeks and
-> Rounds 2–4 are two each, so the four panels are not four equal units.
->
-> Adding a page moves Tournament & strategy to 9 and Draft board to 10 in `app.VIEWS`; the
-> pinned `url_path`s do not change. Update the page counts in `dashboard/README.md`,
-> `docs/dashboard-plan.md` and `CLAUDE.md`.
->
-> Owed on the way out: the emitter's build gate; the three verification layers; tests; a
-> `dashboard/decisions.py` entry; `make dashboard-audit`'s orphan count checked on the way
-> in and out; and a "Step 4, as built" section.
+Above the fold at 1440×900 the reader gets the title, the whole Introduction including its
+first artifact-read figure, the whole Methods section, the entire pipeline diagram and both
+remaining headings — which is the "opens with the Introduction and its first result
+visible" the step asked for, with room to spare.
 
----
+One mechanic, since it cost a wrong reading first: **`document.body.scrollHeight` is 0
+here.** Streamlit scrolls its own container, so the page height is
+`[data-testid="stMain"]`'s `scrollHeight` against `window.innerHeight`; a probe on the
+document reports zero and looks like a page that fits every viewport.
 
-### Prompt 5 — the Overview as a paper
+### Bound 2 grew a half, because prose has room where a tile did not
 
-> Read `CLAUDE.md`, `README.md`, `docs/dashboard-plan.md` (especially "Charter amendment
-> 2026-08-10" and "Step 8, as built"), `dashboard/README.md` and
-> `docs/dashboard-revision-plan.md` (step 5). Run this step **after** the new round-level
-> page has landed, because it adds a route.
->
-> Rewrite the Overview page in the publication structure `README.md` uses — Introduction,
-> Methods, Results, Discussion — two to four sentences each, brief. The current five hero
-> tiles read as numbers-vomit rather than an overview; the figures should live *inside* the
-> prose instead of stacked as tiles.
->
-> **What does not change:** bound 2 of the charter — every number on the page is read from
-> an artifact and none is typed — and `overview.Spec`, the mechanism that enforces it. The
-> lookups stay; `Reading` becomes a prose fragment rather than a tile's label, value and
-> delta. Bound 3 does not move either: no decision registry, no provenance links, no
-> reversal log, and the tests that parse for those stay green. Keep the pipeline diagram and
-> the route block.
->
-> **What you have to renegotiate explicitly:** bound 1, "one page, one screen", measured at
-> 702 px on a 900 px viewport. Four prose sections plus the diagram plus nine route links
-> will not fit it. Step 5 recommends amending the bound to "opens above the fold, scrolls no
-> further than one screen more" and writing that amendment into `docs/dashboard-plan.md`'s
-> charter section with a registry entry — not taking it silently. If you disagree, hold one
-> screen and cut the diagram or the routes to pay for the prose, and record why.
->
-> Owed on the way out: the three verification layers, with the rendered page height measured
-> in Chrome at 1440×900 and recorded (the browser layer is what caught this page's first
-> draft at 1,144 px); tests; a `dashboard/decisions.py` entry for the charter amendment;
-> and a "Step 5, as built" section.
+The bound the exemption turns on is "every number is read from an artifact", and until
+today it was structural for free: a tile's value came from a `Spec` and its label was a
+label, so there was nowhere to type a result. **A paragraph has room for one in the middle
+of a sentence**, which is precisely how the deleted walkthrough's claims drifted from the
+documents that made them. So a `Section`'s body is an ordered mix of two fragment kinds — a
+`str` is typed prose, a `Spec` is a lookup — and `test_typed_prose_carries_no_digit` holds
+every typed fragment to carrying **no digit at all**.
+
+That is why the contest's own rules are spelled in words: *a snake draft of sixteen players*,
+*the best seven by roster slot*, *four elimination rounds*. **A rule is a word and a
+measurement is a digit**, and the rule is then checkable by a grep rather than by reading.
+It is the same device the route blurbs have carried since the page shipped, moved up one
+level to the body text, and it is the only new mechanism in the step.
+
+Bound 3 did not move and its tests were not touched: no `decisions` import, no `docs/` and
+no `withdrawn` in any string a reader could see, and no digits in a route label. All green
+without edits, which is the check that the rewrite did not quietly reach for the registry to
+fill four sections.
+
+### What the rendering caught, which is now seven sessions in a row
+
+- **`R̂` is the wrong glyph at body size and the wrong word on this page.** The Methods
+  sentence read "clear their R̂ and effective-sample-size bars"; in the rendered page the
+  combining circumflex sits badly on the `R` and crowds the following space. The fix is not
+  typographic — a reader who arrives at a URL with no context does not know what R-hat is —
+  so the landing page says **convergence** and the model pages keep the symbol, because a
+  reader who has navigated to one has asked for that level.
+- **The route grid went four columns to three.** Nine routes across four is a ragged final
+  row of one and costs three rows anyway; three columns is a rectangle, keeps every blurb on
+  one line, and is the same height.
+- **Column overflow is a false alarm here.** A probe for "elements whose `scrollHeight`
+  exceeds their `clientHeight`" flags every section column by 16 px, which reads as a
+  paragraph clipped inside its own column. It is the last child's bottom margin, and
+  `overflow` is `visible` on both the column and the markdown block — nothing is clipped.
+  Worth recording because the same probe is how a genuinely clipped block would show up.
+
+The PNG layer is a **regression check only** this step: the page's one figure is
+`fig_pipeline` and no chart code was touched. Both modes re-rendered and looked at; the five
+boxes, four arrowheads and the neutral fill are as they were.
+
+### Verification, as run
+
+**`AppTest`**, both appearance modes × all ten pages: **0 exceptions in 20 runs**, identical
+element counts in the two modes, and no literal `undefined` or `nan`. The Overview reports
+**1 chart, 0 metric tiles, 9 page links and 4 section headings** where it reported 1 chart
+and 5 tiles — the tile row's absence showing up as a number, the same way step 1's retired
+radio showed up as 0 selectors.
+
+**Kaleido**, two PNGs, as above: regression only.
+
+**The live page in Chrome**, 1440×900 and 1280×800, both appearance modes as
+`prefers-color-scheme`, four runs: **0 failures**. Height as recorded above; nine page links
+and the four headings in declared order in every run; all eighteen expected strings present,
+including every figure the prose quotes (`46.4%`, `400.5`, `610.8`, `0.81–0.95`, `29.4%`,
+`16.7%`, `214.4`, `261.9`, `19.9%`, `18.2%`) and both diagram figures checked for; plot
+surface `rgb(252, 252, 251)` and `rgb(26, 26, 25)`; no `undefined`, no standalone `nan`, no
+`stException`. Driving the **Weekly scores** route rather than `page.goto` lands on
+`/weekly` and paints it, which is the check that step 4's new row is reachable from here.
+
+**Tests.** 5 new and 3 rewritten in `tests/test_dashboard.py` (325 → **330**), and
+`.venv/bin/python -m pytest tests/` passes at **1,489** (from 1,484). The three rewrites are
+the ones that used to read a tile's `label` / `value` / `delta`; they now read the joined
+page text, which is deliberate — a sentence that builds correctly and never reaches its
+section would pass a per-`Reading` check and show the reader nothing.
+
+**`make dashboard-audit`: 0 orphans in, 0 out.** `weekly_score_index.csv` was already
+credited to step 4's page, so reading it here moves nothing. **`make docs-audit` green**, 0
+disagreements and 0 stale claims.
+
+### Registry
+
+`overview-bound-one-amended-for-the-paper` (`settled`, topic `problem`, tagged `dashboard`)
+is the amendment and the reasoning for it. Two existing entries were **updated rather than
+withdrawn**, because nothing here was falsified: `overview-fits-one-screen-by-measurement`
+now carries all three height readings (1,144 → 702 → 1,036), and
+`dashboard-overview-page-exemption` states the amended bound 1 and links the amendment. The
+mechanism each of them established — that the height is a browser measurement, and that the
+exemption is bounded rather than waived — is exactly what the amendment relies on.
