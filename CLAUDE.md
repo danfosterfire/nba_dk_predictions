@@ -30,9 +30,6 @@ The docs are:
   - adp-plan.md: Plan and notes for collecting average draft position ("adp") data
   - availability-plan.md: Plan and notes for modeling availability (games played 
   and minutes per game). Work completed and mostly archival.
-  - availability-mixture-ship-plan.md: **Ephemeral scaffolding** — the settled decisions 
-  and per-session work plan for shipping the availability head's mixture likelihood. 
-  Delete it when the round lands.
   - availability-ship-plan.md: **Ephemeral scaffolding** — the per-session work plan 
   for shipping the windowed, role-graded availability head. Delete it when the round 
   lands, as `dashboard-build-prompts.md` was.

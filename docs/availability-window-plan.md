@@ -321,8 +321,12 @@ grading, and too small to be the whole defect at 1.26–1.47×.
    inflation from +6.7% to **+12.3%**, because 4,027 fitting rows leave a wider posterior on
    β than 9,478 do. That is more honest rather than worse, and it is still +0.5% on a 15-man
    roster, but every consumer of `stan_availability_board.csv` is now reading a number twice
-   as large. The gates that hold this head as a floor (`season-total`'s Gate E,
-   `stan-games-played`) have **not** been re-run yet.
+   as large.
+
+   ⚙️ **Superseded by the mixture on 2026-08-12 (§7i)**, which is where this head's shipped
+   figures now live. The gates that hold it as a floor (`season-total`'s Gate E,
+   `stan-games-played`) were owed from this round and were re-run there, once, rather than
+   twice.
 2. **Do not ship a season trend.** Recorded as a null so it is not rebuilt. `season_terms`
    already selected `trend` for `gp` on a 0.011 CRPS margin and did not adopt it; this
    explains *why* that was right and adds the reason — it is the wrong shape of instrument.
@@ -1015,7 +1019,7 @@ point mass on one side and nothing beside it will always miss.
   `beta_rect` wins CRPS and moves the shoulder by pushing a level, so it helps on one
   reading and hurts on the other; `logitnormal` is a measured failure. Whether a
   CRPS-neutral calibration win is a shipping criterion for this head was the judgement call
-  the ladder could not produce a number for, and `docs/availability-mixture-ship-plan.md` D1
+  the ladder could not produce a number for, and **D1** in §8
   made it — **stated before the arm it admits was ported**, which is the point of writing a
   rule down rather than inferring it from the arm that happened to win.
 - ~~**What a Stan port would cost.**~~ ✅ **Measured 2026-08-12** (§7h). It cost a covariate
@@ -1134,7 +1138,7 @@ the geometry"; it was a signal about the autodiff graph, and the geometry is fin
 head.** `posteriors.availability_artifact` and `rehydrate_availability` both refuse a mixture
 artifact, because `DesignRecipe` carries **one** scaler and `π`'s covariate block is not a
 subset of the mean's — a persisted artifact would rehydrate as the single-component head with
-nothing raising. That is §4 of `docs/availability-mixture-ship-plan.md`.
+nothing raising. ✅ Wired 2026-08-12 — §7i.
 
 **And one debt is opened here rather than closed.** `stan_availability_metrics.csv` and every
 port figure quoted against it in `docs/availability-plan.md`, `docs/facts-archive.md` and
@@ -1142,6 +1146,206 @@ port figure quoted against it in `docs/availability-plan.md`, `docs/facts-archiv
 stan-availability` was not re-run, so `make docs-audit` stays green over a consistent set of
 figures rather than a half-refreshed one. Re-running it will move roughly forty quoted
 figures at once, which is the propagation session's job and not a port check's.
+✅ **Closed 2026-08-12 by §7i.**
+
+---
+
+### 7i. The shipped head — propagated 2026-08-12
+
+`make stan-availability` re-run, `make posteriors`, `make model-cards`,
+`make simulate-season`. The mixture is what the whole chain now reads.
+
+**The shipped metrics table** (`stan_availability_metrics.csv`, 883 validation rows, every
+point MLE refitted on the same 4,027 windowed rows):
+
+| arm | CRPS | MAE | R² | PIT KS | ρ (main) |
+|---|---|---|---|---|---|
+| `stan_plug_in` | 9.8195 | 14.3610 | 0.3851 | 0.0643 | 0.2261 |
+| `mixture_mle` | 9.8237 | 14.3785 | 0.3844 | **0.0631** | 0.2245 |
+| **`stan_posterior`** *(ships)* | **9.8239** | 14.3770 | 0.3847 | 0.0643 | 0.2261 |
+| `beta_binomial_role_rho` | 9.8247 | 14.4211 | 0.3889 | **0.0588** | 0.2627 |
+| `beta_binomial` | 9.8444 | 14.4211 | 0.3889 | 0.0632 | 0.2627 |
+
+Every row reproduces §7h to four decimals, which is the control: the shipped target and the
+port check fit the same head on the same rows and had better agree before anything else is
+read. R̂ **1.0073**, min ESS **1,399**, **0** divergences, **366 s**.
+
+**Three things this readout settles.**
+
+**1. The port check's reference was wrong, and fixing it changed the verdict from a
+half-failure to a clean pass.** `fit_and_score` compared the shipped posterior against
+`mle` — the *single-component* shared-ρ optimum — and read the MLE inside the 95% credible
+interval for **19 of 24** terms with `rho[30+ mpg]` at **z = −6.34**. That is not port
+drift. The mixture takes the disrupted seasons out of the main component, so its dispersion
+genuinely falls (0.2261 against 0.2627), and comparing the two is comparing two likelihoods.
+Referenced against `mixture_mle` — the arm the head is a port *of* — the same posterior reads
+**35 of 35** terms inside, max gap **0.74165**, largest **0.597 posterior sd** (`rho_low`),
+and every dispersion term agrees to **z ≤ 0.29**. The module already made this argument one
+axis over, about fitting both on the same *rows*; it now makes it about the same
+*likelihood*, and the coefficient artifact carries all 35 terms rather than 24.
+
+**2. The mixture widens the dispersion grading from 1.54× to 1.97×, and which end moves is
+the finding.** Main-component ρ, point MLE against posterior:
+
+| bucket | fit rows | MLE | posterior | sd | z | single-component posterior |
+|---|---|---|---|---|---|---|
+| `<12 mpg` | 608 | 0.3095 | **0.3124** | 0.0129 | +0.230 | 0.3176 |
+| `12-24` | 1,664 | 0.2369 | 0.2394 | 0.0089 | +0.288 | 0.2698 |
+| `24-30` | 868 | 0.2080 | 0.2086 | 0.0104 | +0.057 | 0.2532 |
+| `30+ mpg` | 887 | 0.1593 | **0.1589** | 0.0087 | −0.046 | 0.2064 |
+
+The fringe bucket barely moves and the star bucket falls by a fifth. A star's blown-up
+season used to be carried as dispersion inside one component; now it is the low component,
+and what is left is a genuinely tighter healthy-season rate. **That is the arm's substantive
+claim arriving in a parameter rather than in a metric** — and it is the reason the head is
+worth more to a draft than its CRPS tie suggests, because a star's downside is now a
+*separate event with a probability* instead of a fat tail on his ordinary season.
+
+**3. PIT KS is the one metric the shipped head loses on, and D1 says so in advance.**
+0.0643 against the role-graded arm's 0.0588. A single KS distance integrates the whole curve
+and is dominated by the middle deciles; D1 selects on **regional** tail calibration with a
+CRPS non-inferiority guard, and on the regions it names the mixture wins (boundary 0.0120
+against 0.0201, shoulder 0.0243 against 0.0253). Recording it plainly because a rule stated
+before the measurement is only worth something if the losses are reported under it too.
+
+**The board term grew, which is the mixture's between-component variance arriving in the
+joint** (`stan_availability_board.csv`):
+
+| portfolio | independent sd | shared-β sd | inflation | *was* |
+|---|---|---|---|---|
+| 12 | 69.060 | 6.499 | +0.4% | +0.4% |
+| 15 | 76.810 | 7.669 | **+0.5%** | +0.5% |
+| 30 | 108.652 | 13.370 | +0.8% | +0.7% |
+| 150 | 242.604 | 58.432 | +2.9% | +2.4% |
+| 883 | 589.169 | 332.588 | **+14.8%** | +12.3% |
+
+The conclusion is unchanged and so is the warning attached to it: real for board-wide
+exposure, near-irrelevant for one roster, and the 883 figure must never be quoted as if it
+applied to a 15-man team.
+
+**`π` is the same object it was at the point MLE and at the port**: mean **4.82%**, **1.23%**
+at the 10th percentile of scored players to **10.58%** at the 90th, an **8.60×** spread.
+
+**What the propagation itself required, in code.** `DesignRecipe` now carries a **second
+design block** — `pi_features` and its own `pi_scaler` — because `PI_FEATURES` enters through
+a different link and cannot share the mean's nineteen-column scaler. Three consequences were
+each a silent failure waiting to happen, and each is now pinned by a test:
+
+- **The round-trip would have checked the wrong quantity and passed.** `response="mean_mu"`
+  serves the reference through `mu_draws`, which under a mixture is the **main component's**
+  mean — a number the shipped head never reports. The head's response is now
+  `mixture_mean_mu`, routed through `predict_mean` on both sides. A distinct name rather than
+  a widened `mean_mu`, so a consumer that switches on `response` raises instead of quietly
+  serving a different function of the same draws.
+- **A dataclass default does not survive unpickling.** Every artifact written before those
+  two fields restores without them, so `recipe.pi_features` would raise `AttributeError`
+  rather than falling back. `DesignRecipe.__setstate__` applies the defaults under the
+  restored state.
+- **The simulator has to draw the component first.** `season.availability_rates` draws
+  per player from whichever component won, never a blend of the two rates — the blend is
+  precisely the season between healthy and disrupted that the arm exists to say does not
+  happen. `π = 0` reproduces the single-component draw **bit for bit**, rng calls included.
+
+The model card also emits the eleven mixture terms, against `π`'s own scaler. A card showing
+`alpha`, `beta` and `rho` for this head would be describing the model that *didn't* ship.
+
+**One thing the propagation broke, and the guard is what found it.** `make model-cards` fails
+the build when the 95% ECDF ribbon moves more than 0.02 between two halves of its draws, and
+the mixture's genuinely wider predictive pushed the availability head from 0.0097 to
+**0.0216** at the shipped 200 draws. The budget went to **400** — re-measured at
+300/400/600/800/1000, not extrapolated — where the worst gated head is availability itself at
+**0.0136** and `make model-cards` costs 17 s rather than 10. That constant was justified by a
+measurement and stayed correct only until the model under it moved, which is the argument for
+gating a budget rather than asserting one.
+
+---
+
+### 7j. The two gates owed from the window round — re-run, and neither verdict moves
+
+Both were outstanding since §5 item 1 and were re-run once here rather than twice.
+
+| gate | reads | verdict | figures |
+|---|---|---|---|
+| `season-total` **Gate E** | `spell_process` against the incumbent on the deliverable | ❌ **fails, unchanged** | MAE **406.65** against 400.46 (+6.19), CRPS **291.63** against 287.26 (+4.37), bias −15.87 against −3.06 |
+| `make stan-games-played` **Gate D** | the spell process's own arms against the incumbent | ❌ **no arm clears, unchanged** | `duration_covariates` 10.1676 / 0.0672 / 0.0535; `calibrated_fallback` 10.0207 / 0.1017 / 0.0440; `hybrid` 10.0057 / 0.0939 / 0.0406 |
+
+**Neither could have moved, and saying why is worth more than the re-run.** Both gates hold
+the **point-MLE incumbent** as their floor — `availability.BetaBinomialGLM`, full-window and
+shared-ρ — not the shipped Stan head. `season_total.gp_treatments` fits it in-process and
+`stan_games_played._floor_scores` refits it per split. Neither module reads
+`stan_availability`'s posterior at all; `stan_games_played` imports only
+`availability_design`, the frame builder. So the window round, the role-graded dispersion and
+now the mixture were all invisible to them by construction, and the re-run was insurance
+rather than a live risk. **§5 item 1's phrase "hold this head as a floor" was imprecise** —
+they hold the *incumbent* as a floor, which is a different object from the head that ships.
+
+What did move is the fourth decimal, on every arm, because the spell process is a Monte Carlo
+simulation over freshly-sampled posteriors: `within_tenure` 7.2265 → **7.23495**,
+`duration_covariates` 10.1625 → **10.1676**, its spell-shape error 1.8105 → **1.7373**, and
+Gate E's margin +6.34 → **+6.19**. 47 audited figures across three docs moved and no verdict
+did, which is the useful shape for a re-run to have: the gates are not resting on margins
+that noise can flip. Both remain failures by margins a bootstrap can resolve —
+`duration_covariates` loses CRPS with a 95% interval of [+0.0737, +0.2393].
+
+---
+
+### 7k. D2's value measurement — and it is confounded, which is the finding
+
+`make bracket` → `make draft-sim` → `make strategy-sweep`, all against the rebuilt tensor.
+D2 asked what the calibration win is worth in Round-1 advance probability, **as a value
+measurement rather than a gate**. Here is what came back, and then why it does not answer
+the question that was asked.
+
+**The shipped arm (`lineup_value_blend30`) in the 600k Shootaround**, pooled over the two
+validation seasons:
+
+| reading | now | recorded | is the change resolved? |
+|---|---|---|---|
+| simulated lift over the symmetric-field null | **+0.1890** [+0.1037, +0.2789] | 0.2107 | **no** — 0.2107 sits inside the interval |
+| realized lift, the same portfolios on real box scores | **+0.1713** | 0.1268 | **no** — 2 seasons, +0.2890 and +0.0535 |
+| autodraft twin over the uncapped click | **+0.0144** | +0.0091 | resolved, same sign |
+| lift given up by autodrafting the board | **0.0975** | 0.092 | same sign |
+
+**Every verdict the sweep carries is unchanged.** Gate C passes — the injected world
+reproduces the market's measured skill gap (+0.0491 on 2022-23, +0.0163 on 2023-24, against
+an uninjected world that has it *backwards* at −0.1230 / −0.1229). Gate D still fails in
+**0 of 6** paired comparisons. The shipped arm is still `lineup_value_blend30`, separated
+from **23 of 23** rivals in the 600k paired comparison, nearest rival `lineup_value` at
+−0.0345 [−0.0449, −0.0237].
+
+**And now the confound, which is the honest headline.** The recorded 0.2107 / 0.1268 were
+measured against a tensor built **before the window round** — before the 2012-13 window,
+before the role-graded `rho`, and before the simulator's availability draw was fixed to
+gather `rho` per player rather than broadcast a scalar. The window round rebuilt the tensors
+and *deliberately did not re-run the sweep* (§8, "one consequence to carry into the port's
+session"), on the reasoning that the propagation session would re-run it anyway and running
+it twice was the expense to avoid. That reasoning saved an hour and cost the measurement:
+**this run moves two things at once**, and 0.2107 → 0.1890 cannot be attributed to the
+mixture.
+
+So D2 is answered only in the weak form:
+
+- **What is established.** Nothing in the contest readout moved detectably. The simulated
+  lift's interval contains the previous point estimate; the realized side has N = 2 seasons
+  and intervals that cover most of the table; and no gate flipped. Whatever the window,
+  the role-graded dispersion and the mixture did *together*, it is smaller than this
+  instrument can resolve at 500 worlds per season.
+- **What is not.** The mixture's own contribution. Isolating it needs a single-component
+  counterfactual — `stan.availability.mixture: false`, then `posteriors` →
+  `simulate-season` → `bracket` → `draft-sim` → `strategy-sweep`, about 2.5 hours — with
+  everything else held at today's code.
+
+**The methodological lesson is worth more than the number.** A value measurement whose
+baseline is not re-measured under the same code is not a value measurement, and the decision
+to skip one sweep to save an hour is exactly what produced that. If the counterfactual is
+run, it should be run as a *pair* — both arms on the same day, same code — rather than
+against a recorded figure of unknown vintage.
+
+**None of this bears on whether the mixture ships.** D2 made the contest readout explicitly
+non-blocking, so a null here was always going to leave the head where D1 put it. What a
+clean counterfactual would buy is knowledge about the *next* head: whether tail-calibration
+wins in this project reach the contest at all, which is currently unmeasured in either
+direction.
 
 ---
 
@@ -1153,19 +1357,36 @@ discovered.
 
 ### The decisions
 
-**1. Is this head selected on CRPS, or on calibration?** The load-bearing one. Every
-availability decision to date has been taken on **mean CRPS with a paired bootstrap**.
-`mixture` *ties* CRPS (+0.011, interval spanning zero) and wins every regional metric.
-Shipping it means deciding the objective for this head is tail calibration. `README.md` §4
-already argues that position — *"A model that improves marginal CRPS by 1% and gets the
-correlation structure wrong is worth less here than one that does the reverse"* — but it has
-never been the stated rule for **this** head, and the call should be made before more numbers
-arrive rather than reverse-engineered from them.
+**1.** ~~**Is this head selected on CRPS, or on calibration?**~~ ✅ **Settled 2026-08-11 —
+this is the head's selection rule, and it was stated before the arm was measured.**
 
-**2. Does a shape win need a contest-level demonstration first?** Nobody has shown that
-moving `P(missed ≤ 5)` from 16.9% toward the observed 12.1% changes a draft. Only
-`make strategy-sweep` can, and it is expensive. Gate on it, or accept the calibration
-evidence plus the mechanical argument in §1.
+> **D1. The availability head is selected on tail calibration, with a CRPS
+> non-inferiority guard.** An arm ships if it improves the tail calibration metrics **and**
+> its CRPS is non-inferior — the paired-bootstrap interval must exclude a material loss.
+>
+> `mixture` passes: CRPS **+0.011** with an interval of [−0.028, +0.051] spanning zero,
+> against `boundary_tail_error` **−0.0089** [−0.0099, −0.0042] and `shoulder_error`
+> **−0.0021** [−0.0086, −0.0010] on validation, and −0.0128 [−0.0138, −0.0064] on the
+> rolling harness.
+>
+> **This is a change of rule and it is deliberate.** Every prior decision on this head was
+> taken on mean CRPS. The reason to move is in `README.md` §4 — *"A model that improves
+> marginal CRPS by 1% and gets the correlation structure wrong is worth less here than one
+> that does the reverse"* — and in §1 above: a dead roster slot and an iron man are the two
+> events a Round-1 knockout turns on, and both errors make a drafted roster look more
+> reliable than it is. **The guard is what stops a future arm trading real accuracy for
+> tails.**
+>
+> The rule is stated *before* the next arm is measured, which is the point of writing it
+> down rather than inferring it from the arm that happened to win. It is also what makes the
+> shipped head's **worse** global PIT KS (0.0643 against the role-graded arm's 0.0588) a
+> reported loss under a standing rule rather than a figure to explain away — see §7i.
+
+**2.** ~~**Does a shape win need a contest-level demonstration first?**~~ ✅ **Settled
+2026-08-11: no.** Port first, then measure the contest value with `make strategy-sweep` as a
+**value measurement rather than a gate**. Nobody had shown that moving `P(missed ≤ 5)` from
+16.9% toward the observed 12.1% changes a draft; that remained an open question and simply
+was not a blocking one. The measurement itself is in §7k — and it came back **confounded**, because the baseline it is compared against predates the window round.
 
 **3.** ~~**Where the mixture lives in Stan.**~~ ✅ **Done 2026-08-12** (§7h). The optional
 block, not a fork: `betabinomial_glm.stan` serves **six** heads (availability, minutes, four
@@ -1238,22 +1459,23 @@ decide whether the strategy sweep is required. The first two were cheap and de-r
 everything after them: one was a live break that the target reproduced, and the other was a
 null that removes the last stated qualification from §7c.
 
-**What the port session leaves for the next one**, beyond the two owed gates:
+**What the port session left for the next one**, beyond the two owed gates — ✅ **both closed
+2026-08-12, §7i**:
 
-1. **`make posteriors` and `rehydrate_availability` raise on a mixture head**, by design —
-   `DesignRecipe` carries one scaler and `π`'s block needs its own. Wire the second design
-   block through `availability_artifact`, `_thinned`'s draw list and `rehydrate_availability`
-   before anything downstream can read this posterior.
-2. **`make stan-availability` has not been re-run**, so `stan_availability_metrics.csv` and
-   the ~40 port figures audited against it across `docs/availability-plan.md`,
-   `docs/facts-archive.md` and `docs/model-development-notes.md` still describe the
-   single-component head. `make docs-audit` is green over a *consistent* set of figures; it
-   will go red the moment that target runs, which is the intended alarm and not a surprise.
-   Refresh those quotes in the same session that re-runs it, keeping the beta-binomial port's
-   figures as `historical=True` rows the way the window round kept the pre-window ones.
+1. ~~**`make posteriors` and `rehydrate_availability` raise on a mixture head**~~ ✅ Done.
+   `DesignRecipe` carries a second design block (`pi_features` / `pi_scaler`), the four
+   mixture draw arrays travel through `_thinned`, and the head's response became
+   `mixture_mean_mu` so the round-trip checks the predictive mean rather than the main
+   component's. Both traps §4 predicted were real and are pinned by tests.
+2. ~~**`make stan-availability` has not been re-run**~~ ✅ Done, and the alarm fired exactly
+   as described: 23 audited figures across `docs/predictions-plan.md` and
+   `docs/model-development-notes.md` went red at once and were refreshed, with the
+   single-component port's figures kept as `historical=True` rows the way the window round
+   kept the pre-window ones.
 
-**One consequence to carry into the port's session.** The simulator's tensors were rebuilt,
-so everything downstream of `sim_tensor_*.npz` — `make bracket`, `make draft`,
-`make strategy-sweep` — is now scored against a *previous* tensor. Those artifacts were not
-re-run, because §4's propagation session re-runs them anyway once the mixture lands, and
-running the sweep twice is the expense this ordering exists to avoid.
+**One consequence carried into that session.** The simulator's tensors were rebuilt, so
+everything downstream of `sim_tensor_*.npz` — `make bracket`, `make draft`,
+`make strategy-sweep` — was scored against a *previous* tensor. Those artifacts were
+deliberately not re-run in the port session, because the propagation session re-runs them
+anyway once the mixture lands, and running the sweep twice is the expense this ordering
+exists to avoid.

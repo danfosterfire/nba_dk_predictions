@@ -782,61 +782,86 @@ the tail has failed at the thing that matters.
 > which makes the posterior *mode* exactly the penalized MLE the existing head finds — so
 > agreement is a check with a defined answer.
 >
-> ⚙️ **Since 2026-08-11 the head fits a 2012-13 window with a role-graded ρ**
-> (`stan.availability` in `configs/default.yaml`, `docs/availability-window-plan.md` §4),
-> so the table below is that head. **Both point MLEs are fitted on the same 4,027 windowed
-> rows** — a port check against a reference fitted on a different population is not a port
-> check — and all four arms score the whole 883-row validation set.
+> ⚙️ **Since 2026-08-11 the head fits a 2012-13 window with a role-graded ρ, and since
+> 2026-08-12 a two-component mixture** (`stan.availability` in `configs/default.yaml`,
+> `docs/availability-window-plan.md` §4 and §7), so the table below is that head. **Every
+> point MLE is fitted on the same 4,027 windowed rows** — a port check against a reference
+> fitted on a different population is not a port check — and all five arms score the whole
+> 883-row validation set.
 >
-> | | MLE | MLE, role ρ | Stan plug-in | Stan posterior |
-> |---|---|---|---|---|
-> | CRPS (games) | **9.8444** | **9.8247** | 9.8136 | 9.8155 |
-> | R² on `gp_share` | 0.3889 | 0.3889 | 0.3894 | 0.3893 |
-> | PIT KS | 0.0632 | **0.0588** | 0.0679 | 0.0690 |
-> | ρ | 0.2627 | 0.2627 | 0.2595 | 0.2595 |
+> | | MLE | MLE, role ρ | MLE, mixture | Stan plug-in | Stan posterior |
+> |---|---|---|---|---|---|
+> | CRPS (games) | **9.8444** | **9.8247** | **9.8237** | 9.8195 | 9.8239 |
+> | MAE (games) | 14.4211 | 14.4211 | 14.3785 | 14.3610 | 14.3770 |
+> | R² on `gp_share` | 0.3889 | 0.3889 | 0.3844 | 0.3851 | 0.3847 |
+> | PIT KS | 0.0632 | **0.0588** | 0.0631 | 0.0643 | 0.0643 |
+> | ρ | 0.2627 | 0.2627 | 0.2245 | 0.2261 | 0.2261 |
 >
-> **The two point-MLE columns reproduce `make availability-window`'s ladder to four
-> decimals** — 9.8444 for `three_point_era__none__shared` and 9.8247 for
-> `three_point_era__none__role` — which is a third-party check that the head fits the arm
-> the ladder selected rather than something nearby. The ρ column is the row-weighted
-> scalar; the vector is in the next block.
+> **The three point-MLE columns reproduce `make availability-window`'s ladder to four
+> decimals** — 9.8444 for `three_point_era__none__shared`, 9.8247 for
+> `three_point_era__none__role` and 9.8237 for `mixture` — which is a third-party check that
+> the head fits the arm the ladder selected rather than something nearby. The ρ column is
+> the row-weighted scalar of the **main** component; the vector is in the next block.
 >
-> Max coefficient gap **0.09352**, largest gap **1.658 posterior sd** (the intercept), and
-> the MLE sits inside the 95% credible interval for **24/24** terms. R̂ **1.0050**, min ESS
-> 2,382, **0 divergences**, 94 s over 4 chains. Both `evaluate` and `crps` are imported from
-> the MLE module rather than reimplemented, so a metric difference could not have been a
-> metric-implementation difference.
+> ⚠️ **PIT KS is the one metric the shipped head loses on, and that is the selection rule
+> working rather than failing.** 0.0643 against the role-graded arm's 0.0588. D1 selects
+> this head on **regional** tail calibration with a CRPS non-inferiority guard, not on a
+> global PIT statistic — and on the regions it names the mixture wins decisively
+> (boundary 0.0120 against 0.0201, shoulder 0.0243 against 0.0253, §7h). A single KS
+> distance integrates the whole curve and is dominated by the middle deciles, which is
+> exactly the part of the distribution nobody drafts on.
 >
-> ⚠️ **The coefficient agreement is looser than it was, and that is a property of the
-> comparison rather than a defect in the port.** Under a *shared* ρ the posterior mode is
-> exactly the penalized MLE, and the check read a max gap of 0.00335 at 0.085 sd. Under a
-> graded ρ the reference is `RoleGradedBetaBinomial`, which re-fits each bucket's dispersion
-> holding the mean fixed — a two-stage profile, not a joint optimum — so the two estimate
-> the same model by different routes and differ most where the mean and the dispersion trade
-> against each other, which is the intercept. Every term is still inside the interval. The
-> exact-nesting claim is pinned where it can be exact: `n_rho = 1` reproduces the shared-ρ
-> target bit for bit, asserted on Stan's own `log_prob` in `tests/test_stan_heads.py`.
+> **The port check's reference is `mixture_mle`, because that is the arm this head is a port
+> of.** Max gap **0.74165**, largest gap **0.597 posterior sd** (`rho_low`), and the MLE
+> sits inside the 95% credible interval for **35/35** terms — 24 coefficient and dispersion
+> terms plus the mixture's 11. R̂ **1.0073**, min ESS 1,399, **0 divergences**, 366 s over 4
+> chains. Both `evaluate` and `crps` are imported from the MLE module rather than
+> reimplemented, so a metric difference could not have been a metric-implementation
+> difference.
 >
-> ⚠️ **Superseded, not wrong** — the full-window, shared-ρ head this replaced read CRPS
-> **10.0057** / 10.0063 / **10.0071**, R² 0.3736 across the board, PIT KS **0.0939**, ρ
-> 0.2806 / 0.2808, gap 0.00335 at 0.085 sd, R̂ 1.0019, min ESS 2,314, 196 s, on 9,478
-> fitting rows.
+> ⚠️ **Referenced against the single-component MLE the same posterior reads 19/24 with
+> `rho[30+ mpg]` at z = −6.34, and that number measures the likelihood rather than the
+> port.** The mixture moves the main component's dispersion down (0.2261 against 0.2627)
+> because the disrupted seasons that used to inflate it now go to the low component, so
+> comparing the two is comparing two models. `fit_and_score` therefore references
+> `mixture_mle` when the head carries a mixture — the same argument this module already
+> makes for fitting both on the same windowed rows, one axis over.
+>
+> ⚠️ **Superseded, not wrong** — the single-component, role-graded head this replaced read
+> CRPS 9.8136 / **9.8155**, R² 0.3894 / 0.3893, PIT KS 0.0679 / 0.0690, ρ 0.2595, gap
+> 0.09352 at 1.658 sd, 24/24 terms, R̂ 1.0050, min ESS 2,382, 94 s. The full-window, shared-ρ
+> head *it* replaced read CRPS **10.0057** / 10.0063 / **10.0071**, R² 0.3736 across the
+> board, PIT KS **0.0939**, ρ 0.2806 / 0.2808, gap 0.00335 at 0.085 sd, R̂ 1.0019, min ESS
+> 2,314, 196 s, on 9,478 fitting rows.
 >
 > **The dispersion vector, fitted jointly rather than profiled** (point MLE against the
-> posterior mean, on the 4,027 windowed rows):
+> posterior mean, on the 4,027 windowed rows — the **main** component's ρ):
 >
-> | bucket | fit rows | point MLE | posterior mean | posterior sd |
-> |---|---|---|---|---|
-> | `<12 mpg` | 608 | 0.3147 | **0.3176** | 0.0115 |
-> | `12-24` | 1,664 | 0.2688 | 0.2698 | 0.0065 |
-> | `24-30` | 868 | 0.2573 | 0.2532 | 0.0091 |
-> | `30+ mpg` | 887 | 0.2142 | **0.2064** | 0.0082 |
+> | bucket | fit rows | point MLE | posterior mean | posterior sd | z |
+> |---|---|---|---|---|---|
+> | `<12 mpg` | 608 | 0.3095 | **0.3124** | 0.0129 | +0.230 |
+> | `12-24` | 1,664 | 0.2369 | 0.2394 | 0.0089 | +0.288 |
+> | `24-30` | 868 | 0.2080 | 0.2086 | 0.0104 | +0.057 |
+> | `30+ mpg` | 887 | 0.1593 | **0.1589** | 0.0087 | −0.046 |
 >
-> A **1.54×** spread in the posterior against 1.47× at the point MLE, in the direction the
-> ladder measured: fringe players are more variable than stars. The joint fit grades it
-> slightly harder than the profile does, which is where its CRPS edge (9.8136 against
-> 9.8247) and its slightly worse PIT (0.0679 against 0.0588) both come from — it buys
-> sharpness at the cost of a little calibration, and the two point MLEs bracket it.
+> A **1.97×** spread in the posterior against 1.94× at the point MLE, in the direction the
+> ladder measured: fringe players are more variable than stars. **The mixture widened that
+> spread from 1.54× to 1.97×, and the mechanism is visible in which end moved**: the fringe
+> bucket barely changes (0.3176 → 0.3124) while the star bucket falls by a fifth
+> (0.2064 → 0.1589). A star's disrupted season used to be absorbed as dispersion in a
+> single component; now it is the low component, and what remains is a genuinely tighter
+> healthy-season rate. That is the substantive claim of the arm, arriving in a parameter
+> rather than in a metric.
+>
+> ⚠️ **The single-component figures for that table** were `<12 mpg` 0.3147 / **0.3176**
+> (sd 0.0115), `12-24` 0.2688 / 0.2698 (0.0065), `24-30` 0.2573 / 0.2532 (0.0091), `30+ mpg`
+> 0.2142 / **0.2064** (0.0082) — a 1.54× posterior spread against 1.47× at the point MLE.
+>
+> **The mixture block, point MLE against the posterior** — `θ` 0.1116 → **0.1078**
+> (sd 0.0236), `μ_low` 0.1000 → **0.1133** (0.0240), `ρ_low` 0.0441 → **0.0578** (0.0230),
+> plus eight `γ` coefficients. On the scored rows `π` has mean **4.82%**, running from
+> **1.23%** at the 10th percentile of players to **10.58%** at the 90th — an **8.60×**
+> spread, which is the arm's distinguishing claim: it can say *who* is at risk.
 >
 > ⚠️ **Measured on the held-out seasons until 2026-08-05**, where it read CRPS 10.7952 /
 > **10.7947** / 10.7953, R² 0.2831 / 0.2832 / 0.2832, PIT KS 0.0963 / 0.0952 / 0.0963, ρ
@@ -858,18 +883,22 @@ the tail has failed at the thing that matters.
 > as sqrt(N) and the shared-β term as N, so their ratio scales as sqrt(N) and the *size of
 > the portfolio* decides whether it matters at all. Measured on the 883-player **validation**
 > board with random subsets: **+0.4%** spread inflation on a 12-player roster, +0.5% at 15,
-> +0.7% at 30, +2.4% at 150, **+12.3%** across the whole board. So "how wrong could my whole
+> +0.8% at 30, +2.9% at 150, **+14.8%** across the whole board. So "how wrong could my whole
 > board be at once" is a real question for **board-wide exposure across many lineups**, and
-> very nearly a non-question for one drafted team. The 297-game full-board figure must not be
-> quoted as if it applied to a 15-man roster.
+> very nearly a non-question for one drafted team. The **332.588**-game full-board figure
+> must not be quoted as if it applied to a 15-man roster.
 >
 > **The 2012-13 window roughly doubled that term, which is the one place the window is not
-> free.** Full-board shared-β sd rose from 222.8 to **297.2** and board inflation from +6.7%
-> to +12.3%, because 4,027 fitting rows leave a wider posterior on β than 9,478 do. It moves
-> in the right direction for honesty — the uncertainty was always there and the longer window
-> was understating it — and it barely touches a roster-sized portfolio (+0.2% → +0.5% at 15).
-> But it is a real cost of the trade, and any consumer reading the board figure as "how much
-> could the whole league move at once" is now reading a number twice as large.
+> free**, and the mixture added to it again. Full-board shared-β sd rose from 222.8 to 297.2
+> with the window and to **332.588** with the mixture; board inflation from +6.7% to +12.3%
+> to **+14.8%**. The window's share is that 4,027 fitting rows leave a wider posterior on β
+> than 9,478 do; the mixture's is its between-component variance
+> `π(1−π)(m_low − m_main)²`, which is the extra spread the arm was adopted for reaching the
+> joint. It moves in the right direction for honesty — the uncertainty was always there and
+> the longer window was understating it — and it barely touches a roster-sized portfolio
+> (+0.2% → +0.5% at 15). But it is a real cost of the trade, and any consumer reading the
+> board figure as "how much could the whole league move at once" is now reading a number
+> half again as large.
 >
 > The board belongs on validation for a reason beyond the lock: it is a **simulator input**,
 > and calibrating one on the seasons the simulator is later backtested against is the leakage
@@ -1311,7 +1340,7 @@ progress lines, plain-`assert` tests with synthetic builders.
 | **E** | `src/models/availability.py` | `availability-model` | ✅ **done** — four baselines, CRPS/PIT. **The simulator was not built: see below.** |
 | **D2** | `src/eda/report_calibration.py` | `report-calibration` | ✅ **done** — the designation → `P(play)` transfer function, measured on the 2025-26 archive/backfill overlap. Unblocks nothing else; de-risks stage A's payoff. |
 | **G** | `src/models/season_total.py` | `season-total` | ✅ **done** — the downstream metric. Composes `gp × rate` with the rate model held fixed; the head is worth **−205 dk_pts MAE**. |
-| **H** | `src/models/stan_availability.py` | `stan-availability` | ✅ **done 2026-07-29**, windowed and role-graded 2026-08-11 — the point MLE ported to Stan and verified against it (24/24 terms inside the 95% interval; 21/21 before the window). Supplies the posterior the simulator needs. |
+| **H** | `src/models/stan_availability.py` | `stan-availability` | ✅ **done 2026-07-29**, windowed and role-graded 2026-08-11, mixture 2026-08-12 — the point MLE ported to Stan and verified against it (35/35 terms inside the 95% interval; 24/24 before the mixture, 21/21 before the window). Supplies the posterior the simulator needs. |
 | **H** | `src/models/stan_minutes.py` | `stan-minutes` | ✅ **done 2026-07-29**, re-run on validation 2026-08-06 — `min \| available` as successes out of real game length. Clears its no-fit floor by +0.030 R². |
 | **F** | dashboard tab | `dashboard` | Not started. A tenth tab over the availability artifacts, matching the existing read-only pattern. |
 
@@ -1534,7 +1563,7 @@ difference below is the availability head and nothing else. Scored on **validati
 | prior GP carried forward | 417.9 | 560.5 | 0.652 | +19.4 | — |
 | league/age baseline | 461.6 | 565.9 | 0.645 | +12.9 | 329.1 |
 | **beta-binomial head** | **400.5** | **514.0** | **0.707** | **−3.1** | **287.3** |
-| *spell process* (Gate E) | *406.8* | *520.3* | *0.700* | *−16.6* | *291.8* |
+| *spell process* (Gate E) | *406.6* | *520.0* | *0.700* | *−15.9* | *291.6* |
 | *oracle rate* (predicted GP, true rate) | *261.9* | *367.0* | *0.851* | *−41.3* | — |
 | *oracle GP* (true GP, predicted rate) | *214.4* | *287.5* | *0.908* | *+2.0* | — |
 
@@ -1569,7 +1598,7 @@ difference below is the availability head and nothing else. Scored on **validati
 - **Bias is where the naive treatment dies.** +523.3 of its 610.8 MAE is bias — it assumes
   82 games for everyone. The head's −3.1 is essentially zero, which is the calibrated
   distribution doing exactly the job stage E's PIT said it would.
-- **Gate E ran here and the spell process FAILS it** — 406.8 MAE and 291.8 CRPS against the
+- **Gate E ran here and the spell process FAILS it** — 406.6 MAE and 291.6 CRPS against the
   incumbent's 400.5 / 287.3. It had been recorded as a ✅ on test with a margin of **0.03
   dk_pts** (435.1053 against 435.1352). `season_total.gate_e` now derives both bars from the
   incumbent's own row on whichever table it scores.

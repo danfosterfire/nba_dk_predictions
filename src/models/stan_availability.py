@@ -87,7 +87,7 @@ statement. Both are pinned on Stan's own `log_prob` in `tests/test_stan_heads.py
 the rollback path for a file six heads share.
 
 **The head is selected on tail calibration with a CRPS guard**, which is a change of rule
-recorded in `docs/availability-mixture-ship-plan.md` D1 and stated *before* this arm was
+recorded as D1 in `docs/availability-window-plan.md` §8 and stated *before* this arm was
 ported. Do not re-decide it on mean CRPS; the mixture ties there by construction.
 
 **`predict_mean` returns the PREDICTIVE mean, not the main component's.** A mixture's mean is
@@ -185,7 +185,7 @@ ROLE_BIN_COL = "rho_bin"
 # `docs/availability-window-plan.md` §7c laddered five likelihoods and `mixture` won the
 # selector: `boundary_tail_error` **0.0109** against the single-component head's 0.0201,
 # `shoulder_error` −0.0021 [−0.0086, −0.0010], and a **tie** on CRPS (+0.011, interval
-# spanning zero). `docs/availability-mixture-ship-plan.md` D1 is the rule that makes that a
+# spanning zero). D1 in `docs/availability-window-plan.md` §8 is the rule that makes that a
 # ship: this head is selected on tail calibration with a CRPS non-inferiority guard, stated
 # before the arm was measured rather than reverse-engineered from it.
 #
@@ -701,32 +701,60 @@ def rehydrate_availability(artifact, keep: int) -> StanAvailability:
     bucket 2 and raise — or, worse, would not. `rho_draws` is (draws x n_rho) in both arms,
     which is what keeps the two on one path.
 
+    **The mixture block comes from the artifact too, and it is all-or-nothing.** `pi` needs
+    four draw arrays *and* its own covariate list and scaler — the recipe's second block,
+    `PI_FEATURES` not being a subset of `FEATURE_COLS`. A head rehydrated with any of those
+    missing would be the single-component model wearing the mixture's name and would raise
+    nowhere, so a mixture artifact that carries an incomplete block raises here instead.
+
     `bin_counts` and the row-weighted scalar `rho` are deliberately absent: both are
     properties of the *fitting* rows, which an artifact does not carry, and a plausible-looking
     stand-in computed from the scored frame would be a different number wearing the same name.
     """
-    model = StanAvailability(features=list(artifact.recipe.features),
+    recipe = artifact.recipe
+    mixture = bool(artifact.extras.get("mixture", False))
+    model = StanAvailability(features=list(recipe.features),
                              pmf_mode="posterior", name="rehydrated/availability",
                              predictive_draws=keep,
                              first_season=str(artifact.extras.get("fit_first_season") or "")
                              or None,
                              role_rho=bool(artifact.extras.get("role_rho", False)),
-                             mixture=bool(artifact.extras.get("mixture", False)))
-    model.scaler = artifact.recipe.scaler
+                             mixture=mixture,
+                             pi_features=list(getattr(recipe, "pi_features", []) or [])
+                             or None)
+    model.scaler = recipe.scaler
     model.alpha_draws = np.asarray(artifact.draws["alpha_draws"], dtype=float)
     model.beta_draws = np.asarray(artifact.draws["beta_draws"], dtype=float)
     model.rho_draws = np.asarray(artifact.draws["rho_draws"], dtype=float)
-    if model.mixture:
-        # Same rule as `role_rho` above, one level up: a mixture artifact rehydrated
-        # without its own draws would be a *different model* wearing the right name, and
-        # would read as the single-component head with no error anywhere.
-        raise NotImplementedError(
-            "this artifact was fitted with the low-availability mixture, and the "
-            "`DesignRecipe` does not yet carry pi's covariate block or its scaler — so "
-            "`pi` cannot be reconstructed for a new frame and the rehydrated head would "
-            "silently be the single-component one. Extend `posteriors.availability_artifact` "
-            "(docs/availability-mixture-ship-plan.md §4) before reading one.")
-    model._absorb_mixture(None)          # the inert block: `pi` is exactly zero
+    if not model.mixture:
+        model._absorb_mixture(None)      # the inert block: `pi` is exactly zero
+    else:
+        missing = [name for name in ("theta_draws", "mu_low_draws", "rho_low_draws",
+                                     "gamma_draws") if name not in artifact.draws]
+        if missing or getattr(recipe, "pi_scaler", None) is None \
+                or not getattr(recipe, "pi_features", []):
+            raise ValueError(
+                f"this artifact declares the low-availability mixture and its block is "
+                f"incomplete — missing draws {missing or 'none'}, "
+                f"{len(getattr(recipe, 'pi_features', []) or [])} pi covariate(s), scaler "
+                f"{'present' if getattr(recipe, 'pi_scaler', None) is not None else 'absent'}"
+                f". `pi` cannot be rebuilt for a new frame, and a head assembled from what "
+                f"is here would silently be the single-component one. Re-run "
+                f"`make posteriors --groups availability`.")
+        model.pi_scaler = recipe.pi_scaler
+        model.theta_draws = np.asarray(artifact.draws["theta_draws"], dtype=float).reshape(-1)
+        model.mu_low_draws = np.asarray(artifact.draws["mu_low_draws"],
+                                        dtype=float).reshape(-1)
+        model.rho_low_draws = np.asarray(artifact.draws["rho_low_draws"],
+                                         dtype=float).reshape(-1)
+        model.gamma_draws = np.asarray(artifact.draws["gamma_draws"], dtype=float).reshape(
+            len(model.alpha_draws), -1)
+        model.chains_table = pd.DataFrame()
+        if model.gamma_draws.shape[1] != len(model.pi_features):
+            raise ValueError(
+                f"the artifact carries {model.gamma_draws.shape[1]} `gamma` coefficient(s) "
+                f"and {len(model.pi_features)} pi covariate(s). The persisted mixture and "
+                f"its design block disagree, so `pi` would be built from the wrong columns.")
     if model.rho_draws.ndim == 1:
         model.rho_draws = model.rho_draws[:, None]
     if model.rho_draws.shape[1] != model.n_rho:
@@ -1159,13 +1187,31 @@ def fit_and_score(train: pd.DataFrame, frame: pd.DataFrame, max_games: int,
         prediction_frames.append(predictions)
         pit_frames.append(pit_table(predictions["pit"].to_numpy(), model.name))
 
+    # **The port check's reference is the arm the head is a port OF.** Under a mixture that
+    # is `mixture_mle`, not `mle`: the two fit different likelihoods, so the main
+    # component's `beta` and `rho` are genuinely different parameters and comparing them
+    # would read a likelihood change as a port discrepancy — the same argument this module
+    # already makes for fitting both on the same windowed rows, one axis over. Measured:
+    # against `mle` the shipped mixture posterior puts the MLE inside 19 of 24 intervals
+    # and `rho[30+ mpg]` at z = -6.34, which says the mixture pulled the main component's
+    # dispersion down (0.2261 against 0.2627) and nothing at all about the port.
+    reference = mixture_mle or mle
+    rho_reference = (dict(zip(ROLE_LABELS, np.asarray(mixture_mle.dispersion).reshape(-1)))
+                     if mixture_mle is not None
+                     else getattr(role_mle, "rho_by_role", None))
+    coefficients = coefficient_comparison(reference, stan, stan.features,
+                                          rho_mle=rho_reference)
+    if mixture_mle is not None:
+        # The eleven mixture terms, in the same columns, so one table is the whole check.
+        coefficients = pd.concat([coefficients,
+                                  mixture_parameters(mixture_mle, stan)],
+                                 ignore_index=True)
     return {
         "mle": mle, "role_mle": role_mle, "mixture_mle": mixture_mle,
+        "reference": reference,
         "stan": stan, "plug_in": plug_in, "fit_rows": fit_rows,
         "metrics": pd.DataFrame(rows),
-        "coefficients": coefficient_comparison(
-            mle, stan, stan.features,
-            rho_mle=getattr(role_mle, "rho_by_role", None)),
+        "coefficients": coefficients,
         "board": board_correlation(stan, frame),
         "pit": pd.concat(pit_frames, ignore_index=True),
         "predictions": pd.concat(prediction_frames, ignore_index=True),
@@ -1224,8 +1270,10 @@ def run(cfg: dict) -> dict[str, Path]:
 
     coefs = scored["coefficients"]
     worst = coefs.loc[coefs["z_from_mle"].abs().idxmax()]
-    print(f"\nPort check — MLE optimum against the posterior ({len(coefs)} terms), both "
-          f"fitted on\n  the same {len(scored['fit_rows']):,} windowed rows:")
+    print(f"\nPort check — `{scored['reference'].name}`'s optimum against the posterior "
+          f"({len(coefs)} terms),\n  both fitted on the same "
+          f"{len(scored['fit_rows']):,} windowed rows. The reference is the arm this head "
+          f"is a\n  port OF, so a likelihood change is not read as a port discrepancy:")
     print(f"  max |posterior mean - MLE| = "
           f"{coefs['difference'].abs().max():.5f}")
     print(f"  largest gap in posterior sds: {worst['term']} at "
@@ -1249,6 +1297,21 @@ def run(cfg: dict) -> dict[str, Path]:
     print("  Looser agreement than the coefficients is expected: the point estimate "
           "re-fits each\n  bucket's rho holding the mean fixed, where Stan samples the "
           "whole vector jointly.")
+
+    mixed = coefs[coefs["term"].isin(["theta", "mu_low", "rho_low"])
+                  | coefs["term"].str.startswith("gamma[")]
+    if len(mixed):
+        print(f"\n  The mixture block ({len(mixed)} terms), point MLE against the "
+              f"posterior:")
+        print(mixed[["term", "mle", "posterior_mean", "posterior_sd",
+                     "z_from_mle", "mle_inside_95"]].round(4).to_string(index=False))
+        print("  Weaker evidence than the coefficient block's, and the difference "
+              "matters: the\n  normal(0, 1/sqrt(2*l2)) prior makes the posterior mode "
+              "exactly the penalized MLE for\n  `beta`, where `theta`, `mu_low` and "
+              "`rho_low` are bounded and unpenalized in the ladder\n  and `gamma` carries "
+              "a prior here and none there. The predictive table is the check.")
+        print("  pi on the scored rows: "
+              + ", ".join(f"{k} {v:.4f}" for k, v in pi_profile(stan, val).items()))
 
     crps_mle = float(table.loc[mle.name, "crps_games"])
     crps_plug = float(table.loc[plug_in.name, "crps_games"])

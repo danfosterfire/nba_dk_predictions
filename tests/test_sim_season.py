@@ -310,6 +310,50 @@ def test_availability_rates_reproduce_the_scalar_form_under_a_shared_dispersion(
     np.testing.assert_array_equal(graded, scalar)
 
 
+def test_pi_zero_is_the_single_component_draw_bit_for_bit():
+    """The mixture's rollback path in the simulator, and it has to cost no rng draws.
+
+    `pi = 0` must not merely give the same *distribution* — it must give the same numbers,
+    or the shipped single-component window's tensors would move the moment the mixture
+    became expressible. Which means the low component's `rng.random` / `rng.beta` calls have
+    to be skipped rather than drawn and discarded.
+    """
+    mu = np.linspace(0.2, 0.95, 400)
+    bins = np.zeros(400, dtype=np.int64)
+    rho = np.array([0.28])
+    plain = S.availability_rates(np.random.default_rng(11), mu, rho, bins)
+    nested = S.availability_rates(np.random.default_rng(11), mu, rho, bins,
+                                  pi=np.zeros(400), mu_low=0.10, rho_low=0.05)
+    np.testing.assert_array_equal(plain, nested)
+
+
+def test_the_mixture_draws_the_component_first_rather_than_blending_the_rates():
+    """`pi = 1` must land on the low component, not somewhere between the two.
+
+    Averaging the two rates would produce a season between healthy and disrupted, which is
+    precisely the season the arm exists to say does not happen — and it would look right in
+    every mean-based check. So the test is on the whole distribution: at `pi = 1` the draws
+    have the low component's mean AND its spread, and at an intermediate `pi` the sample is
+    bimodal rather than shifted.
+    """
+    n = 40_000
+    mu = np.full(n, 0.90)
+    bins = np.zeros(n, dtype=np.int64)
+    rho = np.array([0.05])
+
+    low = S.availability_rates(np.random.default_rng(3), mu, rho, bins,
+                               pi=np.ones(n), mu_low=0.10, rho_low=0.05)
+    assert abs(low.mean() - 0.10) < 0.01
+    np.testing.assert_allclose(low.std(), np.sqrt(0.10 * 0.90 * 0.05), rtol=0.05)
+
+    mixed = S.availability_rates(np.random.default_rng(4), mu, rho, bins,
+                                 pi=np.full(n, 0.25), mu_low=0.10, rho_low=0.05)
+    # A quarter of the mass sits at the low component and three quarters at the main one,
+    # with the midpoint nearly empty — the signature a blended rate cannot produce.
+    assert abs(((mixed < 0.5).mean()) - 0.25) < 0.02
+    assert ((mixed > 0.4) & (mixed < 0.6)).mean() < 0.02
+
+
 # ── The copula ────────────────────────────────────────────────────────────────
 
 def test_count_copula_inflates_the_residual_matrix_rather_than_using_it_raw():

@@ -1435,3 +1435,84 @@ def test_every_gated_head_ships_a_ks_distance_that_is_stable_at_the_draw_budget(
     # multiplicity, so the residual is one row per spell rather than one per cell.
     assert set(index.loc[index["quantile_weighting"] == "expanded", "head"]) == {
         "gp_duration", "game_length_depth"}
+
+
+def test_the_availability_cards_coefficients_carry_the_mixture_block():
+    """A card that omitted them would describe the single-component head.
+
+    Eleven terms, and the check that matters is on the two that are easy to get subtly
+    wrong: `pi:` prefixes keep the mixture's `age` coefficient from being read as the mean's
+    (different coefficients on the same column, through different links), and `gamma`
+    unstandardizes against `pi`'s OWN scaler rather than the mean's nineteen-column one.
+    """
+    import numpy as np
+    from sklearn.preprocessing import StandardScaler
+
+    from src.models import model_cards as MC
+
+    art = _artifact(_raw(60, seed=91), FEATURES)
+    pi_features = ["age", "gp_share_lag1"]
+    pi_scaler = StandardScaler().fit(np.array([[24.0, 0.5], [34.0, 0.9]]))
+    art.recipe.pi_features = list(pi_features)
+    art.recipe.pi_scaler = pi_scaler
+    art.draws["theta_draws"] = np.full(200, 0.11)
+    art.draws["mu_low_draws"] = np.full(200, 0.10)
+    art.draws["rho_low_draws"] = np.full(200, 0.05)
+    art.draws["gamma_draws"] = np.tile(np.array([[0.4, -0.7]]), (200, 1))
+
+    rows = {r["term"]: r for r in MC.coefficient_rows("availability", art)}
+    assert {"theta", "mu_low", "rho_low", "pi:age", "pi:gp_share_lag1"} <= set(rows)
+    # The roles split by what the term IS, because the dashboard's panel splits on them:
+    # the three scalars render beside the dispersion, the eight slopes inside the panel.
+    assert rows["theta"]["term_role"] == "dispersion"
+    assert rows["pi:age"]["term_role"] == "coefficient"
+    assert rows["theta"]["term_family"] == "mixture"
+    np.testing.assert_allclose(rows["pi:gp_share_lag1"]["mean"], -0.7)
+    # `pi`'s own scaler, not the mean block's — the two are fitted on different columns.
+    np.testing.assert_allclose(rows["pi:age"]["scaler_center"], pi_scaler.mean_[0])
+    assert rows["pi:age"]["scaler_center"] != rows["age"]["scaler_center"]
+
+
+def test_a_head_with_no_mixture_emits_no_mixture_terms():
+    """Checked on the term NAMES, not on a role — the roles are shared with other blocks.
+
+    `theta` files under `dispersion` and the `pi:` slopes under `coefficient`, so a check on
+    `term_role` would pass vacuously on every head in the project.
+    """
+    from src.models import model_cards as MC
+
+    rows = MC.coefficient_rows("availability", _artifact(_raw(60, seed=92), FEATURES))
+    terms = {r["term"] for r in rows}
+    assert not (terms & {"theta", "mu_low", "rho_low"})
+    assert not [t for t in terms if t.startswith("pi:")]
+    assert not [r for r in rows if r["term_family"] == "mixture"]
+
+
+def test_the_mixture_weights_are_eight_families_not_one_collapsible_basis():
+    """The collapse toggle keeps one row per `term_family`, labelled "widest of N bases".
+
+    That is right for a spline basis over one underlying quantity and nonsense for eight
+    different covariates on `pi`, so each has to be its own family — exactly how the mean
+    block's features are treated.
+    """
+    import numpy as np
+    from sklearn.preprocessing import StandardScaler
+
+    from dashboard import model_cards as DMC
+    from src.models import model_cards as MC
+
+    art = _artifact(_raw(60, seed=93), FEATURES)
+    pi_features = ["age", "gp_share_lag1", "n_spells_lag1"]
+    art.recipe.pi_features = list(pi_features)
+    art.recipe.pi_scaler = StandardScaler().fit(np.array([[24.0, 0.5, 1.0],
+                                                          [34.0, 0.9, 4.0]]))
+    art.draws["theta_draws"] = np.full(200, 0.11)
+    art.draws["mu_low_draws"] = np.full(200, 0.10)
+    art.draws["rho_low_draws"] = np.full(200, 0.05)
+    art.draws["gamma_draws"] = np.tile(np.array([[0.4, -0.7, 0.2]]), (200, 1))
+
+    frame = pd.DataFrame(MC.coefficient_rows("availability", art))
+    families = frame.loc[frame["term"].str.startswith("pi:"), "term_family"]
+    assert len(set(families)) == len(pi_features)
+    collapsed = DMC.coefficient_panel(frame, "availability", collapse=True)
+    assert sum(t.startswith("pi:") for t in collapsed["term"]) == len(pi_features)

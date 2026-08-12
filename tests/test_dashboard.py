@@ -2800,7 +2800,11 @@ def test_the_shipped_index_lets_every_availability_head_render_all_seven_blocks(
             model_cards.density_panel(cards["density"], head, pair["feature_x"],
                                       pair["feature_y"], "train"), th, "x", "y")
         panel = model_cards.coefficient_panel(cards["coefficients"], head)
-        assert len(panel) == int(row["n_features"])
+        # BOTH design blocks. The availability head's mixture puts eight covariates on `pi`
+        # through their own link and their own scaler, so `n_features` alone under-counts
+        # the panel — which is why the index carries `n_pi_features` beside it. The three
+        # scalar mixture terms are not here; they render with the dispersion.
+        assert len(panel) == int(row["n_features"]) + int(row["n_pi_features"])
         charts.fig_coefficients(panel, th)
         distance = model_cards.band_distance(cards["ecdf"], head)
         assert len(distance) == 2 and (distance["max_gap"] < 0.5).all()

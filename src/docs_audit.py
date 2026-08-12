@@ -1074,27 +1074,52 @@ def _availability() -> list[Claim]:
     C += _minutes_pre_lock_claims(AVAIL)
 
     # ── the Stan availability port ────────────────────────────────────────────
-    # Four arms since 2026-08-11, not three: the head fits a 2012-13 window with a
-    # role-graded rho, so BOTH point MLEs are refitted on the windowed rows and the
-    # role-graded one is scored beside them. Its two CRPS figures also reproduce
+    # Five arms since 2026-08-12, not four: the head fits a 2012-13 window with a
+    # role-graded rho AND a two-component mixture, so all three point MLEs are refitted on
+    # the windowed rows and scored beside it. Their CRPS figures also reproduce
     # `availability_window.csv`'s selected arms, which is a third-party check on the port.
     ports = [("beta_binomial", "9.8444", "0.3889", "0.0632", "0.2627"),
              ("beta_binomial_role_rho", "9.8247", "0.3889", "0.0588", "0.2627"),
-             ("stan_plug_in", "9.8136", "0.3894", "0.0679", "0.2595"),
-             ("stan_posterior", "9.8155", "0.3893", "0.0690", "0.2595")]
+             ("mixture_mle", "9.8237", "0.3844", "0.0631", "0.2245"),
+             ("stan_plug_in", "9.8195", "0.3851", "0.0643", "0.2261"),
+             ("stan_posterior", "9.8239", "0.3847", "0.0643", "0.2261")]
     for model, crps, r2, ks, rho in ports:
         for quoted, name in [(crps, "crps_games"), (r2, "r2_gp_share"),
                              (ks, "pit_ks_distance"), (rho, "dispersion_rho")]:
             add(_c(quoted, STAN_AV_M,
                    lambda m=model, n=name: metric(STAN_AV_M, m, n),
                    f"stan {model} {name}"))
-    add(_c("1.0050", STAN_AV_D, lambda: cell(STAN_AV_D, "max_rhat"), "stan R-hat"))
-    add(_c("2,382", STAN_AV_D, lambda: cell(STAN_AV_D, "min_ess_bulk"), "stan min ESS"))
-    add(_c("94", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
+    add(_c("14.3770", STAN_AV_M,
+           lambda: metric(STAN_AV_M, "stan_posterior", "mae_games"), "stan posterior MAE"))
+    add(_c("14.3610", STAN_AV_M,
+           lambda: metric(STAN_AV_M, "stan_plug_in", "mae_games"), "stan plug-in MAE"))
+    add(_c("14.3785", STAN_AV_M,
+           lambda: metric(STAN_AV_M, "mixture_mle", "mae_games"), "mixture MLE MAE"))
+    add(_c("14.4211", STAN_AV_M,
+           lambda: metric(STAN_AV_M, "beta_binomial", "mae_games"), "MLE MAE"))
+    add(_c("1.0073", STAN_AV_D, lambda: cell(STAN_AV_D, "max_rhat"), "stan R-hat"))
+    add(_c("1,399", STAN_AV_D, lambda: cell(STAN_AV_D, "min_ess_bulk"), "stan min ESS"))
+    add(_c("366", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
            "stan wall clock"))
-    add(_c("297", STAN_AV_B,
+    add(_c("332.588", STAN_AV_B,
            lambda: cell(STAN_AV_B, "shared_beta_sd", n_players=883),
            "shared-beta sd, full board"))
+    # The single-component role-graded head this replaced on 2026-08-12. Presence only.
+    for quoted, label in [("9.8136", "plug-in CRPS"), ("9.8155", "posterior CRPS"),
+                          ("0.3894", "plug-in R2"), ("0.3893", "posterior R2"),
+                          ("0.0679", "plug-in PIT KS"), ("0.0690", "posterior PIT KS"),
+                          ("0.2595", "stan rho"), ("0.09352", "coefficient gap"),
+                          ("1.658", "largest gap in sds"), ("1.0050", "R-hat"),
+                          ("2,382", "min ESS"), ("94", "wall clock"),
+                          ("297", "board shared-beta sd"), ("12.3%", "board inflation"),
+                          ("0.3147", "MLE rho, <12 mpg"), ("0.3176", "rho, <12 mpg"),
+                          ("0.2688", "MLE rho, 12-24"), ("0.2698", "rho, 12-24"),
+                          ("0.2573", "MLE rho, 24-30"), ("0.2532", "rho, 24-30"),
+                          ("0.2142", "MLE rho, 30+ mpg"), ("0.2064", "rho, 30+ mpg"),
+                          ("1.54×", "rho spread"), ("1.47×", "MLE rho spread")]:
+        add(_c(quoted, STAN_AV_M, lambda: float("nan"),
+               f"pre-mixture single-component availability head: {label}",
+               historical=True))
     # The full-window, shared-rho head, kept beside the windowed one it became. Presence
     # only: the point of keeping them is that the window is a trade and the board term is
     # the side of it that got worse.
@@ -1139,7 +1164,7 @@ SEASON_TOTAL_ROWS = [("full_season", "610.8", "751.8", "0.374", "523.3"),
                      ("prior_gp", "417.9", "560.5", "0.652", "19.4"),
                      ("league_age", "461.6", "565.9", "0.645", "12.9"),
                      ("beta_binomial", "400.5", "514.0", "0.707", "−3.1"),
-                     ("spell_process", "406.8", "520.3", "0.700", "−16.6"),
+                     ("spell_process", "406.6", "520.0", "0.700", "−15.9"),
                      ("oracle_rate", "261.9", "367.0", "0.851", "−41.3"),
                      ("oracle_gp", "214.4", "287.5", "0.908", "2.0")]
 
@@ -2166,23 +2191,27 @@ def _predictions() -> list[Claim]:
             f"poisson {head} NLL gain")
 
     # ── the built Stan block (negative binomial) ──────────────────────────────
-    add("9.8136", STAN_AV_M, lambda: metric(STAN_AV_M, "stan_plug_in", "crps_games"),
+    add("9.8195", STAN_AV_M, lambda: metric(STAN_AV_M, "stan_plug_in", "crps_games"),
         "stan availability CRPS")
-    add("9.8444", STAN_AV_M,
-        lambda: metric(STAN_AV_M, "beta_binomial", "crps_games"), "MLE CRPS")
-    add("0.2595", STAN_AV_M,
+    add("9.8237", STAN_AV_M,
+        lambda: metric(STAN_AV_M, "mixture_mle", "crps_games"), "mixture MLE CRPS")
+    add("0.2261", STAN_AV_M,
         lambda: metric(STAN_AV_M, "stan_plug_in", "dispersion_rho"), "stan rho")
-    add("0.2627", STAN_AV_M,
-        lambda: metric(STAN_AV_M, "beta_binomial", "dispersion_rho"), "MLE rho")
-    add("1.0050", STAN_AV_D, lambda: cell(STAN_AV_D, "max_rhat"), "stan R-hat")
-    add("94", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
+    add("0.2245", STAN_AV_M,
+        lambda: metric(STAN_AV_M, "mixture_mle", "dispersion_rho"), "mixture MLE rho")
+    add("1.0073", STAN_AV_D, lambda: cell(STAN_AV_D, "max_rhat"), "stan R-hat")
+    add("366", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
         "stan wall clock")
     add("0.5%", STAN_AV_B,
         lambda: cell(STAN_AV_B, "inflation", n_players=15) - 1.0,
         "board inflation, 15 players")
-    add("12.3%", STAN_AV_B,
+    add("14.8%", STAN_AV_B,
         lambda: cell(STAN_AV_B, "inflation", n_players=883) - 1.0,
         "board inflation, all 883")
+    # The single-component role-graded head this replaced on 2026-08-12.
+    for quoted in ("9.8136", "9.8444", "0.2595", "0.2627", "1.0050", "94", "12.3%"):
+        add(quoted, STAN_AV_M, lambda: float("nan"),
+            f"pre-mixture single-component availability head: {quoted}", historical=True)
     for quoted in ("10.7947", "10.7952", "0.2759", "0.2757", "1.0025", "254",
                    "6.4%", "911"):
         add(quoted, STAN_AV_M, lambda: float("nan"),
@@ -3384,20 +3413,21 @@ def _established_facts() -> list[Claim]:
 
     # the availability port and the board decomposition
     for model, crps, rho in [("beta_binomial", "9.8444", "0.2627"),
-                             ("stan_plug_in", "9.8136", "0.2595"),
-                             ("stan_posterior", "9.8155", "0.2595")]:
+                             ("mixture_mle", "9.8237", "0.2245"),
+                             ("stan_plug_in", "9.8195", "0.2261"),
+                             ("stan_posterior", "9.8239", "0.2261")]:
         add(crps, STAN_AV_M, lambda m=model: metric(STAN_AV_M, m, "crps_games"),
             f"stan {model} CRPS")
         add(rho, STAN_AV_M,
             lambda m=model: metric(STAN_AV_M, m, "dispersion_rho"),
             f"stan {model} rho")
-    add("1.0050", STAN_AV_D, lambda: cell(STAN_AV_D, "max_rhat"), "stan R-hat")
-    add("2,382", STAN_AV_D, lambda: cell(STAN_AV_D, "min_ess_bulk"), "stan min ESS")
-    add("94", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
+    add("1.0073", STAN_AV_D, lambda: cell(STAN_AV_D, "max_rhat"), "stan R-hat")
+    add("1,399", STAN_AV_D, lambda: cell(STAN_AV_D, "min_ess_bulk"), "stan min ESS")
+    add("366", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
         "stan wall clock")
-    board_rows = [(12, "68.0", "6.1", "0.4%"), (15, "75.8", "7.2", "0.5%"),
-                  (30, "107.2", "12.3", "0.7%"), (150, "239.4", "52.5", "2.4%"),
-                  (883, "581.4", "297.2", "12.3%")]
+    board_rows = [(12, "69.060", "6.499", "0.4%"), (15, "76.810", "7.669", "0.5%"),
+                  (30, "108.652", "13.370", "0.8%"), (150, "242.604", "58.432", "2.9%"),
+                  (883, "589.169", "332.588", "14.8%")]
     for n, indep, shared, infl in board_rows:
         add(indep, STAN_AV_B,
             lambda k=n: cell(STAN_AV_B, "independent_sd", n_players=k),
@@ -3420,6 +3450,13 @@ def _established_facts() -> list[Claim]:
                    "222.8", "6.7%"):
         add(quoted, STAN_AV_M, lambda: float("nan"),
             f"pre-window full-sample availability head: {quoted}", historical=True)
+    # The single-component role-graded head the mixture replaced on 2026-08-12. Same rule:
+    # the board term is the side of THIS trade that got wider, so both rows are kept.
+    for quoted in ("9.8136", "9.8155", "0.2595", "0.09352", "1.658", "1.0050", "2,382",
+                   "94", "68.0", "6.1", "75.8", "7.2", "107.2", "12.3", "239.4",
+                   "52.5", "581.4", "297.2", "12.3%", "2.4%"):
+        add(quoted, STAN_AV_M, lambda: float("nan"),
+            f"pre-mixture single-component availability head: {quoted}", historical=True)
 
     # the minutes head — validation only since the 2026-08-06 re-run under the lock
     minutes = [("carry_forward", "161.45", "0.8536", "213.13", "+23.91"),
@@ -3918,9 +3955,9 @@ def _established_facts() -> list[Claim]:
                  / treatment("full_season", "mae_dk_total", "rotation") - 1.0),
         "rotation-player gain, relative")
     # Gate E, which ran here for the first time on 2026-08-05 and failed.
-    add("406.8", SEASON_TOTAL, lambda: cell(SEASON_TOTAL_GATE_E, "mae"),
+    add("406.6", SEASON_TOTAL, lambda: cell(SEASON_TOTAL_GATE_E, "mae"),
         "Gate E spell-process MAE")
-    add("291.8", SEASON_TOTAL, lambda: cell(SEASON_TOTAL_GATE_E, "crps"),
+    add("291.6", SEASON_TOTAL, lambda: cell(SEASON_TOTAL_GATE_E, "crps"),
         "Gate E spell-process CRPS")
     # The superseded TEST ladder, preserved beside the validation one. Presence-only, so
     # the failure this guards is deletion of the reversal rather than drift in it.
@@ -4388,9 +4425,9 @@ def _readme() -> list[Claim]:
     def shipped(column: str) -> float:
         return cell(STRATEGY_SHIPPED, column, tournament="600k_shootaround")
 
-    add("0.2107", STRATEGY_SHIPPED, lambda: shipped("sim_lift"),
+    add("0.1890", STRATEGY_SHIPPED, lambda: shipped("sim_lift"),
         "shipped arm's simulated advance lift, 600k")
-    add("0.1268", STRATEGY_SHIPPED, lambda: shipped("realized_lift"),
+    add("0.1713", STRATEGY_SHIPPED, lambda: shipped("realized_lift"),
         "shipped arm's realized advance lift, 600k")
     # Gate D's failure is a *count of zero*, which is the one shape of result that decays
     # silently: a sweep that started separating the tiers would leave the prose true-looking
@@ -4410,7 +4447,7 @@ def _readme() -> list[Claim]:
     add("0.306", SHIPPED_NEED,
         lambda: cell(SHIPPED_NEED, "sim_lift", tournament="600k_shootaround"),
         "shipped arm's simulated lift against the stipulated need-aware field, 600k")
-    add("+0.0091", STRATEGY_PAIRED,
+    add("+0.0144", STRATEGY_PAIRED,
         lambda: cell(STRATEGY_PAIRED, "gap", tournament="600k_shootaround",
                      metric="p_advance", baseline="blend_a30",
                      strategy="autodraft_blend_a30"),
@@ -4424,7 +4461,7 @@ def _readme() -> list[Claim]:
                     & (frame["strategy"] == arm)]
         return float(hit["lift_vs_null"].mean()) if len(hit) else float("nan")
 
-    add("0.092", STRATEGY_SHIPPED,
+    add("0.0975", STRATEGY_SHIPPED,
         lambda: shipped("sim_lift") - sweep_mean_lift("autodraft_blend_a30"),
         "lift given up by autodrafting instead of the shipped objective, 600k")
 
@@ -4928,11 +4965,11 @@ def _games_played() -> list[Claim]:
     # and the sweep never reaches it. The end-of-project figures live in
     # `final_evaluation.csv` and are claimed only once that has been run.
     ladder = [("floor", "10.0057", "10.0057", "0.0939", "23.7251", "0.0406"),
-              ("within_tenure", "7.2265", "10.0992", "0.1232", "11.4526", "0.0091"),
-              ("full_window", "10.2705", "10.0057", "0.0733", "22.1365", "0.0495"),
-              ("three_state", "10.3484", "10.0501", "0.1171", "20.3721", "0.0041"),
-              ("duration_covariates", "10.1625", "10.0057", "0.0672", "22.0664",
-               "0.0537"),
+              ("within_tenure", "7.23495", "10.0992", "0.1259", "11.4603", "0.0092"),
+              ("full_window", "10.2797", "10.0057", "0.0755", "22.1686", "0.0496"),
+              ("three_state", "10.3466", "10.0501", "0.1204", "20.3687", "0.0043"),
+              ("duration_covariates", "10.1676", "10.0057", "0.0672", "22.1055",
+               "0.0535"),
               ("calibrated_fallback", "10.0207", "10.0057", "0.1017", "23.7251",
                "0.0440"),
               ("hybrid", "10.0057", "10.0057", "0.0939", "23.7251", "0.0406")]
@@ -4945,27 +4982,27 @@ def _games_played() -> list[Claim]:
             f"{arm} implied overdispersion")
         add(tail, GP_METRICS, lambda a=arm: gp_metric(a, "val_tail_error"),
             f"{arm} tail error")
-    for arm, quoted in [("within_tenure", "−2.8726"), ("full_window", "+0.2647"),
-                        ("three_state", "+0.2983"),
-                        ("duration_covariates", "+0.1568"),
+    for arm, quoted in [("within_tenure", "−2.8642"), ("full_window", "+0.2739"),
+                        ("three_state", "+0.2965"),
+                        ("duration_covariates", "+0.1619"),
                         ("calibrated_fallback", "+0.0149")]:
         add(quoted, GP_METRICS, lambda a=arm: gp_metric(a, "crps_vs_floor"),
             f"{arm} vs its floor")
 
     # ── the gates, all on validation ──────────────────────────────────────────
-    add("0.79", GP_GATES, lambda: gp_gates("A", "extrapolated_hours"),
+    add("0.78", GP_GATES, lambda: gp_gates("A", "extrapolated_hours"),
         "Gate A corrected estimate")
     add("−0.350239", GP_GATES, lambda: gp_gates("B", "floor_loglik_per_transition"),
         "Gate B floor")
-    add("−0.330658", GP_GATES, lambda: gp_gates("B", "head_loglik_per_transition"),
+    add("−0.330662", GP_GATES, lambda: gp_gates("B", "head_loglik_per_transition"),
         "Gate B fitted head")
-    add("+0.019580", GP_GATES, lambda: gp_gates("B", "gain"), "Gate B gain")
+    add("+0.019577", GP_GATES, lambda: gp_gates("B", "gain"), "Gate B gain")
     add("48.1", GP_GATES, lambda: gp_gates("B", "floor_shrinkage_k"),
         "Gate B floor shrinkage")
     add("0.0741", GP_GATES, lambda: gp_gates("B", "floor_league_rate"),
         "Gate B league onset rate")
     for arm, crps, pit, p41, p60, tail in [
-            ("duration_covariates", "10.1625", "0.0672", "0.1597", "0.3740", "0.0537"),
+            ("duration_covariates", "10.1676", "0.0672", "0.1597", "0.3734", "0.0535"),
             ("calibrated_fallback", "10.0207", "0.1017", "0.1499", "0.3643", "0.0440"),
             ("hybrid", "10.0057", "0.0939", "0.1553", "0.3521", "0.0406")]:
         add(crps, GP_GATES, lambda a=arm: gp_gates("D", "crps", a), f"Gate D {arm} CRPS")
@@ -4986,8 +5023,8 @@ def _games_played() -> list[Claim]:
     shape = [("observed", "0.4924", "0.0581", "0.0079", "3.0857", None),
              ("hybrid", "0.4904", "0.0572", "0.0202", "3.8220", "0.5310"),
              ("calibrated_fallback", "0.1171", "0.3544", "0.0799", "10.0594", "5.0082"),
-             ("full_window", "0.4534", "0.1052", "0.0419", "4.9653", "1.7408"),
-             ("duration_covariates", "0.4435", "0.1083", "0.0430", "5.0581", "1.8105")]
+             ("full_window", "0.4556", "0.1018", "0.0409", "4.8658", "1.6746"),
+             ("duration_covariates", "0.4471", "0.1063", "0.0416", "4.9746", "1.7373")]
     for arm, p1, p10, p26, mean, err in shape:
         for quoted, col in ((p1, "p_eq_1"), (p10, "p_ge_10"), (p26, "p_ge_26"),
                             (mean, "mean_spell")):
@@ -5045,15 +5082,15 @@ def _games_played_in_notes() -> list[Claim]:
         lambda: (gp_gate("tenure_decomposition", "p_below_41")
                  / gp_gate("tenure_decomposition", "p_below_41", "observed") - 1.0),
         "tenure decomposition tail error")
-    add("7.2265", GP_METRICS, lambda: gp_metric("within_tenure", "val_crps"),
+    add("7.23495", GP_METRICS, lambda: gp_metric("within_tenure", "val_crps"),
         "oracle-tenure CRPS")
     add("10.0992", GP_METRICS, lambda: gp_metric("within_tenure", "floor_val_crps"),
         "oracle-tenure floor")
     add("10.0057", GP_METRICS, lambda: gp_metric("floor", "val_crps"),
         "incumbent CRPS")
-    add("10.1625", GP_METRICS, lambda: gp_metric("duration_covariates", "val_crps"),
+    add("10.1676", GP_METRICS, lambda: gp_metric("duration_covariates", "val_crps"),
         "best fitted arm CRPS")
-    add("+0.1568", GP_METRICS,
+    add("+0.1619", GP_METRICS,
         lambda: gp_metric("duration_covariates", "crps_vs_floor"),
         "best fitted arm vs floor")
     add("0.0406", GP_METRICS, lambda: gp_metric("floor", "val_tail_error"),
@@ -5061,7 +5098,7 @@ def _games_played_in_notes() -> list[Claim]:
     add("0.5310", GP_SHAPE,
         lambda: _one(table(GP_SHAPE), "mean_abs_rel_error", arm="hybrid"),
         "hybrid spell-shape error")
-    add("1.8105", GP_SHAPE,
+    add("1.7373", GP_SHAPE,
         lambda: _one(table(GP_SHAPE), "mean_abs_rel_error", arm="duration_covariates"),
         "arm A spell-shape error")
     add("5.0082", GP_SHAPE,
@@ -5282,7 +5319,7 @@ def _weekly() -> list[Claim]:
         _c("−0.70", WEEK_PERIOD, lambda: _week_period_bias(16),
            "validation bias in week 17", doc=SIMS),
         # Gate A's own season-total bias, so the weekly row is read against it.
-        _c("−21.2", SIM_GATE_A, lambda: _season_total_bias(largest=True),
+        _c("−21.9", SIM_GATE_A, lambda: _season_total_bias(largest=True),
            "smallest season-total bias", doc=SIMS),
         _c("−70.1", SIM_GATE_A, lambda: _season_total_bias(largest=False),
            "largest season-total bias", doc=SIMS),

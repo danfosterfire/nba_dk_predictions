@@ -1083,14 +1083,17 @@ player-seasons, scored on validation (2022-23/23-24). Three results bind on ever
 > `.gitignore` already covers, so no binary is committed and no generated `.hpp` lands in
 > the source tree.
 >
-> **Availability** ports the validated point MLE and reproduces it: validation CRPS 9.8136
-> against 9.8444, ρ 0.2595 against 0.2627, and the MLE inside the 95% credible interval for
-> **24/24** terms. The prior is set to `normal(0, 1/sqrt(2·l2))` precisely so the
-> posterior *mode* is the penalized MLE, making that a defined check. R̂ 1.0050, 0
-> divergences, 94 s. What the posterior adds is `Var_θ(Σ_i E[Y_i|θ])` — exactly 0 for any
+> **Availability** ports the validated point MLE and reproduces it: validation CRPS 9.8195
+> against 9.8237, ρ 0.2261 against 0.2245, and the MLE inside the 95% credible interval for
+> **35/35** terms. The prior is set to `normal(0, 1/sqrt(2·l2))` precisely so the
+> posterior *mode* is the penalized MLE, making that a defined check. R̂ 1.0073, 0
+> divergences, 366 s. (Before the mixture shipped on 2026-08-12 this read 9.8136 against
+> 9.8444, ρ 0.2595 against 0.2627, 24/24 terms, R̂ 1.0050, 94 s — against the
+> single-component MLE, which is the arm that head was a port of.) What the posterior adds
+> is `Var_θ(Σ_i E[Y_i|θ])` — exactly 0 for any
 > point estimate — but **its size depends on the portfolio**, and this plan's framing
 > oversold it. The independent term grows as sqrt(N) and the shared-β term as N, so measured
-> on the validation board the spread inflation is **+0.5% on a 15-player roster** and **+12.3%
+> on the validation board the spread inflation is **+0.5% on a 15-player roster** and **+14.8%
 > across all 883**. Real for board-wide exposure across many lineups; near-irrelevant for one
 > drafted team. This matters for the "joint / correlation modeling across teammates" section
 > below: shared *parameter* uncertainty is not the correlation source a single roster needs —

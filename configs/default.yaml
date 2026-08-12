@@ -208,18 +208,19 @@ stan:
     # this one halved the selector: boundary_tail_error 0.0109 against 0.0201, shoulder
     # error -0.0021 [-0.0086, -0.0010], and a TIE on CRPS (+0.011, interval spanning
     # zero). It ships because this head is selected on tail calibration with a CRPS
-    # non-inferiority guard — a rule stated in docs/availability-mixture-ship-plan.md D1
+    # non-inferiority guard — a rule stated as D1 in docs/availability-window-plan.md §8
     # BEFORE the arm was measured, not inferred from the arm that won.
     #
     # `false` recovers the single-component head EXACTLY: `P = 0` in
     # `src/stan/betabinomial_glm.stan`, whose mixture parameters are then zero-length.
     # Asserted on Stan's own `log_prob`, the same discipline `n_rho = 1` carries.
     #
-    # ⚠️ Two consumers are NOT yet wired for it and raise rather than mis-describe the
-    # head: `make posteriors` (the DesignRecipe carries one scaler and pi's covariate
-    # block needs its own) and `rehydrate_availability`. That is session 3 of
-    # docs/availability-mixture-ship-plan.md. `make stan-availability-mixture` is the
-    # port check and needs neither.
+    # Wired all the way through on 2026-08-12 (docs/availability-window-plan.md §7i):
+    # `DesignRecipe` carries a SECOND design block for pi's covariates and its own scaler,
+    # so `make posteriors`, `rehydrate_availability`, `make model-cards` and the simulator
+    # all read the mixture rather than raising or, worse, silently reading the
+    # single-component head. `make stan-availability-mixture` remains the port check and
+    # needs none of that.
     mixture: true
     # Normal scale on pi's coefficients. Weakly informative on standardized columns —
     # the point MLE leaves them unpenalized inside a +/-5 box, which has no Bayesian

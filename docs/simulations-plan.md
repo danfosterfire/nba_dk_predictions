@@ -1397,28 +1397,39 @@ separately because pooling them would hide the one figure that moves.
 
 | check | 2022-23 | 2023-24 | bar | artifact |
 |---|---|---|---|---|
-| season-total dk_pts MAE | **399.03** | **402.48** | 400.46 | `season_total_metrics.csv` |
-| …CRPS | **278.84** | **278.40** | 287.26 | " |
-| …R² | 0.6543 | 0.6683 | 0.7073 | " |
-| …bias | −21.20 | −61.14 | −3.06 | " |
-| games played CRPS | **9.5262** | **9.6140** | 10.0057 | `stan_games_played_metrics.csv` |
-| …bias, in games | **−0.307** | **−0.728** | — | " |
-| …pooled GP pmf total variation | **0.0543** | **0.0510** | — | `stan_games_played_gp_pmf.csv` |
-| bonus per played game | 0.1768 | 0.1728 | 0.1559 / 0.1626 realized | `bonus_calibration.csv` |
+| season-total dk_pts MAE | **401.07** | **399.37** | 400.46 | `season_total_metrics.csv` |
+| …CRPS | **279.03** | **275.60** | 287.26 | " |
+| …R² | 0.6504 | 0.6719 | 0.7073 | " |
+| …bias | −21.94 | −62.51 | −3.06 | " |
+| games played CRPS | **9.5291** | **9.5517** | 10.0057 | `stan_games_played_metrics.csv` |
+| …bias, in games | **−0.113** | **−0.490** | — | " |
+| …pooled GP pmf total variation | **0.0654** | **0.0648** | — | `stan_games_played_gp_pmf.csv` |
+| bonus per played game | 0.1748 | 0.1711 | 0.1559 / 0.1626 realized | `bonus_calibration.csv` |
 | …on **realized** minutes | **0.1535** | **0.1477** | 0.1559 / 0.1626 | `component_targets.parquet` |
-| season minutes sd, given GP | **317.22** | **314.09** | 302.75 | `minutes_unification.csv` |
+| season minutes sd, given GP | **319.70** | **316.20** | 302.75 | `minutes_unification.csv` |
 
-> **Re-measured 2026-08-11, and this is the first reading taken against the head that
-> ships.** The availability draw was re-implemented inline against a **scalar** dispersion,
-> so at the `train` window it raised outright against the role-graded posterior the window
-> round persisted — the target had not been run end to end since. The column above is
-> therefore the shipped head arriving in the simulator for the first time, not a re-run of
-> the same thing: every row moved, all of them in the improving direction. Games played
-> gains the most (CRPS 9.6754 → **9.5262** and 9.7829 → **9.6140**), which is what grading
-> `rho` by role is supposed to buy, and the season total follows it (MAE 402.14 → 399.03 and
-> 407.89 → 402.48). The one row that got *worse* is the games-played bias, +0.127 → −0.307
-> on 2022-23: the graded head is less optimistic about fringe players, and the simulator now
-> says so. See `docs/availability-window-plan.md` §8.
+> **Re-measured 2026-08-12 against the two-component availability mixture**
+> (`docs/availability-window-plan.md` §7i), which is what the simulator now draws: the
+> component is chosen per player per draw and the rate comes from whichever one won.
+> **The row that moves most is the one the mixture was adopted for** — games-played bias
+> falls from −0.307 to **−0.113** on 2022-23 and −0.728 to **−0.490** on 2023-24, better
+> than halving it. A single component had to buy its left tail out of the *whole*
+> distribution and undershot the population; a separate disrupted-season component pays for
+> the tail directly, so the rest of the curve stops being dragged down with it. CRPS is
+> flat to three decimals (9.5262 → 9.5291, 9.6140 → 9.5517) and the season total is a wash
+> in both directions (399.03 → 401.07, 402.48 → **399.37**), which is the CRPS tie from the
+> ladder arriving intact at the deliverable. The pooled pmf total variation rose (0.0543 →
+> 0.0654) against a *fixed* comparator: `stan_games_played_gp_pmf.csv` is the single-component
+> `duration_covariates` arm, so a mixture that genuinely disagrees with it in the tail must
+> read further from it, and that distance is the change rather than an error.
+>
+> ⚠️ **The 2026-08-11 column, taken against the single-component role-graded head**, read
+> MAE 399.03 / 402.48, CRPS 278.84 / 278.40, R² 0.6543 / 0.6683, bias −21.20 / −61.14,
+> games-played CRPS 9.5262 / 9.6140 at bias −0.307 / −0.728, pmf TV 0.0543 / 0.0510, bonus
+> 0.1768 / 0.1728 and minutes sd 317.22 / 314.09. That column was itself the first reading
+> ever taken against a shipped head — the availability draw had been re-implemented inline
+> against a **scalar** dispersion and raised outright once `rho` became a vector — and it
+> replaced a pre-fix reading of CRPS 9.6754 / 9.7829 and MAE 402.14 / 407.89.
 
 **Three of the four gate rows pass and the fourth is traced out of this module.** Season
 totals land on the incumbent's MAE within 1%, and *better* than it on CRPS — the deliverable
@@ -1503,8 +1514,10 @@ Both would have produced a completely plausible board.
   empirical rate of no-design player-seasons in the earlier seasons selection may read
   (**0.4303** for 2022-23), which is the same point-in-time device
   `stan_composition.rookie_share_priors` already uses for their minutes share. The bias falls
-  to **−21.2** (it read −21.9 before the availability draw was fixed to read the head's
-  role-graded dispersion).
+  to **−21.9** (it read −21.9 before the availability draw was fixed to read the head's
+  role-graded dispersion, −21.2 with that fix, and −21.9 again under the mixture — the fault
+  this bullet is about is worth −69 dk_pts and the head's likelihood is worth under one, so
+  the three readings are the same finding).
 
 #### What the artifact carries, and the honest caveats
 

@@ -113,21 +113,22 @@ draw.
 | artifact | grain | rows | size | what it feeds |
 |---|---|---|---|---|
 | `model_card_index.csv` | head | **20** | 17 KB | the head selector, the *unit* every page must state, and each head's role in the shipped chain |
-| `model_card_coefficients.csv` | head × term | **314** | 46 KB | the sorted credible-interval panel (block 4) |
+| `model_card_coefficients.csv` | head × term | **325** | 47 KB | the sorted credible-interval panel (block 4) |
 | `model_card_features.csv` | head × feature × split × bin | **14,892** | 2.1 MB | the small-multiple histograms and the n/mean/sd/missing table (block 2) |
 | `model_card_feature_corr.csv` | head × split × feature × feature | **8,920** | 767 KB | the correlation heatmap and the pairs that earn a density (block 3) |
 | `model_card_feature_density.parquet` | head × pair × split × 2-D bin | **93,456** | 536 KB | the on-demand joint density beside that heatmap (block 3) |
 | `model_card_ecdf.csv` | head × split × grid point | **2,975** | 328 KB | the observed ECDF over the predictive ribbon (block 5) |
-| `model_card_calibration.csv` | head × split × panel × 2-D bin | **11,595** | 966 KB | fitted-against-observed, as density (block 6) |
-| `model_card_quantile.csv` | head × split × panel × row | **8,768** | 724 KB | the QQ-uniform and the residual against rank-transformed predicted (block 6) |
+| `model_card_calibration.csv` | head × split × panel × 2-D bin | **11,679** | 968 KB | fitted-against-observed, as density (block 6) |
+| `model_card_quantile.csv` | head × split × panel × row | **8,761** | 725 KB | the QQ-uniform and the residual against rank-transformed predicted (block 6) |
 | `model_card_sample.parquet` | head × split × row | **54,375** | 1.0 MB | the bounded scatter overlaid on both of those densities (block 6) |
 
 **7.5 MB in total** (`du`), *below* the 8.7 MB the eight-artifact contract cost: the quantile
 half adds 724 KB and the `residual_fitted` panel it replaced was 1.5 MB. Twenty
 heads across four classes — availability
 (5), minutes (2), box-score components (11), game length (2) — carrying 268 coefficients, 20
-intercepts and 26 dispersion terms over 92 distinct features. `make model-cards` runs in
-about **10 seconds** and needs **no CmdStan**: it refits nothing and runs no sampler, and
+intercepts, 26 dispersion terms and, since 2026-08-12, the availability mixture's **11**
+(`theta`, `mu_low`, `rho_low` and eight `pi:` weights on `π`'s own scaler) over 92 distinct
+features. `make model-cards` runs in about **17 seconds** and needs **no CmdStan**: it refits nothing and runs no sampler, and
 imports the head modules for their variant ladders and their own predictive.
 
 ### `model_card_index.csv` — one row per head
@@ -460,7 +461,7 @@ Two heads get a different reading and one gets none:
 
 ### The budget, and the check that it is enough
 
-**200 draws over at most 20,000 rows a split.** The composition sets both: at 631,158 rows
+**400 draws over at most 20,000 rows a split** — 200 until 2026-08-12. The composition sets both: at 631,158 rows
 times its 1,000 persisted draws the predictive alone is 631M numbers, and none of that buys a
 better picture. The row cap is a subsample of the population, so it moves Monte Carlo error
 rather than the estimand — and on the composition it is taken in **whole team-game blocks**
@@ -476,19 +477,29 @@ standard error of the D-draw estimate they average to, so the statistic is a con
 bound on the shipped ribbon, and the bar is set at 0.02 to hold that ribbon inside one ECDF
 point. Measured, at 100 / 200 / 400 draws:
 
-| head | 100 | **200 (shipped)** | 400 |
+| head | 100 | 200 | **400 (shipped)** |
 |---|---|---|---|
-| `game_length_depth` | 0.0346 | **0.0145** | 0.0073 |
-| `availability` | 0.0158 | **0.0097** | 0.0079 |
-| `gp_entry` | 0.0148 | **0.0107** | 0.0054 |
-| `minutes` | 0.0139 | **0.0074** | 0.0081 |
-| `ast` | 0.0091 | **0.0071** | 0.0065 |
-| `composition` | 0.0023 | **0.0020** | 0.0014 |
+| `game_length_depth` | 0.0346 | 0.0145 | **0.0073** |
+| `availability` | 0.0158 | 0.0097 | **0.0079** |
+| `gp_entry` | 0.0148 | 0.0107 | **0.0054** |
+| `minutes` | 0.0139 | 0.0074 | **0.0081** |
+| `ast` | 0.0091 | 0.0071 | **0.0065** |
+| `composition` | 0.0023 | 0.0020 | **0.0014** |
 
 It falls as `1/sqrt(D)`, which is the confirmation that it is measuring Monte Carlo error and
-not misfit. At the shipped budget the worst gated head sits at 0.0145 — the shipped ribbon is
-good to roughly 0.007 ECDF, well under the resolution one of these panels is drawn at, and
-400 draws would buy a third of a pixel for double the cost.
+not misfit.
+
+⚠️ **The budget doubled on 2026-08-12 because a head changed, and the gate is what said so.**
+The availability head became a two-component mixture, whose predictive is genuinely wider, and
+at 200 draws its band went from the 0.0097 above to **0.0216** — over the 0.02 bar, so
+`check_predictive` failed the build rather than shipping a ribbon that was measuring the
+sampler. Re-measured on the mixture at 300 / 400 / 600 / 800 / 1000 draws it reads
+0.0083 / 0.0136 / 0.0059 / 0.0091 / 0.0079, which is the `1/sqrt(D)` fall plus the statistic's
+own noise, and 400 is the smallest step that clears the bar for every head. The worst gated
+head is now `availability` itself at **0.0136**, against `game_length_depth`'s 0.0073. Cost
+went from about 10 seconds to **17**. **This is the case the "measured rather than assumed"
+rule was written for**: a constant justified by one measurement stayed correct only until the
+model under it moved, and nothing but the gate would have noticed.
 
 **`game_length_ot` is reported and not gated**, at 0.5000. Its validation split is two season
 cells, so its ECDF takes three values and a half-sample gap of 0.5 is the frame rather than
@@ -497,7 +508,8 @@ from the gate rather than from the file.
 
 **The same budget carries the quantile residual, and that is a decision rather than an
 inheritance.** It was re-measured on its own statistic before being reused — see
-`model_card_quantile.csv` below — and 200 draws holds it. Keeping one budget keeps the rule
+`model_card_quantile.csv` below — and the budget holds it with room to spare at either
+size (worst half-sample KS disagreement **0.0067** against the same 0.02 bar). Keeping one budget keeps the rule
 this whole half rests on: the ribbon, the density and the residual are cut from **one** draw
 per head per split, so a page cannot show a ribbon and a QQ that describe two different
 predictives.

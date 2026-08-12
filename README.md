@@ -272,6 +272,19 @@ beta-binomial GLM over games played out of team games. Games played is the large
 the season total and the least persistent quantity in the project, so the head shrinks hard
 toward a league/age baseline and emits a distribution.
 
+**It is a two-component mixture, and that head is selected on tail calibration rather than
+on CRPS** — the only head in the project that is. A disrupted season is a *different event*,
+not an extreme draw of a per-game rate, so it gets its own component with its own mean and
+dispersion and a weight `π` that carries covariates: the arm can say **who** is at risk,
+which a wider frailty can only refuse to. Against the single-component head it halves the
+boundary error (**0.0120** against 0.0201) and ties CRPS (+0.011, interval spanning zero),
+which is a ship only because the objective was stated first —
+`docs/availability-window-plan.md` §7 and §8. Two things fall out of it that a metric table
+does not show. The main component's dispersion spread widens from 1.54× to **1.97×** across
+prior-minutes buckets, almost entirely because a *star's* ρ falls by a fifth once his
+disrupted seasons live somewhere else. And the port check's reference has to be the mixture's
+own point MLE, since the two likelihoods estimate different parameters.
+
 **Minutes** in the shipped chain is [stan_minutes.py](src/models/stan_minutes.py): the
 marginal `min | available`, fitted season-collapsed as successes out of real game length,
 selecting `logit(own) + spline`. What it supplies the simulator is the season-level
@@ -560,8 +573,8 @@ season-total sd, against +0.5% from shared coefficient uncertainty.
 
 **The drafting edge is large in the simulated world and the realized readout cannot confirm
 it — which is the result, not a caveat.** `make strategy-sweep`. Against a symmetric-field
-null, the arm that ships lifts its Round-1 advance probability by **0.2107** in the 600k
-Shootaround's simulated worlds and by **0.1268** on the two validation seasons replayed
+null, the arm that ships lifts its Round-1 advance probability by **0.1890** in the 600k
+Shootaround's simulated worlds and by **0.1713** on the two validation seasons replayed
 against realized box scores. The second number is not a smaller version of the first: the
 simulated side pools 500 drawn worlds per season and the realized side has exactly one, so
 its intervals cover most of the table and it selected nothing. **Gate D fails, and that is
@@ -578,7 +591,7 @@ curve carries none, degrading fastest in the elite region), and against a *stipu
 value for shape, so the fitted pure-ADP field is the harder opponent and stays shipped.
 On the execution axis, submitting our best feasible ranking to DK's own autodraft is
 identical to clicking it under DK's 8G/8F/3C caps — and beats the uncapped click by
-**+0.0091** (600k, resolved) — while giving up **0.092** of simulated lift against the
+**+0.0144** (600k, resolved) — while giving up **0.0975** of simulated lift against the
 shipped per-pick objective, which no static board can express. The 30-second-clock
 fallback is safe; the objective is the half worth defending. See
 [docs/simulations-plan.md](docs/simulations-plan.md), "The field with lineup reasoning,
@@ -587,11 +600,14 @@ and the execution axis".
 **The sampler behaved.** 37 component fits with 0 divergences and every fit clearing every
 convergence bar, 54 season-term fits with 0
 divergences and 0 treedepth saturation, and the availability port reproduces the point MLE
-with the MLE inside the 95% credible interval for 24 of 24 terms. Cost is concentrated
+of its own likelihood with the MLE inside the 95% credible interval for 35 of 35 terms —
+where the *reference* is load-bearing: scored against the single-component MLE the shipped
+mixture reads 19 of 24, which measures the likelihood change rather than the port. Cost is
+concentrated
 entirely in the spline variants. Dropping the test side halved the component fit count from
 74 and cut sampler time from 305.0 to **137.4** minutes *while* raising every selection fit
 to full-length chains — which incidentally fixed the one fit that used to miss its R̂ bar.
-1,580 tests pass (`.venv/bin/python -m pytest tests/`).
+1,599 tests pass (`.venv/bin/python -m pytest tests/`).
 
 ---
 

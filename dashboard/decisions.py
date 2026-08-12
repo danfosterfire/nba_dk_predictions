@@ -3435,14 +3435,15 @@ REGISTRY: tuple[Decision, ...] = (
                 "shared `betabinomial_glm.stan` with `π = 0` reproducing the current target "
                 "bit for bit, asserted on Stan's own `log_prob`, rather than into a fork; and "
                 "the simulator fix plus the `l2` sweep come **before** the port so it carries "
-                "no unresolved question. `docs/availability-mixture-ship-plan.md` is the work "
-                "plan.",
+                "no unresolved question. The four are recorded as **D1–D4** in "
+                "`docs/availability-window-plan.md` §8; D1 is the one that outlives this "
+                "round, since it is the head's standing selection rule.",
         status="settled",
         reproduce="make availability-window → "
                   "outputs/predictions/availability_likelihood.csv, "
                   "outputs/predictions/availability_likelihood_rolling.csv",
-        source="docs/availability-mixture-ship-plan.md",
-        reviewed="2026-08-11",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-12",
         date="2026-08-11",
         tags=("head", "calibration"),
     ),
@@ -3498,44 +3499,166 @@ REGISTRY: tuple[Decision, ...] = (
     Decision(
         id="availability-mixture-artifacts-refuse-to-persist-it",
         topic="availability",
-        claim="**`make posteriors` and `rehydrate_availability` refuse a mixture head "
-              "rather than persist one they cannot reconstruct** — and `make "
-              "stan-availability` was deliberately left un-rerun.",
-        because="`DesignRecipe` carries **one** scaler, and `π`'s covariate block "
-                "(`stan_availability.PI_FEATURES`) is not a subset of the mean's feature "
-                "list, so an artifact written today would carry `alpha`/`beta`/`rho` and "
-                "rehydrate as the **single-component head** with nothing raising — the same "
-                "failure mode `_finish` already refuses for a year random effect, one level "
-                "over. Both call sites therefore raise with the wiring named. Separately, "
-                "the port check writes its own artifacts "
-                "(`stan_availability_mixture*.csv`) instead of overwriting "
-                "`stan_availability_metrics.csv`, because ~40 quoted port figures across "
-                "`docs/availability-plan.md`, `docs/facts-archive.md` and "
-                "`docs/model-development-notes.md` are audited against that file. So "
-                "`make docs-audit` is green over a **consistent** set of figures describing "
-                "the single-component head, and will go red the moment `make "
-                "stan-availability` runs — which is the intended alarm, recorded here so it "
-                "is not read as a regression.",
-        status="blocked",
-        unblocks="Give `DesignRecipe` a second design block — π's feature list and its own "
-                 "scaler — then wire it through `posteriors.availability_artifact`, add "
-                 "`theta_draws` / `mu_low_draws` / `rho_low_draws` / `gamma_draws` to "
-                 "`_thinned`'s name list, and reconstruct π in `rehydrate_availability`. "
-                 "Two traps: `response=\"mean_mu\"` serves the reference prediction through "
-                 "`mu_draws`, which under a mixture is the MAIN component's mean rather "
-                 "than the predictive one, so `roundtrip()` would verify the wrong quantity "
-                 "and pass; and a dataclass field default does not survive unpickling, so "
-                 "artifacts written before the new fields exist raise `AttributeError` "
-                 "instead of falling back — read them through `getattr` or add a "
-                 "`__setstate__`. Then re-run `make stan-availability` and refresh the "
-                 "quoted port figures, keeping the single-component ones as "
-                 "`historical=True` rows.",
-        reproduce="make stan-availability-mixture → "
-                  "outputs/predictions/stan_availability_mixture.csv",
-        source="docs/availability-mixture-ship-plan.md",
+        claim="**The persisted recipe carries a SECOND design block, because `π`'s "
+              "covariates enter through a different link than the mean's** — and both traps "
+              "predicted before the wiring turned out to be real.",
+        because="`DesignRecipe` carried **one** scaler, and `π`'s covariate block "
+                "(`stan_availability.PI_FEATURES`) is standardized on its own fit, so an "
+                "artifact written without it would carry `alpha`/`beta`/`rho` and rehydrate "
+                "as the **single-component head** with nothing raising — the failure mode "
+                "`_finish` already refuses for a year random effect, one level over. Both "
+                "call sites raised until 2026-08-12, when the block shipped: `pi_features` "
+                "and `pi_scaler` on the recipe, the four mixture draw arrays through "
+                "`_thinned`, and `π` rebuilt from the recipe alone by "
+                "`PosteriorArtifact.pi_draws`. **Trap 1 — the round-trip would have checked "
+                "the wrong quantity and passed.** `response=\"mean_mu\"` serves the "
+                "reference through `mu_draws`, which under a mixture is the MAIN "
+                "component's mean, a number the shipped head never reports; the head's "
+                "response is now `mixture_mean_mu`, routed through `predict_mean` on both "
+                "sides, and a distinct name rather than a widened `mean_mu` so a consumer "
+                "switching on `response` raises instead of quietly serving a different "
+                "function of the same draws. **Trap 2 — a dataclass default does not "
+                "survive unpickling**, so every artifact written before those fields "
+                "restores without them; `DesignRecipe.__setstate__` applies the defaults "
+                "under the restored state. The model card also emits the eleven mixture "
+                "terms against `π`'s own scaler, since a card showing only "
+                "`alpha`/`beta`/`rho` would describe the model that did not ship.",
+        status="built",
+        reproduce="make posteriors --groups availability → "
+                  "data/features/posteriors/train/availability.pkl, "
+                  "outputs/predictions/model_card_coefficients.csv",
+        source="docs/availability-window-plan.md",
         reviewed="2026-08-12",
         date="2026-08-12",
         tags=("head", "provenance"),
+    ),
+    Decision(
+        id="the-availability-port-check-references-its-own-likelihood",
+        topic="availability",
+        claim="**A port check's reference has to be the point MLE of the head's OWN "
+              "likelihood** — referenced against the single-component MLE the shipped "
+              "mixture posterior reads **19 of 24** terms inside the 95% interval, and "
+              "against `mixture_mle` it reads **35 of 35**.",
+        because="`fit_and_score` compared the shipped posterior against `mle`, the "
+                "shared-ρ single-component optimum, and reported `rho[30+ mpg]` at "
+                "**z = −6.34**. That is not port drift: the mixture takes the disrupted "
+                "seasons out of the main component, so its dispersion genuinely falls "
+                "(**0.2261** against 0.2627), and the two arms estimate different "
+                "parameters. Against the arm the head is a port *of*, every dispersion term "
+                "agrees to **z ≤ 0.29**, the largest gap anywhere is **0.597** posterior sd "
+                "(`rho_low`), and the coefficient artifact carries all 35 terms rather than "
+                "24. The module already made this argument one axis over — both references "
+                "are refitted on the same 4,027 windowed rows, because a check against a "
+                "reference fitted on a different *population* is not a check — and it now "
+                "makes it about the same *likelihood*. Worth keeping because the wrong "
+                "reference produced a number that looked exactly like a regression and was "
+                "a property of the comparison.",
+        status="settled",
+        reproduce="make stan-availability → "
+                  "outputs/predictions/stan_availability_coefficients.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("head", "stan", "provenance"),
+    ),
+    Decision(
+        id="the-owed-gates-hold-the-incumbent-not-the-shipped-head",
+        topic="availability",
+        claim="**`season-total`'s Gate E and `stan-games-played`'s Gate D hold the "
+              "point-MLE INCUMBENT as their floor, not the shipped Stan head** — so the "
+              "window, the role-graded dispersion and the mixture were invisible to them by "
+              "construction, and re-running them was insurance rather than a live risk. "
+              "Neither verdict moves.",
+        because="Both were owed from the window round and were re-run once, on 2026-08-12, "
+                "after the mixture landed. Gate E still **fails** — MAE **406.65** against "
+                "the incumbent's 400.46 (+6.19), CRPS **291.63** against 287.26 (+4.37), "
+                "bias −15.87 against −3.06 — and Gate D still admits **no arm**. The reason "
+                "neither could move is worth more than the re-run: `season_total"
+                ".gp_treatments` fits `availability.BetaBinomialGLM` in-process and "
+                "`stan_games_played._floor_scores` refits it per split, both full-window and "
+                "shared-ρ; neither module reads `stan_availability`'s posterior, and "
+                "`stan_games_played` imports only `availability_design`, the frame builder. "
+                "The plan's phrase *'both of which hold this head as a floor'* was "
+                "imprecise. What DID move is the fourth decimal on every arm, because the "
+                "spell process is a Monte Carlo simulation over freshly-sampled posteriors: "
+                "`within_tenure` 7.2265 → **7.23495**, `duration_covariates` 10.1625 → "
+                "**10.1676**, its spell-shape error 1.8105 → **1.7373**, Gate E's margin "
+                "+6.34 → **+6.19**. **47 audited figures moved and no verdict did**, which "
+                "is the useful shape for a re-run to have — the gates are not resting on "
+                "margins that noise can flip.",
+        status="measured",
+        reproduce="make stan-games-played → "
+                  "outputs/predictions/stan_games_played_gates.csv, "
+                  "outputs/predictions/season_total_gate_e.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("head", "provenance"),
+    ),
+    Decision(
+        id="the-mixtures-contest-value-is-confounded-not-measured",
+        topic="availability",
+        claim="**D2's value measurement came back confounded.** The shipped arm's simulated "
+              "Round-1 advance lift reads **+0.1890** [+0.1037, +0.2789] in the 600k "
+              "Shootaround against a recorded **0.2107**, and the realized readout "
+              "**+0.1713** against 0.1268 — but neither difference can be attributed to the "
+              "mixture, because the baseline was measured on a **pre-window** tensor.",
+        because="The recorded figures predate the 2012-13 window, the role-graded `rho` and "
+                "the simulator's `rho`-gather fix. The window round rebuilt the tensors and "
+                "deliberately did not re-run the sweep, reasoning that the propagation "
+                "session would re-run it anyway and twice was the expense to avoid. That "
+                "saved an hour and cost the measurement: **this run moves two things at "
+                "once.** What IS established is that nothing in the contest readout moved "
+                "detectably — 0.2107 sits inside the new interval, the realized side has "
+                "N = 2 seasons, and **no gate flipped**: Gate C passes (the injected world "
+                "reproduces the market skill gap, +0.0491 / +0.0163 against an uninjected "
+                "world that has it backwards at −0.1230 / −0.1229), Gate D still fails in "
+                "**0 of 6**, and the shipped arm is still separated from **23 of 23** "
+                "rivals. **A value measurement whose baseline is not re-measured under the "
+                "same code is not a value measurement** — that is the lesson, and it is "
+                "worth more than the number. None of it bears on whether the mixture ships: "
+                "D2 made the contest readout non-blocking before the arm was measured, so "
+                "a null here always left the head where D1 put it.",
+        status="measured",
+        unblocks="A single-component counterfactual, run as a PAIR on the same day and the "
+                 "same code rather than against a recorded figure of unknown vintage: "
+                 "`stan.availability.mixture: false`, then posteriors → simulate-season → "
+                 "bracket → draft-sim → strategy-sweep, about 2.5 hours. What it would buy "
+                 "is knowledge about the NEXT head — whether tail-calibration wins in this "
+                 "project reach the contest at all, currently unmeasured in either "
+                 "direction.",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_shipped.csv, "
+                  "outputs/predictions/strategy_gate_d.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("head", "simulations", "provenance"),
+    ),
+    Decision(
+        id="the-simulator-draws-the-availability-component-first",
+        topic="simulations",
+        claim="**Under the mixture the simulator draws the COMPONENT first, per player, and "
+              "takes the rate from whichever one won** — never a blend of the two rates.",
+        because="Averaging `μ_low` and `μ_main` in proportion to `π` would produce a season "
+                "between healthy and disrupted, which is precisely the season the arm "
+                "exists to say does not happen — and it would look right in every "
+                "mean-based check, since the blended mean is the mixture's mean. "
+                "`season.availability_rates` mirrors `StanAvailability.predict_samples`: one "
+                "Bernoulli on `π` per player per draw, then that component's Beta. `π = 0` "
+                "reproduces the single-component draw **bit for bit**, rng calls included, "
+                "so the shipped window's tensors could not move when the mixture became "
+                "expressible. `π` comes from the artifact's own second design block, so the "
+                "simulator reconstructs it rather than re-implementing it — the same rule "
+                "that fixed the `rho` gather. A rostered player with no design row keeps "
+                "`π = 0` deliberately: his rate is `no_design_availability`'s empirical "
+                "figure over players like him, which already contains their disrupted "
+                "seasons, so a mixture on top would discount the same absences twice.",
+        status="built",
+        reproduce="make simulate-season → data/features/sim_tensor_2022-23.npz",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("simulations", "head"),
     ),
     Decision(
         id="simulator-reimplements-the-availability-draw",
@@ -3565,13 +3688,32 @@ REGISTRY: tuple[Decision, ...] = (
                 "the composition head. Three traps: `rho_bin` is **1-based** (verified against "
                 "`role_bins`), `rho_draws` is `(draws,)` on a shared artifact and `(draws, K)` "
                 "on a graded one so both must work, and no-design players need the lowest "
-                "bucket. Scheduled as session 1 of "
-                "`docs/availability-mixture-ship-plan.md`.",
-        status="open",
-        unblocks="Gather each player's `rho_bin` from the availability artifact's recipe in "
-                 "`src/sim/season.py` instead of assuming a scalar dispersion, then run "
-                 "`make simulate-season` end to end — the failure has only been reproduced "
-                 "at the expression level, never through the target.",
+                "bucket. **✅ Fixed 2026-08-11**, and the target did reproduce the failure "
+                "rather than only the expression — `ValueError` at sim 0 of 2,000, which was "
+                "the difference between a broken target and a broken line. The claim above "
+                "no longer holds of the code and the entry is kept because the *diagnosis* "
+                "was corrected mid-flight: see "
+                "`the-simulator-gathers-availability-rho-rather-than-broadcasting-it` for "
+                "the fix and `the-simulator-draws-the-availability-component-first` for the "
+                "mixture that followed it through the same door. The silently stale "
+                "`train_val` artifact was rebuilt 2026-08-12.",
+        status="withdrawn",
+        replaced_by="**The dispersion axis is reconstructed from the artifact's own `cut` "
+                    "recipe step**, not drawn through `predict_samples` and not "
+                    "re-implemented — see "
+                    "`the-simulator-gathers-availability-rho-rather-than-broadcasting-it`. "
+                    "The mixture went through the same door on 2026-08-12 rather than "
+                    "adding a second inlined expression: "
+                    "`the-simulator-draws-the-availability-component-first`.",
+        caught_by="`make simulate-season`, run end to end for the first time since the "
+                  "window round: it raised `ValueError: could not broadcast input array "
+                  "from shape (4,) into shape (539,)` at sim 0 of 2,000. The entry had "
+                  "recorded the failure as reproduced *at the expression level only*, and "
+                  "running the target is what turned that into a broken build. The "
+                  "diagnosis in the claim was also wrong in its first form — "
+                  "`predict_samples` returns games played, where the simulator needs a rate "
+                  "it can apply per cell — and was corrected before any code was written.",
+        reproduce="make simulate-season → data/features/sim_tensor_2022-23.npz",
         source="docs/availability-window-plan.md",
         reviewed="2026-08-11",
         date="2026-08-11",
@@ -5862,9 +6004,10 @@ REGISTRY: tuple[Decision, ...] = (
     Decision(
         id="model-card-ribbon-budget-is-measured-not-assumed",
         topic="problem",
-        claim="The predictive is **200 draws over at most 20,000 rows a split**, and that "
+        claim="The predictive is **400 draws over at most 20,000 rows a split**, and that "
               "budget is verified at build time by re-reading the 95% ECDF ribbon on two "
-              "interleaved halves of the draws rather than being asserted to be enough.",
+              "interleaved halves of the draws rather than being asserted to be enough — "
+              "which is how it came to be 400 rather than 200.",
         because="The composition alone is 631,158 rows times 1,000 persisted draws, and "
                 "none of that buys a better picture — but 'the band is stable well before "
                 "that' is the kind of claim that is easy to write and never check. So "
@@ -5872,10 +6015,18 @@ REGISTRY: tuple[Decision, ...] = (
                 "by about twice the standard error of the full-budget estimate they average "
                 "to, which makes the statistic a conservative bound, and it falls as "
                 "`1/sqrt(D)` across 100 / 200 / 400 draws — the confirmation that it is "
-                "measuring Monte Carlo error rather than misfit. At the shipped 200 the "
-                "worst gated head reads **0.0145** against a 0.02 bar, so the ribbon is "
-                "good to roughly 0.007 in ECDF units and 400 draws would buy a third of a "
-                "pixel. `game_length_ot` is reported rather than gated: its two validation "
+                "measuring Monte Carlo error rather than misfit. **The budget doubled on "
+                "2026-08-12 and the gate is what said so**: the availability head became a "
+                "two-component mixture, whose predictive is genuinely wider, and its band "
+                "went from 0.0097 to **0.0216** at 200 draws — over the 0.02 bar, so "
+                "`check_predictive` failed the build rather than shipping a ribbon that was "
+                "measuring the sampler. That is the case this rule was written for: a "
+                "constant justified by one measurement stayed right only until the model "
+                "under it moved, and nothing but the gate would have noticed. At the "
+                "shipped 400 the worst gated head is `availability` itself at **0.0136** "
+                "against the 0.02 bar (it was `game_length_depth` at 0.0145), so the ribbon "
+                "is good to roughly 0.007 in ECDF units, and `make model-cards` costs 17 s "
+                "rather than 10. `game_length_ot` is reported rather than gated: its two validation "
                 "cells give an ECDF that takes three values, where a half-sample gap of 0.5 "
                 "is the frame and not the budget. The row cap is a subsample of the "
                 "population, so it moves Monte Carlo error and not the estimand — and on "
@@ -5885,7 +6036,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make model-cards → outputs/predictions/model_card_ecdf.csv, "
                   "outputs/predictions/model_card_index.csv",
         source="docs/model-cards-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-12",
         date="2026-08-10",
         tags=("dashboard", "performance", "provenance"),
     ),

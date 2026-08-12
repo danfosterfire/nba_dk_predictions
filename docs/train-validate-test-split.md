@@ -53,8 +53,9 @@ replication.
   retiring "the whole free-throw family fails"; and **the availability model ladder**,
   added 2026-08-08, where the GBM went from third to first. **Three survived unchanged**,
   which is the useful contrast: the availability
-  Stan port still reproduces the MLE on every one of its terms (21/21 then, 24/24 since the
-  2026-08-11 window and role-graded dispersion), the `reb` alpha-trap pair
+  Stan port still reproduces the MLE on every one of its terms (21/21 then, 24/24 after the
+  2026-08-11 window and role-graded dispersion, 35/35 since the 2026-08-12 mixture), the
+  `reb` alpha-trap pair
   reproduces 0.928 / 0.662 to a thousandth across the split change, and the substitution
   arm's validation margin reproduces at −0.771 across a half-length-to-full-length change
   in every one of its fits.

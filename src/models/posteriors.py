@@ -260,6 +260,13 @@ class DesignRecipe:
     (`stan_components.build_design`, `stan_minutes.build_design`, ...). It is recorded as a
     string rather than a callable so the pickle does not pin an import path, and so a
     consumer building a 2026-27 frame can see which builder it has to satisfy.
+
+    **`pi_features` / `pi_scaler` are a SECOND design block, not more columns in the
+    first.** The availability head's low-availability mixture puts covariates on `pi`
+    through their own link, standardized by their own scaler on the same fitting rows
+    (`stan_availability.PI_FEATURES`), and that list is not a subset of `features` — so
+    folding the two together would either mis-standardize one block or silently drop it.
+    Empty on every other head, which is the single-block recipe exactly.
     """
 
     variant: str
@@ -267,6 +274,19 @@ class DesignRecipe:
     scaler: object
     steps: tuple[dict, ...] = ()
     builder: str = ""
+    pi_features: list[str] = field(default_factory=list)
+    pi_scaler: object = None
+
+    def __setstate__(self, state: dict) -> None:
+        """Restore an artifact pickled before the second block existed.
+
+        A dataclass field default is applied by `__init__`, and unpickling does not call
+        it — `pickle` restores `__dict__` directly. So without this, every artifact written
+        before these two fields raises `AttributeError` on `recipe.pi_features` rather than
+        falling back to the default, on every head and every window. Defaults first, state
+        second, so a newer pickle still wins.
+        """
+        self.__dict__.update({"pi_features": [], "pi_scaler": None, **state})
 
     def transform(self, frame: pd.DataFrame) -> pd.DataFrame:
         """Apply every fitted step, in order."""
@@ -277,17 +297,35 @@ class DesignRecipe:
 
     def matrix(self, frame: pd.DataFrame, transformed: bool = False) -> np.ndarray:
         """The standardized design matrix — mirrors every head's private `_design`."""
-        if not self.features:
+        return self._block(frame, self.features, self.scaler, transformed)
+
+    def pi_matrix(self, frame: pd.DataFrame, transformed: bool = False) -> np.ndarray:
+        """The mixture weight's standardized design — mirrors `StanAvailability._pi_design`.
+
+        `(rows x 0)` when the head carries no mixture, which is what makes a consumer's
+        `pi` expression one path rather than a branch.
+        """
+        return self._block(frame, self.pi_features, self.pi_scaler, transformed)
+
+    def _block(self, frame: pd.DataFrame, features: list[str], scaler,
+               transformed: bool) -> np.ndarray:
+        if not features:
             # The intercept-only duration arm. `features = []` is legal in Stan and the
             # head stores no scaler, so an empty (rows x 0) block is the honest design.
             return np.zeros((len(frame), 0))
+        if scaler is None:
+            raise ValueError(
+                f"the recipe names {len(features)} column(s) for this block and carries "
+                f"no scaler for them, so there is nothing to standardize a new frame "
+                f"with. The names and the fitted scaler travel together or the block "
+                f"describes a different model from the one that was fitted.")
         out = frame if transformed else self.transform(frame)
-        missing = [c for c in self.features if c not in out.columns]
+        missing = [c for c in features if c not in out.columns]
         if missing:
             raise KeyError(f"the recipe produced no column for {missing}; the frame is "
                            f"not the output of `{self.builder or 'the head builder'}`")
-        X = out[self.features].to_numpy(dtype=float)
-        return self.scaler.transform(np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0))
+        X = out[features].to_numpy(dtype=float)
+        return scaler.transform(np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0))
 
 
 # ── The artifact ──────────────────────────────────────────────────────────────
@@ -338,6 +376,30 @@ class PosteriorArtifact:
             return np.exp(np.clip(eta, -30, 30))
         return 1.0 / (1.0 + np.exp(-np.clip(eta, -30, 30)))
 
+    def pi_draws(self, frame: pd.DataFrame, transformed: bool = False) -> np.ndarray:
+        """(draws x rows) low-availability mixture weight, `pi = theta * sigmoid(Z gamma)`.
+
+        Zero everywhere when the head carries no mixture, so a consumer writes the convex
+        combination once instead of branching — `(1 - 0) * mu + 0 * mu_low` is `mu`.
+
+        The covariates come from the recipe's **second** block, which is why the block had
+        to be persisted: `pi` is the arm's distinguishing claim (it says *who* is at risk),
+        and a consumer that could not rebuild `Z` for a new frame would be holding the
+        single-component head under the mixture's name.
+        """
+        theta = np.asarray(self.draws.get("theta_draws", ()), dtype=float)
+        if not theta.size:
+            return np.zeros((self.n_draws, len(frame)))
+        Z = self.recipe.pi_matrix(frame, transformed=transformed)
+        gamma = np.asarray(self.draws["gamma_draws"], dtype=float)
+        if gamma.shape[1] != Z.shape[1]:
+            raise ValueError(
+                f"{self.head}: `gamma_draws` has {gamma.shape[1]} coefficient(s) and the "
+                f"recipe's pi block builds {Z.shape[1]} column(s). The persisted mixture "
+                f"and its design have drifted; re-run `make posteriors`.")
+        eta = np.clip(gamma @ Z.T, -30, 30)
+        return theta[:, None] / (1.0 + np.exp(-eta))
+
     def predict(self, frame: pd.DataFrame, transformed: bool = False) -> np.ndarray:
         """The head's own reported mean, per row.
 
@@ -345,6 +407,17 @@ class PosteriorArtifact:
         dispersion. This exists so the round-trip has something to compare against, and so a
         consumer can sanity-check an artifact against a stored figure.
         """
+        if self.response == "mixture_mean_mu":
+            # The PREDICTIVE mean of the two-component mixture, not the main component's.
+            # A separate response name rather than a widened `mean_mu` because they are
+            # different functions of the same draws: `mean_mu` is what `mu_draws` returns,
+            # and a head whose reported mean silently changed meaning under the same label
+            # would make the round-trip pass while checking a number the head never
+            # reports. Mirrors `StanAvailability.predict_mean` exactly.
+            mu = self.mu_draws(frame, transformed=transformed)
+            pi = self.pi_draws(frame, transformed=transformed)
+            mu_low = np.asarray(self.draws["mu_low_draws"], dtype=float)[:, None]
+            return ((1.0 - pi) * mu + pi * mu_low).mean(axis=0)
         if self.response == "eta":
             return self.eta_draws(frame, transformed=transformed).mean(axis=0)
         if self.response == "plug_in_mu":
@@ -583,7 +656,17 @@ def _thinned(model, keep: int) -> tuple[object, dict, int]:
              "beta_draws": np.asarray(model.beta_draws)[idx]}
     out.alpha_draws = draws["alpha_draws"]
     out.beta_draws = draws["beta_draws"]
-    for name in ("rho_draws", "phi_draws", "kappa_draws"):
+    # The dispersion blocks, plus the low-availability mixture's four when the head
+    # declares one. Every one of these is indexed by draw, so they thin on the SAME `idx`
+    # as `alpha` — pairing a draw's `mu` with another draw's `pi` would average the
+    # posterior without saying so. Gated on `model.mixture` rather than on the attributes
+    # existing, because `StanAvailability` carries an inert zero block in both arms and a
+    # persisted block of zeros would be a mixture artifact that nests rather than an
+    # artifact with no mixture.
+    names = ["rho_draws", "phi_draws", "kappa_draws"]
+    if getattr(model, "mixture", False):
+        names += ["theta_draws", "mu_low_draws", "rho_low_draws", "gamma_draws"]
+    for name in names:
         values = getattr(model, name, None)
         if values is None:
             continue
@@ -616,7 +699,9 @@ def _finish(head: str, head_label: str, family: str, response: str, variant: str
             features: list[str], model, fit_frame: pd.DataFrame,
             probe_transformed: pd.DataFrame, probe_raw: pd.DataFrame,
             steps: list[dict], builder: str, extras: dict, window: str,
-            cfg_stan: dict, draws_kept: int, seconds: float) -> PosteriorArtifact:
+            cfg_stan: dict, draws_kept: int, seconds: float,
+            pi_features: list[str] | None = None,
+            pi_scaler: object = None) -> PosteriorArtifact:
     """Thin, capture the reference from the live head, assemble, and verify.
 
     **A fitted random effect is persisted as its SCALE or refused outright, never dropped.**
@@ -643,7 +728,14 @@ def _finish(head: str, head_label: str, family: str, response: str, variant: str
                   "u_sd_scale": float(ps.scale), "u_stream": ps.stream, **ps.summary()}
     thinned, draws, n_full = _thinned(model, draws_kept)
     recipe = DesignRecipe(variant=variant, features=list(features),
-                          scaler=model.scaler, steps=tuple(steps), builder=builder)
+                          scaler=model.scaler, steps=tuple(steps), builder=builder,
+                          pi_features=list(pi_features or []), pi_scaler=pi_scaler)
+    if recipe.pi_features and recipe.pi_scaler is None:
+        raise ValueError(
+            f"{head}: the recipe names {len(recipe.pi_features)} `pi` covariate(s) and "
+            f"carries no scaler for them, so `pi_matrix` would raise on the first consumer "
+            f"rather than here. The second design block is standardized on the head's own "
+            f"fitting rows; pass the head's `pi_scaler`.")
 
     # The reference is taken through the head's OWN methods on its OWN transformed frame,
     # so the round-trip compares two genuinely different paths to the same number.
@@ -707,7 +799,7 @@ def _reference_prediction(model, response: str, frame: pd.DataFrame,
             a, b = model.shapes(frame, draw)
             mus.append(a / (a + b))
         return np.mean(mus, axis=0)
-    if response in ("mean_mu_x_trials", "mean_count"):
+    if response in ("mean_mu_x_trials", "mean_count", "mixture_mean_mu"):
         return model.predict_mean(frame)
     if response == "plug_in_mu":
         return model.mean(frame)
@@ -740,11 +832,20 @@ def availability_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorA
     the same door `src/sim/season.py` already opens on the composition
     (`art.recipe.transform(frame)["rho_bin"]`) — a consumer reconstructs the assignment for
     any frame, including a 2026-27 board, without refitting and without importing the head.
+
+    **The low-availability mixture is a second design block and a different reported mean**,
+    and both are recorded rather than implied. `pi`'s covariates go into the recipe's own
+    `pi_features` / `pi_scaler`, because `PI_FEATURES` is not a subset of `FEATURE_COLS` and
+    its columns enter through a different link. And the response becomes
+    `mixture_mean_mu` — the predictive mean `(1 - pi) mu + pi mu_low`, which is what the head
+    reports — rather than `mean_mu`, which under a mixture is the *main component's* mean and
+    would let the round-trip pass while checking a quantity the shipped head never publishes.
     """
     from src.models.availability import FEATURE_COLS
-    from src.models.stan_availability import (FIRST_SEASON, ROLE_BIN_COL, ROLE_COL,
-                                              StanAvailability, availability_design,
-                                              role_edges)
+    from src.models.stan_availability import (FIRST_SEASON, MIXTURE, ROLE_BIN_COL,
+                                              ROLE_COL, StanAvailability,
+                                              availability_design, role_edges)
+    from src.models.stan_utils import GAMMA_SCALE, MU_LOW_MAX
 
     cfg_stan = cfg.get("stan", {})
     cfg_head = cfg_stan.get("availability", {})
@@ -752,15 +853,7 @@ def availability_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorA
                        .get("test_seasons", 2))
     l2 = float(cfg.get("features", {}).get("availability", {}).get("glm_l2", 1.0))
 
-    if bool(cfg_head.get("mixture", False)):
-        raise NotImplementedError(
-            "stan.availability.mixture is on and this artifact builder cannot persist it: "
-            "the `DesignRecipe` carries one scaler, and `pi`'s covariate block "
-            "(`stan_availability.PI_FEATURES`) needs its own. Wire the second design block "
-            "through here, through `_thinned`'s draw list and through "
-            "`rehydrate_availability` — docs/availability-mixture-ship-plan.md §4 — rather "
-            "than shipping an artifact that silently describes a different model. Raised "
-            "before the fit, so nine minutes of sampler time are not spent on it.")
+    mixture = bool(cfg_head.get("mixture", MIXTURE))
 
     design = availability_design(cfg)
     offered, val = windowed(design, window, test_seasons)
@@ -774,12 +867,9 @@ def availability_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorA
         seed=int(cfg_stan.get("seed", 42)),
         first_season=cfg_head.get("first_season", FIRST_SEASON),
         role_rho=bool(cfg_head.get("role_rho", True)),
-        # Refused rather than dropped, the same rule `_finish` applies to a year random
-        # effect. The mixture's `pi` needs its OWN covariate block and scaler in the
-        # recipe — `PI_FEATURES` is not a subset of `FEATURE_COLS`' scaler — and until
-        # `DesignRecipe` carries a second one, persisting these draws would produce an
-        # artifact that rehydrates as the single-component head with nothing raising.
-        mixture=False).fit(offered)
+        mixture=mixture,
+        gamma_scale=float(cfg_head.get("pi_gamma_scale", GAMMA_SCALE)),
+        mu_low_max=float(cfg_head.get("mu_low_max", MU_LOW_MAX))).fit(offered)
     seconds = time.perf_counter() - started
 
     # The rows the head fitted, taken from the head's own `fitting_rows` rather than
@@ -791,9 +881,13 @@ def availability_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorA
 
     return _finish(
         head="availability", head_label="availability", family="betabinomial",
-        response="mean_mu", variant="base", features=list(FEATURE_COLS), model=model,
+        response="mixture_mean_mu" if model.mixture else "mean_mu",
+        variant="mixture" if model.mixture else "base",
+        features=list(FEATURE_COLS), model=model,
         fit_frame=fit_frame, probe_transformed=probe, probe_raw=probe, steps=steps,
         builder="src.models.stan_availability.availability_design",
+        pi_features=list(model.pi_features) if model.mixture else [],
+        pi_scaler=getattr(model, "pi_scaler", None) if model.mixture else None,
         extras={"successes": "gp", "trials": "team_games", "dispersion": "rho_draws",
                 # The dispersion axis: which `rho_draws` column applies to which row.
                 "n_rho": int(model.n_rho), "rho_bin_column": ROLE_BIN_COL,
@@ -801,6 +895,16 @@ def availability_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorA
                 "rho_bin_edges": np.asarray(role_edges(model.role_rho), dtype=float),
                 "rho_labels": list(model.rho_labels),
                 "role_rho": bool(model.role_rho),
+                # The mixture axis. `mixture` is what `rehydrate_availability` branches on,
+                # and the three scalars are what a consumer needs to form the low component
+                # without importing the head. `PI_FEATURES` is duplicated here as a
+                # readable record; the recipe's `pi_features` is the load-bearing copy.
+                "mixture": bool(model.mixture),
+                "pi_weight": "theta_draws", "low_mean": "mu_low_draws",
+                "low_dispersion": "rho_low_draws", "pi_coefficients": "gamma_draws",
+                "pi_columns": list(model.pi_features) if model.mixture else [],
+                "mu_low_max": float(model.mu_low_max),
+                "pi_gamma_scale": float(model.gamma_scale),
                 # The season-truncation axis. NOT `provenance["fit_window"]`, and not
                 # `provenance["first_season"]` either — that one is a *readout* of the
                 # frame's own span, where this is the knob that produced it.

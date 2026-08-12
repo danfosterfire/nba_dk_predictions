@@ -401,7 +401,8 @@ def component_rates(artifacts: dict, frame: pd.DataFrame) -> dict:
 
 
 def availability_rates(rng: np.random.Generator, mu: np.ndarray, rho_by_bin: np.ndarray,
-                       bins: np.ndarray) -> np.ndarray:
+                       bins: np.ndarray, pi: np.ndarray | float = 0.0,
+                       mu_low: float = 0.0, rho_low: float = 0.0) -> np.ndarray:
     """One beta-binomial availability rate per player, at that player's **own** `rho`.
 
     Two vectors and a gather rather than a scalar broadcast, because the shipped head grades
@@ -410,12 +411,23 @@ def availability_rates(rng: np.random.Generator, mu: np.ndarray, rho_by_bin: np.
     shared dispersion `n_rho` is 1 and every player gathers the same entry, which reproduces
     the scalar form exactly.
 
+    **The low-availability mixture enters by drawing the COMPONENT first**, per player, and
+    taking the rate from whichever one won — `StanAvailability.predict_samples`' rule, for
+    its reason: averaging the two rates would produce a season between healthy and disrupted,
+    which is precisely the season the arm exists to say does not happen. `pi = 0` is the
+    single-component head exactly, so both arms take one path.
+
     Named rather than inlined because it is the one place the simulator touches this head's
     likelihood, and it was inlined against a scalar for the whole window round without
     anything raising until `rho` became a vector.
     """
     a, b = beta_shapes(mu, rho_by_bin[bins])
-    return rng.beta(a, b)
+    p = rng.beta(a, b)
+    pi = np.asarray(pi, dtype=float)
+    if not np.any(pi):
+        return p
+    a_low, b_low = beta_shapes(np.full_like(p, mu_low), np.full_like(p, rho_low))
+    return np.where(rng.random(p.shape) < pi, rng.beta(a_low, b_low), p)
 
 
 def availability_rho_bin(artifact, frame: pd.DataFrame) -> np.ndarray:
@@ -707,7 +719,9 @@ def _sim_one(s: int, ctx: dict) -> dict:
 
     # ── availability: one beta-binomial rate per player, a binomial per stint ─
     p_available = availability_rates(rng, ctx["avail_mu"][draw], ctx["avail_rho"][draw],
-                                     ctx["avail_rho_bin"])
+                                     ctx["avail_rho_bin"], ctx["avail_pi"][draw],
+                                     float(ctx["avail_mu_low"][draw]),
+                                     float(ctx["avail_rho_low"][draw]))
     gp = rng.binomial(ctx["cell_games"], p_available[ctx["cell_player"]])
     played = allocate_spells(gp, ctx["cell_games"], float(ctx["dur_mu"][draw]),
                              float(ctx["dur_kappa"][draw]),
@@ -878,6 +892,19 @@ def build_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
     if avail_rho.ndim == 1:
         avail_rho = avail_rho[:, None]
     avail_rho_bin = availability_rho_bin(avail_art, avail)
+    # The low-availability mixture's weight, from the artifact's OWN second design block —
+    # `(draws x players)`, and all zeros when the persisted head carries no mixture, which
+    # is the single-component draw exactly. A player with no design row keeps `pi = 0`
+    # deliberately: his `mu` is `no_design_availability`'s empirical rate over players like
+    # him, which already contains their disrupted seasons, so a mixture on top of it would
+    # discount the same absences twice.
+    avail_pi = np.zeros_like(mu)
+    if present.any():
+        avail_pi[:, present] = avail_art.pi_draws(avail[present])
+    avail_mu_low = np.asarray(avail_art.draws.get("mu_low_draws",
+                                                  np.zeros(avail_art.n_draws)), dtype=float)
+    avail_rho_low = np.asarray(avail_art.draws.get("rho_low_draws",
+                                                   np.zeros(avail_art.n_draws)), dtype=float)
 
     comp_art = artifacts["composition"]
     comp_model = rehydrate_composition(comp_art, comp_art.n_draws,
@@ -918,6 +945,9 @@ def build_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
         "cell_games": cell_frame["games"].to_numpy(np.int64),
         "component_row": component_row,
         "avail_mu": mu, "avail_rho": avail_rho, "avail_rho_bin": avail_rho_bin,
+        "avail_pi": avail_pi, "avail_mu_low": avail_mu_low,
+        "avail_rho_low": avail_rho_low,
+        "avail_mixture": bool(avail_art.extras.get("mixture", False)),
         # One label per dispersion column, always — a legacy artifact carries none, and a
         # progress line that silently printed three of four buckets would be worse than one
         # that printed indices.
@@ -1354,6 +1384,12 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
         print("    dispersion: " + ", ".join(
             f"{label} rho {ctx['avail_rho'][:, j].mean():.4f} ({n:,} players)"
             for j, (label, n) in enumerate(zip(ctx["avail_rho_labels"], counts))))
+        if ctx["avail_mixture"]:
+            pi = ctx["avail_pi"].mean(axis=0)
+            print(f"    mixture: pi {pi.mean():.4f} mean, "
+                  f"{np.percentile(pi, 10):.4f}-{np.percentile(pi, 90):.4f} "
+                  f"p10-p90, low component {ctx['avail_mu_low'].mean():.4f} "
+                  f"at rho {ctx['avail_rho_low'].mean():.4f}")
         print(f"  copula: {len(COUNT_HEADS)} count frailties, lognormal sigma "
               f"{ctx['frailty_sigma']:.4f} at overdispersion "
               f"{BONUS_GAME_OVERDISPERSION}; {ctx['copula']['saturated']} of "

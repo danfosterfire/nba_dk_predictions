@@ -140,7 +140,7 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
   | prior GP carried forward | 417.9 | 560.5 | 0.652 | +19.4 | — |
   | league/age baseline | 461.6 | 565.9 | 0.645 | +12.9 | 329.1 |
   | **beta-binomial head** | **400.5** | **514.0** | **0.707** | **−3.1** | **287.3** |
-  | *spell process* (Gate E) | *406.8* | *520.3* | *0.700* | *−16.6* | *291.8* |
+  | *spell process* (Gate E) | *406.6* | *520.0* | *0.700* | *−15.9* | *291.6* |
   | *oracle rate* | *261.9* | *367.0* | *0.851* | *−41.3* | — |
   | *oracle GP* | *214.4* | *287.5* | *0.908* | *+2.0* | — |
 
@@ -174,7 +174,7 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
   — `crps_from_atoms`, the O(K) kernel reduction, pinned against the literal double sum in
   `tests/test_season_total.py`.
 - **⭐ Gate E of the games-played plan RAN here on 2026-08-05 and the spell process FAILS
-  it** — 406.8 MAE and 291.8 CRPS against the incumbent's 400.5 / 287.3. **It had been
+  it** — 406.6 MAE and 291.6 CRPS against the incumbent's 400.5 / 287.3. **It had been
   recorded as a ✅ on test with a margin of 0.03 dk_pts** (435.1053 against a 435.1352 bar),
   which is seven parts in a hundred thousand and was never evidence of anything. That is the
   third gate in that head to reverse on moving off the test split.
@@ -499,22 +499,28 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     hopeful comparison.** An L2 penalty of `l2` on standardized coefficients *is* a
     `normal(0, 1/sqrt(2·l2))` prior, so the posterior **mode** is exactly the penalized
     optimum `BetaBinomialGLM` finds — `stan_utils.prior_sd_for_l2` is that identity. Measured
-    on the 4,027 **windowed** fitting rows / 883 **validation**: CRPS **9.8136** (Stan
-    plug-in) / **9.8155** (posterior) against the MLE's **9.8444**, ρ **0.2595** vs
-    **0.2627**, max coefficient gap **0.09352**, largest gap **1.658 posterior sd**, and the
-    MLE inside the 95% credible interval for **24/24** terms. R̂ **1.0050**, min ESS 2,382,
-    **0 divergences**, 94 s wall clock over 4 chains.
-    - **⚙️ The head took a 2012-13 fitting window and a role-graded ρ on 2026-08-11**
-      (`docs/availability-window-plan.md` §4). Both point MLEs are refitted on the same
-      windowed rows, or the port check would be comparing two populations rather than two
-      fits. The full-window shared-ρ block read CRPS 10.0063 / 10.0071 against 10.0057, ρ
-      0.2808 vs 0.2806, gap 0.00335 at 0.085 sd, 21/21 terms, R̂ 1.0019, min ESS 2,314, 196 s.
-      **The looser coefficient agreement is the comparison changing, not the port
-      degrading**: under a shared ρ the posterior mode *is* the penalized MLE, while
-      `RoleGradedBetaBinomial` profiles each bucket's dispersion against a fixed mean instead
-      of optimizing jointly, so the two differ most on the intercept — where the mean and the
-      dispersion trade. The exact claim is pinned where it can be exact: `n_rho = 1`
-      reproduces the shared-ρ target bit for bit on Stan's own `log_prob`.
+    on the 4,027 **windowed** fitting rows / 883 **validation**: CRPS **9.8195** (Stan
+    plug-in) / **9.8239** (posterior) against the mixture MLE's **9.8237** and the
+    single-component MLE's **9.8444**, ρ **0.2261** vs **0.2245** and **0.2627**, max
+    coefficient gap **0.74165**, largest gap **0.597 posterior sd**, and the MLE inside the
+    95% credible interval for **35/35** terms. R̂ **1.0073**, min ESS 1,399,
+    **0 divergences**, 366 s wall clock over 4 chains.
+    - **⚙️ The head took a 2012-13 fitting window and a role-graded ρ on 2026-08-11, and the
+      low-availability mixture on 2026-08-12** (`docs/availability-window-plan.md` §4 and
+      §7). Every point MLE is refitted on the same windowed rows, or the port check would be
+      comparing two populations rather than two fits. The single-component role-graded block
+      read CRPS 9.8136 / 9.8155 against 9.8444, ρ 0.2595 vs 0.2627, gap 0.09352 at 1.658 sd,
+      24/24 terms, R̂ 1.0050, min ESS 2,382, 94 s; the full-window shared-ρ block before it
+      read CRPS 10.0063 / 10.0071 against 10.0057, ρ 0.2808 vs 0.2806, gap 0.00335 at
+      0.085 sd, 21/21 terms, R̂ 1.0019, min ESS 2,314, 196 s.
+      **The reference has to be the arm the head is a port OF, and that is now load-bearing
+      rather than pedantic**: referenced against the *single-component* MLE the shipped
+      mixture posterior reads 19/24 with `rho[30+ mpg]` at z = **−6.34**, which measures the
+      likelihood change — the mixture takes the disrupted seasons out of the main component,
+      so its ρ falls from 0.2627 to 0.2261 — and says nothing about the port. Against
+      `mixture_mle` every dispersion term agrees to z ≤ 0.29. The exact claim is pinned where
+      it can be exact: `n_rho = 1` reproduces the shared-ρ target bit for bit on Stan's own
+      `log_prob`, and `θ = 0` reproduces the single-component target bit for bit.
     - **⚠️ This block was measured on the held-out seasons until 2026-08-05 and read
       10.7947 / 10.7953 / 10.7952, ρ 0.2759 vs 0.2757, gap 0.0127 / 0.095 sd, R̂ 1.0025,
       min ESS 2,402, 254 s.** The port check moved to validation with every other head
@@ -534,15 +540,15 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
 
     | players | independent sd | shared-β sd | inflation |
     |---|---|---|---|
-    | 12 | 68.0 | 6.1 | **+0.4%** |
-    | 15 | 75.8 | 7.2 | +0.5% |
-    | 30 | 107.2 | 12.3 | +0.7% |
-    | 150 | 239.4 | 52.5 | +2.4% |
-    | **883 (whole board)** | 581.4 | 297.2 | **+12.3%** |
+    | 12 | 69.060 | 6.499 | **+0.4%** |
+    | 15 | 76.810 | 7.669 | +0.5% |
+    | 30 | 108.652 | 13.370 | +0.8% |
+    | 150 | 242.604 | 58.432 | +2.9% |
+    | **883 (whole board)** | 589.169 | 332.588 | **+14.8%** |
 
     So it is real for **board-wide exposure across many lineups** and near-irrelevant for a
-    single 15-man team. Quoting the 297-game figure as if it applied to one roster is the
-    over-claim to avoid — it was made and corrected in the session that built this.
+    single 15-man team. Quoting the **332.588**-game figure as if it applied to one roster is
+    the over-claim to avoid — it was made and corrected in the session that built this.
     - **⚙️ The 2012-13 window roughly doubled the shared-β term, and it is the one place the
       window is not free.** The full-window head read 69.9 / 4.2 / +0.2% at 12 players and
       597.8 / **222.8** / **+6.7%** across the board. Fewer fitting rows leave a wider
@@ -551,6 +557,13 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
       understating it — and on a roster it is still a rounding error. But a consumer reading
       the board figure as "how far could the entire league move at once" is now reading a
       number twice as large, and any simulator input derived from it moves with it.
+    - **⚙️ The mixture added to it again, by a different mechanism.** The single-component
+      role-graded head read 68.0 / 6.1 at 12 players and 581.4 / **297.2** / **+12.3%**
+      across the board (75.8 / 7.2 at 15, 107.2 / 12.3 at 30, 239.4 / 52.5 / +2.4% at 150).
+      The window's share was posterior width on β; the mixture's is the between-component
+      term `π(1−π)(m_low − m_main)²` in `predictive_moments` — the extra spread the arm was
+      adopted for, reaching the joint rather than only the marginal. Two different sources,
+      the same direction, and the same warning attached.
     - **The board is a SIMULATOR INPUT, so validation is where it belongs**, not merely
       where the lock put it. "How much does my whole board move together" is a number the
       simulator is *given*; calibrating it on the seasons the simulator is later backtested
@@ -1048,7 +1061,7 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     **z = +5.29** against the sampling error of the observed proportion, where the tenure
     decomposition misses by **3.8%** (**z = +0.93**).
   - **⭐ The process class is right and the TENURE is the bottleneck.** The oracle-tenure arm
-    scores validation CRPS **7.2265** against its own floor's **10.0992** on the same rows
+    scores validation CRPS **7.23495** against its own floor's **10.0992** on the same rows
     (the incumbent reads **10.0057** on the full validation frame) — 28% better on the
     deciding split. Given the observed tenure the within-tenure chain is far better than the
     season-level beta-binomial, and every bit of that is destroyed by having to predict entry
@@ -1063,8 +1076,8 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     its tail test is a strict inequality, so the hybrid ties every bar and fails on the tie.
     **That is a category error in the instrument, not a verdict on the arm** — and it is the
     reason the head's decision is a judgement rather than a gate outcome.
-  - **The fitted arms lose on their merits**: `duration_covariates` scores **10.1625**
-    against the incumbent's 10.0057, a gap of **+0.1568** (paired bootstrap over 883 rows,
+  - **The fitted arms lose on their merits**: `duration_covariates` scores **10.1676**
+    against the incumbent's 10.0057, a gap of **+0.1619** (paired bootstrap over 883 rows,
     95% CI [+0.0737, +0.2393], P(better) = 0.1%), `full_window` +0.2647, `three_state`
     +0.2983, `calibrated_fallback` +0.0149 and it also loses PIT. `three_state` posts the *best* tail of any arm (0.0041)
     while being worst on CRPS — the tail alone is a noisy criterion on 359 rotation rows.
@@ -1072,7 +1085,7 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     MAE and `P(GP<41)` are all functions of a pmf over a count: two models with identical
     games-played distributions can scatter absences as coin flips or block them into a
     fortnight and score the same. Simulated spell lengths against observed, mean absolute
-    relative error: **hybrid 0.5310**, `full_window` 1.7408, `duration_covariates` **1.8105**,
+    relative error: **hybrid 0.5310**, `full_window` 1.7408, `duration_covariates` **1.7373**,
     `calibrated_fallback` **5.0082**. The hybrid is within 2% on both P(T=1) and P(≥10 games)
     — the statistic a Round 1 knockout turns on — and its weakness is the extreme tail
     (+157% on month-long absences).

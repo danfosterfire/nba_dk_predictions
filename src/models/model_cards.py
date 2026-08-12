@@ -145,7 +145,14 @@ VERIFY_ROWS = 25_000
 # `ECDF_BAND_TOL` in ECDF units. The row cap is a *subsample of the population*, so it moves
 # Monte Carlo error and not the estimand; the index carries the row count per split so a page
 # can say what it drew over.
-PRED_DRAWS = 200
+# 400 since 2026-08-12, up from 200: the availability head became a two-component mixture,
+# whose predictive is genuinely wider, and the same 200 draws stopped buying a stable ribbon
+# — `ecdf_band_mc` read **0.0216** against a 0.02 bar, so the gate below failed rather than
+# shipping a band that was measuring the sampler. The budget is measured rather than
+# extrapolated: at 300/400/600/800/1000 draws the availability band reads
+# 0.0083 / 0.0136 / 0.0059 / 0.0091 / 0.0079, which is the 1/sqrt(D) fall plus the statistic's
+# own noise, and 400 is the smallest power-of-two step that clears the bar for every head.
+PRED_DRAWS = 400
 PRED_ROWS = 20_000
 
 # Grid points on the ECDF. A response with few enough distinct values gets one point per
@@ -165,6 +172,11 @@ BAND_LEVELS = (2.5, 10.0, 25.0, 50.0, 75.0, 90.0, 97.5)
 # Heads below `BAND_MIN_ROWS` are reported and not gated: the overtime-onset head's two
 # validation cells give an ECDF that takes three values, and a half-sample gap of 0.5 there
 # is the *frame*, not the draw budget.
+#
+# Worst gated head at the shipped 400 draws is `availability` at 0.0136, which is also the
+# head that forced the budget up — see `PRED_DRAWS`. The figure this comment used to quote
+# (0.0145 at 200 draws, `game_length_depth`) held until the availability head's likelihood
+# changed under it, which is the argument for gating the budget rather than asserting it.
 ECDF_BAND_TOL = 0.02
 BAND_MIN_ROWS = 500
 
@@ -1031,9 +1043,59 @@ def coefficient_rows(head: str, art) -> list[dict]:
                              scaler_scale=float("nan")))
         rows[-1]["term_family"] = "dispersion"
 
+    rows += _mixture_rows(art)
     for row in rows:
         row["head"] = head
     return rows
+
+
+def _mixture_rows(art) -> list[dict]:
+    """The availability head's low-availability mixture — eleven terms, or none.
+
+    Emitted because a card that showed `alpha`, `beta` and `rho` for a head fitted with a
+    mixture would describe the **single-component** model: `theta` scales the whole weight,
+    `gamma` says which players carry it, and `mu_low` / `rho_low` are the disrupted season
+    itself. Those are parameters of the shipped head, not diagnostics of it.
+
+    `gamma` rides on `pi`'s OWN scaler — the recipe's second block — so its centre and scale
+    columns come from there rather than from the mean's, which would unstandardize eight
+    coefficients against the wrong nineteen-column fit. The terms are prefixed `pi:` so a
+    reader cannot mistake `pi:age` for the mean's `age`; they are different coefficients on
+    the same column through different links.
+    """
+    theta = art.draws.get("theta_draws")
+    if theta is None:
+        return []
+    out = []
+    for name, key in [("theta", "theta_draws"), ("mu_low", "mu_low_draws"),
+                      ("rho_low", "rho_low_draws")]:
+        # `dispersion`, not a role of their own: these three are scalar summaries of the low
+        # component, and the dashboard's `SCALAR_ROLES` is what keeps a scalar out of the
+        # sorted slope panel. A new role would render them as bars with no design column
+        # behind them.
+        out.append(_summary(name, art.draws[key], "dispersion",
+                            scaler_center=float("nan"), scaler_scale=float("nan")))
+        out[-1]["term_family"] = "mixture"
+
+    gamma = np.asarray(art.draws.get("gamma_draws", np.zeros((len(theta), 0))), dtype=float)
+    scaler = getattr(art.recipe, "pi_scaler", None)
+    centres = np.asarray(getattr(scaler, "mean_", []), dtype=float)
+    scales = np.asarray(getattr(scaler, "scale_", []), dtype=float)
+    for j, name in enumerate(getattr(art.recipe, "pi_features", []) or []):
+        # `coefficient`, because that is what they are — slopes on a standardized design,
+        # just through a different link — so the panel sorts them beside the mean block's
+        # and a reader can see which players `pi` picks out.
+        # `term_family` is left as `_summary` derives it — one family per term, exactly how
+        # the mean block's features are treated. Grouping the eight under a shared
+        # "mixture weight" family would be wrong in a way the page makes visible: the panel's
+        # collapse toggle keeps one row per family and labels it "widest of N bases", which
+        # is right for a spline basis over ONE quantity and nonsense for eight different
+        # covariates.
+        out.append(_summary(
+            f"pi:{name}", gamma[:, j], "coefficient",
+            scaler_center=float(centres[j]) if j < centres.size else float("nan"),
+            scaler_scale=float(scales[j]) if j < scales.size else float("nan")))
+    return out
 
 
 # ── Features ──────────────────────────────────────────────────────────────────
@@ -1512,7 +1574,7 @@ def fitted_values(art, spec: ResponseSpec, frame: pd.DataFrame,
     if spec.check != "mean":
         return draws.mean(axis=0)
     mean = np.asarray(art.predict(frame, transformed=True), dtype=float)
-    if art.response in ("mean_mu", "plug_in_mu"):
+    if art.response in ("mean_mu", "plug_in_mu", "mixture_mean_mu"):
         if not spec.trials:
             raise KeyError(
                 f"{art.head} reports `{art.response}` — a rate — and its `ResponseSpec` "
@@ -2075,6 +2137,11 @@ def index_row(head: str, art, frames: HeadFrames, check: dict,
         "description": spec.description,
         "variant": art.recipe.variant,
         "n_features": len(art.recipe.features),
+        # The recipe's SECOND design block, which today only the availability mixture has:
+        # `pi`'s covariates enter through their own link and their own scaler, so they are
+        # not more columns in `n_features` and the coefficient panel carries both blocks.
+        # A page reading `n_features` alone would under-count the panel by exactly this.
+        "n_pi_features": len(getattr(art.recipe, "pi_features", []) or []),
         "n_terms": int(n_terms),
         # How many of this head's feature pairs a page can open a joint density on. Zero is
         # a real value — a one-feature head has no pair — and a page reading it can say so
