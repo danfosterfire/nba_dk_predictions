@@ -690,6 +690,17 @@ size — a Stan parameter, a validation-scored grid and a train-scored grid — 
 0.10. That is Gate P5 passing, and it is corroboration of the size rather than a value to
 ship, because the chains had not mixed.
 
+> ⚙️ **σ = 0.450 was re-examined against a stronger reference on 2026-08-12 and stands** —
+> `make minutes-window`, [minutes-window-plan.md](minutes-window-plan.md) §4. The question was
+> whether a short-window refit of the *marginal* head narrows its predictive enough to lower
+> the σ this head needs to draw level. It narrows it (302.04 → 265.67, −12.0%) and the tie
+> boundary moves the **wrong way**, 0.200 → 0.300, because the short window improves the
+> marginal head's CRPS more than its spread and is a harder reference. The shipped 0.450 still
+> ties every arm — but against the best one the tie band is **[0.300, 0.450]** rather than
+> [0.200, 0.525], so 0.450 now sits on its **upper** edge. Also recorded there: σ is selected
+> by *this* head's CRPS optimum on training rows, so nothing about the marginal head can move
+> the constant under the rule that chose it, only the verdict it is read against.
+
 ### What is NOT in this head's own sweep, and why
 
 `make stan-composition` is unchanged — same four arms, same artifacts, same selected variant.

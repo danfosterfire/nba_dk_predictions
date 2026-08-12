@@ -16,10 +16,11 @@ PIP    := .venv/bin/pip
         stan stan-availability stan-availability-mixture stan-minutes \
         stan-components stan-composition \
         stan-substitution season-terms games-played stan-games-played \
-        stan-game-length posteriors model-cards minutes-unification composition-effects \
+        stan-game-length posteriors model-cards minutes-unification minutes-window \
+        composition-effects \
         scoring-periods draft-pool simulate-season weekly-scores bracket draft-sim \
         draft-sim-need draft-room draft-room-prep strategy-sweep strategy-sweep-need \
-        pick-log-stake final-evaluation
+        pick-log-stake mixture-value final-evaluation
 
 venv:
 	/opt/homebrew/bin/python3.14 -m venv .venv
@@ -345,6 +346,20 @@ model-cards:
 minutes-unification:
 	$(PYTHON) -m src.models.minutes_unification
 
+# The fitting-window x dispersion ladder for the MARGINAL minutes head — the same question
+# `make availability-window` asked one head over, and the one `docs/availability-window-
+# plan.md` §9 item 1 called the largest open stake in that line of work, because it can
+# revise a SHIPPED decision. Four steps: rebuild §6's era series through each head's own
+# design rows (its own caveat says they were measured on a rotation filter), scan for the
+# break, ladder window x dispersion on validation, confirm on a rolling origin over the
+# fitting half, and re-run the composition's injected-sigma grid against each window's arm.
+#
+# Point MLE for the ladder and a rehydrated posterior for the stake, so no CmdStan and no
+# refit of either minutes head — minutes, not the composition's 9.92 h. Needs
+# `make posteriors` for step 4 only.
+minutes-window:
+	$(PYTHON) -m src.models.minutes_window
+
 # Item 3d: fit the per-(player, season) random effect `make minutes-unification` measured
 # the need for, and sweep a team-context block alongside it. Four arms — a same-window
 # `base` control plus `ps`, `team`, `ps_team` — at the PILOT window by default, because the
@@ -535,6 +550,30 @@ strategy-sweep-need:
 # a ranking" for the stake where that trade is actually live.
 pick-log-stake:
 	$(PYTHON) -m src.sim.strategy --pick-log-stake
+
+# What the availability head's tail-calibration win is worth in the contest — as a PAIRED
+# counterfactual rather than a re-read. `docs/availability-window-plan.md` §7k asked this
+# once and had to discard the answer, because the sweep it compared against predated the
+# window round and moved three things at once. This target reports two arms of the same
+# chain, captured under the same code; it does not run them.
+#
+# Running them is two passes over five targets, differing in ONE config key. Only the
+# availability group of `make posteriors` is refitted, which is what makes a pass an hour:
+#
+#   # in configs/default.yaml: stan.availability.mixture: false
+#   $(PYTHON) -m src.models.posteriors --window train --groups availability
+#   make simulate-season bracket draft-sim strategy-sweep
+#   $(PYTHON) -m src.sim.mixture_value --capture single
+#   # then the same five with `mixture: true` and `--capture mixture`
+#   make mixture-value
+#
+# `--capture` refuses when the config key and the arm name disagree, since capturing the
+# artifacts of one arm under the other's name is precisely the confound being removed.
+# READ `resolution` BEFORE the contest block: 500 worlds per season resolves a lift gap of
+# ~0.09, and the simulated lift is SELF-SCORED — each arm is measured in a world it
+# generated, so only the realized rows share a truth across arms.
+mixture-value:
+	$(PYTHON) -m src.sim.mixture_value
 
 # Does any head need a season term, and which kind? A trend covariate and a year-level
 # random effect for every head, plus the season x role interaction the availability era

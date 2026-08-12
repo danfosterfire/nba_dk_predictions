@@ -34,8 +34,9 @@ The docs are:
   for shipping the windowed, role-graded availability head. Delete it when the round 
   lands, as `dashboard-build-prompts.md` was.
   - availability-window-plan.md: The availability head's fitting window, season term, 
-  dispersion and **likelihood**. Read it before changing any of those; its last section 
-  lists what a new likelihood would have to decide and what it would inherit.
+  dispersion and **likelihood**, and what the shipped mixture is worth in the contest. 
+  Read it before changing any of those, or before pricing a head change with 
+  `make strategy-sweep`.
   - dashboard-plan.md: The dashboard's charter and pages. The dashboard is a 
   **data-visualization surface**, not a project walkthrough — read this before adding 
   or editing a view.
@@ -57,6 +58,9 @@ The docs are:
   tendon ruptures in basketball players. Archival.
   - minutes-composition-plan.md: Plan and notes for the production version of 
   the minutes-played model. Work completed and mostly archival at this point.
+  - minutes-window-plan.md: The marginal minutes head's fitting window and dispersion, 
+  and what they do to the composition's injected σ. Read it before changing either, or 
+  before re-opening whether the marginal head can be retired.
   - model-cards-plan.md: The contract between the fitted heads and the dashboard's 
   model detail pages — what `make model-cards` writes, the rules the emitter inherits, 
   and each head's declared `chain_role`. Read this before adding a `model_card_*` 

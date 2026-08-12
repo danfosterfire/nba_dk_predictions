@@ -8,6 +8,9 @@ the ladder that separates the candidate causes, and what it settled.
 Built 2026-08-11. It is a **point-MLE specification ladder**, not a shipping path: an arm
 that wins here earns a Stan port in `stan_availability.py`, it does not ship from here.
 
+> **§9 is the current state of the whole line of work** — what shipped, what is a measured
+> null not to be rebuilt, and what is still open, ranked by stake. Start there.
+
 ---
 
 ## 1. The defect
@@ -352,7 +355,15 @@ grading, and too small to be the whole defect at 1.26–1.47×.
 4. ~~**Selection multiplicity.**~~ ✅ **Closed** by §4b — 13 origins and 5,142 fitting-half
    rows. The window and the role-graded dispersion both replicate; the trend's apparent
    pooled gain turned out to be two COVID origins.
-5. **Optimize the trade rather than picking a window.** §4b shows CRPS optimal at a
+5. ⚙️ **Partly closed by §5b — (a), (b) and (d) are measured NULLS, (c) is still
+   unbuilt.** Do not rebuild the first three: split `beta`/`rho` windows, exponential
+   decay and per-block windowing were all fitted and **none beats the plain window on
+   validation**, for one shared reason (they lean on the COVID trough). Only **(c)** —
+   shrinking the short-window fit toward the long-window one, which in Stan is the
+   long-window posterior used as the prior — remains open, and §5b names it the
+   *principled* version of the block-splice arm that failed. The original text:
+
+   **Optimize the trade rather than picking a window.** §4b shows CRPS optimal at a
    lookback of 8 while PIT and boundary error keep improving to 3, so one window cannot
    serve both estimands. The candidates, in the order their evidence supports them:
    **(a)** fit `beta` on a long window and `rho` on a short one — the head already
@@ -364,12 +375,22 @@ grading, and too small to be the whole defect at 1.26–1.47×.
    Stan port is just the long-window posterior used as the prior; **(d)** let the drift sit
    where it actually is — probably the intercept and the role terms rather than the lag
    slopes — and window only those.
-6. **A confound in this ladder, to fix before (a)-(d) are trusted.** `l2` is pinned at 1.0
+6. ~~**A confound in this ladder, to fix before (a)-(d) are trusted.**~~ ✅ **Closed by
+   §5b's `l2_by_lookback` experiment**, which swept `l2` from 0.25 to 256 against the
+   lookback and found the 8-season optimum **survives and sharpens** — so the turnaround at
+   5 and 3 is variance, not a penalty artifact. (The *other* `l2` confound, on the
+   likelihood axis, is §7d and was closed separately on 2026-08-12.) The original text:
+   `l2` is pinned at 1.0
    at every lookback, and a 1,155-row fit wants more regularization than a 6,630-row one.
    The short lookbacks are therefore under-regularized for their row count, so some of the
    turnaround at 5 and 3 is a penalty artifact rather than variance. Sweep `l2` jointly
    with the lookback on the rolling harness before reading the optimum as a fact.
-7. **Recency and representativeness are different knobs.** 2019-20 through 2021-22 are
+7. 🔴 **OPEN, and §5b sharpened the motive.** Every optimization in §5b failed by leaning
+   on the COVID trough, which is precisely the population this item is about — so it is the
+   one candidate on this list that round pointed *at* rather than away from. Still
+   unmeasured.
+
+   **Recency and representativeness are different knobs.** 2019-20 through 2021-22 are
    recent *and* unrepresentative, and §4b shows they dominate the trend's apparent value. A
    weighting scheme indexed on age treats them as maximally relevant for the 2026-27 fit.
    An explicit regime indicator, or excluding them, is a separate axis from lookback and
@@ -472,7 +493,7 @@ different priors rather than transplanted.
 
 ---
 
-## 6. The same question for the minutes heads — measured, not yet laddered
+## 6. The same question for the minutes heads — ✅ **laddered 2026-08-12, in `docs/minutes-window-plan.md`**
 
 The marginal minutes head has the **same defect shape and a different break**. On the
 `stan_minutes` unit (season minutes ÷ games × game length, rotation players, through
@@ -506,6 +527,56 @@ moves 0.1279 → 0.1161 across 1996-97 → 2023-24, about 9%, and has partially 
 > rather than those heads' own row filters, so they are directional. The 10.4× is far too
 > large for a population definition to flip; the −15.2% is not, and should be rebuilt
 > through each head's own design before anyone acts on it.
+
+### 6a. What the ladder found — and the caveat above was right about both halves
+
+`make minutes-window`; the round is written up in
+[docs/minutes-window-plan.md](minutes-window-plan.md). Everything above is kept as written
+because the caveat is the part that paid off. Four corrections and one null, in the order
+they change what someone would do:
+
+**1. The caveat's own reasoning was correct, and it splits the two claims.** Rebuilt through
+`stan_minutes.build_design`'s own rows, the workhorse fold survives the population change at
+**8.0×** (0.1075 → 0.0134) — a different number, the same event — while the sd contraction
+falls from −15.2% to **−9.0%**. §6's arithmetic about which claim could flip was right on
+both counts.
+
+**2. "Flat afterwards" is wrong: the contraction has stopped and partially reverted.** On the
+head's own rows cross-player sd bottoms at **0.1563** in 2019-20 and rises in every season
+since, to **0.1824** in 2023-24 — back to its 2012-13 level. Pooled, 2014-15 → 2018-19 reads
+**0.1663** against 2019-20 → 2023-24's **0.1706**. On the composition's rows there is no
+recent contraction left at all. **So a short window no longer buys a narrower population.**
+
+**3. The break is 2010-11, not 2014-15** — for the sd (sup-F 107.15) and the workhorse tail
+(203.07) on the head's own rows, and in the same place on all three populations. The *mean*
+breaks two seasons later at 2012-13. Same lesson as §4 result 1: where the regime changed and
+where the best window starts are different questions.
+
+**4. The window does not replicate; the dispersion does.** Every window arm beats the
+incumbent on validation with an interval clear of zero, and matched by fit-row count on the
+rolling harness the window collapses to **−0.079 [−0.59, +0.43]**, 6 of 13 origins — while
+**role-graded ρ** reads −1.672 [−2.55, −0.80] on validation against −1.376 [−1.73, −1.00] on
+the harness, **13 of 13 origins**, at a **2.12–3.03×** spread. That is the largest graded
+dispersion in the project, against this head's own 1.26–1.54× on availability and the
+composition's 2.07×. §4b's verdict reached from the other direction: on availability ρ barely
+moved across windows and era pooling was falsified; here ρ *does* move (−15% across
+lookbacks) and capturing it still does not pay. **Pooling across eras is not the defect;
+pooling across players is.**
+
+**5. The stake is a NULL, and it could not have been anything else.**
+`sim.minutes.player_season_sigma = 0.450` **stands**. A short window does narrow the marginal
+predictive — 302.04 → 277.06, and 265.67 once ρ is graded, −12.0% — but the tie boundary
+moves the *wrong way*, from σ **0.200** against the incumbent to **0.300** against the best
+arm, because a short window improves the head's CRPS (−5.3) more than it narrows its spread
+and is therefore a *harder* reference to tie. And the framing above was mistaken in a way
+worth recording: σ is selected by the **composition's own** CRPS optimum on training rows, so
+the marginal head appears nowhere in that estimator and no property of it can move the
+constant. What it moves is the verdict — the tie band narrows from [0.200, 0.525] to
+[0.300, 0.450], leaving the shipped 0.450 at its upper edge.
+
+**And the round pushes the retirement question backwards.** The marginal head comes out of it
+*better* — CRPS 144.23 → 138.91, PIT KS 0.0737 → 0.0392, the latter better than every
+injected composition arm including the shipped σ's 0.0659.
 
 ---
 
@@ -1345,7 +1416,128 @@ against a recorded figure of unknown vintage.
 non-blocking, so a null here was always going to leave the head where D1 put it. What a
 clean counterfactual would buy is knowledge about the *next* head: whether tail-calibration
 wins in this project reach the contest at all, which is currently unmeasured in either
-direction.
+direction. ✅ **Run as a pair on 2026-08-12 — §7l.**
+
+---
+
+### 7l. The pair, run — and the contest value is a measured null with a mechanism
+
+`make mixture-value`, 2026-08-12. §7k's answer had to be discarded because its baseline
+predated the window round; this is the same question asked properly. Two arms of one chain —
+`stan.availability.mixture` **false** and **true**, nothing else touched — each through
+`posteriors --groups availability` → `simulate-season` → `bracket` → `draft-sim` →
+`strategy-sweep`, back to back on one afternoon at **60 min** and **65 min**. Only one of the
+twenty heads is refitted, which is what makes an arm an hour rather than a day.
+
+**The pair is valid, and establishing that was worth the second run on its own.** The mixture
+arm was re-run rather than remembered, and it reproduces the recorded run **exactly**: all
+seven posterior draw arrays at max |diff| **0.000e+00**, both `sim_tensor_*.npz` bit for bit
+on `dk_pts` and the games-played twin, and all three bracket tables and all four draft tables
+byte-identical. The chain is deterministic under its seeds. So §7k's figures *were* today's
+code — which is now a measurement rather than a hope, and it is exactly the thing that could
+not be asserted before.
+
+#### The head reaches the draw, and it reaches it as shape rather than as order
+
+Off the tensors, same players, same seed:
+
+| | 2022-23 | 2023-24 |
+|---|---|---|
+| board rank correlation **between the arms** | **0.9990** | **0.9993** |
+| top-100 overlap | 98% | 99% |
+| mean \|Δrank\| over the 192 drafted picks | **3.1979** | 2.9219 |
+| max \|Δrank\| over the drafted picks | 19 | 12 |
+
+The *order* is the same board. The *shape* is not, and it moves the way §7f said it should.
+§7f found the head over-predicts the upper shoulder — `missed ≤ 5` at 16.92% against an
+observed 12.12%, the worst-calibrated region of the distribution. Twenty scoring periods span
+~76 games rather than 82, so the tensor's thresholds are its own: `gp ≥ 75` is this window's
+"missed ≤ 1", where a star's iron-man season lives (2022-23, single → mixture):
+
+| bucket | P(gp ≥ 75) | P(gp ≤ 41) | q10 season total | mean sd |
+|---|---|---|---|---|
+| `<12 mpg` | 0.0061 → 0.0052 | 0.5017 → 0.4959 | 155.70 → 126.20 (**−29.49**) | ×1.017 |
+| `12-24` | 0.0329 → 0.0297 | 0.2744 → 0.2562 | 517.70 → 485.94 (−31.76) | ×1.024 |
+| `24-30` | 0.0602 → 0.0522 | 0.1573 → 0.1349 | 989.43 → 1,018.51 (+29.08) | ×1.014 |
+| `30+ mpg` | **0.1023 → 0.0834** | 0.0958 → 0.0773 | 1,299.55 → 1,345.96 (**+46.40**) | ×1.021 |
+
+2023-24 carries every sign, with the star bucket at 0.0385 → 0.0316 and q10 **+52.75**. The
+iron-man frequency falls at every bucket — the §7f correction arriving — and **the q10 splits
+by role**: a star's tenth-percentile season gets *better* by 46 dk_pts while a fringe player's
+gets 29 worse. That is §7i's ρ table, the star's main-component dispersion falling by a fifth
+once his disrupted seasons live somewhere else, arriving as a per-player quantity in the
+deliverable rather than as a coefficient.
+
+#### The contest does not move, and the control is what establishes it
+
+| tournament | simulated lift | realized lift |
+|---|---|---|
+| 600k_shootaround | 0.1631 → **0.1890** | 0.1881 → **0.1713** |
+| 20k_spin_move | 0.1727 → 0.2060 | 0.2076 → 0.2102 |
+| 50k_four_pt_play | 0.1771 → 0.2084 | 0.1486 → 0.1556 |
+| 15k_and_one | 0.1663 → 0.1923 | 0.1207 → 0.1205 |
+| 88k_alley_oop | 0.3541 → 0.4359 | 0.3601 → 0.3973 |
+
+Both columns hold `lineup_value_blend30` in **both** arms rather than each arm's own
+selection, which matters at `88k_alley_oop` — the single-component arm selects `blend_a70`
+there, and reading `strategy_shipped.csv` per arm would report the gap between two different
+strategies as the mixture's value.
+
+The simulated column favours the mixture in all five rows and **that is one result, not
+five**: the five tournaments share the same worlds and the same portfolios, differing only in
+pod size and payout. The axis that can discriminate is the sweep's own **24 strategies**,
+because they consume the board differently — and one of them does not consume it at all.
+
+| across the 24 strategies, 600k, pooled over both seasons | |
+|---|---|
+| mean lift delta | **+0.0097** |
+| sd across strategies | **0.0161** |
+| spread | −0.0333 to +0.0310, **20** of 24 positive |
+| **`adp` — the control, whose board is identical in both arms** | 0.0397 → 0.0490, **+0.0093** |
+| `lineup_value_blend30`'s delta, in sds of that spread | **+1.0091** |
+| strategy ordering between arms | Spearman **0.9174**, same top arm |
+
+**A strategy that never reads the model captures the entire mean shift.** `adp` ranks on the
+market alone, so its board is byte-identical across the arms and its **+0.0093** contains no
+drafting whatsoever — it is a property of the world each arm generated. The shipped arm's
++0.0260 sits **one standard deviation** above that mean, in a spread where four strategies
+move the *other* way (`model_q75` at −0.0333) on boards correlated at 0.999. And the
+instrument's own resolution, derived from the sweep's bootstrap rather than asserted, is
+**0.0876** at 95% for an arm-to-arm gap: every row in the contest table is under it.
+
+So the simulated lift is **self-scored** — each arm is measured against a symmetric-field null
+inside a world that arm generated, and a head with a wider predictive posts a higher lift
+because its world spreads rosters further apart. The realized column is the only reading whose
+truth, actual box scores, is common to both arms; there the sign **flips** at the largest
+contest and the deltas run −0.0002 to +0.0373 on two seasons at one realization each.
+
+#### Every verdict is unchanged, in both arms
+
+Gate C passes in both. Gate D fails in **0 of 6** paired comparisons in both. The injection
+solves its own ρ per arm (0.4189 / 0.4234 against 0.4268 / 0.4164), which is correct — it is
+calibrated per world by construction. `lineup_value_blend30` is separated from **23 of 23**
+rivals in both and is the top arm in both; the nearest rival differs (`bracket_ev_blend30` at
+−0.0218 against `lineup_value` at −0.0345) and neither is close.
+
+#### What this buys for the next head
+
+**A tail-calibration win in this project reaches the shape of the draw and not the order of
+the board — and the drafting layer ranks.** That is the transferable finding and it is
+mechanistic rather than statistical: a change leaving the board correlated at 0.999 cannot be
+expressed by a strategy that consumes an ordering, however much it improves the distribution.
+It does not say tail calibration is worthless. It says the current *consumer* has no channel
+for it, which is a fact about the drafting layer and points at the shape-reading objectives
+(`bracket_ev`, +0.0233, against `bracket_ev_blend30`'s +0.0054 — the same noise scale as
+everything else here) rather than at the head.
+
+**And `make strategy-sweep` is not a value metric for a model change.** Its simulated side
+scores each model inside its own world, so a cross-model reading off it measures the world as
+much as the board; `adp_only_lift` is the row that proves this rather than asserts it, and it
+is in the artifact for exactly that reason. The only cross-model reading the sweep produces is
+the realized one, and it has two seasons in it. Any future "what is this head worth in the
+contest" has to be asked of the realized readout, of a shape-reading objective, or of a larger
+world count — and the first two are cheap while the third is not: resolving a 0.02 gap needs
+roughly 80× the worlds.
 
 ---
 
@@ -1479,3 +1671,85 @@ everything downstream of `sim_tensor_*.npz` — `make bracket`, `make draft`,
 deliberately not re-run in the port session, because the propagation session re-runs them
 anyway once the mixture lands, and running the sweep twice is the expense this ordering
 exists to avoid.
+
+---
+
+## 9. What this whole line of work leaves, after the mixture shipped
+
+Written 2026-08-12, once the mixture round landed. §5's list was about the *window*; this is
+the state of everything, ranked by stake. Each item names what would settle it.
+
+**1.** ~~**The minutes heads have the same defect and nobody has laddered them**~~ ✅
+**Closed 2026-08-12 — `make minutes-window`, [docs/minutes-window-plan.md](minutes-window-plan.md),
+summarized in §6a.** The item read: the largest open stake in this line of work, because it
+can revise a *shipped* decision rather than only add one — if the marginal head's
+season-level spread is averaged over a contracted window, a short-window refit should narrow
+the predictive and lower the injection `σ`, moving
+`sim.minutes.player_season_sigma = 0.450`.
+
+**The shipped decision does not move, and the stake was mis-framed.** σ is selected by the
+*composition's* own CRPS optimum on training rows, so the marginal head is not in that
+estimator and no window on it can move the constant. The tie boundary it *can* move goes the
+wrong way — 0.200 → 0.300 — because a short window improves the marginal head's CRPS more
+than it narrows its spread, making it a harder reference. **What the round found instead is
+on the axis the window was crossed with**: role-graded ρ replicates at 13 of 13 rolling
+origins at a 2.12–3.03× spread, the largest in the project, while the window itself does not
+replicate at all. Honouring §6's own caveat first was the right call and it paid: the 10.4×
+survived the population change at 8.0×, the −15.2% did not (−9.0%), the break is 2010-11
+rather than 2014-15, and "flat afterwards" turned out to be a **reversion**.
+
+The item this leaves is smaller and concrete: **port the graded ρ to `stan_minutes`**, which
+is one call — `rho_block(len(train))` becomes `role_bins`, and `n_rho = 1` already reproduces
+the incumbent bit for bit on the shared `betabinomial_glm.stan`.
+
+**2.** ~~**The contest value of a tail-calibration win is still unmeasured in either
+direction**~~ ✅ **Closed 2026-08-12 — `make mixture-value`, §7l. It is a null, and the null
+has a mechanism.** The item read: the D2 sweep moved two things at once and cannot attribute
+anything to the mixture; the fix is a **paired** counterfactual, both arms on the same day and
+the same code, never against a recorded figure of unknown vintage.
+
+The pair was run, and the first thing it returned was that the chain is **deterministic** —
+the mixture arm's re-run reproduces the recorded one bit for bit through posteriors, tensors,
+bracket and draft. So the vintage was never actually the problem; not being able to *know* it
+was. The finding proper is that **the mixture changes the shape of the draw and not the order
+of the board** (rank correlation 0.9990/0.9993, 3.20 places of mean movement over the 192
+drafted picks) while cutting the iron-man frequency and splitting the season-total q10 by role
+(+46.40 dk_pts for stars, −29.49 for fringe). The contest reading is a null against a
+resolution of 0.0876, and the `adp` control — a strategy whose board is identical in both arms
+— captures **+0.0093** of the +0.0097 mean shift across 24 strategies, which is what makes it
+a *measured* null rather than an underpowered one.
+
+What it leaves is a question about the consumer rather than the head: **the drafting layer
+ranks, so it has no channel for a distributional improvement.** The shape-reading objectives
+(`bracket_ev`) are where that channel would be, and they move no more than noise here.
+
+**3. Recency and representativeness are different knobs** (§5.7). Unmeasured, and §5b handed
+it a motive: every optimization there failed by leaning on the COVID trough. An explicit
+regime indicator for 2019-20 → 2021-22, or excluding them, is a separate axis from lookback.
+
+**4. Shrinkage toward the long-window fit** (§5.5(c)). The only survivor of §5's four
+candidates, and §5b names it the principled version of the arm that failed: fit the blocks
+jointly under different priors rather than transplanting coefficients between fits. In the
+Stan port it is the long-window posterior used as the prior.
+
+**5. The exchangeable-trials assumption, which no arm on the likelihood axis touched**
+(§7g). Absences come in **spells** — beta-geometric, beating the geometric by 11,278
+log-likelihood points at one extra parameter — and one 40-game spell and forty single-game
+absences give identical `gp` and very different distributions. A beta-binomial absorbs the
+variance inflation from that clustering but not its shape, and neither does the mixture.
+
+**6. A decision that was taken and never implemented.** `docs/availability-ship-plan.md`
+decision 2 specifies a three-class imputed role bucket for the **no-prior population** —
+rookies from draft position via `stan_composition.rookie_share_priors`, returning veterans
+from their bucket at last appearance conditioned on gap length, everyone else the lowest
+bucket. Only the third class exists in code: `stan_availability.role_bins` falls back to the
+lowest bucket and its own docstring calls that "a guard rather than a live branch". The
+population is real — about **14.7%** of season-start roster minutes per `README.md` — but it
+reaches the head through the *simulator's* `no_design_availability` path rather than through
+the design, so the first question is whether the rule is needed where it was specified.
+
+> ⚠️ **`docs/availability-ship-plan.md` is stale scaffolding that cannot simply be deleted.**
+> Its own closing step says to delete it, and the window round it plans has landed — but
+> `src/models/stan_availability.py:334` cites its **decision 2** for a live code rule, and
+> item 6 above is that decision still outstanding. Relocate decision 2 (and decision 3, the
+> fixed role bins) into this doc and repoint the code comment *before* deleting it.

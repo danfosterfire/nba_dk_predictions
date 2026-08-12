@@ -7339,4 +7339,196 @@ REGISTRY: tuple[Decision, ...] = (
         date="2026-08-11",
         tags=("drafting", "execution", "capture"),
     ),
+    Decision(
+        id="minutes-era-series-rebuilt-through-the-heads-own-rows",
+        topic="minutes",
+        claim="**The minutes head's cross-player sd contracted 9.0%, not 15.2%, and the "
+              "contraction has since REVERTED** — rebuilt through the head's own design "
+              "rows rather than a rotation filter. The workhorse collapse survives the "
+              "population change at **8.0x**, and the break is **2010-11**, not 2014-15.",
+        because="`docs/availability-window-plan.md` §6 measured both series on a rotation "
+                "filter (`gp >= 20`, `mpg >= 10`) rather than on either head's own row "
+                "filter, and wrote its own caveat: a 10.4x fall is too large for a "
+                "population definition to flip, a 15.2% contraction is not. **Both halves "
+                "of that reasoning were right.** Through `stan_minutes.build_design` the "
+                "fold reads 8.0x (0.1075 -> 0.0134) and the sd change reads -9.0% "
+                "(0.2004 -> 0.1824). The correction the rebuild ADDS is the one that "
+                "matters: 'flat afterwards' is wrong. Per-season sd bottoms at **0.1563** "
+                "in 2019-20 and rises in every season since to **0.1824**, back to its "
+                "2012-13 level; pooled, 2014-15..2018-19 reads 0.1663 against "
+                "2019-20..2023-24's 0.1706. On the composition's own rows the 2023-24 "
+                "`sd_logit` of 1.0789 is a twelve-season HIGH. **So a short window no "
+                "longer buys a narrower population**, which is half the reason the stake "
+                "in [[minutes-window-does-not-move-the-injected-sigma]] reads as a null. A "
+                "sup-F scan against a 5,000-replicate Monte-Carlo null puts the break in "
+                "the sd (107.15) and the workhorse tail (203.07) at 2010-11 on all three "
+                "populations, with the MEAN breaking two seasons later at 2012-13 — the "
+                "same lesson §4 recorded for availability, that where the regime changed "
+                "and where the best window starts are different questions.",
+        status="withdrawn",
+        replaced_by="-9.0% and 8.0x on the head's own rows, break 2010-11, and a "
+                    "reversion since 2019-20 rather than a flat post-break level",
+        caught_by="`make minutes-window` step 1, rebuilding both series through "
+                  "`stan_minutes.build_design` and `stan_composition.composition_frame` "
+                  "as §6's own caveat asked",
+        reproduce="make minutes-window → outputs/predictions/minutes_window_era.csv, "
+                  "outputs/predictions/minutes_window_break.csv",
+        source="docs/minutes-window-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("architecture",),
+    ),
+    Decision(
+        id="minutes-dispersion-is-role-graded-and-the-window-is-not",
+        topic="minutes",
+        claim="**The marginal minutes head's dispersion is strongly role-graded — a "
+              "2.12-3.03x spread, the largest in the project — and that replicates at 13 "
+              "of 13 rolling origins. Its fitting WINDOW does not replicate at all.**",
+        because="The ladder crosses four windows with two dispersion modes on the point "
+                "MLE, at the head's own selected variant, and on validation every arm "
+                "beats the incumbent with an interval clear of zero — which read alone "
+                "says ship the shortest window. The rolling-origin harness over the "
+                "fitting half (13 origins, 4,517 rows, no validation row touched) splits "
+                "the two axes apart. Matched by fit-row count: the window is **-2.687 "
+                "[-4.19, -1.14]** on validation and **-0.079 [-0.59, +0.43]** on the "
+                "harness, 6 of 13 origins; role-graded rho is **-1.672 [-2.55, -0.80]** on "
+                "validation and **-1.376 [-1.73, -1.00]** on the harness, **13 of 13**. "
+                "The two readings of the dispersion agree to within 0.3 CRPS minutes; the "
+                "window's validation margin is five to thirty times what the fitting half "
+                "supports. Fitted per prior-MPG bucket the dispersion runs 0.05997 "
+                "(`<12 mpg`) to 0.01982 (`30+ mpg`) on the best arm, monotone in role in "
+                "every window, against availability's 1.26-1.54x and the composition's "
+                "2.07x. **Pooling across eras is not the defect; pooling across players "
+                "is** — the same verdict §4b reached for availability from the opposite "
+                "direction, since there rho barely moved across windows and here it moves "
+                "-15% across lookbacks and still does not pay. Two costs the CRPS column "
+                "hides: season-total bias worsens from -14.78 to -22.56 minutes on the "
+                "short windows, and realized 50% coverage drifts from 0.5768 to 0.5283. "
+                "Nothing ships from a point-MLE ladder; the port is one call, "
+                "`rho_block(len(train))` becoming `role_bins`, on a "
+                "`betabinomial_glm.stan` that already takes `rho` as a binned vector with "
+                "`n_rho = 1` reproducing the incumbent bit for bit.",
+        status="measured",
+        reproduce="make minutes-window → outputs/predictions/minutes_window.csv, "
+                  "outputs/predictions/minutes_window_rolling.csv",
+        source="docs/minutes-window-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("next", "architecture"),
+    ),
+    Decision(
+        id="minutes-window-does-not-move-the-injected-sigma",
+        topic="minutes",
+        claim="**`sim.minutes.player_season_sigma = 0.450` stands.** A short-window "
+              "marginal head narrows its predictive by 12.0% and moves the composition's "
+              "tie boundary the WRONG way, 0.200 -> 0.300 — and the constant was never "
+              "calibrated against the marginal head in the first place.",
+        because="This was `docs/availability-window-plan.md` §9 item 1, the only open item "
+                "there that could revise a shipped decision: if the marginal head's "
+                "season-level spread — the sole reason it ships, per "
+                "[[simulator-minutes-draw-is-both-heads]] — is averaged over a contracted "
+                "window, a short-window refit narrows it and the composition needs less "
+                "injected sigma to draw level. `injection_restake` measures it against "
+                "each window's arm on the same 742 rows, rehydrating the composition's "
+                "persisted posterior and refitting nothing. **The first half holds and the "
+                "conclusion does not.** The predictive narrows 302.04 -> 277.06, and to "
+                "265.67 once rho is graded (-12.0%) — but the tie boundary RISES from "
+                "sigma **0.200** against the incumbent to **0.300** against the best arm, "
+                "because a short window improves the marginal head's CRPS (-5.3) more than "
+                "it narrows its spread, making it a *harder* reference to tie. And the "
+                "framing was wrong at the root: sigma is selected by the COMPOSITION's own "
+                "CRPS optimum on training rows "
+                "(`minutes_unification.estimate_sigma_on_train`, see "
+                "[[injected-sigma-estimated-on-train-is-0.45]]), so the marginal head "
+                "appears nowhere in that estimator and no property of it can move the "
+                "constant under the rule that chose it. What moves is the verdict: the tie "
+                "band narrows from [0.200, 0.525] to **[0.300, 0.450]**, leaving the "
+                "shipped 0.450 on its UPPER edge — it survives a stronger reference "
+                "unchanged, and would not survive one much stronger. **The round also "
+                "pushes retirement backwards**: the marginal head comes out better, CRPS "
+                "144.23 -> 138.91 and PIT KS 0.0737 -> 0.0392, the latter better than "
+                "every injected composition arm including the shipped sigma's 0.0659.",
+        status="null",
+        reproduce="make minutes-window → outputs/predictions/minutes_window_stake.csv",
+        source="docs/minutes-window-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("architecture",),
+    ),
+    Decision(
+        id="availability-mixture-contest-value-is-a-null",
+        topic="availability",
+        claim="**The mixture's tail-calibration win does not reach the contest, and the "
+              "reason is mechanistic**: it changes the SHAPE of each player's season and "
+              "not the ORDER of the board — rank correlation **0.9990** between the two "
+              "arms — while the drafting layer consumes an ordering.",
+        because="D2 (see [[availability-head-selected-on-calibration-with-a-crps-guard]]) "
+                "made the contest readout non-blocking and deferred it; the first attempt "
+                "came back CONFOUNDED, because the sweep it compared against predated the "
+                "window round and moved three things at once. This is the paired re-run: "
+                "`stan.availability.mixture` **false** and **true**, nothing else touched, "
+                "each through posteriors → simulate-season → bracket → draft-sim → "
+                "strategy-sweep, back to back at 60 and 65 minutes. **The first thing it "
+                "returned is that the chain is deterministic** — the mixture arm "
+                "reproduces the recorded run at max |diff| **0.000e+00** on all seven "
+                "posterior draw arrays, both tensors bit for bit, and every bracket and "
+                "draft table byte-identical — so the vintage was never the problem; not "
+                "being able to KNOW it was. **The head does reach the draw.** The iron-man "
+                "frequency falls at every role bucket (`P(gp ≥ 75)` **0.1023 → 0.0834** "
+                "for stars, the §7f region the head over-predicts) and the season-total "
+                "q10 SPLITS BY ROLE: **+46.40** dk_pts for stars against **−29.49** for "
+                "fringe, which is §7i's ρ table arriving as a per-player quantity instead "
+                "of a coefficient. **It does not reach the board**: top-100 overlap 98%, "
+                "mean |Δrank| **3.1979** over the 192 drafted picks. And the contest gap "
+                "is a null against a resolution of **0.0876** — with the control that "
+                "makes it a measured null rather than an underpowered one: **`adp`, whose "
+                "board is byte-identical in both arms, captures +0.0093 of the +0.0097 "
+                "mean lift shift** across 24 strategies (sd 0.0161, four moving the other "
+                "way). Every verdict holds in both arms: Gate C passes, Gate D fails 0 of "
+                "6, `lineup_value_blend30` separated from 23 of 23 rivals and top in both.",
+        status="null",
+        reproduce="make mixture-value → "
+                  "outputs/predictions/availability_mixture_contest.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("head", "calibration", "architecture"),
+    ),
+    Decision(
+        id="simulated-lift-is-not-a-cross-model-value-metric",
+        topic="drafting",
+        claim="**`make strategy-sweep`'s simulated lift cannot price a MODEL change**, "
+              "because each arm is scored inside a world that arm generated. Only the "
+              "realized readout has a truth common to two arms — and it is two seasons "
+              "deep.",
+        because="The sweep's simulated side measures a strategy against a symmetric-field "
+                "null in the injected tensor, which is the right instrument for comparing "
+                "STRATEGIES (same world, paired inside it) and the wrong one for comparing "
+                "HEADS. A head with a wider predictive spreads rosters further apart, so a "
+                "correctly-ranked entry advances more often in its own world without "
+                "drafting any better. The availability-mixture pair "
+                "([[availability-mixture-contest-value-is-a-null]]) measured this rather "
+                "than argued it: the pure-ADP strategy — whose board cannot move between "
+                "arms — gained **+0.0093** of the **+0.0097** mean lift shift across the "
+                "24 swept strategies, so essentially the whole apparent gain belongs to "
+                "the world. `mixture_value.strategy_rows` reports that control row beside "
+                "every contest row for exactly this reason. **Three consequences.** A "
+                "cross-model contest question goes to the realized readout, to a "
+                "shape-reading objective (`bracket_ev`), or to a bigger world count — and "
+                "the third is not cheap, since the pooled standard error at 500 worlds per "
+                "season puts the 95% resolution at **0.0876** and closing that to 0.02 "
+                "needs ~80× the worlds. A sweep's five tournaments are ONE test of a model "
+                "change, not five, because they share worlds and portfolios and differ "
+                "only in pod size and payout. And a per-arm comparison must hold the "
+                "strategy fixed: the two arms selected different arms at `88k_alley_oop`, "
+                "so reading `strategy_shipped.csv` per arm compares `blend_a70` against "
+                "`lineup_value_blend30` and calls the difference the model's value.",
+        status="settled",
+        reproduce="make mixture-value → "
+                  "outputs/predictions/availability_mixture_contest.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("architecture", "calibration"),
+    ),
 )

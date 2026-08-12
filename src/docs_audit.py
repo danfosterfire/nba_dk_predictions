@@ -112,6 +112,12 @@ ADP = "docs/adp-plan.md"
 SHOT = "docs/shot-attempt-basis-plan.md"
 README = "README.md"
 GAMES = "docs/games-played-plan.md"
+MWIN = "docs/minutes-window-plan.md"        # the marginal minutes head's window ladder
+# The availability head's window / season-term / dispersion / likelihood round. Only its
+# §7l block is claimed — the paired contest counterfactual — because that is the section
+# with a live artifact behind it. The ladders in §3-§7 write their own CSVs and are a
+# larger job; entering the doc here at all is what makes adding them incremental.
+AWIN = "docs/availability-window-plan.md"
 
 # `CLAUDE.md` held the established-facts section until 2026-08-08, when it was split
 # across the five docs below and reduced to a router. Nothing claims `CLAUDE.md` now:
@@ -168,6 +174,19 @@ GL_PPC = "outputs/predictions/stan_game_length_ppc.csv"
 # minutes-unification`. One row per arm plus one paired-bootstrap row, which is why the
 # delta columns are blank on the arm rows and vice versa.
 MIN_UNIF = "outputs/predictions/minutes_unification.csv"
+# The marginal head's window x dispersion ladder — `make minutes-window`. The era file
+# carries two row shapes in one table: per-season cells (`block` blank) and pooled era
+# blocks (`season` blank), so a lookup keyed on one axis can never hit the other.
+MWIN_ERA = "outputs/predictions/minutes_window_era.csv"
+MWIN_BREAK = "outputs/predictions/minutes_window_break.csv"
+MWIN_LADDER = "outputs/predictions/minutes_window.csv"
+MWIN_ROLL = "outputs/predictions/minutes_window_rolling.csv"
+MWIN_STAKE = "outputs/predictions/minutes_window_stake.csv"
+# The availability mixture's PAIRED contest counterfactual — `make mixture-value`. One
+# long table over five blocks, keyed on (block, measure, key), carrying BOTH arms in the
+# `single` and `mixture` columns. Claiming a delta therefore reads one row rather than
+# differencing two artifacts, which is what stops a half-refreshed pair passing.
+MIXVAL = "outputs/predictions/availability_mixture_contest.csv"
 GL_DEPTH = "outputs/predictions/stan_game_length_depth.csv"
 GL_D = "outputs/predictions/stan_game_length_diagnostics.csv"
 COMP_RHO = "outputs/predictions/stan_composition_dispersion.csv"
@@ -5327,6 +5346,368 @@ def _weekly() -> list[Claim]:
     return C
 
 
+def _minutes_window() -> list[Claim]:
+    """`docs/minutes-window-plan.md` — the marginal minutes head's window x dispersion
+    ladder, the era series rebuilt through each head's own rows, and the injection stake.
+
+    Claimed at three scopes, because the doc's three sections fail differently. The era
+    series is a **correction** of figures another doc quoted, so both the old and the new
+    values are here — the rotation-filter row is live rather than historical, since
+    `make minutes-window` re-derives §6's own population deliberately so the two reconcile
+    in one table. The ladder and the harness are claimed as a matched pair on the axis the
+    round turns on: a window margin that replicated and a dispersion margin that did not
+    would be the same table with the opposite conclusion, so both intervals are audited.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, artifact: str, actual, label: str, **kw) -> None:
+        C.append(_c(quoted, artifact, actual, label, doc=MWIN, **kw))
+
+    def era(population: str, column: str, **where) -> float:
+        return cell(MWIN_ERA, column, population=population, **where)
+
+    def arm(rel: str, name: str, column: str) -> float:
+        return cell(rel, column, arm=name)
+
+    # ── §1: the two series, rebuilt through each head's own design rows ───────
+    endpoints = [
+        ("rotation_filter", "0.1918", "0.1626", "−15.2%", "0.1574", "0.0151",
+         "10.4", "−7.4%"),
+        ("minutes_head", "0.2004", "0.1824", "−9.0%", "0.1075", "0.0134",
+         "8.0", "−6.2%"),
+        ("composition_head", "0.2277", "0.2053", "−9.8%", "0.1134", "0.0105",
+         "10.8", "−9.5%"),
+    ]
+    for pop, sd0, sd1, change, p0, p1, fold, mean in endpoints:
+        for quoted, column in ((sd0, "sd_rate_first"), (sd1, "sd_rate_last"),
+                               (change, "sd_rate_change"),
+                               (p0, "p_workhorse_first"), (p1, "p_workhorse_last"),
+                               (fold, "p_workhorse_fold"),
+                               (mean, "mean_rate_change")):
+            add(quoted, MWIN_ERA,
+                lambda p=pop, c=column: era(p, c, block="endpoints"),
+                f"{pop} endpoint {column}")
+
+    # The pooled blocks, which are what "flat afterwards" turned out to be wrong about.
+    for quoted, block, column in (("0.1942", "pre_2014_15", "sd_rate"),
+                                  ("0.8851", "pre_2014_15", "sd_logit"),
+                                  ("0.4902", "pre_2014_15", "mean_rate"),
+                                  ("0.1027", "pre_2014_15", "p_workhorse"),
+                                  ("0.1663", "post_2014_first_half", "sd_rate"),
+                                  ("0.7410", "post_2014_first_half", "sd_logit"),
+                                  ("0.4714", "post_2014_first_half", "mean_rate"),
+                                  ("0.0154", "post_2014_first_half", "p_workhorse"),
+                                  ("0.1706", "post_2014_second_half", "sd_rate"),
+                                  ("0.7635", "post_2014_second_half", "sd_logit"),
+                                  ("0.4739", "post_2014_second_half", "mean_rate"),
+                                  ("0.0148", "post_2014_second_half", "p_workhorse"),
+                                  ("0.0151", "post_2014_15", "p_workhorse")):
+        add(quoted, MWIN_ERA,
+            lambda b=block, c=column: era("minutes_head", c, block=b),
+            f"minutes_head {block} {column}")
+
+    # The reversion itself, as the two per-season endpoints of the rising run.
+    add("0.1563", MWIN_ERA, lambda: era("minutes_head", "sd_rate", season="2019-20"),
+        "minutes_head sd trough 2019-20")
+    add("1.0789", MWIN_ERA,
+        lambda: era("composition_head", "sd_logit", season="2023-24"),
+        "composition_head sd_logit at a twelve-season high")
+
+    # ── §1: the breakpoint scan ───────────────────────────────────────────────
+    for pop, stat, f, shift in (("minutes_head", "mean_rate", "79.30", "−0.0187"),
+                                ("minutes_head", "sd_rate", "107.15", "−0.0280"),
+                                ("minutes_head", "p_workhorse", "203.07", "−0.0957"),
+                                ("composition_head", "sd_rate", "119.90", "−0.0238"),
+                                ("rotation_filter", "p_workhorse", "203.62", "−0.0952")):
+        add(f, MWIN_BREAK,
+            lambda p=pop, s=stat: cell(MWIN_BREAK, "sup_f", population=p, statistic=s),
+            f"sup-F {pop} {stat}")
+        add(shift, MWIN_BREAK,
+            lambda p=pop, s=stat: cell(MWIN_BREAK, "shift", population=p, statistic=s),
+            f"break shift {pop} {stat}")
+    for pop, stat, p95 in (("minutes_head", "mean_rate", "9.28"),
+                           ("minutes_head", "sd_rate", "8.84"),
+                           ("minutes_head", "p_workhorse", "8.82"),
+                           ("composition_head", "sd_rate", "9.41"),
+                           ("rotation_filter", "p_workhorse", "9.04")):
+        add(p95, MWIN_BREAK,
+            lambda p=pop, s=stat: cell(MWIN_BREAK, "null_p95", population=p,
+                                       statistic=s),
+            f"MC null 95th {pop} {stat}")
+
+    # The composition's own concentration series, which lives in the same artifact as a
+    # fourth population — same question, same unit of time, different statistic.
+    for quoted, season in (("0.1275", "1996-97"), ("0.1157", "2023-24"),
+                           ("0.1131", "2018-19")):
+        add(quoted, MWIN_ERA,
+            lambda s=season: era("composition_team_game", "hhi", season=s),
+            f"team-game HHI {season}")
+
+    # ── §2: the ladder ────────────────────────────────────────────────────────
+    ladder_arms = [
+        ("carry_forward", "161.289", "+17.062", "+11.17", "+23.16", "0.1242", "330.84",
+         "0.0623", None),
+        ("full__shared", "144.228", None, None, None, "0.0737", "302.04", "0.0501",
+         "1.00"),
+        ("full__role", "142.555", "−1.672", "−2.55", "−0.80", "0.0652", "297.46",
+         "0.0501", "2.12"),
+        ("post_break__shared", "142.407", "−1.821", "−2.86", "−0.77", "0.0554",
+         "284.24", "0.0442", "1.00"),
+        ("post_break__role", "140.622", "−3.606", "−4.88", "−2.24", "0.0360", "275.06",
+         "0.0442", "2.72"),
+        ("three_point_era__shared", "141.836", "−2.392", "−3.63", "−1.08", "0.0587",
+         "284.70", "0.0445", "1.00"),
+        ("three_point_era__role", "139.554", "−4.674", "−6.16", "−3.11", "0.0420",
+         "273.92", "0.0445", "2.92"),
+        ("post_2014__shared", "141.540", "−2.687", "−4.19", "−1.14", "0.0537", "277.06",
+         "0.0421", "1.00"),
+        ("post_2014__role", "138.911", "−5.317", "−7.02", "−3.61", "0.0392", "265.67",
+         "0.0421", "3.03"),
+    ]
+    for name, crps, delta, lo, hi, pit, sd, rho, spread in ladder_arms:
+        add(crps, MWIN_LADDER, lambda n=name: arm(MWIN_LADDER, n, "val_crps"),
+            f"ladder {name} CRPS")
+        add(pit, MWIN_LADDER, lambda n=name: arm(MWIN_LADDER, n, "val_pit_ks"),
+            f"ladder {name} PIT KS")
+        add(sd, MWIN_LADDER, lambda n=name: arm(MWIN_LADDER, n, "predictive_sd"),
+            f"ladder {name} predictive sd")
+        add(rho, MWIN_LADDER, lambda n=name: arm(MWIN_LADDER, n, "rho"),
+            f"ladder {name} rho")
+        if spread is not None:
+            add(spread, MWIN_LADDER,
+                lambda n=name: arm(MWIN_LADDER, n, "rho_spread"),
+                f"ladder {name} rho spread")
+        if delta is not None:
+            add(delta, MWIN_LADDER,
+                lambda n=name: arm(MWIN_LADDER, n, "crps_vs_incumbent"),
+                f"ladder {name} vs incumbent")
+            add(lo, MWIN_LADDER,
+                lambda n=name: arm(MWIN_LADDER, n, "crps_vs_incumbent_lo"),
+                f"ladder {name} interval low")
+            add(hi, MWIN_LADDER,
+                lambda n=name: arm(MWIN_LADDER, n, "crps_vs_incumbent_hi"),
+                f"ladder {name} interval high")
+
+    # The graded dispersion, bucket by bucket — the round's headline, so every cell.
+    for name, low, mid, high, star in (
+            ("full__role", "0.06130", "0.06055", "0.05306", "0.02894"),
+            ("post_break__role", "0.06203", "0.05288", "0.04481", "0.02283"),
+            ("three_point_era__role", "0.06249", "0.05392", "0.04439", "0.02140"),
+            ("post_2014__role", "0.05997", "0.05157", "0.04096", "0.01982")):
+        for quoted, bucket in ((low, "<12 mpg"), (mid, "12-24"), (high, "24-30"),
+                               (star, "30+ mpg")):
+            add(quoted, MWIN_LADDER,
+                lambda n=name, b=bucket: arm(MWIN_LADDER, n, f"rho_{b}"),
+                f"{name} rho {bucket}")
+
+    # The two costs the CRPS column hides.
+    for name, bias, cover in (("full__shared", "−14.78", "0.5768"),
+                              ("post_2014__role", "−22.56", "0.5283")):
+        add(bias, MWIN_LADDER, lambda n=name: arm(MWIN_LADDER, n, "val_bias"),
+            f"ladder {name} season-total bias")
+        add(cover, MWIN_LADDER, lambda n=name: arm(MWIN_LADDER, n, "coverage_50"),
+            f"ladder {name} realized 50% coverage")
+    add("0.9609", MWIN_LADDER,
+        lambda: arm(MWIN_LADDER, "full__shared", "coverage_95"),
+        "ladder full__shared realized 95% coverage")
+    add("0.9528", MWIN_LADDER,
+        lambda: arm(MWIN_LADDER, "post_2014__role", "coverage_95"),
+        "ladder post_2014__role realized 95% coverage")
+
+    # The reference check — the point MLE against the shipped Stan head's own figures.
+    add("144.352", MIN_UNIF,
+        lambda: cell(MIN_UNIF, "crps_minutes", arm="minutes_head",
+                     unit="season_total"),
+        "shipped Stan head season-unit CRPS")
+    add("302.75", MIN_UNIF,
+        lambda: cell(MIN_UNIF, "predictive_sd", arm="minutes_head",
+                     unit="season_total"),
+        "shipped Stan head season-unit predictive sd")
+
+    # ── §3: the rolling-origin confirmation ───────────────────────────────────
+    rolling_arms = [
+        ("8__role", "155.668", "−1.778", "−2.36", "−1.20", "0.0414", "0.0482"),
+        ("12__role", "155.708", "−1.738", "−2.20", "−1.28", "0.0406", "0.0502"),
+        ("all__role", "156.070", "−1.376", "−1.73", "−1.00", "0.0440", "0.0530"),
+        ("5__role", "156.303", "−1.143", "−1.87", "−0.40", "0.0426", "0.0463"),
+        ("12__shared", "157.030", "−0.416", "−0.78", "−0.07", "0.0379", "0.0502"),
+        ("3__role", "157.109", "−0.337", "−1.29", "+0.57", "0.0418", "0.0452"),
+        ("8__shared", "157.367", "−0.079", "−0.59", "+0.43", "0.0356", "0.0482"),
+        ("all__shared", "157.446", None, None, None, "0.0456", "0.0530"),
+        ("5__shared", "157.555", "+0.109", "−0.56", "+0.76", "0.0419", "0.0463"),
+        ("3__shared", "158.439", "+0.993", "+0.14", "+1.83", "0.0419", "0.0452"),
+    ]
+    for name, crps, delta, lo, hi, pit, rho in rolling_arms:
+        add(crps, MWIN_ROLL, lambda n=name: arm(MWIN_ROLL, n, "crps"),
+            f"rolling {name} CRPS")
+        add(pit, MWIN_ROLL, lambda n=name: arm(MWIN_ROLL, n, "pit_ks"),
+            f"rolling {name} PIT KS")
+        add(rho, MWIN_ROLL, lambda n=name: arm(MWIN_ROLL, n, "mean_rho"),
+            f"rolling {name} mean rho")
+        if delta is not None:
+            add(delta, MWIN_ROLL, lambda n=name: arm(MWIN_ROLL, n, "crps_vs_all"),
+                f"rolling {name} vs all")
+            add(lo, MWIN_ROLL, lambda n=name: arm(MWIN_ROLL, n, "crps_vs_all_lo"),
+                f"rolling {name} interval low")
+            add(hi, MWIN_ROLL, lambda n=name: arm(MWIN_ROLL, n, "crps_vs_all_hi"),
+                f"rolling {name} interval high")
+    for name, fit_rows in (("8__role", "2,690"), ("12__role", "3,972"),
+                           ("all__role", "5,839"), ("5__role", "1,699"),
+                           ("3__role", "1,024")):
+        add(fit_rows, MWIN_ROLL, lambda n=name: arm(MWIN_ROLL, n, "mean_fit_rows"),
+            f"rolling {name} mean fit rows")
+    add("4,517", MWIN_ROLL, lambda: max_of(MWIN_ROLL, "n_scored"),
+        "rolling scored rows")
+
+    # ── §4: the stake ─────────────────────────────────────────────────────────
+    for name, crps, pit, sd in (
+            ("minutes__full__shared", "144.228", "0.0737", "302.04"),
+            ("minutes__post_break__shared", "142.407", "0.0554", "284.24"),
+            ("minutes__three_point_era__shared", "141.836", "0.0587", "284.70"),
+            ("minutes__post_2014__shared", "141.540", "0.0537", "277.06"),
+            ("minutes__post_2014__role", "138.911", "0.0392", "265.67")):
+        add(crps, MWIN_STAKE, lambda n=name: arm(MWIN_STAKE, n, "crps_minutes"),
+            f"stake {name} CRPS")
+        add(pit, MWIN_STAKE, lambda n=name: arm(MWIN_STAKE, n, "pit_ks"),
+            f"stake {name} PIT KS")
+        add(sd, MWIN_STAKE, lambda n=name: arm(MWIN_STAKE, n, "predictive_sd"),
+            f"stake {name} predictive sd")
+    for name, lo, hi in (("tie_band__full__shared", "0.200", "0.525"),
+                         ("tie_band__post_break__shared", "0.250", "0.525"),
+                         ("tie_band__three_point_era__shared", "0.250", "0.525"),
+                         ("tie_band__post_2014__shared", "0.250", "0.525"),
+                         ("tie_band__post_2014__role", "0.300", "0.450")):
+        add(lo, MWIN_STAKE, lambda n=name: arm(MWIN_STAKE, n, "sigma"),
+            f"{name} lower edge")
+        add(hi, MWIN_STAKE, lambda n=name: arm(MWIN_STAKE, n, "sigma_band_hi"),
+            f"{name} upper edge")
+    add("0.050", MWIN_STAKE,
+        lambda: arm(MWIN_STAKE, "tie_band__full__shared", "grid_step"),
+        "stake grid step")
+    # The composition arms the doc reads the marginal head's PIT against.
+    add("0.0659", MIN_UNIF,
+        lambda: cell(MIN_UNIF, "pit_ks", unit="ps_effect_sweep", sigma=0.45),
+        "composition PIT at the shipped sigma")
+    add("0.0808", MIN_UNIF,
+        lambda: cell(MIN_UNIF, "pit_ks", unit="ps_effect_sweep", sigma=0.375),
+        "composition PIT at the validation grid optimum")
+    add("64.65", MIN_UNIF,
+        lambda: cell(MIN_UNIF, "predictive_sd", arm="composition_sum",
+                     unit="season_total"),
+        "composition un-injected predictive sd")
+    return C
+
+
+def _availability_window() -> list[Claim]:
+    """`docs/availability-window-plan.md` §7l — the mixture's PAIRED contest counterfactual.
+
+    Only §7l is claimed. The doc's earlier sections are a nine-part ladder over window,
+    season term, dispersion and likelihood, and bringing them in is a separate job; entering
+    the doc into the registry at all is what makes that job incremental rather than a
+    decision.
+
+    The block is worth auditing tightly for one reason that is specific to it: **it is the
+    section most likely to be re-run and half-updated.** Its figures come from two arms
+    captured hours apart, and the failure it records — comparing against a baseline of
+    unknown vintage — is precisely the failure a stale half of this table would reproduce.
+    So both arms of every pair are claimed, not just the deltas: a refreshed `mixture`
+    column beside a stale `single` one fails here rather than reading as a new result.
+
+    The `adp` control is claimed at both ends for the same reason. It is the row the whole
+    "measured null rather than underpowered null" reading rests on, and a control that
+    silently stopped being a control would leave the conclusion standing on nothing.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, actual, label: str, **kw) -> None:
+        C.append(_c(quoted, MIXVAL, actual, label, doc=AWIN, **kw))
+
+    def mv(block: str, measure: str, key: str, column: str = "mixture") -> float:
+        return cell(MIXVAL, column, block=block, measure=measure, key=key)
+
+    # ── the board: the order the drafting layer actually consumes ─────────────
+    for season, spearman, moved in (("2022-23", "0.9990", "3.1979"),
+                                    ("2023-24", "0.9993", "2.9219")):
+        add(spearman, lambda s=season: mv("board", "spearman_mean_total", s),
+            f"board rank correlation between the arms, {season}")
+        add(moved, lambda s=season: mv("board", "mean_abs_rank_move_drafted", s),
+            f"mean |rank move| over the drafted picks, {season}")
+    # A `%` quote is scaled by `check_values`, so these hand back the share itself.
+    add("98%", lambda: mv("board", "top100_overlap", "2022-23"),
+        "top-100 overlap between the arms, 2022-23")
+    add("99%", lambda: mv("board", "top100_overlap", "2023-24"),
+        "top-100 overlap between the arms, 2023-24")
+
+    # ── the draw: the shape that DOES move, graded by role ───────────────────
+    # The star bucket at both ends, because the claim is the SIZE of the iron-man
+    # correction and a delta alone would survive both figures drifting together.
+    add("0.1023", lambda: mv("draw", "p_iron_man_strict", "2022-23 30+ mpg", "single"),
+        "star P(gp>=75), single-component arm")
+    add("0.0834", lambda: mv("draw", "p_iron_man_strict", "2022-23 30+ mpg"),
+        "star P(gp>=75), mixture arm")
+    add("0.0385", lambda: mv("draw", "p_iron_man_strict", "2023-24 30+ mpg", "single"),
+        "star P(gp>=75), single-component arm, 2023-24")
+    add("0.0316", lambda: mv("draw", "p_iron_man_strict", "2023-24 30+ mpg"),
+        "star P(gp>=75), mixture arm, 2023-24")
+    # The q10 split is the finding, so both signs are claimed: one number moving would
+    # leave "splits by role" true-looking with the split gone.
+    add("−29.49", lambda: mv("draw", "q10_total", "2022-23 <12 mpg", "delta"),
+        "fringe season-total q10 move")
+    add("+46.40", lambda: mv("draw", "q10_total", "2022-23 30+ mpg", "delta"),
+        "star season-total q10 move")
+    add("+52.75", lambda: mv("draw", "q10_total", "2023-24 30+ mpg", "delta"),
+        "star season-total q10 move, 2023-24")
+
+    # ── the contest, at the reference strategy in BOTH arms ──────────────────
+    for measure, single, mixture, label in (
+            ("sim_lift", "0.1631", "0.1890", "600k simulated lift"),
+            ("realized_lift", "0.1881", "0.1713", "600k realized lift")):
+        add(single, lambda m=measure: mv("contest", m, "600k_shootaround", "single"),
+            f"{label}, single-component arm")
+        add(mixture, lambda m=measure: mv("contest", m, "600k_shootaround"),
+            f"{label}, mixture arm")
+    add("0.3541", lambda: mv("contest", "sim_lift", "88k_alley_oop", "single"),
+        "88k simulated lift at the reference strategy, single-component arm")
+    add("0.4359", lambda: mv("contest", "sim_lift", "88k_alley_oop"),
+        "88k simulated lift, mixture arm")
+
+    # ── the control, and the resolution the null is read against ─────────────
+    add("+0.0097", lambda: mv("strategy", "lift_delta_mean", "600k_shootaround"),
+        "mean lift delta over the 24 strategies")
+    add("0.0161", lambda: mv("strategy", "lift_delta_sd", "600k_shootaround"),
+        "lift delta sd over the 24 strategies")
+    add("20", lambda: mv("strategy", "lift_delta_positive", "600k_shootaround"),
+        "strategies whose lift moved up")
+    add("0.0397", lambda: mv("strategy", "adp_only_lift", "600k_shootaround", "single"),
+        "the ADP control's lift, single-component arm")
+    add("0.0490", lambda: mv("strategy", "adp_only_lift", "600k_shootaround"),
+        "the ADP control's lift, mixture arm")
+    add("+0.0093", lambda: mv("strategy", "adp_only_lift", "600k_shootaround", "delta"),
+        "THE CONTROL: a board identical across arms, moving anyway")
+    add("+1.0091", lambda: mv("strategy", "reference_lift_z", "600k_shootaround"),
+        "the shipped arm's delta in sds of the across-strategy spread")
+    add("0.9174", lambda: mv("strategy", "ordering_spearman", "600k_shootaround"),
+        "strategy ordering between the arms")
+    add("0.0876", lambda: mv("resolution", "min_detectable_lift_gap", "mixture"),
+        "the 95% resolution on an arm-to-arm lift gap")
+
+    # ── the verdicts, which is where a re-run would show a real change ───────
+    # Split into two claims because the registry parses a bare number: "0 of 6" is a
+    # count and a denominator, and both have to be claimed or the failure can decay by
+    # the denominator moving underneath a zero that stays true.
+    add("0", lambda: mv("verdict", "gate_d_materially_different", "all tournaments"),
+        "Gate D comparisons separating the tiers, both arms", tol=0.5)
+    add("6", lambda: mv("verdict", "gate_d_comparisons", "all tournaments"),
+        "Gate D paired comparisons behind that zero", tol=0.5)
+    for season, single, mixture in (("2022-23", "0.4189", "0.4268"),
+                                    ("2023-24", "0.4234", "0.4164")):
+        add(single, lambda s=season: mv("verdict", "injection_rho", s, "single"),
+            f"injection rho, single-component arm, {season}")
+        add(mixture, lambda s=season: mv("verdict", "injection_rho", s),
+            f"injection rho, mixture arm, {season}")
+    return C
+
+
 def _build() -> tuple[Claim, ...]:
     """Every claim, in doc order. One builder per doc — the registry is long enough that
     a single function made it hard to see which doc a section belonged to.
@@ -5336,7 +5717,8 @@ def _build() -> tuple[Claim, ...]:
     rather than taking one for the whole builder."""
     return tuple(_availability() + _composition() + _predictions() + _adp()
                  + _established_facts() + _readme() + _shot_basis() + _games_played()
-                 + _games_played_in_notes() + _train_validate_test() + _weekly())
+                 + _games_played_in_notes() + _train_validate_test() + _weekly()
+                 + _minutes_window() + _availability_window())
 
 
 CLAIMS: tuple[Claim, ...] = _build()

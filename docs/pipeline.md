@@ -181,6 +181,25 @@ make minutes-unification
                        #   what makes the injection shippable: sigma_train = 0.450 against
                        #   the validation grid's 0.375.
 
+make minutes-window    # the marginal minutes head's fitting window x dispersion ladder,
+                       #   the same question `make availability-window` asked one head
+                       #   over → outputs/predictions/minutes_window_era.csv,
+                       #   minutes_window_break.csv, minutes_window.csv,
+                       #   minutes_window_rolling.csv, minutes_window_stake.csv.
+                       #   Point MLE for the ladder and a rehydrated posterior for the
+                       #   stake, so no CmdStan and no refit of either minutes head.
+                       #   THREE FINDINGS. It rebuilds availability-window-plan §6's era
+                       #   series through each head's OWN design rows, which corrects the
+                       #   sd contraction from -15.2% to -9.0%, moves the break from
+                       #   2014-15 to 2010-11, and finds the contraction has REVERTED
+                       #   since 2019-20. The ladder's window wins on validation and does
+                       #   NOT replicate on a 13-origin rolling harness (-0.079
+                       #   [-0.59, +0.43]) while role-graded rho does, 13 of 13 origins at
+                       #   a 3.03x spread — the largest in the project. And the stake is a
+                       #   NULL: sim.minutes.player_season_sigma = 0.450 stands, because a
+                       #   short window makes the marginal head a HARDER reference to tie
+                       #   rather than an easier one.
+
 make weekly-scores     # Gate A at the unit a LINEUP is set at: observed against
                        #   simulated dk_pts per player per scoring period, on train and
                        #   validation → outputs/predictions/weekly_score_{index,period,
@@ -215,6 +234,22 @@ make composition-effects
                        #   incumbent's record and is quoted by `make docs-audit`. The
                        #   deviation table lands BEFORE any sampling, so an aborted run
                        #   still leaves it.
+
+make mixture-value     # what the availability mixture is worth in the CONTEST, as a
+                       #   paired counterfactual
+                       #   → outputs/predictions/availability_mixture_contest.csv.
+                       #   REPORTS two arms; it does not run them. Running them is two
+                       #   passes over five targets differing in one config key
+                       #   (`stan.availability.mixture`), ~1 h each because only
+                       #   `--groups availability` of `make posteriors` is refitted, with
+                       #   `python -m src.sim.mixture_value --capture {single,mixture}`
+                       #   freezing each pass into outputs/predictions/mixture_arms/.
+                       #   `--capture` REFUSES when the config key and the arm name
+                       #   disagree. Read the `resolution` block before the `contest`
+                       #   one: 500 worlds per season resolves a lift gap of 0.0876, and
+                       #   the simulated lift is SELF-SCORED — each arm is measured in a
+                       #   world it generated, which is why the `adp` control row (a
+                       #   board identical across arms) is what the null rests on.
 ```
 
 **After `make posteriors`, nothing else in the simulation layer needs CmdStan.** That is the
