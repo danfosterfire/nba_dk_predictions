@@ -16,6 +16,7 @@ import pandas as pd
 import pytest
 
 from src.models import held_out
+from src.models import posteriors as P
 from src.models.component_rates import CONVERSION_HEADS, COUNT_HEADS, DERIVED_COUNTS
 from src.models.held_out import HeldOutLocked, unlocked
 from src.sim import season as S
@@ -185,6 +186,128 @@ def test_feasibility_repair_is_a_no_op_when_every_block_is_deep_enough():
     repaired, short = S.feasibility_repair(available, block, 2)
     assert short == 0
     assert repaired is available or np.array_equal(repaired, available)
+
+
+# ── The availability draw's dispersion axis ───────────────────────────────────
+
+def _availability_artifact(n_rho: int = 4, edges=(0.0, 12.0, 24.0, 30.0, 60.0)):
+    """An availability posterior in the shape `make posteriors` writes.
+
+    `n_rho = 1` is the shared-dispersion arm, which persists a `(draws,)` `rho_draws` and an
+    empty recipe — the shape the `train_val` artifact on disk still carries.
+    """
+    graded = n_rho > 1
+    rho = (np.tile(np.array([0.32, 0.27, 0.25, 0.21])[:n_rho], (5, 1))
+           if graded else np.full(5, 0.28))
+    steps = ({"kind": "cut", "column": "minutes_per_game_lag1",
+              "edges": list(edges), "name": "rho_bin"},) if graded else ()
+    return P.PosteriorArtifact(
+        head="availability", head_label="availability", family="betabinomial",
+        response="mean_mu",
+        recipe=P.DesignRecipe("base", [], None, steps=steps, builder="test"),
+        draws={"alpha_draws": np.zeros(5), "beta_draws": np.zeros((5, 0)),
+               "rho_draws": rho},
+        extras={"n_rho": n_rho, "rho_bin_column": "rho_bin",
+                "rho_bin_source": "minutes_per_game_lag1", "role_rho": graded},
+        provenance={"fit_window": "train"})
+
+
+def test_availability_rho_bin_is_zero_based_against_a_one_based_recipe():
+    """`rho_bin` is 1-based and `rho_draws` is 0-based, and the gap is silent if missed.
+
+    An off-by-one here hands every player his *neighbour's* dispersion at a perfectly legal
+    index — no exception, no shape error, just the wrong model. So the buckets are pinned
+    against the edges rather than against each other: 5 mpg is the fringe bucket, which is
+    column 0, and 45 mpg is the star bucket, which is the last column.
+    """
+    art = _availability_artifact()
+    frame = pd.DataFrame({"minutes_per_game_lag1": [5.0, 18.0, 27.0, 45.0]})
+    bins = S.availability_rho_bin(art, frame)
+    assert list(bins) == [0, 1, 2, 3]
+    # The head's own 1-based assignment, one subtraction away — the invariant, not the values.
+    one_based = art.recipe.transform(frame)["rho_bin"].to_numpy(int)
+    assert list(one_based) == [1, 2, 3, 4]
+    np.testing.assert_array_equal(bins, one_based - 1)
+    # And the gathered dispersion is monotone in role, which is the fitted direction.
+    gathered = np.asarray(art.draws["rho_draws"])[0][bins]
+    assert (np.diff(gathered) < 0).all()
+
+
+def test_availability_rho_bin_gives_a_player_with_no_design_row_the_widest_bucket():
+    """A rostered player the head has no row for still needs a bucket, and it is bucket 1.
+
+    `build_context` reindexes the design onto the roster, so a no-design player arrives with
+    a NaN prior MPG and an empirical mean. `role_bins` sends him to the **lowest** bucket —
+    the widest dispersion, the conservative direction — and the persisted `cut` step has to
+    reproduce that rather than raise or produce a NaN index.
+    """
+    art = _availability_artifact()
+    frame = pd.DataFrame({"minutes_per_game_lag1": [np.nan, 90.0, 33.0]})
+    bins = S.availability_rho_bin(art, frame)
+    assert bins[0] == 0 and bins[1] == 0        # NaN and above the top edge both fall in
+    assert bins[2] == 3
+    assert np.asarray(art.draws["rho_draws"])[0][bins[0]] == max(
+        np.asarray(art.draws["rho_draws"])[0])
+
+
+def test_availability_rho_bin_reads_a_shared_dispersion_artifact_as_one_column():
+    """The `train_val` artifact predates the graded head: `(draws,)` and no recipe step.
+
+    Handling only the graded shape would trade one broken window for the other, so the
+    absence of the step is read as the shared arm rather than as a broken recipe.
+    """
+    art = _availability_artifact(n_rho=1)
+    frame = pd.DataFrame({"minutes_per_game_lag1": [5.0, 45.0, np.nan]})
+    assert list(S.availability_rho_bin(art, frame)) == [0, 0, 0]
+
+
+def test_availability_rho_bin_refuses_a_graded_artifact_whose_recipe_lost_the_cut():
+    """Four dispersion columns and no way to address them is unrecoverable, not a default.
+
+    Defaulting to column 0 would silently apply the fringe bucket's dispersion to every star
+    in the league, which is the failure this whole path exists to stop.
+    """
+    art = _availability_artifact()
+    art.recipe.steps = ()
+    with pytest.raises(KeyError, match="which column applies"):
+        S.availability_rho_bin(art, pd.DataFrame({"minutes_per_game_lag1": [5.0]}))
+
+
+def test_availability_rates_gather_each_player_his_own_bucket_dispersion():
+    """The regression test. The scalar broadcast this replaced *raises* on this input.
+
+    `np.full(n_players, rho_draws[draw])` with a `(4,)` row is
+    `ValueError: could not broadcast input array from shape (4,) into shape (n,)`, which is
+    what `make simulate-season` did against the shipped `train` posterior. Beyond not
+    raising, the draw has to be *graded*: the fringe bucket's rates must be more dispersed
+    than the star bucket's at the same mean, or the vector is being gathered wrongly.
+    """
+    n = 40_000
+    rho_by_bin = np.array([0.32, 0.27, 0.25, 0.21])
+    bins = np.repeat(np.arange(4), n)
+    mu = np.full(4 * n, 0.75)
+
+    rates = S.availability_rates(np.random.default_rng(0), mu, rho_by_bin, bins)
+    assert rates.shape == (4 * n,)
+    spread = np.array([rates[bins == j].std() for j in range(4)])
+    # Monotone in the fitted dispersion, and matching the beta's own sd = sqrt(mu(1-mu)rho).
+    assert (np.diff(spread) < 0).all()
+    np.testing.assert_allclose(spread, np.sqrt(0.75 * 0.25 * rho_by_bin), rtol=0.02)
+
+
+def test_availability_rates_reproduce_the_scalar_form_under_a_shared_dispersion():
+    """`n_rho = 1` must be the old behaviour exactly, not merely close to it.
+
+    That is the rollback path: a shared-dispersion artifact has to give bit-identical draws
+    to the scalar broadcast it replaced, or the fix has changed a shipped window's numbers
+    while claiming to repair the other one.
+    """
+    mu = np.linspace(0.2, 0.95, 500)
+    bins = np.zeros(500, dtype=np.int64)
+    graded = S.availability_rates(np.random.default_rng(7), mu, np.array([0.28]), bins)
+    a, b = S.beta_shapes(mu, np.full(500, 0.28))
+    scalar = np.random.default_rng(7).beta(a, b)
+    np.testing.assert_array_equal(graded, scalar)
 
 
 # ── The copula ────────────────────────────────────────────────────────────────

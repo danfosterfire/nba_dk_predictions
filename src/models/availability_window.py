@@ -1560,6 +1560,114 @@ def _score_pmf(name: str, pmf: np.ndarray, val: pd.DataFrame, max_games: int,
     return score_arm(name, _Fixed(), val, val, [], max_games, seed)
 
 
+# ── The `l2` confound (§7d) ───────────────────────────────────────────────────
+
+#: The penalty grid every arm is swept over. Geometric and spanning the range
+#: `availability_weighting`'s `l2_by_lookback` used, which found the shorter windows
+#: preferring 16-64 where this ladder pins 1 — and **anchored at 0**, the unpenalized MLE.
+#: The zero end is what makes this a bound rather than a grid search: if the reference's
+#: optimum sat on the low edge, "sweep it further down" would still be an open move.
+L2_GRID = (0.0, 0.0625, 0.25, 1.0, 4.0, 16.0, 64.0, 256.0)
+
+#: The arms the confound is measured on: the reference, plus the three that carry
+#: unpenalized parameters it does not. `logitnormal` is left out because it carries none —
+#: 20 coefficients and 4 dispersions, exactly the reference's block — so the penalty is
+#: already neutral between those two and it is a measured failure on every other axis.
+L2_ARMS = ("betabinom", "beta_rect", "finite_mix", "mixture")
+
+#: Parameters each arm adds outside `beta[1:]`, which is the only block the penalty reaches.
+#: This is the confound stated as a number rather than as a sentence.
+L2_UNPENALIZED = {"betabinom": 0, "beta_rect": 1, "finite_mix": 4, "mixture": 11}
+
+
+def l2_confound(train: pd.DataFrame, val: pd.DataFrame, max_games: int,
+                grid: tuple = L2_GRID, arms: tuple = L2_ARMS,
+                seed: int = 42) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """§7d measured rather than stated: how much of the margin is the pinned penalty?
+
+    The ladder pins `l2 = 1.0` across arms so the contrast is the likelihood alone, and a
+    fixed penalty on `beta[1:]` is **not** neutral between arms that carry different numbers
+    of parameters outside that block. Every margin in §7c is therefore an upper bound on the
+    likelihood's own contribution, and this says by how much.
+
+    Two readings, because "regularized as favourably as the alternatives are" has two honest
+    meanings and they can disagree:
+
+    - **`reference_best`** — every challenger stays at the pinned `l2 = 1.0` and only the
+      reference moves, to whichever grid point scores *best on validation*. That is
+      deliberately the most favourable setting the reference can be given, so the surviving
+      margin is a **lower bound** on the likelihood's contribution. Picking it on the
+      evaluation split is selection, and it is the right direction of selection here: it can
+      only shrink the challengers' margins, never inflate them.
+    - **`matched`** — every arm at its own best grid point, which is the like-for-like
+      comparison and the one that says whether the *ordering* survives at all.
+
+    Returns `(sweep, verdict)`: one row per (arm, `l2`), and one row per challenger holding
+    both readings with a paired bootstrap on each.
+    """
+    cut = restrict_window(train, WINDOWS[LIKELIHOOD_WINDOW])
+    rows: list[dict] = []
+    scores: dict[tuple[str, float], np.ndarray] = {}
+
+    for name in arms:
+        for l2 in grid:
+            model = LIKELIHOODS[name](l2=float(l2), features=list(FEATURE_COLS)).fit(cut)
+            row, per_row = score_arm(f"{name}__l2_{l2:g}", model, cut, val,
+                                     list(FEATURE_COLS), max_games, seed)
+            row.update({"likelihood": name, "l2": float(l2),
+                        "n_params": model.n_params,
+                        "n_unpenalized": L2_UNPENALIZED.get(name, np.nan),
+                        "train_loglik": model.train_loglik,
+                        "is_pinned": bool(float(l2) == 1.0)})
+            rows.append(row)
+            scores[(name, float(l2))] = per_row
+            print(f"  {name:<12} l2 {l2:>7g}  CRPS {row['val_crps']:.4f}  "
+                  f"PIT {row['val_pit_ks']:.4f}  boundary {row['boundary_tail_error']:.4f}"
+                  f"  shoulder {row['shoulder_error']:.4f}")
+
+    sweep = pd.DataFrame(rows)
+    best = {name: float(sweep[sweep["likelihood"] == name]
+                        .sort_values("val_crps").iloc[0]["l2"]) for name in arms}
+    ref = LIKELIHOOD_REFERENCE
+
+    def _crps(name: str, l2: float) -> float:
+        return float(scores[(name, l2)].mean())
+
+    verdict: list[dict] = []
+    for name in arms:
+        if name == ref:
+            continue
+        pinned, lo, hi = paired_bootstrap(scores[(name, 1.0)], scores[(ref, 1.0)], seed=seed)
+        against_best = paired_bootstrap(scores[(name, 1.0)], scores[(ref, best[ref])],
+                                        seed=seed)
+        matched = paired_bootstrap(scores[(name, best[name])], scores[(ref, best[ref])],
+                                   seed=seed)
+        verdict.append({
+            "arm": name, "n_unpenalized": L2_UNPENALIZED.get(name, np.nan),
+            "reference_l2_pinned": 1.0, "reference_l2_best": best[ref],
+            "arm_l2_best": best[name],
+            "reference_crps_pinned": _crps(ref, 1.0),
+            "reference_crps_best": _crps(ref, best[ref]),
+            "arm_crps_pinned": _crps(name, 1.0),
+            "arm_crps_best": _crps(name, best[name]),
+            "margin_pinned": pinned, "margin_pinned_lo": lo, "margin_pinned_hi": hi,
+            "margin_vs_reference_best": against_best[0],
+            "margin_vs_reference_best_lo": against_best[1],
+            "margin_vs_reference_best_hi": against_best[2],
+            "margin_matched": matched[0],
+            "margin_matched_lo": matched[1], "margin_matched_hi": matched[2],
+            # The headline: what fraction of the pinned margin survives a reference
+            # regularized as favourably as the grid allows. Undefined when the pinned
+            # margin is not a margin, which is why it is reported beside it rather than
+            # instead of it.
+            "share_surviving": (against_best[0] / pinned) if pinned < 0 else np.nan,
+            "beats_reference_pinned": bool(hi < 0.0),
+            "beats_reference_best": bool(against_best[2] < 0.0),
+            "beats_reference_matched": bool(matched[2] < 0.0),
+        })
+    return sweep, pd.DataFrame(verdict)
+
+
 # The likelihood axis's rolling-origin confirmation runs at this lookback: §4b's interior
 # CRPS optimum, and the closest fitting-half analogue of the 2012-13 window the validation
 # ladder holds. An absolute first season means nothing at a 2011 origin.
@@ -1702,6 +1810,19 @@ def run(cfg: dict) -> dict[str, Path]:
     likelihood.to_csv(lik_dest, index=False)
     print(f"\nWrote {len(likelihood):,} arms → {lik_dest}")
 
+    print(f"\nThe `l2` confound (§7d): the penalty reaches beta[1:] only, so the "
+          f"alternatives carry\n  unpenalized parameters the reference does not "
+          f"({', '.join(f'{k} {v}' for k, v in L2_UNPENALIZED.items() if v)}). "
+          f"Sweeping it\n  over {list(L2_GRID)} says how much of each margin is the "
+          f"likelihood and how much is the penalty.")
+    l2_sweep, l2_verdict = l2_confound(train, val, max_games, seed=seed)
+    sweep_dest = out_dir / "availability_l2_sweep.csv"
+    l2_sweep.to_csv(sweep_dest, index=False)
+    verdict_dest = out_dir / "availability_l2_verdict.csv"
+    l2_verdict.to_csv(verdict_dest, index=False)
+    print(f"\nWrote {len(l2_sweep):,} (arm x l2) cells → {sweep_dest}")
+    print(f"Wrote {len(l2_verdict):,} verdict rows → {verdict_dest}")
+
     print(f"\nRolling-origin confirmation of the likelihood axis "
           f"(lookback {LIKELIHOOD_LOOKBACK}, fitting half only):")
     lik_rolling = likelihood_rolling(train, max_games, l2=l2, seed=seed)
@@ -1712,6 +1833,7 @@ def run(cfg: dict) -> dict[str, Path]:
 
     return {"availability_window": dest, "availability_window_rolling": roll_dest,
             "availability_likelihood": lik_dest,
+            "availability_l2_sweep": sweep_dest, "availability_l2_verdict": verdict_dest,
             "availability_likelihood_rolling": lik_roll_dest}
 
 

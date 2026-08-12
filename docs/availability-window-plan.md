@@ -691,6 +691,14 @@ beats `mixture` on CRPS while losing to it on the boundary. Read together with r
 *tail mass* is what CRPS wants, and *which* tail is what the boundary wants. A symmetric
 hedge buys the first and only half of the second.
 
+> ✅ **The extra parameter is not what buys it — swept 2026-08-11, see §7d.** Refitting the
+> reference at each of eight penalties from 0 to 256 moves it by **0.00034** CRPS at its best,
+> so **99.4%** of this −0.056 survives a reference regularized as favourably as the grid
+> allows, and matching every arm at its own optimum makes the margin marginally larger rather
+> than smaller. The pinned penalty is 1.5 parts in 100,000 of the objective at these row
+> counts. So this row is the likelihood's, and the qualification below is the one that
+> stands.
+
 > ⚠️ **Qualified by §7f.** Flat mass everywhere also pushes the 71–81 error from +0.0186 to
 > **+0.0273**, so `beta_rect` is the *worst* Beta arm on `shoulder_error` (0.0290 against the
 > reference's 0.0253). Its CRPS win is real and its calibration win is confined to the two
@@ -723,19 +731,58 @@ closes both tails and blows out the body. Nothing here does that: every arm that
 boundary **also** improves the body, `mixture` from 0.0107 to 0.0047 and `finite_mix` to
 0.0012. The trap the ladder was built to detect did not fire.
 
-### 7d. The confound, stated rather than corrected
+### 7d. The confound, measured — and it is a null
 
-**`l2 = 1.0` is pinned across arms so the contrast is the likelihood alone — and a fixed
+**`l2 = 1.0` is pinned across arms so the contrast is the likelihood alone, and a fixed
 penalty is not neutral between them.** The penalty reaches `β[1:]` only, so `mixture` carries
 **eleven** extra unpenalized parameters against the incumbent's zero, `finite_mix` four, and
-`beta_rect` one. Every margin in §7c is therefore an **upper bound** on the likelihood's own
-contribution, and the arms are not equally advantaged by it. §5.6 records the same confound
-one axis over, where `l2` was pinned across lookbacks of very different row counts and turned
-out to matter. It is stated rather than corrected because correcting it means sweeping `l2`
-per arm, which is a second selection axis on a ladder that already has a multiplicity problem.
+`beta_rect` one. Every margin in §7c was therefore recorded as an **upper bound** on the
+likelihood's own contribution. §5.6 records the same confound one axis over, where `l2` was
+pinned across lookbacks of very different row counts and turned out to matter.
 
-That the confound cuts *against* the reading is worth noting: the arm that wins the selector
-is the one it favours most, and the arm that wins CRPS carries one extra parameter.
+✅ **Swept 2026-08-11. It does not matter here, and the margins survive essentially whole.**
+`make availability-window` → `availability_l2_sweep.csv`, `availability_l2_verdict.csv`:
+every arm refitted at each of **eight** penalties from 0 to 256 at the shipped window, with
+the grid **anchored at 0** — the unpenalized MLE — so the reference's optimum cannot sit on a
+low edge with "sweep further down" still available as a move.
+
+| `l2` | `betabinom` | `beta_rect` | `finite_mix` | `mixture` |
+|---|---|---|---|---|
+| **0** | **9.8122** | **9.7554** | **9.7659** | **9.8232** |
+| 0.0625 | 9.8122 | 9.7554 | 9.7660 | 9.8232 |
+| 0.25 | 9.8123 | 9.7556 | 9.7661 | 9.8235 |
+| 1 *(pinned)* | 9.8125 | 9.7561 | 9.7667 | 9.8237 |
+| 4 | 9.8134 | 9.7574 | 9.7684 | 9.8258 |
+| 16 | 9.8146 | 9.7598 | 9.7722 | 9.8290 |
+| 64 | 9.8235 | 9.7713 | 9.7862 | 9.8423 |
+| 256 | 9.8663 | 9.8223 | 9.8580 | 9.8918 |
+
+**1. The reference gains 0.00034 CRPS from the most favourable penalty it can be given.**
+Its optimum is at `l2 = 0` — 9.812192 against 9.812533 at the pinned 1.0. So `beta_rect`'s
+margin against a reference regularized as favourably as the grid allows is **−0.056052**
+[−0.096, −0.015] against the pinned **−0.056392**: **99.4% of it survives**. `finite_mix`
+keeps 99.3%, and `mixture` remains a tie either way (+0.0112 against +0.0112). Matching every
+arm at its own optimum instead — the like-for-like reading — moves `beta_rect` to −0.056822,
+i.e. the margin gets marginally *larger*. **Every ordering in §7c stands unchanged.**
+
+**2. The reason is arithmetic, and it is why this was worth ten minutes rather than a
+session.** At the fitted solution `β[1:]·β[1:]` is **0.2418** for the reference, against a
+training log-likelihood of **−16,239.2**. So the pinned penalty is **1.5 parts in 100,000**
+of the objective — the features are standardized and the coefficients are already shrunk by
+4,027 rows of data, so `l2 = 1` is numerically almost no penalty at all. It takes `l2 = 64`
+before any arm moves by as much as the *smallest* margin in §7c, and by then every arm has
+moved together and the ordering is still the same.
+
+**3. Which is not the same answer §5b got, and the difference is the axis.** There, sweeping
+`l2` jointly with the *lookback* mattered — 1,155-row fits preferred `l2 = 64` and 8-season
+fits preferred 16. Here the row count is held fixed at the shipped window, so the penalty has
+nothing to trade against. **A penalty matters when the row count is the axis, and not when
+the likelihood is.**
+
+**So §7c's margins are the likelihood's own**, and the caveat that the arms are unequally
+advantaged is now a measured 0.6% of one of them rather than an unbounded upper bound. What
+it does *not* do is change any verdict: `mixture` was selected on calibration with a CRPS
+guard, and both halves of that read identically at every penalty on the grid.
 
 ### 7e. Confirmation on the rolling harness — and only one finding survives it
 
@@ -941,6 +988,12 @@ point mass on one side and nothing beside it will always miss.
   be a *larger* miss than the upper boundary it was pooled next to, and it was the region the
   window helped most. A metric added after the fact is also what found the one overclaim in
   §4 result 3.
+- **The pinned `l2` is not doing the work** (§7d). Swept over eight penalties from 0 to 256,
+  the reference's best is worth **0.00034** CRPS and **99.4%** of `beta_rect`'s margin
+  survives it, because at 4,027 rows the penalty is 1.5 parts in 100,000 of the objective.
+  §7c's margins are the likelihood's own. The contrast with §5b — where `l2` mattered a great
+  deal — is that a penalty matters when the **row count** is the axis and not when the
+  likelihood is.
 - **Joint estimation of the shipped head is worth −0.012 CRPS for free**, and §5.1's
   attribution of that gap to the Bayesian fit was wrong about the cause.
 
@@ -961,9 +1014,8 @@ point mass on one side and nothing beside it will always miss.
   a covariate block and a component to `betabinomial_glm.stan`, which four other heads share
   — the same transplant discipline `n_rho` needed, and a session's work rather than a
   parameter.
-- **Whether the pinned `l2` is doing the work** (§7d). The cheapest way to find out is to
-  sweep `l2` for `betabinom` alone and see how much of `beta_rect`'s CRPS margin survives a
-  reference that is regularized as favourably as the alternatives are.
+- ~~**Whether the pinned `l2` is doing the work** (§7d).~~ ✅ **Closed 2026-08-11** — a null,
+  moved to the settled list above.
 - **The exchangeable-trials assumption**, which none of these arms touches. Absences come in
   *spells* — beta-geometric, beating the geometric by 11,278 log-likelihood points at one
   extra parameter — and one 40-game spell and forty single-game absences give identical `gp`
@@ -1005,40 +1057,49 @@ that did not ask for a change.
 of "age, prior absence, playoff workload". That is a shipped choice which lands in the
 persisted `DesignRecipe`, not a default.
 
-**5. Whether the `l2` confound is settled first** (§7d). The mixture carries eleven
-unpenalized parameters. Its boundary and shoulder wins are large and replicated so they
-probably survive, but the honest order is to sweep `l2` for the reference arm before porting.
-Point MLE, minutes to run.
+**5.** ~~**Whether the `l2` confound is settled first**~~ ✅ **Settled 2026-08-11, and it was
+a null** (§7d). Eight penalties from 0 to 256 for every arm at the shipped window: the
+reference's best is worth **0.00034** CRPS, **99.4%** of `beta_rect`'s margin survives it, and
+`mixture` ties on CRPS at every penalty on the grid. Nothing about the port's premises moved,
+and the mixture's eleven unpenalized parameters turn out not to be an advantage worth the
+sentence they were given — the penalty is 1.5 parts in 100,000 of the objective at these row
+counts. The prediction in this item — "they probably survive" — was right, and it now has a
+number.
 
 ### Two debts that predate this axis
 
-**1. The simulator re-implements this head rather than drawing through it, and it is already
-out of sync.** `src/sim/season.py:645-648` inlines the beta-binomial draw with a **scalar**
-dispersion:
+**1.** ~~**The simulator re-implements this head rather than drawing through it, and it is
+already out of sync.**~~ ✅ **Fixed 2026-08-11.** `src/sim/season.py` inlined the
+beta-binomial draw with a **scalar** dispersion, `np.full(n_players, rho_draws[draw])`, while
+the persisted `train` posterior has carried `rho_draws` of shape **(1000, 4)** with
+`n_rho: 4` since the role-graded head shipped. **`make simulate-season` was run and it did
+fail there**, not only at the expression — `ValueError: could not broadcast input array from
+shape (4,) into shape (539,)` at sim 0 of 2,000 — which was the check this section asked for
+and the difference between a broken target and a broken line. The `train_val` artifact is
+still `(1000,)` with `role_rho: None`, so it predates the window round: one window raised and
+the other was silently stale.
 
-```python
-a, b = beta_shapes(ctx["avail_mu"][draw],
-                   np.full(ctx["n_players"], ctx["avail_rho"][draw]))
-```
+The fix is **not** `predict_samples`, and the reason is worth keeping. That returns **games
+played** for the design rows, one row per player-season; the simulator needs the **rate**,
+because it applies that rate to each of a player's *cells* — a player traded mid-season has
+more than one — before handing the count to `allocate_spells`. A head-level predictive cannot
+be split across cells. So the head's dispersion axis is reconstructed instead, from the `cut`
+recipe step the artifact already carries (`season.availability_rho_bin`), which is the same
+door the composition head is read through and needs no import of `stan_availability`. Both
+artifact shapes are handled, `rho_bin`'s 1-based convention is pinned by a test, and a player
+with no design row falls into the **lowest** bucket — `role_bins`' own rule, and the widest
+dispersion.
 
-`FIT_WINDOW = "train"` (`season.py:176`), and the persisted `train` posterior has carried
-`rho_draws` of shape **(1000, 4)** with `n_rho: 4` since the role-graded head shipped. Loading
-the real artifact and evaluating that expression at a realistic player count raises
-`ValueError: could not broadcast input array from shape (4,) into shape (500,)`. Nothing
-between the load (`season.py:851`) and the use reshapes it. The `train_val` artifact is still
-`(1000,)` with `role_rho: None` — it predates the window round entirely — so one window
-raises and the other is silently stale.
+**Every Gate A row improved, and it is the first reading taken against the head that ships**
+(`docs/simulations-plan.md`, "Gate A, in full"): games played CRPS 9.6754 → **9.5262** and
+9.7829 → **9.6140**, season-total MAE 402.14 → 399.03 and 407.89 → 402.48. The two
+bonus-on-realized-minutes rows reproduce to four decimals, which is the control — they
+condition on realized minutes and played games, so they are the only rows the fix could not
+have moved.
 
-> Verified by inspection and by evaluating the expression against the loaded artifact.
-> `make simulate-season` has **not** been run end to end to confirm the failure surfaces
-> there, and it should be, because that is the difference between a broken target and a
-> broken line.
-
-This is a debt from the window round, not from the mixture — but the mixture makes the same
-line worse, since `π`, `μ_low`, `ρ_low` and `π`'s design matrix would all have to be inlined
-too. **The fix is for the simulator to draw through the head's own `predict_samples`**, which
-is the rule `docs/model-cards-plan.md` already makes load-bearing: *no second implementation
-of any head's predictive*. Doing that first makes a mixture port nearly free downstream.
+The mixture would have made the same line worse, since `π`, `μ_low`, `ρ_low` and `π`'s design
+matrix would all have had to be inlined too. Reconstructing the recipe instead means a mixture
+port extends the recipe rather than the simulator.
 
 **2. Two gates are owed from the window round.** §5.1 records that `season-total`'s Gate E
 and `stan-games-played` — both of which hold this head as a floor — have not been re-run. If
@@ -1046,6 +1107,14 @@ the mixture goes in, re-run them once afterwards rather than twice.
 
 ### The order the evidence supports
 
-Fix the simulator's draw path → sweep `l2` → port with `π = 0` nesting asserted → re-run the
-two owed gates → then decide whether the strategy sweep is required. The first two are cheap
-and de-risk everything after them.
+~~Fix the simulator's draw path → sweep `l2`~~ ✅ **both done 2026-08-11** → port with
+`π = 0` nesting asserted → re-run the two owed gates → then decide whether the strategy sweep
+is required. The first two were cheap and de-risked everything after them: one was a live
+break that the target reproduced, and the other was a null that removes the last stated
+qualification from §7c.
+
+**One consequence to carry into the port's session.** The simulator's tensors were rebuilt,
+so everything downstream of `sim_tensor_*.npz` — `make bracket`, `make draft`,
+`make strategy-sweep` — is now scored against a *previous* tensor. Those artifacts were not
+re-run, because §4's propagation session re-runs them anyway once the mixture lands, and
+running the sweep twice is the expense this ordering exists to avoid.

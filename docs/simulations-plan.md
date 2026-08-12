@@ -1397,30 +1397,45 @@ separately because pooling them would hide the one figure that moves.
 
 | check | 2022-23 | 2023-24 | bar | artifact |
 |---|---|---|---|---|
-| season-total dk_pts MAE | **402.14** | **407.89** | 400.46 | `season_total_metrics.csv` |
-| …CRPS | **280.49** | **281.03** | 287.26 | " |
-| …R² | 0.6481 | 0.6589 | 0.7073 | " |
-| …bias | −21.93 | −63.34 | −3.06 | " |
-| games played CRPS | **9.6754** | **9.7829** | 10.0057 | `stan_games_played_metrics.csv` |
-| …bias, in games | **+0.127** | **−0.363** | — | " |
-| …pooled GP pmf total variation | **0.0602** | **0.0588** | — | `stan_games_played_gp_pmf.csv` |
-| bonus per played game | 0.1733 | 0.1702 | 0.1559 / 0.1626 realized | `bonus_calibration.csv` |
+| season-total dk_pts MAE | **399.03** | **402.48** | 400.46 | `season_total_metrics.csv` |
+| …CRPS | **278.84** | **278.40** | 287.26 | " |
+| …R² | 0.6543 | 0.6683 | 0.7073 | " |
+| …bias | −21.20 | −61.14 | −3.06 | " |
+| games played CRPS | **9.5262** | **9.6140** | 10.0057 | `stan_games_played_metrics.csv` |
+| …bias, in games | **−0.307** | **−0.728** | — | " |
+| …pooled GP pmf total variation | **0.0543** | **0.0510** | — | `stan_games_played_gp_pmf.csv` |
+| bonus per played game | 0.1768 | 0.1728 | 0.1559 / 0.1626 realized | `bonus_calibration.csv` |
 | …on **realized** minutes | **0.1535** | **0.1477** | 0.1559 / 0.1626 | `component_targets.parquet` |
-| season minutes sd, given GP | **322.05** | **319.32** | 302.75 | `minutes_unification.csv` |
+| season minutes sd, given GP | **317.22** | **314.09** | 302.75 | `minutes_unification.csv` |
+
+> **Re-measured 2026-08-11, and this is the first reading taken against the head that
+> ships.** The availability draw was re-implemented inline against a **scalar** dispersion,
+> so at the `train` window it raised outright against the role-graded posterior the window
+> round persisted — the target had not been run end to end since. The column above is
+> therefore the shipped head arriving in the simulator for the first time, not a re-run of
+> the same thing: every row moved, all of them in the improving direction. Games played
+> gains the most (CRPS 9.6754 → **9.5262** and 9.7829 → **9.6140**), which is what grading
+> `rho` by role is supposed to buy, and the season total follows it (MAE 402.14 → 399.03 and
+> 407.89 → 402.48). The one row that got *worse* is the games-played bias, +0.127 → −0.307
+> on 2022-23: the graded head is less optimistic about fringe players, and the simulator now
+> says so. See `docs/availability-window-plan.md` §8.
 
 **Three of the four gate rows pass and the fourth is traced out of this module.** Season
-totals land on the incumbent's MAE within 2%, and *better* than it on CRPS — the deliverable
+totals land on the incumbent's MAE within 1%, and *better* than it on CRPS — the deliverable
 is a distribution and that is the distributional metric. Games played reproduces the
 availability head it was handed rather than approximating it: CRPS **below** the head's own
 10.0057 (the simulator integrates over the posterior draw where the head's published figure
-is scored per row), a bias of a tenth of a game, and a pooled pmf within 0.06 total variation
-of the persisted one on a mean of 55.8 games against 55.6.
+is scored per row), a bias of a third of a game, and a pooled pmf within 0.06 total variation
+of the persisted one on a mean of 55.3 games against 55.4.
 
-**The bonus is +11% high in 2022-23 and +5% in 2023-24, and the cause is upstream.** Running
+**The bonus is +13% high in 2022-23 and +6% in 2023-24, and the cause is upstream.** Running
 the identical `draw_components` call on **realized** minutes and realized played games gives
-0.1535 against a realized 0.1559 and 0.1477 against 0.1626 — i.e. the component chain,
-its season/game frailty split and its copula are calibrated on the bonus to within 1.5% and
-9% respectively, in the *low* direction. Everything above that comes from the minutes the
+0.1535 against a realized 0.1559 and 0.1477 against 0.1626 — **unchanged to four decimals**
+by the availability fix above, which is the control that says the miss is not in the
+availability draw: those two rows condition on realized minutes and realized played games,
+so they are the only rows in the table the fix could not move, and they did not move. So the
+component chain, its season/game frailty split and its copula are calibrated on the bonus to
+within 1.5% and 9% respectively, in the *low* direction. Everything above that comes from the minutes the
 simulator draws, and the next row says why.
 
 #### The diagnostic that earned its keep: the composition's game-level minutes dispersion
@@ -1432,7 +1447,7 @@ it fails — and not because of anything in `src/sim/`:
 | source | implied game-level overdispersion |
 |---|---|
 | realized 2022-23 minutes | **4.22** |
-| the simulator's draws | **8.42** |
+| the simulator's draws | **8.28** *(8.42 before the availability fix)* |
 | the composition head's own draws, on **realized** availability, sigma = 0 | **7.70** |
 | …with the shipped sigma = 0.45 | 7.87 |
 
@@ -1488,7 +1503,8 @@ Both would have produced a completely plausible board.
   empirical rate of no-design player-seasons in the earlier seasons selection may read
   (**0.4303** for 2022-23), which is the same point-in-time device
   `stan_composition.rookie_share_priors` already uses for their minutes share. The bias falls
-  to **−21.9**.
+  to **−21.2** (it read −21.9 before the availability draw was fixed to read the head's
+  role-graded dispersion).
 
 #### What the artifact carries, and the honest caveats
 
@@ -1541,8 +1557,8 @@ whole four-round structure: 2020-21 has **no Round 4 at all** (0 games in slot 1
 | double week | train | 2,298 | 93.24 | 89.63 | 50.48 | −3.61 | 0.4615 | 34.37 |
 | double week | validation | 2,319 | 98.51 | 97.31 | 52.90 | −1.21 | 0.4216 | 36.18 |
 
-**The season-total bias is a weekly bias, and it is front-loaded.** Gate A reads −21.9 to
-−71.6 dk_pts on a season and this says where it comes from: about −2 to −3 a week,
+**The season-total bias is a weekly bias, and it is front-loaded.** Gate A reads −21.2 to
+−70.1 dk_pts on a season and this says where it comes from: about −2 to −3 a week,
 concentrated at the **start** of the season. Pooled over the two validation seasons the
 per-period bias runs **−5.28** in week 1, −4.99 in week 2, −3.27 in week 3, and is inside
 one point by week 13 (−1.08) and −0.70 by week 17. That is a real shape and not noise — it

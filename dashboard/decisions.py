@@ -3361,14 +3361,16 @@ REGISTRY: tuple[Decision, ...] = (
                 "reproduced the incumbent to four decimals, because at `g = 0` every class "
                 "carries identical responsibility and the surface is flat in the direction "
                 "that separates them. Separated starts are worth **21.9** and **29.3** "
-                "log-likelihood points at K=3 and K=4, against 0.007 for `mixture`. **The "
+                "log-likelihood points at K=3 and K=4, against 0.007 for `mixture`. "
                 "**And on the shoulders it REGRESSES**: flat mass everywhere pushes the "
                 "71-81 error from +0.0186 to **+0.0273**, the worst of the Beta arms, so its "
                 "`shoulder_error` is 0.0290 against the reference's 0.0253. Its CRPS win is "
                 "real and its calibration win is confined to the two regions the metric set "
-                "happened to measure. **The pinned `l2` is a stated confound**: the penalty "
-                "reaches `β[1:]` only, so every margin here is an upper bound on the "
-                "likelihood's own contribution and the arms are not equally advantaged. "
+                "happened to measure. **The pinned `l2` was a stated confound and is now a "
+                "measured null**: swept from 0 to 256, the reference's best penalty is "
+                "worth 0.00034 CRPS and **99.4%** of this −0.056 survives it, because at "
+                "4,027 rows the penalty is 1.5 parts in 100,000 of the objective. The extra "
+                "parameter is not what buys the margin. "
                 "**And the CRPS wins do NOT replicate.** On 13 rolling origins and 5,142 "
                 "fitting-half rows every margin shrinks by roughly an order of magnitude "
                 "and every interval spans zero — `beta_rect` −0.0055 [−0.0212, +0.0102] at "
@@ -6897,6 +6899,82 @@ REGISTRY: tuple[Decision, ...] = (
         reviewed="2026-08-10",
         date="2026-08-10",
         tags=("simulations", "provenance"),
+    ),
+    Decision(
+        id="the-pinned-l2-is-not-what-buys-the-likelihood-margins",
+        topic="availability",
+        claim="**The pinned `l2 = 1.0` is not doing the work.** Swept from 0 to 256, the "
+              "reference's most favourable penalty is worth **0.00034** CRPS, so **99.4%** "
+              "of `beta_rect`'s −0.056 margin survives and every ordering on the "
+              "likelihood axis stands.",
+        because="The likelihood ladder pins `l2` across arms so the contrast is the "
+                "likelihood alone, and the penalty reaches `β[1:]` only — so `mixture` "
+                "carried **eleven** unpenalized parameters against the reference's zero, "
+                "`finite_mix` four and `beta_rect` one, making every margin a stated upper "
+                "bound. Refitting all four arms at **eight** penalties, with the grid "
+                "**anchored at 0** so the reference's optimum cannot sit on a low edge: "
+                "every arm's optimum is `l2 = 0`, the reference moves 9.812533 → "
+                "**9.812192**, and `beta_rect`'s margin goes −0.056392 → **−0.056052** "
+                "against it. Matching every arm at its own optimum instead makes the margin "
+                "marginally **larger** (−0.056822), and `mixture` ties CRPS at every "
+                "penalty on the grid, so **D1's selection rule is untouched**. The "
+                "mechanism is arithmetic: at the fitted solution `β[1:]·β[1:]` is **0.2418** "
+                "against a training log-likelihood of −16,239.2, so the pinned penalty is "
+                "**1.5 parts in 100,000** of the objective — the features are standardized "
+                "and 4,027 rows have already shrunk the coefficients. **This is the "
+                "opposite of what the same sweep found one axis over**, where `l2` mattered "
+                "a great deal: there it was swept jointly with the *lookback*, and a "
+                "1,155-row fit preferred `l2 = 64` where an 8-season fit preferred 16. A "
+                "penalty matters when the **row count** is the axis and not when the "
+                "likelihood is.",
+        status="null",
+        reproduce="make availability-window → "
+                  "outputs/predictions/availability_l2_sweep.csv, "
+                  "outputs/predictions/availability_l2_verdict.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-11",
+        date="2026-08-11",
+        tags=("head", "calibration"),
+    ),
+    Decision(
+        id="the-simulator-gathers-availability-rho-rather-than-broadcasting-it",
+        topic="simulations",
+        claim="The simulator drew availability from a **scalar** dispersion, so at the "
+              "`train` window it **raised** against the role-graded posterior that ships. "
+              "It now gathers each player's `rho_bin` from the head's own recipe — and "
+              "every Gate A row improved.",
+        because="`season.py` re-implemented the beta-binomial inline as `np.full("
+                "n_players, rho_draws[draw])`. That is a scalar broadcast, and since the "
+                "window round the `train` posterior has carried `rho_draws` of shape "
+                "**(1000, 4)** with `n_rho: 4`, so `make simulate-season` died with "
+                "`could not broadcast input array from shape (4,) into shape (539,)` — "
+                "**confirmed by running the target, not only the expression**. The other "
+                "window was worse than broken: `train_val` is still `(1000,)` with "
+                "`role_rho: None`, so it predates the window round and was silently stale. "
+                "The fix is NOT to route through `predict_samples`, which returns games "
+                "played for design rows where the simulator needs the **rate**, applied "
+                "per cell — a traded player has more than one. It is to reconstruct the "
+                "head's own `cut` step (`availability_rho_bin`), the same door the "
+                "composition head is already read through. Three traps, each silent: "
+                "`rho_bin` is **1-based** while `rho_draws` is 0-based; a shared-`rho` "
+                "artifact has no cut step at all and must read as one column rather than "
+                "as a broken recipe; and a player with no design row has a NaN prior MPG "
+                "that the cut sends to the **lowest** bucket — the widest dispersion, "
+                "which is `role_bins`' own rule and the conservative direction. **This is "
+                "the first Gate A reading against the head that ships**, and every row "
+                "moved in the improving direction: games played CRPS 9.6754 → **9.5262** "
+                "and 9.7829 → **9.6140**, season-total MAE 402.14 → 399.03 and 407.89 → "
+                "402.48, bias −21.93 → −21.20 and −63.34 → −61.14. The two "
+                "realized-minutes bonus rows are the control — they condition on realized "
+                "minutes and played games, are the only rows the fix could not move, and "
+                "reproduce to four decimals.",
+        status="built",
+        reproduce="make simulate-season → outputs/predictions/sim_season_gate_a.csv, "
+                  "data/features/sim_tensor_2022-23.npz",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-11",
+        date="2026-08-11",
+        tags=("simulations", "availability", "head"),
     ),
     Decision(
         id="field-lineup-reasoning-is-a-measured-null",

@@ -400,6 +400,70 @@ def component_rates(artifacts: dict, frame: pd.DataFrame) -> dict:
     return out
 
 
+def availability_rates(rng: np.random.Generator, mu: np.ndarray, rho_by_bin: np.ndarray,
+                       bins: np.ndarray) -> np.ndarray:
+    """One beta-binomial availability rate per player, at that player's **own** `rho`.
+
+    Two vectors and a gather rather than a scalar broadcast, because the shipped head grades
+    dispersion by prior-MPG role bucket: `rho_by_bin` is this posterior draw's `(n_rho,)`
+    row and `bins` is the 0-based bucket per player from `availability_rho_bin`. Under a
+    shared dispersion `n_rho` is 1 and every player gathers the same entry, which reproduces
+    the scalar form exactly.
+
+    Named rather than inlined because it is the one place the simulator touches this head's
+    likelihood, and it was inlined against a scalar for the whole window round without
+    anything raising until `rho` became a vector.
+    """
+    a, b = beta_shapes(mu, rho_by_bin[bins])
+    return rng.beta(a, b)
+
+
+def availability_rho_bin(artifact, frame: pd.DataFrame) -> np.ndarray:
+    """0-based dispersion column per row, from the availability head's **own** recipe.
+
+    The head grades `rho` by prior-MPG role bucket, so `rho_draws` is `(draws x n_rho)` and
+    a consumer has to say which column applies to which player. The artifact already
+    carries that as a `cut` recipe step — the same door `build_context` opens on the
+    composition head — so the assignment is reconstructed rather than re-derived, and a
+    consumer never has to import `stan_availability.role_bins` or know the edges.
+
+    Three things this has to get right, each of which fails silently rather than loudly:
+
+    - **`rho_bin` is 1-based.** `recipe.transform` and `role_bins` both emit `[1..n_rho]`,
+      matching the Stan source's own gather. Indexing `rho_draws` needs `bin - 1`, and an
+      off-by-one hands a player the *wrong bucket's* dispersion at a legal index.
+    - **A shared-`rho` artifact has no such step.** `rho_draws` is then `(draws,)` with an
+      empty recipe, and every row belongs to the single column — so a missing step is the
+      shared-dispersion arm rather than a broken recipe, and returns all zeros.
+    - **A player with no design row still needs a bucket.** His `mu` is
+      `no_design_availability`'s empirical rate; his prior MPG is NaN, which the `cut` step
+      sends to the **lowest** bucket. That is the head's own rule (`role_bins`) and the
+      conservative direction, since the fringe bucket carries the widest dispersion.
+
+    Returned as an index rather than as `rho` itself because the dispersion is a per-draw
+    quantity: the caller gathers `rho_draws[draw][bin]` inside the sim loop, where the
+    posterior draw is the outer loop (rule 4).
+    """
+    n_rho = int(artifact.extras.get("n_rho", np.shape(artifact.draws["rho_draws"])[-1]
+                                    if np.ndim(artifact.draws["rho_draws"]) > 1 else 1))
+    column = artifact.extras.get("rho_bin_column", "rho_bin")
+    transformed = artifact.recipe.transform(frame)
+    if column not in transformed.columns:
+        if n_rho != 1:
+            raise KeyError(
+                f"the availability artifact carries {n_rho} dispersion columns but its "
+                f"recipe produces no {column!r}, so there is no way to say which column "
+                f"applies to which player. Re-run `make posteriors`.")
+        return np.zeros(len(frame), dtype=np.int64)
+
+    bins = transformed[column].to_numpy(np.int64) - 1
+    if bins.min(initial=0) < 0 or bins.max(initial=0) >= n_rho:
+        raise ValueError(
+            f"{column!r} produced buckets outside [1, {n_rho}] — the recipe's cut and the "
+            f"persisted `rho_draws` disagree about the head's dispersion axis")
+    return bins
+
+
 def composition_eta(artifact, model, players: pd.DataFrame) -> dict:
     """The composition's linear predictor, split into a base and two per-game slopes.
 
@@ -642,9 +706,8 @@ def _sim_one(s: int, ctx: dict) -> dict:
     row_overtimes = (row_length - 48.0) / 5.0
 
     # ── availability: one beta-binomial rate per player, a binomial per stint ─
-    a, b = beta_shapes(ctx["avail_mu"][draw],
-                       np.full(ctx["n_players"], ctx["avail_rho"][draw]))
-    p_available = rng.beta(a, b)
+    p_available = availability_rates(rng, ctx["avail_mu"][draw], ctx["avail_rho"][draw],
+                                     ctx["avail_rho_bin"])
     gp = rng.binomial(ctx["cell_games"], p_available[ctx["cell_player"]])
     played = allocate_spells(gp, ctx["cell_games"], float(ctx["dur_mu"][draw]),
                              float(ctx["dur_kappa"][draw]),
@@ -809,6 +872,12 @@ def build_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
     mu = np.full((avail_art.n_draws, len(player_ids)), no_design)
     if present.any():
         mu[:, present] = avail_art.mu_draws(avail[present])
+    # `(draws x n_rho)` in both arms, so the gather below has one shape to handle. The
+    # shared-dispersion artifact persists `(draws,)`; `rehydrate` does the same promotion.
+    avail_rho = np.asarray(avail_art.draws["rho_draws"], dtype=float)
+    if avail_rho.ndim == 1:
+        avail_rho = avail_rho[:, None]
+    avail_rho_bin = availability_rho_bin(avail_art, avail)
 
     comp_art = artifacts["composition"]
     comp_model = rehydrate_composition(comp_art, comp_art.n_draws,
@@ -848,7 +917,14 @@ def build_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
         "cell_player": cell_frame["player_id"].map(player_pos).to_numpy(np.int64),
         "cell_games": cell_frame["games"].to_numpy(np.int64),
         "component_row": component_row,
-        "avail_mu": mu, "avail_rho": np.asarray(avail_art.draws["rho_draws"], float),
+        "avail_mu": mu, "avail_rho": avail_rho, "avail_rho_bin": avail_rho_bin,
+        # One label per dispersion column, always — a legacy artifact carries none, and a
+        # progress line that silently printed three of four buckets would be worse than one
+        # that printed indices.
+        "avail_rho_labels": (list(avail_art.extras["rho_labels"])
+                             if len(avail_art.extras.get("rho_labels", ()))
+                             == avail_rho.shape[1]
+                             else [f"bucket {j + 1}" for j in range(avail_rho.shape[1])]),
         "dur_mu": dur_mu, "dur_kappa": dur_kappa,
         "eta_base": eta["base"], "eta_per_overtime": eta["per_overtime"],
         "eta_per_clip": eta["per_clip"], "affine_error": eta["affine_error"],
@@ -1274,6 +1350,10 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
               f"{float(ctx['ps_sigma'].mean()):.3f} ({ctx['sigma_source']})")
         print(f"  availability: the head where it has a row, {ctx['no_design_availability']:.4f} "
               f"where it does not (an expanding-window empirical rate)")
+        counts = np.bincount(ctx["avail_rho_bin"], minlength=ctx["avail_rho"].shape[1])
+        print("    dispersion: " + ", ".join(
+            f"{label} rho {ctx['avail_rho'][:, j].mean():.4f} ({n:,} players)"
+            for j, (label, n) in enumerate(zip(ctx["avail_rho_labels"], counts))))
         print(f"  copula: {len(COUNT_HEADS)} count frailties, lognormal sigma "
               f"{ctx['frailty_sigma']:.4f} at overdispersion "
               f"{BONUS_GAME_OVERDISPERSION}; {ctx['copula']['saturated']} of "

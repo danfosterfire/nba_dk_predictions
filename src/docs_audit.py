@@ -5282,9 +5282,9 @@ def _weekly() -> list[Claim]:
         _c("−0.70", WEEK_PERIOD, lambda: _week_period_bias(16),
            "validation bias in week 17", doc=SIMS),
         # Gate A's own season-total bias, so the weekly row is read against it.
-        _c("−21.9", SIM_GATE_A, lambda: _season_total_bias(largest=True),
+        _c("−21.2", SIM_GATE_A, lambda: _season_total_bias(largest=True),
            "smallest season-total bias", doc=SIMS),
-        _c("−71.6", SIM_GATE_A, lambda: _season_total_bias(largest=False),
+        _c("−70.1", SIM_GATE_A, lambda: _season_total_bias(largest=False),
            "largest season-total bias", doc=SIMS),
     ]
     return C

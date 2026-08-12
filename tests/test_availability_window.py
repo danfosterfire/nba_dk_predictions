@@ -495,3 +495,73 @@ def test_both_rolling_tables_carry_the_shoulder_columns():
                        "err_band_high_shoulder", "boundary_tail_error", "body_error"):
             assert column in table.columns
         assert (table["shoulder_error"] >= 0).all()
+
+
+# ── The `l2` confound (§7d) ───────────────────────────────────────────────────
+
+def test_l2_grid_is_anchored_at_the_unpenalized_mle():
+    """The zero end is what makes the sweep a bound rather than a grid search.
+
+    If the reference's optimum sat on the grid's low edge, "sweep it further down" would
+    still be an open move and the surviving margin would not be a bound on anything. Zero
+    is the unpenalized MLE, so nothing lies below it.
+    """
+    from src.models.availability_window import L2_GRID
+
+    assert min(L2_GRID) == 0.0
+    assert list(L2_GRID) == sorted(L2_GRID)
+    assert len(set(L2_GRID)) == len(L2_GRID)
+    # The pinned value the ladder scored every arm at has to be *on* the grid, or the
+    # sweep cannot report a margin against it.
+    assert 1.0 in L2_GRID
+
+
+def test_l2_confound_reports_each_arm_against_the_reference_at_its_own_best():
+    """The verdict's three margins are the three readings §7d distinguishes.
+
+    A sweep that only reported the pinned margin would answer a different question than the
+    one asked: what has to be shown is the challenger against a reference regularized *as
+    favourably as the grid allows*, which is the reading that can only shrink the margin.
+    """
+    from src.models import availability_window as mod
+
+    train = _frailty_frame(400, seed=3)
+    val = _frailty_frame(200, seed=4)
+    grid = (0.0, 1.0, 256.0)
+    sweep, verdict = mod.l2_confound(train, val, 85, grid=grid,
+                                     arms=("betabinom", "beta_rect"), seed=0)
+
+    assert len(sweep) == len(grid) * 2
+    assert set(sweep["l2"]) == set(grid)
+    assert sweep["is_pinned"].sum() == 2
+    # One verdict row per challenger — the reference is the yardstick, not an arm.
+    assert list(verdict["arm"]) == ["beta_rect"]
+
+    row = verdict.iloc[0]
+    ref = sweep[sweep["likelihood"] == "betabinom"]
+    # The reference's chosen `l2` is its best on the grid, and "best" is lowest CRPS.
+    assert row["reference_l2_best"] == ref.sort_values("val_crps").iloc[0]["l2"]
+    assert row["reference_crps_best"] <= row["reference_crps_pinned"] + 1e-12
+    assert row["arm_crps_best"] <= row["arm_crps_pinned"] + 1e-12
+    # A more favourably regularized reference can only move the margin toward zero, which
+    # is what makes the surviving share a lower bound rather than a point estimate.
+    assert row["margin_vs_reference_best"] >= row["margin_pinned"] - 1e-12
+    for name in ("margin_pinned", "margin_vs_reference_best", "margin_matched"):
+        assert row[f"{name}_lo"] <= row[name] <= row[f"{name}_hi"]
+
+
+def test_l2_confound_counts_the_parameters_the_penalty_never_reaches():
+    """The confound is the unpenalized block, so the table has to carry its size.
+
+    `l2` multiplies `beta[1:]` and nothing else, so an arm's advantage under a pinned
+    penalty is exactly the parameters it adds outside that block. Stating it as a column
+    is what turns "the arms are not equally advantaged" into something checkable.
+    """
+    from src.models.availability_window import L2_UNPENALIZED, LIKELIHOODS
+
+    assert L2_UNPENALIZED["betabinom"] == 0
+    # Every arm the confound is measured on is a real arm of the ladder.
+    assert set(L2_UNPENALIZED) <= set(LIKELIHOODS)
+    # And the ordering is the one §7d states: mixture carries the most, the control one.
+    assert (L2_UNPENALIZED["mixture"] > L2_UNPENALIZED["finite_mix"]
+            > L2_UNPENALIZED["beta_rect"] > L2_UNPENALIZED["betabinom"])

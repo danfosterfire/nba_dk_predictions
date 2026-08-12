@@ -68,6 +68,30 @@ want a different one** — it is the least-examined of the five.
 
 ## 2. Session 1 — the simulator's draw path, and the `l2` confound
 
+> ✅ **Done 2026-08-11. Both parts landed; neither changed a decision.**
+>
+> **Part A.** `make simulate-season` was run first and reproduced the failure *in the target*
+> — `ValueError: could not broadcast input array from shape (4,) into shape (539,)` at sim 0
+> of 2,000 — so the break was a broken target and not only a broken line. The fix is
+> `season.availability_rho_bin` + `season.availability_rates`: the dispersion axis is
+> reconstructed from the artifact's own `cut` step, both artifact shapes are handled,
+> `rho_bin`'s 1-based convention and the no-design player's lowest-bucket rule are each
+> pinned by a test, and a shared-`rho` artifact reproduces the old scalar draw **bit for
+> bit** (also a test). Six tests added. All four seasons were re-simulated at 2,000 sims, so
+> the Gate A artifact holds no rows from the pre-window posterior; every row improved and the
+> two realized-minutes bonus rows reproduced to four decimals as the control. Details in
+> `availability-window-plan.md` §8, figures in `simulations-plan.md`.
+>
+> **Part B is a null**, which is the useful kind here: eight penalties from 0 to 256 for
+> every arm at the shipped window move the reference by **0.00034** CRPS at its best, so
+> **99.4%** of `beta_rect`'s margin survives and every ordering in §7c stands. The mechanism
+> is that at 4,027 rows the pinned penalty is 1.5 parts in 100,000 of the objective. §7c
+> result 3, §7d, §7g and §8 decision 5 are updated. **D1 is unaffected** — `mixture` ties
+> CRPS at every penalty on the grid — so session 2 starts with nothing outstanding.
+>
+> One thing session 3 inherits: the tensors were rebuilt, so `make bracket` / `make draft` /
+> `make strategy-sweep` are now scored against a superseded tensor. §4 re-runs them anyway.
+
 ### What is actually wrong with the simulator, corrected
 
 `src/sim/season.py:645-648` draws availability by **re-implementing** the head:
