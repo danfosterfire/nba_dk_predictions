@@ -187,6 +187,12 @@ MWIN_STAKE = "outputs/predictions/minutes_window_stake.csv"
 # `single` and `mixture` columns. Claiming a delta therefore reads one row rather than
 # differencing two artifacts, which is what stops a half-refreshed pair passing.
 MIXVAL = "outputs/predictions/availability_mixture_contest.csv"
+AREG = "outputs/predictions/availability_regime.csv"
+ASHRINK = "outputs/predictions/availability_shrinkage.csv"
+ARCONF = "outputs/predictions/availability_regime_confirmation.csv"
+#: §5b's block-window arm, rebuilt inside `make availability-regime` as the
+#: control the whole shrinkage comparison is read against.
+SPLICE = "splice8__intercept_workload"
 GL_DEPTH = "outputs/predictions/stan_game_length_depth.csv"
 GL_D = "outputs/predictions/stan_game_length_diagnostics.csv"
 COMP_RHO = "outputs/predictions/stan_composition_dispersion.csv"
@@ -5708,6 +5714,211 @@ def _availability_window() -> list[Claim]:
     return C
 
 
+def _availability_regime() -> list[Claim]:
+    """`docs/availability-window-plan.md` §10 — the regime axis and the shrinkage family.
+
+    A null round, which changes what is worth claiming. There is no shipped figure to
+    protect, so the claims here protect the two things a null can silently lose:
+
+    **The controls.** `regime_placebo` is what turns "the trough hurts" into a measurement
+    rather than a statement about row count, and `splice8__intercept_workload` is what makes
+    the shrinkage table comparable to §5b at all — it reproduces that round's 9.8983 and
+    −0.0359 on a fresh run, which is the provenance the whole §10c comparison stands on. A
+    control that quietly stopped controlling would leave both sections reading the same and
+    meaning nothing.
+
+    **Both sides of every reversal.** §10c withdraws §5b's co-adaptation diagnosis on one
+    matched pair, so the pair is claimed at both ends and so is the interval; §10d's verdict
+    is that the selected arms *lose*, so the selected arms' validation rows are claimed with
+    their intervals rather than only the shipped head's.
+
+    The identification block is claimed because §10d's largest single figure — the lag arm's
+    +0.1610 — is only interpretable beside it, and a reader who lost the 1.000 would be left
+    with a feature that looks like it was tested and failed.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, artifact: str, actual, label: str, **kw) -> None:
+        C.append(_c(quoted, artifact, actual, label, doc=AWIN, **kw))
+
+    def reg(arm: str, column: str, experiment: str) -> float:
+        return cell(AREG, column, arm=arm, experiment=experiment)
+
+    def shr(arm: str, column: str, experiment: str = "shrinkage") -> float:
+        return cell(ASHRINK, column, arm=arm, experiment=experiment)
+
+    def conf(arm: str, column: str) -> float:
+        return cell(ARCONF, column, arm=arm)
+
+    # ── §10a: the blindness, and the sign reversal it produces ────────────────
+    add("2", AREG, lambda: max_of(AREG, "origins_active"),
+        "most origins any regime arm is active at", tol=0.5)
+    for quoted, arm, column in (
+            ("−0.0198", "lb8__dummy_lag", "crps_vs_lookback_none"),
+            ("−0.0341", "lb8__dummy_lag", "lookback_none_lo"),
+            ("−0.0046", "lb8__dummy_lag", "lookback_none_hi"),
+            ("−0.0169", "lb8__dummy_both", "crps_vs_lookback_none"),
+            ("+0.0018", "lb8__w0.50", "crps_vs_lookback_none"),
+            ("+0.0072", "lb8__exclude", "crps_vs_lookback_none"),
+            ("+0.0081", "lb8__dummy_target", "crps_vs_lookback_none"),
+            ("+0.0036", "lb8__dummy_target", "lookback_none_lo"),
+            ("+0.0124", "lb8__dummy_target", "lookback_none_hi")):
+        add(quoted, AREG, lambda a=arm, c=column: reg(a, c, "regime_x_lookback"),
+            f"{arm} {column}")
+
+    # ── §10b: the contamination harness and its control ───────────────────────
+    contam = [("clean", "10.0121", None, None, None, "−0.0060"),
+              ("contaminated", "10.0307", "+0.0186", "−0.0067", "+0.0428", "−0.0166"),
+              ("contaminated__dummy_target", "9.9951", "−0.0171", "−0.0325", "−0.0027",
+               "−0.0026"),
+              ("contaminated__dummy_both", "9.9968", "−0.0154", "−0.0311", "−0.0005",
+               "−0.0023"),
+              ("contaminated__dummy_lag", "9.9992", "−0.0129", "−0.0273", "+0.0001",
+               "−0.0046"),
+              ("contaminated__w0.25", "10.0132", "+0.0011", "−0.0074", "+0.0093",
+               "−0.0096"),
+              ("contaminated__w0.50", "10.0175", "+0.0054", "−0.0100", "+0.0202",
+               "−0.0124")]
+    for arm, crps, delta, lo, hi, bias in contam:
+        add(crps, AREG, lambda a=arm: reg(a, "crps", "regime_contamination"),
+            f"contamination CRPS, {arm}")
+        add(bias, AREG, lambda a=arm: reg(a, "share_bias", "regime_contamination"),
+            f"contamination predicted-share bias, {arm}")
+        for quoted, column in ((delta, "crps_vs_reference"), (lo, "lo"), (hi, "hi")):
+            if quoted is not None:
+                add(quoted, AREG,
+                    lambda a=arm, c=column: reg(a, c, "regime_contamination"),
+                    f"contamination {column}, {arm}")
+    add("8", AREG,
+        lambda: reg("contaminated__dummy_target", "origins_won", "regime_contamination"),
+        "origins the indicator wins", tol=0.5)
+    # The core-block sensitivity: same sign, interval now covering zero.
+    for quoted, column in (("−0.0125", "crps_vs_reference"), ("−0.0276", "lo"),
+                           ("+0.0017", "hi")):
+        add(quoted, AREG,
+            lambda c=column: reg("contaminated__dummy_target", c,
+                                 "regime_contamination_core"),
+            f"core-block contamination {column}")
+    # THE CONTROL. Both the regime block's cost against the placebo and the placebo's own
+    # null against clean, because the reading is the pair.
+    for quoted, arm, column in (("9.7426", "inject_regime", "crps"),
+                                ("+0.0402", "inject_regime", "crps_vs_reference"),
+                                ("+0.0163", "inject_regime", "lo"),
+                                ("+0.0653", "inject_regime", "hi"),
+                                ("9.7085", "clean", "crps"),
+                                ("+0.0061", "clean", "crps_vs_reference"),
+                                ("−0.0107", "clean", "lo"),
+                                ("+0.0232", "clean", "hi"),
+                                ("9.7024", "inject_placebo", "crps")):
+        add(quoted, AREG,
+            lambda a=arm, c=column: reg(a, c, "regime_placebo_vs_placebo"),
+            f"placebo control {column}, {arm}")
+
+    # ── §10c: the shrinkage ladder, and the §5b arms it reproduces ────────────
+    add("9.9478", ASHRINK, lambda: shr("long_only", "crps"),
+        "the untruncated fit — §5b's (all, all) reproduced")
+    add("9.8983", ASHRINK, lambda: shr(SPLICE, "crps"),
+        "§5b's block winner reproduced")
+    add("9.9342", ASHRINK, lambda: shr("shrink8__laminf", "crps"),
+        "§5b's `short__none` reference reproduced")
+    add("−0.0359", ASHRINK,
+        lambda: shr(SPLICE, "crps") - shr("shrink8__laminf", "crps"),
+        "§5b's headline block gap, re-derived on one run")
+    add("9.918054", ASHRINK, lambda: shr("shrink8__lam0", "crps"),
+        "the lambda = 0 endpoint")
+    add("9.917984", ASHRINK, lambda: shr("short8__only", "crps"),
+        "the plain short-window fit it reproduces")
+    for quoted, arm, column in (
+            ("9.8939", "shrink5__free_drift__laminf", "crps"),
+            ("−0.0539", "shrink5__free_drift__laminf", "crps_vs_reference"),
+            ("−0.0750", "shrink5__free_drift__laminf", "lo"),
+            ("−0.0322", "shrink5__free_drift__laminf", "hi"),
+            ("10", "shrink5__free_drift__laminf", "origins_won"),
+            ("9.8973", "shrink5__free_drift__lam1024", "crps"),
+            ("−0.0496", SPLICE, "crps_vs_reference"),
+            ("12", SPLICE, "origins_won"),
+            ("9.9025", "shrink5__lam256", "crps"),
+            ("9.9038", "shrink8__free_drift__laminf", "crps"),
+            ("9.9180", "short8__only", "crps"),
+            ("−0.0136", "shrink8__laminf", "crps_vs_reference")):
+        add(quoted, ASHRINK, lambda a=arm, c=column: shr(a, c),
+            f"shrinkage {column}, {arm}",
+            **({"tol": 0.5} if column == "origins_won" else {}))
+    # The lambda sweep at short = 8, quoted as a monotone run: the claim is that the knob
+    # has an INTERIOR optimum, which a single endpoint could not carry.
+    for quoted, lam in (("9.9181", "lam0"), ("9.9175", "lam1"), ("9.9164", "lam4"),
+                        ("9.9145", "lam16"), ("9.9117", "lam64"), ("9.9088", "lam256"),
+                        ("9.9102", "lam1024")):
+        add(quoted, ASHRINK, lambda x=lam: shr(f"shrink8__{x}", "crps"),
+            f"global shrinkage at short = 8, {lam}")
+    # THE REVERSAL, at both ends and with its interval.
+    for quoted, arm, column in (("+0.0055", "shrink8__free_drift__laminf",
+                                 "crps_vs_reference"),
+                                ("−0.0017", "shrink8__free_drift__laminf", "lo"),
+                                ("+0.0131", "shrink8__free_drift__laminf", "hi"),
+                                ("4", "shrink8__free_drift__laminf", "origins_won"),
+                                ("−0.0044", "shrink5__free_drift__laminf",
+                                 "crps_vs_reference"),
+                                ("−0.0175", "shrink5__free_drift__laminf", "lo"),
+                                ("+0.0081", "shrink5__free_drift__laminf", "hi")):
+        add(quoted, ASHRINK,
+            lambda a=arm, c=column: shr(a, c, "shrinkage_vs_splice"),
+            f"joint fit against the splice, {column}, {arm}",
+            **({"tol": 0.5} if column == "origins_won" else {}))
+
+    # ── §10d: the one validation reading ──────────────────────────────────────
+    val = [("shipped__2012_role_rho", "9.8247", None, None, None, "0.0588", "0.0178"),
+           ("regime__w0.50", "9.8192", "−0.0056", "−0.0289", "+0.0195", "0.0692",
+            "0.0198"),
+           ("regime__w0.25", "9.8225", "−0.0023", "−0.0421", "+0.0402", "0.0758",
+            "0.0212"),
+           ("shrink__global__2012__lam256", "9.8363", "+0.0116", "−0.0053", "+0.0278",
+            "0.0611", "0.0183"),
+           ("regime__exclude", "9.8367", "+0.0119", "−0.0490", "+0.0780", "0.0830",
+            "0.0231"),
+           ("regime__dummy_target", "9.8423", "+0.0175", "−0.0326", "+0.0693", "0.0779",
+            "0.0233"),
+           ("regime__core_exclude", "9.8534", "+0.0286", "−0.0254", "+0.0894", "0.0822",
+            "0.0223"),
+           ("shrink__global__lb5__lam256", "9.9046", "+0.0798", "+0.0258", "+0.1304",
+            "0.0759", "0.0143"),
+           ("shrink__free_drift__2012__laminf", "9.9001", "+0.0753", "+0.0368", "+0.1139",
+            "0.0605", "0.0180"),
+           ("shrink__free_drift__lb5__laminf", "9.9393", "+0.1146", "+0.0444", "+0.1821",
+            "0.0854", "0.0122"),
+           ("regime__dummy_both", "9.9350", "+0.1103", "+0.0122", "+0.2095", "0.0799",
+            "0.0133"),
+           ("regime__dummy_lag", "9.9857", "+0.1610", "+0.0472", "+0.2807", "0.0833",
+            "0.0113"),
+           ("mixture__shipped_2012", "9.8237", None, None, None, "0.0631", "0.0108"),
+           ("mixture__regime_exclude", "9.8709", "+0.0472", "−0.0221", "+0.1261",
+            "0.0931", "0.0180"),
+           ("mixture__regime_dummy_target", "9.8925", "+0.0688", "+0.0145", "+0.1258",
+            "0.0886", "0.0161")]
+    for arm, crps, delta, lo, hi, pit, boundary in val:
+        add(crps, ARCONF, lambda a=arm: conf(a, "val_crps"), f"validation CRPS, {arm}")
+        add(pit, ARCONF, lambda a=arm: conf(a, "val_pit_ks"), f"validation PIT KS, {arm}")
+        add(boundary, ARCONF, lambda a=arm: conf(a, "boundary_tail_error"),
+            f"validation boundary error, {arm}")
+        for quoted, column in ((delta, "crps_vs_shipped"), (lo, "crps_vs_shipped_lo"),
+                               (hi, "crps_vs_shipped_hi")):
+            if quoted is not None:
+                add(quoted, ARCONF, lambda a=arm, c=column: conf(a, c),
+                    f"validation {column}, {arm}")
+
+    # ── the identification block the lag arm's reading depends on ─────────────
+    for quoted, column in (("1.000", "lag_implies_target_train"),
+                           ("885", "n_regime_lag_train"),
+                           ("1,285", "n_regime_target_train"),
+                           ("433", "n_regime_lag_val"),
+                           ("0", "n_regime_target_val")):
+        add(quoted, ARCONF,
+            lambda c=column: cell(ARCONF, c, arm="shipped__2012_role_rho"),
+            f"regime identification, {column}",
+            **({"tol": 0.5} if column == "n_regime_target_val" else {}))
+    return C
+
+
 def _build() -> tuple[Claim, ...]:
     """Every claim, in doc order. One builder per doc — the registry is long enough that
     a single function made it hard to see which doc a section belonged to.
@@ -5718,7 +5929,8 @@ def _build() -> tuple[Claim, ...]:
     return tuple(_availability() + _composition() + _predictions() + _adp()
                  + _established_facts() + _readme() + _shot_basis() + _games_played()
                  + _games_played_in_notes() + _train_validate_test() + _weekly()
-                 + _minutes_window() + _availability_window())
+                 + _minutes_window() + _availability_window()
+                 + _availability_regime())
 
 
 CLAIMS: tuple[Claim, ...] = _build()

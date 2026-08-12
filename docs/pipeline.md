@@ -200,6 +200,22 @@ make minutes-window    # the marginal minutes head's fitting window x dispersion
                        #   short window makes the marginal head a HARDER reference to tie
                        #   rather than an easier one.
 
+make availability-regime # the last two open axes on the availability head's fitting rule
+                       #   → outputs/predictions/availability_{regime,shrinkage,
+                       #   regime_confirmation}.csv. (1) an explicit COVID-regime indicator
+                       #   or exclusion, swept against lookback; (2) shrinkage toward the
+                       #   long-window fit. Point MLE for selection, ~6 min, no CmdStan.
+                       #   BOTH ARE NULLS, and the round's reusable part is the
+                       #   INSTRUMENT: the walk-forward harness is blind to a regime that
+                       #   sits in its last three fitting seasons — no arm is active at
+                       #   more than 2 of 13 origins, and those two are the trough seasons
+                       #   themselves, so it ranks the arms backwards. The fix is a
+                       #   CONTAMINATION harness that injects the block into ten ordinary
+                       #   origins, with a same-size ordinary block as the control. It also
+                       #   rebuilds availability-window-plan §5b's spliced arm and
+                       #   WITHDRAWS that round's diagnosis of it: fitted jointly, the same
+                       #   coefficient partition does not beat the transplant.
+
 make weekly-scores     # Gate A at the unit a LINEUP is set at: observed against
                        #   simulated dk_pts per player per scoring period, on train and
                        #   validation → outputs/predictions/weekly_score_{index,period,

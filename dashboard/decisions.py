@@ -3189,9 +3189,11 @@ REGISTRY: tuple[Decision, ...] = (
                 "training seasons are the COVID trough, so all of them over-correct "
                 "downward into two validation seasons that partially recovered. Decay 0.80 "
                 "posts the *best* full-schedule error of any arm (+0.0075) with a worse "
-                "CRPS, which is over-correction rather than calibration. Block splicing "
-                "fails for a second reason too: the blocks are not orthogonal, so a "
-                "transplanted vector is not a fit of anything. **This also bounds the "
+                "CRPS, which is over-correction rather than calibration. (A second reason "
+                "was offered for block splicing specifically — non-orthogonal blocks, so a "
+                "transplanted vector is not a fit of anything — and it was **withdrawn "
+                "2026-08-12**; see `splicing-did-not-fail-from-co-adaptation`.) **This also "
+                "bounds the "
                 "rolling harness** — every origin in it is one season ahead inside the "
                 "training half, so it cannot see a two-step extrapolation across a regime "
                 "transient and systematically prefers arms that lean recent.",
@@ -3200,9 +3202,119 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/availability_weighting.csv, "
                   "outputs/predictions/availability_weighting_confirmation.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-11",
+        reviewed="2026-08-12",
         date="2026-08-11",
         tags=("era", "null"),
+    ),
+    Decision(
+        id="the-covid-regime-axis-is-a-null",
+        topic="availability",
+        claim="**An explicit regime indicator for 2019-20 → 2021-22, and excluding those "
+              "seasons, both lose to leaving them in.** The mechanism is real and the "
+              "correction is not worth making.",
+        because="The trough is real and measurable: staged on a contamination harness — the "
+                "regime block injected into ten ordinary origins, which is the production "
+                "situation the walk-forward half contains **zero** instances of — it biases "
+                "the predicted availability share down by **1.66pp** against a clean fit's "
+                "0.60pp, and a target-season indicator cuts that to **0.26pp** while buying "
+                "**−0.0171** CRPS [−0.0325, −0.0027] over the clean fit itself. The control "
+                "holds: an ordinary block of the same size injected the same way costs "
+                "nothing (regime vs placebo **+0.0402** [+0.0163, +0.0653]). On the one "
+                "validation reading nothing survives — the indicator reads **+0.0175** on "
+                "the point MLE and **+0.0688** [+0.0145, +0.1258] on the shipped mixture, "
+                "exclusion +0.0119, and the best challenger of any kind is a 50% downweight "
+                "at −0.0056 [−0.0289, +0.0195], which is a tie that is worse on PIT and on "
+                "the boundary the head is selected on.",
+        status="null",
+        reproduce="make availability-regime → "
+                  "outputs/predictions/availability_regime.csv, "
+                  "outputs/predictions/availability_regime_confirmation.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("era", "null"),
+    ),
+    Decision(
+        id="the-rolling-harness-ranks-regime-arms-backwards",
+        topic="availability",
+        claim="**The rolling harness is not merely blind to the regime axis — it ranks it "
+              "backwards**, so the axis needed a contamination harness before it could be "
+              "measured at all.",
+        because="The regime block is the last three seasons of the fitting half, so across "
+                "the 45 arms of the lookback × regime cross **no arm is active at more than "
+                "2 of 13 origins** and five are the incumbent by definition. The two live "
+                "origins are 2020 and 2021 — the same two §4b caught the season trend's "
+                "gain hiding in — and they *are* trough seasons, so an arm that predicts an "
+                "ordinary season is penalized: at lookback 8 the target indicator reads "
+                "**+0.0081** [+0.0036, +0.0124] and a prior-season indicator **−0.0198** "
+                "[−0.0341, −0.0046], both the reverse of what the production population "
+                "wants. Intervals there are not replications either: 11 of 13 origins "
+                "contribute exactly-zero pairs. **The general fix is to stage the situation "
+                "the walk-forward cannot reach** — inject the unrepresentative block into "
+                "an ordinary origin, with a same-size ordinary block as the control.",
+        status="measured",
+        reproduce="make availability-regime → "
+                  "outputs/predictions/availability_regime.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("era",),
+    ),
+    Decision(
+        id="shrinkage-toward-the-long-window-is-a-null",
+        topic="availability",
+        claim="**Shrinking the short-window fit toward the long-window one loses to the "
+              "plain 2012-13 window on validation**, the same way the four optimizations "
+              "before it did.",
+        because="Built as a per-coefficient Gaussian prior centred on the long-window "
+                "coefficients, with `λ = 0` reproducing the plain short-window fit's "
+                "objective and `λ = ∞` pinning that coefficient to the long-window estimate "
+                "exactly. It behaves — CRPS falls monotonically in λ to an interior optimum "
+                "— and it wins the rolling harness at **9.8939** [−0.0750, −0.0322] against "
+                "the untruncated fit's 9.9478. On validation the rolling winner reads "
+                "**+0.1146** [+0.0444, +0.1821] against the shipped head, and applied at the "
+                "shipped window it is a tie at +0.0116. The tail column gives the mechanism "
+                "for the fifth time: the arms that lose most on CRPS post the **best** "
+                "boundary errors (0.0122 against the shipped head's 0.0178), which is a "
+                "downward location shift bought from the trough, not calibration.",
+        status="null",
+        reproduce="make availability-regime → "
+                  "outputs/predictions/availability_shrinkage.csv, "
+                  "outputs/predictions/availability_regime_confirmation.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("era", "null"),
+    ),
+    Decision(
+        id="splicing-did-not-fail-from-co-adaptation",
+        topic="availability",
+        claim="**A spliced coefficient block did not fail because it was spliced.** The "
+              "non-orthogonality explanation offered for the block-window arm is withdrawn.",
+        because="The claim was that coefficients estimated on eight seasons are co-adapted "
+                "to each other, so dropping five of them into a vector estimated on "
+                "twenty-five breaks that — which predicts that fitting the same five "
+                "**jointly**, conditional on the other fifteen held at their long-window "
+                "values, should beat the transplant. It does not: same coefficient "
+                "partition, same two windows, the joint fit reads **+0.0055** [−0.0017, "
+                "+0.0131] against the splice and wins 4 of 13 origins. The best arm of the "
+                "new family beats the splice only by also shortening the window, and then "
+                "by **−0.0044** [−0.0175, +0.0081] — a tie.",
+        status="withdrawn",
+        replaced_by="What was wrong with the spliced arm is what was wrong with every other "
+                    "arm in that round: it leans on the COVID trough and over-corrects into "
+                    "two validation seasons that partially recovered. The estimator was "
+                    "never the problem, so fixing it could not have helped.",
+        caught_by="A matched-pair control in `make availability-regime`, which rebuilds the "
+                  "spliced arm rather than quoting its recorded figure — it reproduces "
+                  "9.8983 and the −0.0359 headline to four decimals, so the two families "
+                  "are compared on one run rather than across two.",
+        reproduce="make availability-regime → "
+                  "outputs/predictions/availability_shrinkage.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("era",),
     ),
     Decision(
         id="rho-is-graded-by-role-not-by-era",

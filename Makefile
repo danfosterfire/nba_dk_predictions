@@ -7,7 +7,7 @@ PIP    := .venv/bin/pip
         dashboard-audit dashboard-config docs-audit \
         availability availability-profile injury-reports injuries daily-capture \
         boxscore-status availability-model availability-window \
-        availability-weighting capture-status \
+        availability-weighting availability-regime capture-status \
         capture-calendar \
         report-calibration \
         season-total adp adp-draftkings adp-fantasypros adp-panel adp-profile \
@@ -191,6 +191,19 @@ availability-window:
 # block windowing. All scored on the rolling harness — validation is never read.
 availability-weighting:
 	$(PYTHON) -m src.models.availability_weighting
+
+# The two axes `docs/availability-window-plan.md` §9 leaves open, run as one round because
+# they are the same complaint from two sides. (1) RECENCY IS NOT REPRESENTATIVENESS: an
+# explicit regime indicator for 2019-20 -> 2021-22, or excluding those seasons, swept
+# against lookback. (2) SHRINKAGE toward the long-window fit — the blocks fitted jointly
+# under different priors rather than transplanted, which is the principled version of the
+# spliced arm that failed in §5b. The plain walk-forward harness is structurally BLIND to
+# axis (1) — the regime block is the last three fitting seasons, so most origins produce a
+# bit-identical fit — so the selector is a contamination harness that injects the block
+# into a non-regime origin, with a same-size ordinary block as its control. Validation is
+# read once, at the end, on the point MLE AND on the shipped mixture.
+availability-regime:
+	$(PYTHON) -m src.models.availability_regime
 
 # ── Stan heads ────────────────────────────────────────────────────────────────
 # Fitted SEPARATELY, one model per head, because the chain availability -> min |

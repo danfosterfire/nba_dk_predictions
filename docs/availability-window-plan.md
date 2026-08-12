@@ -9,7 +9,9 @@ Built 2026-08-11. It is a **point-MLE specification ladder**, not a shipping pat
 that wins here earns a Stan port in `stan_availability.py`, it does not ship from here.
 
 > **§9 is the current state of the whole line of work** — what shipped, what is a measured
-> null not to be rebuilt, and what is still open, ranked by stake. Start there.
+> null not to be rebuilt, and what is still open, ranked by stake. Start there. §10 closes
+> its items 3 and 4 (`make availability-regime`), leaving item 5 as the only remaining one
+> that changes the model rather than the fitting rule.
 
 ---
 
@@ -355,13 +357,13 @@ grading, and too small to be the whole defect at 1.26–1.47×.
 4. ~~**Selection multiplicity.**~~ ✅ **Closed** by §4b — 13 origins and 5,142 fitting-half
    rows. The window and the role-graded dispersion both replicate; the trend's apparent
    pooled gain turned out to be two COVID origins.
-5. ⚙️ **Partly closed by §5b — (a), (b) and (d) are measured NULLS, (c) is still
-   unbuilt.** Do not rebuild the first three: split `beta`/`rho` windows, exponential
-   decay and per-block windowing were all fitted and **none beats the plain window on
-   validation**, for one shared reason (they lean on the COVID trough). Only **(c)** —
-   shrinking the short-window fit toward the long-window one, which in Stan is the
-   long-window posterior used as the prior — remains open, and §5b names it the
-   *principled* version of the block-splice arm that failed. The original text:
+5. ✅ **Closed — (a), (b) and (d) by §5b, (c) by §10c/§10d on 2026-08-12. All four are
+   measured NULLS.** Do not rebuild any of them: split `beta`/`rho` windows, exponential
+   decay, per-block windowing and shrinkage toward the long-window fit were all fitted and
+   **none beats the plain window on validation**, for one shared reason (they lean on the
+   COVID trough). §10c also withdraws the reason §5b gave for *why* (c) would be the
+   principled version of the block-splice arm: fitted jointly, the same coefficient
+   partition does not beat the transplant. The original text:
 
    **Optimize the trade rather than picking a window.** §4b shows CRPS optimal at a
    lookback of 8 while PIT and boundary error keep improving to 3, so one window cannot
@@ -385,10 +387,12 @@ grading, and too small to be the whole defect at 1.26–1.47×.
    The short lookbacks are therefore under-regularized for their row count, so some of the
    turnaround at 5 and 3 is a penalty artifact rather than variance. Sweep `l2` jointly
    with the lookback on the rolling harness before reading the optimum as a fact.
-7. 🔴 **OPEN, and §5b sharpened the motive.** Every optimization in §5b failed by leaning
-   on the COVID trough, which is precisely the population this item is about — so it is the
-   one candidate on this list that round pointed *at* rather than away from. Still
-   unmeasured.
+7. ✅ **Closed 2026-08-12 as a NULL — §10a, §10b, §10d.** §5b sharpened the motive and §10
+   spent it: every optimization in §5b failed by leaning on the COVID trough, which is
+   precisely the population this item is about. Swept as its own axis and crossed with
+   lookback, it needed a **contamination harness** to be visible at all — the plain
+   walk-forward is blind at 11 of 13 origins — and the instrument that works there does not
+   survive validation on either likelihood. The original text:
 
    **Recency and representativeness are different knobs.** 2019-20 through 2021-22 are
    recent *and* unrepresentative, and §4b shows they dominate the trend's apparent value. A
@@ -490,6 +494,14 @@ different priors rather than transplanted.
 > that matters most here, and it systematically prefers arms that lean recent. It remains the
 > right instrument for multiplicity and power — it caught the trend's two-origin artifact —
 > but it is not a substitute for the validation reading, and this section is the evidence.
+>
+> ⚙️ **§10 is the second half of that evidence and makes it four instances.** It also shows
+> the limit is worse than "cannot see": on the regime axis the harness's two live origins
+> *are* the trough seasons, so it does not merely miss the effect, it ranks the arms
+> backwards (§10a). The fix used there — staging the production situation by injecting the
+> unrepresentative block into an ordinary origin, with a same-size ordinary block as the
+> control — is the general form, and it is available to any future axis whose population
+> the walk-forward cannot reach.
 
 ---
 
@@ -1723,14 +1735,34 @@ What it leaves is a question about the consumer rather than the head: **the draf
 ranks, so it has no channel for a distributional improvement.** The shape-reading objectives
 (`bracket_ev`) are where that channel would be, and they move no more than noise here.
 
-**3. Recency and representativeness are different knobs** (§5.7). Unmeasured, and §5b handed
-it a motive: every optimization there failed by leaning on the COVID trough. An explicit
-regime indicator for 2019-20 → 2021-22, or excluding them, is a separate axis from lookback.
+**3.** ~~**Recency and representativeness are different knobs**~~ ✅ **Closed 2026-08-12 as
+a NULL — `make availability-regime`, §10a/§10b/§10d.** The item read: unmeasured, and §5b
+handed it a motive — every optimization there failed by leaning on the COVID trough, so an
+explicit regime indicator for 2019-20 → 2021-22, or excluding them, is a separate axis from
+lookback.
 
-**4. Shrinkage toward the long-window fit** (§5.5(c)). The only survivor of §5's four
-candidates, and §5b names it the principled version of the arm that failed: fit the blocks
-jointly under different priors rather than transplanting coefficients between fits. In the
-Stan port it is the long-window posterior used as the prior.
+It needed a new instrument before it could be measured at all: the plain walk-forward
+harness is **structurally blind** to it, with no arm active at more than 2 of 13 origins, and
+what it does see it sees backwards because those two origins are the trough seasons
+themselves. On a contamination harness that stages the production situation the mechanism is
+unambiguous — the trough biases the predicted availability share down by 1.66pp and an
+indicator recovers 1.40pp of it — with a same-size ordinary block as a working control. None
+of it survives validation, on the point MLE or on the shipped mixture.
+
+**4.** ~~**Shrinkage toward the long-window fit**~~ ✅ **Closed 2026-08-12 as a NULL, and it
+withdrew §5b's diagnosis — `make availability-regime`, §10c/§10d.** The item read: the only
+survivor of §5's four candidates, and §5b names it the principled version of the arm that
+failed — fit the blocks jointly under different priors rather than transplanting
+coefficients between fits.
+
+Built as a per-coefficient Gaussian prior centred on the long-window fit, with `λ = 0` and
+`λ = ∞` reproducing the plain short-window fit and the long-window coefficients exactly. It
+wins on the rolling harness and loses on validation by **+0.1146 [+0.0444, +0.1821]**. The
+sharper result is the matched-pair control: fitted **jointly**, §5b's own five drifting
+columns do **not** beat the transplant at the same two windows (+0.0055 [−0.0017, +0.0131]),
+so co-adaptation was never what was wrong with that arm — leaning recent was. In the Stan
+port this would still be the long-window posterior used as the prior; there is now no reason
+to build it.
 
 **5. The exchangeable-trials assumption, which no arm on the likelihood axis touched**
 (§7g). Absences come in **spells** — beta-geometric, beating the geometric by 11,278
@@ -1753,3 +1785,221 @@ the design, so the first question is whether the rule is needed where it was spe
 > `src/models/stan_availability.py:334` cites its **decision 2** for a live code rule, and
 > item 6 above is that decision still outstanding. Relocate decision 2 (and decision 3, the
 > fixed role bins) into this doc and repoint the code comment *before* deleting it.
+
+---
+
+## 10. §9's two open axes — measured 2026-08-12, and **both are nulls**
+
+`make availability-regime` → `availability_regime.csv`, `availability_shrinkage.csv`,
+`availability_regime_confirmation.csv`. Built to close §9 items 3 and 4:
+**(1)** an explicit regime indicator for 2019-20 → 2021-22, or excluding those seasons,
+swept against lookback (§5.7); **(2)** shrinkage toward the long-window fit — the blocks
+fitted jointly under different priors rather than transplanted (§5.5(c)).
+
+§5's (a), (b) and (d) are not rebuilt. §5b's spliced arm *is*, as a control, because axis
+(2)'s whole claim is that it is that arm's principled version.
+
+### 10a. The regime axis had to be re-instrumented before it could be measured at all
+
+**The plain rolling harness is structurally blind to it.** Origins run 2009 → 2021 on the
+fitting half and the regime block is the last three seasons in it, so an arm that excludes
+or indicates those seasons produces a bit-identical fit at every origin whose fitting rows
+end before 2019. Measured rather than asserted, via an `origins_active` column: across the
+45 arms of the lookback × regime cross, **no arm is active at more than 2 of 13 origins**,
+and 5 are the incumbent by definition. The two live origins are 2020 and 2021 — the same
+two §4b caught the season trend's apparent gain hiding in.
+
+**And what it does see, it sees backwards.** Paired within its own lookback (a second
+column, because the pooled reference mixes the lookback's effect into every cell), at
+lookback 8:
+
+| arm | CRPS vs `lb8__none` | 95% | origins active |
+|---|---|---|---|
+| `dummy_lag` | **−0.0198** | [−0.0341, −0.0046] | 1 |
+| `dummy_both` | **−0.0169** | [−0.0265, −0.0062] | 2 |
+| `w0.50` | +0.0018 | [−0.0014, +0.0051] | 2 |
+| `exclude` | +0.0072 | [−0.0009, +0.0155] | 2 |
+| `dummy_target` | **+0.0081** | [+0.0036, +0.0124] | 2 |
+
+The signs are the harness's population, not the axis. Its two live origins *are* the trough
+seasons, so an arm that predicts an ordinary season is penalized for being right about the
+wrong year, and an arm that can read a disrupted prior season is rewarded. Production is
+the opposite population. **Read no interval in that table as a replication either**: 11 of
+13 origins contribute exactly-zero pairs, so a bootstrap over rows is a within-origin
+sampling statement about one origin wearing thirteen origins' clothes.
+
+### 10b. The contamination harness — 10 replicates where the walk-forward has none
+
+The situation the production fit is in is *fitting set contains the trough, target season
+does not*, and the fitting half contains **zero** instances of it: the first ordinary target
+season after the trough is 2022-23, which is validation. So the selector stages it. For each
+origin 2009 → 2018 the regime block is **injected** into the fitting rows and the arm is
+scored on the origin season, against `clean` — the same fit without it.
+
+This is anachronistic by construction and is an **ablation of a mechanism, not a forecast**;
+no row of it is a walk-forward score. `exclude` is absent because excluding the injected
+block *is* `clean`, exactly — what the harness can test is whether an instrument that
+**keeps** the rows recovers what exclusion gets for free.
+
+| arm | CRPS | vs `clean` | 95% | origins won | share bias |
+|---|---|---|---|---|---|
+| `contaminated__dummy_target` | **9.9951** | **−0.0171** | [−0.0325, −0.0027] | 8/10 | −0.0026 |
+| `contaminated__dummy_both` | 9.9968 | −0.0154 | [−0.0311, −0.0005] | 7/10 | −0.0023 |
+| `contaminated__dummy_lag` | 9.9992 | −0.0129 | [−0.0273, +0.0001] | 8/10 | −0.0046 |
+| **`clean`** | **10.0121** | — | — | — | −0.0060 |
+| `contaminated__w0.25` | 10.0132 | +0.0011 | [−0.0074, +0.0093] | 6/10 | −0.0096 |
+| `contaminated__w0.50` | 10.0175 | +0.0054 | [−0.0100, +0.0202] | 6/10 | −0.0124 |
+| `contaminated` | 10.0307 | +0.0186 | [−0.0067, +0.0428] | 4/10 | −0.0166 |
+
+Three readings. The **damage is visible in the mechanism before it is visible in CRPS**:
+contamination pushes the predicted availability share down by 1.66 percentage points
+against `clean`'s 0.60, which is the trough leaking into the intercept, while its CRPS cost
+of +0.0186 has an interval covering zero. An **indicator recovers it and then beats it** —
+`dummy_target` cuts the bias to 0.26pp and buys −0.0171 over `clean` itself, because the
+1,285 injected rows are still information once the level shift is absorbed. And
+**downweighting does not work**: partial exclusion partially removes the rows without ever
+letting the model *say* what was different about them, so w0.50 lands between the two and
+improves neither.
+
+Re-run with the **core block** (2020-21 and 2021-22 only, the two seasons the league series
+actually singles out — 2019-20 at 0.6739 sits between 2017-18's 0.6762 and 2018-19's
+0.6704), the same arm reads **−0.0125 [−0.0276, +0.0017]**: same sign, interval now covering
+zero. The bubble season carries part of the effect.
+
+**The control is what makes it a measurement.** `contaminated` differs from `clean` in two
+ways at once — the rows are unrepresentative, and they are ~1,300 extra rows arriving out of
+chronological order. `regime_placebo` injects an ordinary block of the same size (2016-18)
+instead, over the 7 origins where that block sits strictly after the origin:
+
+| arm | CRPS | vs `inject_placebo` | 95% |
+|---|---|---|---|
+| `inject_regime` | 9.7426 | **+0.0402** | [+0.0163, +0.0653] |
+| `clean` | 9.7085 | +0.0061 | [−0.0107, +0.0232] |
+| **`inject_placebo`** | **9.7024** | — | — |
+
+Three ordinary seasons injected out of order cost nothing. The trough costs, and costs
+significantly. **The damage is the regime, not the row count and not the anachronism.**
+
+### 10c. Shrinkage toward the long-window fit
+
+`ShrunkBetaBinomialGLM` replaces the transplant with a prior:
+
+```
+-loglik(short rows) + l2·||β[1:]||² + Σⱼ λⱼ·(βⱼ − β_longⱼ)²
+```
+
+`λ = 0` is the plain short-window fit's objective and `λ = ∞` pins that coefficient to the
+long-window estimate exactly, by dropping it from the optimization rather than by a large
+finite penalty — so both endpoints are arms that already existed and the family is a
+one-knob extension. The `free_drift` variant frees §5b's five drifting columns (intercept +
+workload) and shrinks the other fifteen, which is that arm's coefficient partition **fitted
+jointly** instead of imported across two fits.
+
+**The harness reproduces §5b before it extends it**, which is what makes the comparison
+readable: `long_only` scores **9.9478**, §5b's `(all, all)` to four decimals;
+`splice8__intercept_workload` scores **9.8983**, its block winner to four decimals; and the
+gap between the splice and `shrink8__laminf` — β entirely on the long fit with ρ on the
+short window, which is exactly §5b's `short__none` reference — is **−0.0359**, its headline
+figure to four decimals. `shrinkN__lam0` reproduces `shortN__only` (9.918054 against
+9.917984).
+
+| arm | CRPS | vs `long_only` | 95% | origins won |
+|---|---|---|---|---|
+| `shrink5__free_drift__laminf` | **9.8939** | −0.0539 | [−0.0750, −0.0322] | 10/13 |
+| `shrink5__free_drift__lam1024` | 9.8973 | −0.0505 | [−0.0742, −0.0268] | 10/13 |
+| **`splice8__intercept_workload`** *(§5b's arm)* | **9.8983** | −0.0496 | [−0.0682, −0.0307] | **12/13** |
+| `shrink5__lam256` | 9.9025 | −0.0453 | [−0.0674, −0.0235] | 9/13 |
+| `shrink8__free_drift__laminf` | 9.9038 | −0.0441 | [−0.0585, −0.0299] | 10/13 |
+| `short8__only` | 9.9180 | −0.0299 | [−0.0527, −0.0078] | 7/13 |
+| `shrink8__laminf` *(ρ windowed, β not)* | 9.9342 | −0.0136 | [−0.0199, −0.0071] | 11/13 |
+
+The knob behaves: within each family CRPS falls monotonically in λ to an interior optimum
+(at short = 8 the global family runs 9.9181 → 9.9175 → 9.9164 → 9.9145 → 9.9117 →
+**9.9088** → 9.9102 across λ = 0 … 1024), so shrinkage is doing something rather than
+selecting an endpoint.
+
+**But §5b's stated mechanism does not survive its own matched test, and that is the finding
+here.** §5b diagnosed its spliced arm as failing because *"a spliced coefficient vector is
+not a fit of anything"* — blocks co-adapted to each other, dropped into a vector estimated
+elsewhere. Fit those same five columns **jointly**, conditional on the other fifteen pinned
+at their long-window values, same two windows: `shrink8__free_drift__laminf` against
+`splice8__intercept_workload` reads **+0.0055 [−0.0017, +0.0131]**, winning 4 of 13 origins.
+The joint fit is, if anything, *worse*. The best shrinkage arm beats the splice only by also
+shortening the window to five seasons, and even then by **−0.0044 [−0.0175, +0.0081]** — a
+tie. **Co-adaptation was not what was wrong with the spliced arm.** What was wrong with it
+is in §10d, and it is the same thing that is wrong with every arm in this section.
+
+### 10d. The one validation reading — nothing ships, on either likelihood
+
+Taken once, after every recipe above was fixed, and on **two likelihoods**: the point-MLE
+`RoleGradedBetaBinomial` that selection ran on, and the two-component mixture that actually
+ships (§7i). A recipe that reweights rows or shrinks coefficients has no guarantee of
+surviving a likelihood whose second component already exists to absorb disrupted seasons.
+
+| arm | val CRPS | vs shipped | 95% | PIT KS | boundary |
+|---|---|---|---|---|---|
+| **`shipped__2012_role_rho`** | **9.8247** | — | — | **0.0588** | 0.0178 |
+| `regime__w0.50` | 9.8192 | −0.0056 | [−0.0289, +0.0195] | 0.0692 | 0.0198 |
+| `regime__w0.25` | 9.8225 | −0.0023 | [−0.0421, +0.0402] | 0.0758 | 0.0212 |
+| `shrink__global__2012__lam256` | 9.8363 | +0.0116 | [−0.0053, +0.0278] | 0.0611 | 0.0183 |
+| `regime__exclude` | 9.8367 | +0.0119 | [−0.0490, +0.0780] | 0.0830 | 0.0231 |
+| `regime__dummy_target` *(the selected arm)* | 9.8423 | +0.0175 | [−0.0326, +0.0693] | 0.0779 | 0.0233 |
+| `regime__core_exclude` | 9.8534 | +0.0286 | [−0.0254, +0.0894] | 0.0822 | 0.0223 |
+| `shrink__global__lb5__lam256` | 9.9046 | **+0.0798** | [+0.0258, +0.1304] | 0.0759 | **0.0143** |
+| `shrink__free_drift__2012__laminf` | 9.9001 | **+0.0753** | [+0.0368, +0.1139] | 0.0605 | 0.0180 |
+| `shrink__free_drift__lb5__laminf` *(the rolling winner)* | 9.9393 | **+0.1146** | [+0.0444, +0.1821] | 0.0854 | **0.0122** |
+| `regime__dummy_both` | 9.9350 | **+0.1103** | [+0.0122, +0.2095] | 0.0799 | **0.0133** |
+| `regime__dummy_lag` | 9.9857 | **+0.1610** | [+0.0472, +0.2807] | 0.0833 | **0.0113** |
+| **`mixture__shipped_2012`** | **9.8237** | — | — | 0.0631 | **0.0108** |
+| `mixture__regime_exclude` | 9.8709 | +0.0472 | [−0.0221, +0.1261] | 0.0931 | 0.0180 |
+| `mixture__regime_dummy_target` | 9.8925 | **+0.0688** | [+0.0145, +0.1258] | 0.0886 | 0.0161 |
+
+**Not one arm beats the shipped head.** The best challenger, `w0.50`, is a tie (−0.0056,
+interval spanning zero) and is worse on PIT *and* on the boundary — which is the metric §7
+selected the shipped head on, so it is not close. Everything the rolling harnesses actually
+**selected** loses, and loses with an interval excluding zero: the shrinkage winner by
++0.1146, and the contamination winner by +0.0688 once it is applied to the head that ships.
+
+**The discordance is §5b's, for the fourth time, and the tail column shows the mechanism
+directly.** The arms that lose most on CRPS post the *best* boundary errors of any
+beta-binomial arm here — 0.0113, 0.0122, 0.0133, 0.0143 against the shipped head's 0.0178 —
+because every one of them leans harder on the trough and shifts the whole predictive
+downward. That buys the low tail and pays for it in location. It is exactly what decay 0.80
+did in §5b, and it is the answer to §10c: what was wrong with the spliced arm was never its
+estimator, it was **which seasons it leans on**, and fixing the estimator cannot fix that.
+
+**The one arm that is genuinely mis-specified rather than merely over-corrected is
+`dummy_lag`, and the confirmation table carries the reason as data.** The disrupted seasons
+are *consecutive*, so inside the shipped window every fitting row carrying a regime lag also
+carries a regime target: `lag_implies_target_train` = **1.000** over **885** flagged rows of
+1,285. On validation the two separate completely — **433** of 883 rows carry the lag flag
+and **0** carry the target flag. The coefficient is estimated only where the two coincide
+and applied only where they do not, so it extrapolates a trough level onto a season that
+recovered. That is an identification failure, not a feature that failed, and no amount of
+data inside this window fixes it.
+
+### 10e. What this settles
+
+1. **§9 item 3 (recency ≠ representativeness) closes as a null.** An explicit regime
+   indicator and exclusion are both measurable improvements *on the staged mechanism* —
+   the contamination harness is unambiguous, with a working control — and neither survives
+   contact with validation on either likelihood. The mechanism was real and the correction
+   is not worth making.
+2. **§9 item 4 (shrinkage toward the long-window fit) closes as a null, and takes §5b's
+   diagnosis with it.** The principled version of the spliced arm does not beat the spliced
+   arm at matched configuration, so co-adaptation was the wrong explanation for that
+   failure. The right one is the one §5b's own closing paragraph gave for everything else
+   in it: leaning recent over-corrects into two seasons that partly recovered.
+3. **The shipped head is unchanged.** `three_point_era` window, no season term, role-graded
+   ρ, two-component mixture — §7i, untouched.
+4. **The rolling harness has now selected an arm that validation rejected four times**
+   (the trend in §4b, the four optimizations in §5b, the regime instrument and the
+   shrinkage recipe here). Its limit is no longer a caveat to be restated; it is a
+   measured property with four instances and one shared mechanism, and any future arm on
+   this head that wins on the harness by leaning recent should be treated as failing until
+   validation says otherwise.
+5. **What is left is the population, not the estimator.** Every instrument in §5b and §10
+   is a way of re-weighting or re-pooling the same 4,027 rows, and the ceiling on that is
+   now well mapped. §9 item 5 — the exchangeable-trials assumption, which no arm on any
+   axis has touched — is the only remaining item on this head that changes the *model*
+   rather than the fitting rule.

@@ -607,7 +607,7 @@ concentrated
 entirely in the spline variants. Dropping the test side halved the component fit count from
 74 and cut sampler time from 305.0 to **137.4** minutes *while* raising every selection fit
 to full-length chains — which incidentally fixed the one fit that used to miss its R̂ bar.
-1,623 tests pass (`.venv/bin/python -m pytest tests/`).
+1,644 tests pass (`.venv/bin/python -m pytest tests/`).
 
 ---
 
