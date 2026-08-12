@@ -7,7 +7,8 @@ PIP    := .venv/bin/pip
         dashboard-audit dashboard-config docs-audit \
         availability availability-profile injury-reports injuries daily-capture \
         boxscore-status availability-model availability-window \
-        availability-weighting availability-regime capture-status \
+        availability-weighting availability-regime availability-exchangeability \
+        availability-no-prior capture-status \
         capture-calendar \
         report-calibration \
         season-total adp adp-draftkings adp-fantasypros adp-panel adp-profile \
@@ -204,6 +205,26 @@ availability-weighting:
 # read once, at the end, on the point MLE AND on the shipped mixture.
 availability-regime:
 	$(PYTHON) -m src.models.availability_regime
+
+# The last axis `docs/availability-window-plan.md` §9 leaves open: the head's trials are
+# NOT exchangeable — absences come in spells — and no arm on the likelihood axis touched
+# it. Nothing here fits anything, because `gp` is INVARIANT to the arrangement, so no
+# likelihood over it can separate clustering from frailty (they enter the variance only
+# through `C + rho*(n - C)`). The instrument is therefore a ladder at the SCORING PERIOD,
+# holding gp fixed at its realized value and varying only the layout: observed against
+# `allocate_spells` (what ships) against uniformly-placed absences (what the beta-binomial
+# asserts). numpy only, no CmdStan, seconds.
+availability-exchangeability:
+	$(PYTHON) -m src.models.availability_exchangeability
+
+# What the players the head has NO ROW FOR actually realize — rookies and returning
+# veterans, who reach the simulator through `sim/season.no_design_availability` rather than
+# through the design. Built to settle `docs/availability-window-plan.md` §8 decision 2,
+# which specified grading their ROLE BUCKET in three classes. The bucket carries
+# dispersion, not level, so the decision is only worth implementing if the classes differ
+# in dispersion — and they do not. numpy only, seconds.
+availability-no-prior:
+	$(PYTHON) -m src.models.availability_no_prior
 
 # ── Stan heads ────────────────────────────────────────────────────────────────
 # Fitted SEPARATELY, one model per head, because the chain availability -> min |

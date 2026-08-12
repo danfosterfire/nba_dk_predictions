@@ -285,6 +285,19 @@ prior-minutes buckets, almost entirely because a *star's* ρ falls by a fifth on
 disrupted seasons live somewhere else. And the port check's reference has to be the mixture's
 own point MLE, since the two likelihoods estimate different parameters.
 
+**And the head's largest calibration error is at a unit it cannot see, which is a limit of
+the target rather than of the likelihood.** A beta-binomial asserts the season's ~82 games
+are exchangeable trials; absences come in spells, so they are not. But permuting a
+played/missed vector leaves `gp` exactly where it was, so clustering and frailty enter its
+variance only through `C + ρ(n − C)` and are **not separately identified** — no arm on the
+likelihood axis could have found this, and five already-fitted non-exchangeable arms agree,
+the marginal-neutral one reproducing CRPS, PIT and the tail error to every decimal. At the
+**scoring period** DK actually seats a lineup in, the assumption understates a star's chance
+of three consecutive dead weeks by **9.1×**. What pays for it is `allocate_spells` — the
+simulator's layout step, which recovers **81.5%** of the pooled gap and was shipped on a
+judgement rather than a gate. `make availability-exchangeability`,
+`docs/availability-window-plan.md` §11.
+
 **Minutes** in the shipped chain is [stan_minutes.py](src/models/stan_minutes.py): the
 marginal `min | available`, fitted season-collapsed as successes out of real game length,
 selecting `logit(own) + spline`. What it supplies the simulator is the season-level

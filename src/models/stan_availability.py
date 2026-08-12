@@ -330,10 +330,19 @@ def role_bins(frame: pd.DataFrame, role_rho: bool = ROLE_RHO) -> np.ndarray:
     exactly.
 
     A row outside the edges — no prior minutes at all, or an implausible one above the top
-    edge — falls into the **lowest** bucket. That is the same rule
-    `docs/availability-ship-plan.md` decision 2 sets for the no-prior population, and it is
-    the conservative direction: the fringe bucket carries the widest dispersion. Today the
-    design has no such row, so this is a guard rather than a live branch.
+    edge — falls into the **lowest** bucket, the conservative direction since the fringe
+    bucket carries the widest dispersion. Today the design has no such row, so this is a
+    guard rather than a live branch — but the *simulator* reaches it constantly, through
+    `sim/season.availability_rho_bin`, for every rostered player the head has no row for.
+
+    **That fallback is measured rather than assumed** (`make availability-no-prior`,
+    `docs/availability-window-plan.md` §8a). A three-class imputed bucket for that population
+    was specified and is **withdrawn**: across draft buckets the no-prior population's
+    realized dispersion spans 1.1557× while its realized *level* spans 3.3260×, so the rule
+    graded the flat axis — and applied as written it would hand a lottery top-5 pick a
+    narrower `rho` than he realizes. The lowest bucket is too narrow on eight of the nine
+    measured no-design groups and too wide on one, by 0.0184 — which is the argument for
+    keeping it, since too wide is the safe direction and it is barely that.
     """
     if not role_rho:
         return np.ones(len(frame), dtype=int)

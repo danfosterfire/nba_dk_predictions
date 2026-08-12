@@ -1616,6 +1616,98 @@ sentence they were given — the penalty is 1.5 parts in 100,000 of the objectiv
 counts. The prediction in this item — "they probably survive" — was right, and it now has a
 number.
 
+**6. The role bins themselves stay fixed.** `season_effects.ROLE_EDGES` is
+`[0, 12, 24, 30, 60]` on `minutes_per_game_lag1` — constants, so there is no split concern
+and a validation row lands in the bucket it would have landed in during fitting. If anyone
+later makes them quantile-derived they must come from the fitting rows only, which is what
+`composition_glm.stan`'s "bin edges from TRAIN quantiles only" comment is about.
+
+*(Relocated from `docs/availability-ship-plan.md` decision 3 on 2026-08-12, when that
+scaffolding was deleted. `stan_availability.role_bins` cites this item.)*
+
+**7.** ~~**The no-prior population gets an imputed role bucket in three classes.**~~
+❌ **WITHDRAWN 2026-08-12 — `make availability-no-prior`, §8a.** Taken 2026-08-11 as
+`docs/availability-ship-plan.md` decision 2, never implemented, and relocated here rather
+than deleted because the reversal is the useful part.
+
+> The decision read: players on a season-start roster with no prior-season row at all get a
+> role bucket in three classes — **rookies** from draft position via
+> `stan_composition.rookie_share_priors`, **returning veterans** from their bucket at last
+> appearance conditioned on gap length, **everyone else** the lowest bucket. Assigning them
+> the pooled dispersion was called "a silent shrug at a sixth of the league".
+
+**The population is real and the rule was aimed at the wrong axis.** §8a is the measurement.
+
+### 8a. Why decision 2 is withdrawn — measured 2026-08-12
+
+`make availability-no-prior` → `availability_no_prior.csv`. Descriptive, seconds, no fit.
+
+**The role bucket carries dispersion, not level.** That was noted when the decision was
+taken — the ship plan's own session-3 prompt called it "the check that could invalidate the
+idea" and predicted the failure direction correctly — and it was never run. It is now.
+
+On the **2,616** no-design player-seasons in the 27 seasons selection may read, against
+**10,361** in-design rows, each group's realized level and its unconditional implied
+dispersion:
+
+| population | rows | `μ` | mean MPG | implied `ρ` | P(GP<10) | imputed bucket | its `ρ` | error |
+|---|---|---|---|---|---|---|---|---|
+| in design *(control)* | 10,361 | 0.6445 | 21.8619 | 0.4143 | 0.0796 | `12-24` | 0.2701 | −0.1442 |
+| **all no-design** | **2,616** | 0.4223 | 13.3602 | **0.4337** | 0.2565 | `12-24` | 0.2701 | **−0.1636** |
+| rookie | 2,227 | 0.4445 | 13.4128 | 0.4341 | 0.2281 | `12-24` | 0.2701 | −0.1640 |
+| gap 2 seasons | 254 | 0.3141 | 13.7612 | 0.3948 | 0.3976 | `12-24` | 0.2701 | −0.1247 |
+| gap 3+ seasons | 135 | 0.2662 | 11.7382 | 0.3610 | 0.4593 | `<12 mpg` | 0.3176 | −0.0434 |
+| draft: lottery top-5 | 138 | **0.8316** | 26.8385 | **0.2992** | **0.0000** | `24-30` | 0.2535 | **−0.0457** |
+| draft: lottery | 247 | 0.7326 | 19.8947 | 0.3177 | 0.0202 | `12-24` | 0.2701 | −0.0476 |
+| draft: late first | 435 | 0.5669 | 13.9505 | 0.3458 | 0.0920 | `12-24` | 0.2701 | −0.0757 |
+| draft: second round | 626 | 0.4036 | 11.0350 | 0.3451 | 0.2077 | `<12 mpg` | 0.3176 | −0.0275 |
+| draft: undrafted | 781 | **0.2500** | 10.5969 | **0.3400** | **0.4264** | `<12 mpg` | 0.3176 | −0.0224 |
+
+**The decision grades the axis that is flat.** Across the five draft buckets the realized
+**level** spans **3.3260×** (0.2500 → 0.8316) and the left tail spans the whole range it can
+— P(GP<10) runs 0.4264 for an undrafted player to **exactly 0.0000** for a lottery top-5 pick,
+of whom not one in the window played under ten games. Realized **dispersion** over the same
+five buckets spans **1.1557×** (0.2992 → 0.3458), which is not only flat in absolute terms but
+flatter than the in-design role gradient the decision was borrowing (1.5365×). **The
+instrument's range exceeds the signal's**: realized dispersion moves **0.0466** across the
+five buckets, while the fitted `ρ`s the rule would assign them span **0.0641** — so the map is
+imposing more variation than it is explaining, on a population whose *means* differ by a
+factor of three.
+
+**And applied as specified it points the wrong way.** A lottery top-5 pick's 26.84 mean MPG
+maps to the `24-30` bucket and its `ρ` of 0.2535, against a realized 0.2992 — the decision
+would tell the simulator that the least-known player on the board has **narrower** availability
+than he does, which is the exact failure the ship plan flagged and did not test. Every
+`rho_imputed_error` in the table is negative. The current fallback — the lowest bucket, 0.3176,
+which `role_bins` calls "a guard rather than a live branch" — is **too narrow on eight of the
+nine no-design groups and too wide on one, by 0.0184**. It is the better estimator, and it is
+better for the reason it was chosen: it is the conservative direction.
+
+**What the measurement does find is a different defect, on the axis nobody graded.** The
+no-design population's implied `ρ` is **0.4337** against the fringe bucket's fitted 0.3176 —
+the fallback is **27% too narrow** for them — and this is an apples-to-apples reading, because
+they reach the simulator with a *constant* `mu` and no covariates, so the spread that has to be
+reproduced around that constant is the unconditional one. The in-design control is 0.4143 on
+the same footing. So the honest statement is that the no-design population is barely more
+dispersed than the league (**1.047×**) and that **both** are wider than any bucket the head
+fitted, because a fitted `ρ` is residual to a covariate block these players do not have.
+
+**The disposition.**
+
+1. **Decision 2 is withdrawn and must not be implemented.** It grades dispersion by draft
+   position; dispersion does not vary by draft position; and the map it would use is biased
+   toward false reliability on every row.
+2. **`role_bins`' lowest-bucket fallback stands**, and its docstring is now a measured claim
+   rather than a hedge.
+3. **The live item is level, not dispersion.** `sim/season.no_design_availability` hands the
+   whole population one pooled rate while the classes span 3.3× — an undrafted free agent and
+   a top-5 pick are given the same availability. That is a real defect, it is the one the
+   3.3× spread licenses, and it is logged in `docs/potential-to-dos.md` rather than built
+   here, because it changes the simulator's draw path and costs `make simulate-season` plus
+   the whole contest layer.
+4. **Nothing about the fitted head moves.** These rows are not in the head's frame and never
+   were.
+
 ### Two debts that predate this axis
 
 **1.** ~~**The simulator re-implements this head rather than drawing through it, and it is
@@ -1764,27 +1856,49 @@ so co-adaptation was never what was wrong with that arm — leaning recent was. 
 port this would still be the long-window posterior used as the prior; there is now no reason
 to build it.
 
-**5. The exchangeable-trials assumption, which no arm on the likelihood axis touched**
-(§7g). Absences come in **spells** — beta-geometric, beating the geometric by 11,278
+**5.** ~~**The exchangeable-trials assumption, which no arm on the likelihood axis
+touched**~~ ✅ **Closed 2026-08-12 — `make availability-exchangeability`, §11.** The item
+read: absences come in **spells** — beta-geometric, beating the geometric by 11,278
 log-likelihood points at one extra parameter — and one 40-game spell and forty single-game
 absences give identical `gp` and very different distributions. A beta-binomial absorbs the
 variance inflation from that clustering but not its shape, and neither does the mixture.
 
-**6. A decision that was taken and never implemented.** `docs/availability-ship-plan.md`
-decision 2 specifies a three-class imputed role bucket for the **no-prior population** —
-rookies from draft position via `stan_composition.rookie_share_priors`, returning veterans
-from their bucket at last appearance conditioned on gap length, everyone else the lowest
-bucket. Only the third class exists in code: `stan_availability.role_bins` falls back to the
-lowest bucket and its own docstring calls that "a guard rather than a live branch". The
-population is real — about **14.7%** of season-start roster minutes per `README.md` — but it
-reaches the head through the *simulator's* `no_design_availability` path rather than through
-the design, so the first question is whether the rule is needed where it was specified.
+**All of that is true, and none of it is the head's to fix.** `gp` is *invariant* to the
+arrangement, so `C` and `ρ` enter its variance only through `C + ρ(n − C)` and are not
+separately identified — which is why no arm on §7's axis touched this and why none should be
+built. Five already-fitted non-exchangeable arms agree, `hybrid` decisively: it rearranges
+absences maximally and reproduces CRPS, PIT and the tail error to every decimal. At the
+**scoring period** — the unit DK scores — the assumption is instead the largest distributional
+error measured on this head, understating a star's P(three consecutive dead periods) by
+**9.1×**. What the chain is saved by is `allocate_spells`, which already ships in
+`sim/season.py` and pays **63–82%** of it. What is left is the *tenure* half: **44.17%** of
+missed games are edge blocks the layout gives neither the right shape nor the right position,
+and the residual's sign flips by role because of it.
 
-> ⚠️ **`docs/availability-ship-plan.md` is stale scaffolding that cannot simply be deleted.**
-> Its own closing step says to delete it, and the window round it plans has landed — but
-> `src/models/stan_availability.py:334` cites its **decision 2** for a live code rule, and
-> item 6 above is that decision still outstanding. Relocate decision 2 (and decision 3, the
-> fixed role bins) into this doc and repoint the code comment *before* deleting it.
+**6.** ~~**A decision that was taken and never implemented.**~~ ✅ **Closed 2026-08-12 as a
+WITHDRAWAL — `make availability-no-prior`, §8a.** The item read: the ship plan's decision 2
+specifies a three-class imputed role bucket for the **no-prior population** — rookies from
+draft position via `stan_composition.rookie_share_priors`, returning veterans from their
+bucket at last appearance conditioned on gap length, everyone else the lowest bucket. Only
+the third class exists in code: `stan_availability.role_bins` falls back to the lowest bucket
+and its own docstring calls that "a guard rather than a live branch". The population is real
+— about **14.7%** of season-start roster minutes per `README.md` — but it reaches the head
+through the *simulator's* `no_design_availability` path rather than through the design, so
+the first question is whether the rule is needed where it was specified.
+
+**It is not, and the reason is that the bucket carries dispersion while the population
+varies in level.** Across the five draft buckets the realized level spans **3.3260×** and the
+realized dispersion **1.1557×**; applied as specified the rule hands a lottery top-5 pick a
+`ρ` of 0.2535 against a realized 0.2992, i.e. it makes the least-known player on the board
+look *more* reliable. The lowest-bucket fallback stands and is now a measured claim. The live
+item the measurement uncovers is the **level** — one pooled rate for a population spanning
+3.3× — and it is logged in `docs/potential-to-dos.md`.
+
+> ✅ **`docs/availability-ship-plan.md` was deleted on 2026-08-12.** Decision 3 (the fixed
+> role bins) is now §8 decision 6, decision 2 is §8 decision 7 and §8a, and
+> `stan_availability.role_bins` cites §8 rather than the deleted file. Decision 1 (the
+> GLM/GBM/ridge ladder stays on the full window as development history, not as a live gate)
+> is already recorded in `README.md` §3 and in `dashboard/decisions.py`.
 
 ---
 
@@ -2002,4 +2116,225 @@ data inside this window fixes it.
    is a way of re-weighting or re-pooling the same 4,027 rows, and the ceiling on that is
    now well mapped. §9 item 5 — the exchangeable-trials assumption, which no arm on any
    axis has touched — is the only remaining item on this head that changes the *model*
-   rather than the fitting rule.
+   rather than the fitting rule. ✅ **Closed 2026-08-12 in §11, and it does not change the
+   model either**: `gp` cannot identify the axis, so what it changes is the *simulator's
+   layout step*, one layer down.
+
+---
+
+## 11. §9 item 5 — the exchangeable-trials assumption, measured 2026-08-12
+
+`make availability-exchangeability` → `availability_clustering.csv`,
+`availability_exchangeability.csv`. numpy only, seconds, no CmdStan and no fit.
+
+The head is a beta-binomial on `gp` out of `team_games`, which asserts that — given the
+player-season's frailty draw — the schedule's ~82 games are **exchangeable Bernoulli
+trials**. They are not. One 40-game spell and forty single-game absences give the identical
+`gp` and are not the same season. §7g raised it, §10e named it the only remaining item on
+this head that changes the *model* rather than the fitting rule, and this is the reading.
+
+**The verdict has two halves and they point opposite ways.** At the `gp` margin the
+assumption is not merely harmless, it is *unfalsifiable* — and that is a theorem about the
+statistic rather than a null result. At the **scoring period**, which is the unit DK actually
+scores, it is the largest single distortion measured anywhere in this document: it
+understates a star's chance of being a dead roster slot for three consecutive weeks by
+**9.1×**. What saves the shipped chain is a component nobody built for this purpose.
+
+### 11a. Why no likelihood arm could have touched it, and why that is not an oversight
+
+**`gp` is invariant to the arrangement.** Permuting a player-season's played/missed vector
+leaves the count exactly where it was. So the only trace clustering can leave on a `gp`
+likelihood is second-order, and `games_played.variance_inflation` is that trace in full:
+with `n` trials, a within-cell clustering `C` and a between-cell frailty `ρ`,
+
+```
+inflation  =  C + ρ·(n − C)
+```
+
+One equation, two unknowns. **`C` and `ρ` are not separately identified from `gp` alone** —
+every point on that line produces the same variance, and a fit will simply route clustering
+into `ρ`. §7's five arms all vary the mixing distribution, which is the *other* term. That
+none of them touched exchangeability is a property of the statistic, not a gap in the ladder,
+and an arm that had tried would have been estimating a parameter the data cannot see.
+
+**The experiment was nevertheless already run, four times, one head across.** Every arm in
+`stan_games_played` is non-exchangeable *by construction* — entry index × exit index × a
+within-tenure two-state chain with beta-geometric spells — and every one was scored on the
+same 883 validation rows against the same floor. `gp_margin_invariance` reads that table
+rather than re-running it (47 minutes of sampler time, and nothing about it has changed):
+
+| arm | val CRPS | vs its floor | PIT KS | tail error |
+|---|---|---|---|---|
+| `full_window` | 10.2797 | **+0.2739** | 0.0755 | 0.0496 |
+| `three_state` | 10.3466 | **+0.2965** | 0.1204 | 0.0043 |
+| `duration_covariates` | 10.1676 | **+0.1619** | 0.0672 | 0.0535 |
+| `calibrated_fallback` | 10.0207 | **+0.0149** | 0.1017 | 0.0440 |
+| **`hybrid`** | **10.0057** | **0.0000** | **0.0939** | **0.0406** |
+
+`calibrated_fallback` is the closest thing to a clean test, because it is a clustered process
+*calibrated to reproduce the incumbent's marginal* — the non-exchangeable version of the same
+head — and it costs +0.0149 CRPS and loses PIT. **`hybrid` is the proof rather than the
+evidence.** It draws its count from the incumbent's own pmf and only rearranges the
+absences, so it reproduces CRPS, PIT and the tail error **to every decimal**: maximal change
+in arrangement, zero change in every marginal metric. Nothing on the `gp` margin can see this
+axis, and five arms agreeing is what turns that from an argument into a measurement.
+
+### 11b. Where the non-exchangeability actually comes from — and it is not mostly injuries
+
+On the 4,027 fitting rows, single-team seasons only, the head's **85,341** missed games split
+into two processes that get conflated by the phrase "absences come in spells":
+
+| population | missed games | interior spells | **tenure edge blocks** |
+|---|---|---|---|
+| all | 85,341 | 55.83% | **44.17%** |
+| `<12 mpg` | 22,211 | 48.67% | **51.33%** |
+| `12-24` | 36,941 | 57.78% | 42.22% |
+| `24-30` | 13,121 | 57.78% | 42.22% |
+| `30+ mpg` | 13,068 | 60.48% | **39.52%** |
+
+A tenure edge block is a delayed first appearance or a trailing absence — one block at an end
+of the schedule, which `docs/games-played-plan.md` establishes is an **absorbing hitting
+time** rather than a low recovery rate. An interior spell is an injury with a return. They
+are different processes with different shapes and different positions, and **44.17% of the
+head's missed games are the first kind**. That share falls monotonically with role, which is
+the expected direction: a fringe player's absence is more often a roster fact.
+
+The interior spells themselves are the reassuring half. Their **shape** is close to
+role-invariant while their **rate** is not:
+
+| population | spells / season | mean spell | P(T = 1) | P(T ≥ 10) | fitted `μ` | fitted `κ` |
+|---|---|---|---|---|---|---|
+| all | 3.8587 | 3.0660 | 0.4906 | 0.0551 | 0.4871 | 3.8703 |
+| `<12 mpg` | **5.5839** | 3.1844 | 0.4530 | 0.0571 | 0.4577 | 4.5722 |
+| `12-24` | 4.4525 | 2.8811 | 0.4862 | 0.0471 | 0.4849 | 4.5069 |
+| `24-30` | 2.6325 | 3.3177 | 0.5116 | 0.0652 | 0.4971 | 3.1097 |
+| `30+ mpg` | **2.7621** | 3.2261 | 0.5367 | 0.0669 | 0.5291 | 2.6223 |
+
+Mean spell moves by **15%** across the whole role range and `P(T ≥ 10)` by 1.42×, against a
+**2.12×** spread in spells per season. **What separates a fringe player from a star is how
+often he goes down, not how long he stays down** — and the head already carries how often,
+through `gp`. That is the measured justification for `sim/season.spell_shape` taking one
+pooled `(μ, κ)` for every player, which until now was a convenience with a docstring.
+
+### 11c. The unit that can see it, and the ladder
+
+DraftKings scores **twenty scoring periods** and seats the best 7 of 16 in each. What a
+roster is exposed to is therefore not "how many games did he miss" but "how many periods is
+he a guaranteed zero, and do they come in a row". That is a question about the arrangement
+and about nothing else, which is exactly the axis `gp` cannot resolve.
+
+So the ladder holds `gp` **fixed at its realized value** and varies only the layout — the
+three arms have identical games-played marginals by construction, and `layout_ladder`
+asserts it on every row rather than assuming it, because anything that separated them
+otherwise would be confounded:
+
+- **`observed`** — the real played/missed vector. The target.
+- **`clustered`** — `games_played.allocate_spells`, **what ships** inside `sim/season.py`.
+- **`exchangeable`** — `gp` played games placed uniformly at random. This is what the head's
+  likelihood literally asserts, and it needs no parameter from the head: conditional on `gp`
+  a beta-binomial's vector is exactly uniform over arrangements, so the frailty and the
+  dispersion drop out and there is nothing to get wrong.
+
+751 single-team validation player-seasons of 883, 25 layouts per arm.
+
+| population | arm | P(dead period) | longest dead run | P(run ≥ 3) |
+|---|---|---|---|---|
+| all | observed | 0.2447 | 4.4634 | 0.4607 |
+| all | clustered | 0.2273 | 4.7862 | 0.3555 |
+| all | **exchangeable** | **0.1509** | **1.6862** | **0.1729** |
+| `<12 mpg` | observed | 0.4531 | 8.0224 | 0.6642 |
+| `<12 mpg` | clustered | 0.4738 | 10.7233 | 0.6469 |
+| `<12 mpg` | **exchangeable** | **0.3665** | **4.0525** | **0.4633** |
+| `12-24` | observed | 0.2562 | 4.5809 | 0.4719 |
+| `12-24` | clustered | 0.2447 | 5.0516 | 0.3987 |
+| `12-24` | **exchangeable** | **0.1618** | **1.8037** | **0.1810** |
+| `24-30` | observed | 0.1749 | 3.4643 | 0.4643 |
+| `24-30` | clustered | 0.1253 | 2.3189 | 0.2351 |
+| `24-30` | **exchangeable** | **0.0637** | **0.6909** | **0.0540** |
+| `30+ mpg` | observed | 0.1202 | 2.3218 | 0.2816 |
+| `30+ mpg` | clustered | 0.0892 | 1.7370 | 0.1526 |
+| `30+ mpg` | **exchangeable** | **0.0361** | **0.4602** | **0.0308** |
+
+**The assumption is most wrong exactly where the contest is most sensitive.** Pooled, an
+exchangeable layout puts a player at 0.1509 dead periods against an observed 0.2447 — 62% of
+the truth — and gives him a longest dead run of 1.69 periods against 4.46, **2.65× short**.
+For a **star** the same three columns read 0.0361 against 0.1202 (**3.3×** short), 0.4602
+against 2.3218 (**5.0×**), and P(three consecutive dead periods) 0.0308 against 0.2816 —
+**9.1× short**. The gradient runs the same way on every metric and it is monotone in role:
+the fringe bucket's longest dead run is 4.0525 against an observed 8.0224, a factor of 2.0,
+against the star bucket's 5.0. **The more central the player, the worse the assumption.**
+
+That gradient is the mirror image of the head's own. `ρ` is graded *narrowest* for stars
+(0.2067 against the fringe bucket's 0.3176), so the head says a star's season **length** is
+the most predictable thing on the board — and it is right about that. What it cannot say,
+and what the exchangeability assumption then gets most wrong, is that his absences are the
+most **concentrated**. Two facts about the same player, and only one of them is in the
+likelihood.
+
+The contest arithmetic follows directly and needs no simulation. On a 16-man roster of
+`24-30` and `30+ mpg` players, an exchangeable availability draw expects `16 × 0.049 = 0.78`
+dead slots in a given scoring period; the observed rate is `16 × 0.147 = 2.36`. A lineup
+seating 7 of 16 is a **max**, so understating dead slots by 1.6 per period does not shift a
+mean — it thins the right tail of exactly the order statistic the payout is convex in.
+
+### 11d. What saves it, and what is left
+
+**`allocate_spells` recovers most of the gap, and it was not built for this.** It exists
+because `stan_games_played`'s Gate D could not select the `hybrid` arm on a marginal
+criterion (`docs/games-played-plan.md`), and it ships inside `sim/season.py` as the layout
+step. Priced against the exchangeable arm it closes:
+
+| population | P(dead period) | longest dead run | P(run ≥ 3) |
+|---|---|---|---|
+| all | **81.5%** | 111.6% | 63.4% |
+| `<12 mpg` | 123.9% | 168.0% | 91.4% |
+| `12-24` | 87.8% | 117.0% | 74.8% |
+| `24-30` | 55.4% | 58.7% | 44.2% |
+| `30+ mpg` | 63.1% | 68.6% | 48.6% |
+
+So the answer to §9 item 5 is **not** "the head is wrong and nothing addresses it". It is
+that the assumption is materially wrong, is invisible at the unit the head is fitted and
+scored at, and is **already 63–82% paid for at the pooled level** by a component that reaches
+the deliverable without passing through the likelihood at all. The chain is better than its
+weakest likelihood because the correction lives one layer down.
+
+**The residual is real and it is role-shaped, and the mechanism is named rather than
+guessed.** `allocate_spells` fits its beta-geometric on **interior** spells only — the
+appearance window is its frame — and then places every spell at a uniform random start over
+the whole schedule. Both halves of that are wrong for the 44.17% of missed games that are
+tenure edge blocks: their shape is not the interior shape, and their position is not random,
+it is an end. The consequence is visible in the sign of the residual, which **flips by role**.
+For the fringe bucket the layout *overshoots* — longest dead run 10.7233 against an observed
+8.0224, a `recovered_share` of 168.0% — because that bucket's missed games are **51.33%** edge
+blocks and scattering many interior spells over a mostly-absent season manufactures runs that
+were one block. For stars it *undershoots* — 1.7370 against 2.3218 — because a season-ending
+injury is one long block at one end and the pooled interior shape has no such spell in it.
+
+The fix is scoped and **not run here**: draw the tenure factors first (`stan_games_played`
+already fits an entry index and an exit index), lay the edge blocks at the ends, and give
+`allocate_spells` only the interior remainder. That is a change to the simulator's draw path,
+so it costs `make simulate-season` plus the whole contest layer downstream of it, and pricing
+it is a round of its own. It is logged in `docs/potential-to-dos.md` rather than scheduled.
+
+### 11e. What this settles
+
+1. **§9 item 5 closes — the assumption is violated, and the violation is not the head's to
+   fix.** No likelihood over `gp` can identify it (11a, and five fitted arms agree), so no
+   arm on §7's axis was ever going to, and none should be built.
+2. **It is the largest distributional error measured on this head, at the right unit.**
+   9.1× on a star's P(three consecutive dead periods) is an order of magnitude more than
+   anything the likelihood ladder moved, and the ladder could not have seen any of it.
+3. **The shipped chain already pays 63–82% of it**, through `allocate_spells` — a component
+   selected against a marginal gate it could not pass, kept on a judgement about what the
+   simulator needs. This is the retrospective vindication of that judgement, arriving from
+   a different direction, and it is the argument for `docs/games-played-plan.md`'s claim
+   that Gate D was the wrong instrument rather than the arm being the wrong arm.
+4. **Pooling the spell shape across roles is correct and now measured** (11b): the shape
+   moves 15% across the role range where the rate moves 2.12×, and the head already carries
+   the rate.
+5. **What is left is the tenure half, not the injury half.** 44.17% of missed games are edge
+   blocks that the layout models with neither the right shape nor the right position, and
+   the residual's sign flips by role because of it. That is the next thing worth building on
+   this axis, and it is a simulator change rather than a head change.
+6. **The head is unchanged.** `three_point_era` window, no season term, role-graded ρ,
+   two-component mixture — §7i, untouched by §10 and untouched by this.

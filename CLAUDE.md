@@ -30,13 +30,10 @@ The docs are:
   - adp-plan.md: Plan and notes for collecting average draft position ("adp") data
   - availability-plan.md: Plan and notes for modeling availability (games played 
   and minutes per game). Work completed and mostly archival.
-  - availability-ship-plan.md: **Ephemeral scaffolding** — the per-session work plan 
-  for shipping the windowed, role-graded availability head. Delete it when the round 
-  lands, as `dashboard-build-prompts.md` was.
   - availability-window-plan.md: The availability head's fitting window, season term, 
-  dispersion and **likelihood**, and what the shipped mixture is worth in the contest. 
-  Read it before changing any of those, or before pricing a head change with 
-  `make strategy-sweep`.
+  dispersion, **likelihood** and trials assumption, what the shipped mixture is worth in 
+  the contest, and how players the head has no row for are treated. Read it before 
+  changing any of those, or before pricing a head change with `make strategy-sweep`.
   - dashboard-plan.md: The dashboard's charter and pages. The dashboard is a 
   **data-visualization surface**, not a project walkthrough — read this before adding 
   or editing a view.

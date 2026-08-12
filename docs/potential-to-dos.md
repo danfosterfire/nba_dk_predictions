@@ -410,3 +410,131 @@ trend paid, in which case the honest conclusion is that 82 games out of a fixed 
 simply not a beta-binomial and the tenure decomposition is the only structural answer. The
 other way it fails is CRPS: an arm that fixes the shape and loses the mean is not shippable
 against a head whose mean function is the largest measured lever in the project.
+---
+
+## 6. Lay the tenure edge blocks separately from the interior spells
+
+**Give `sim/season.py`'s availability layout a tenure factor.** Today
+`games_played.allocate_spells` fits one pooled beta-geometric on **interior** spells — the
+appearance window is its frame — and then places every drawn spell at a uniform random start
+over the whole schedule. Both halves of that are wrong for the games that are not interior.
+
+### Why this is worth measuring
+
+`make availability-exchangeability` (`docs/availability-window-plan.md` §11) priced the
+whole exchangeability axis and found the layout step already pays 63–82% of it. The residual
+is the part this entry is about, and it is *named* rather than inferred:
+
+- **44.17%** of the availability head's 85,341 missed fitting-row games are **tenure edge
+  blocks** — a delayed first appearance or a trailing absence — not interior spells.
+  `docs/games-played-plan.md` establishes those are an absorbing hitting time rather than a
+  low recovery rate, so both their shape and their position differ from what is being drawn.
+- **The residual's sign flips by role**, which is the signature of exactly that mismatch.
+  Against the observed longest dead run, the shipped layout **overshoots** the `<12 mpg`
+  bucket (10.7233 against 8.0224) and **undershoots** stars (1.7370 against 2.3218). The
+  fringe bucket is **51.33%** edge blocks, and scattering many interior spells over a mostly
+  absent season manufactures runs that were one block; a star's season-ending injury is one
+  long block at one end, and the pooled interior shape contains no such spell.
+- Edge share falls monotonically with role — 51.33% / 42.22% / 42.22% / 39.52% — so the
+  correction is role-graded without any role parameter being introduced.
+
+### What to compare, and how
+
+The pieces already exist. `stan_games_played` fits an **entry index** and an **exit index**
+as beta-binomial heads on `betabinomial_glm.stan`, and `games_played.tenure_frame` is the
+frame. So the arm is: draw pre-tenure and post-tenure lengths from those heads, place them at
+the ends, and hand `allocate_spells` only the interior remainder and the interior games as
+its schedule. `allocate_spells`' existing behaviour must be recoverable exactly at zero
+tenure, the same nesting discipline `n_rho = 1` and `U_n = 0` already carry.
+
+Score it on `make availability-exchangeability`'s own ladder, which is built for this: the
+three arms become four, `gp` stays fixed at its realized value on every row, and the readout
+is `recovered_share` per role on `p_dead_period`, `longest_dead_run` and `p_dead_run`. The
+target is a `recovered_share` near 1.0 in **every** bucket rather than 1.68 in one and 0.59
+in another.
+
+### What would settle it
+
+Closing the sign flip. If a tenure-aware layout brings the fringe bucket down from 168% and
+the star bucket up from 69% without moving the pooled number much, the mechanism named in §11
+was right and the arm is worth its cost. Then, and only then, price it downstream: it is a
+change to the simulator's draw path, so it costs `make simulate-season` plus `make bracket`,
+`make draft` and `make strategy-sweep`, and §7l's finding — that the drafting layer *ranks*
+and so has no channel for a distributional improvement — says to expect the contest reading
+to be a null and to check `bracket_ev` specifically if it is not.
+
+### What would falsify it
+
+The layout already being right for the wrong reason. `allocate_spells` truncates its last
+spell to make the missed total exact and collapses to a single block when the drawn spells
+cannot fit, so it manufactures long blocks on heavily-absent rows by accident — which is
+plausibly why the fringe bucket overshoots. If a tenure-aware arm moves the fringe bucket by
+less than that truncation does, the defect is in the fitting loop rather than in the missing
+factor, and the cheaper fix is to stop truncating.
+
+---
+
+## 7. Grade the no-design availability *level*, which is one pooled rate for a 3.3× spread
+
+**`sim/season.no_design_availability` returns a single scalar** — the pooled `gp / team_games`
+of no-design player-seasons strictly before the target — and every rostered player the
+availability head has no row for gets it. An undrafted free agent and a first overall pick
+are handed the same availability.
+
+### Why this is worth measuring
+
+`make availability-no-prior` (`docs/availability-window-plan.md` §8a) measured the population
+this scalar covers, on the 2,616 no-design player-seasons selection may read:
+
+| draft bucket | rows | realized `μ` | P(GP < 10) |
+|---|---|---|---|
+| undrafted | 781 | **0.2500** | **0.4264** |
+| second round | 626 | 0.4036 | 0.2077 |
+| late first | 435 | 0.5669 | 0.0920 |
+| lottery | 247 | 0.7326 | 0.0202 |
+| lottery top-5 | 138 | **0.8316** | **0.0000** |
+
+**3.3260×** on the level, and the left tail runs from 42.6% to exactly zero. Against that,
+realized *dispersion* spans 1.1557× — which is why §8a withdrew the decision that graded the
+dispersion and left this one standing. The population is not small: about **14.7%** of
+season-start roster minutes per `README.md`, and 106 of 539 rostered players in 2022-23.
+
+It also lands on the contest directly rather than only on a metric. Minutes allocation is
+zero-sum, so an availability rate given to a rookie comes straight out of his teammates'
+minutes; scoring a top-5 pick at the pooled 0.4223 moves minutes *toward* the veterans on his
+team, and scoring an undrafted call-up at the same 0.4223 moves them away. Both are wrong and
+they are wrong in opposite directions, so the errors do not cancel at the team level.
+
+### What to compare, and how
+
+The estimator is already in the repo twice over. `rookie_share_priors` is an expanding-window,
+point-in-time mean per draft bucket for exactly this population, with `DRAFT_BUCKETS` and
+`UNDRAFTED_BUCKET` from `features/team_context.py`; `no_design_availability` is the same
+construction one column over. So the arm is `no_design_availability` returning a **per-bucket
+Series** rather than a scalar, pooling only seasons strictly before the target and only
+seasons selection may read — the same rule it already follows, keyed on one more column.
+
+Returning veterans are the second axis and the same table has them: gap-2 seasons realize
+0.3141 and gap-3+ realize 0.2662 against the pooled 0.4223, so gap length is worth a second
+key. That one is the genuinely new measurement, and it is small — 254 and 135 rows.
+
+The bar is Gate A in `outputs/predictions/sim_season_gate_a.csv`, since these players are in
+the tensor. Note what the pooled scalar already fixed once: scoring them at the head's
+*intercept* put them at 58.4 simulated games against a realized 30.1, and the scalar is the
+correction. This entry is the next term of the same series, not a new idea.
+
+### What would settle it
+
+Gate A's games-played CRPS and season-total MAE moving in the right direction, plus the
+minutes displacement being checked at the team level rather than only at the player level —
+the zero-sum argument above says a per-player improvement could still be a team-level wash,
+and that is the thing worth knowing.
+
+### What would falsify it
+
+The buckets not being knowable at draft time in the production frame. `bio_draft_number` is
+~15% NaN by construction, which is fine — that is the `undrafted` bucket and it is the
+largest and best-estimated of the five — but the *veteran* gap length needs the panel, and a
+player signed after the draft board is built has no row anywhere. If the graded rate can only
+be applied to a minority of the population, the pooled scalar is doing more work than the
+table suggests.

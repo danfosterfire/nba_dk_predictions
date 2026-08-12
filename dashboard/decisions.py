@@ -7643,4 +7643,127 @@ REGISTRY: tuple[Decision, ...] = (
         date="2026-08-12",
         tags=("architecture", "calibration"),
     ),
+    Decision(
+        id="exchangeable-trials-are-invisible-at-the-season-count",
+        topic="availability",
+        claim="The head's trials are **not exchangeable** — absences come in spells — and "
+              "no likelihood over `gp` can ever say so, because `gp` is invariant to the "
+              "arrangement. The assumption is instead priced at the **scoring period**, "
+              "where it is the largest distributional error measured on this head.",
+        because="A beta-binomial asserts that, given the frailty draw, a season's ~82 "
+                "games are exchangeable Bernoulli trials. They are not: one 40-game spell "
+                "and forty single-game absences give the identical `gp`. But permuting the "
+                "played/missed vector leaves `gp` exactly where it was, so within-cell "
+                "clustering `C` and between-cell frailty `rho` enter its variance only "
+                "through `C + rho*(n - C)` and are **not separately identified** — which "
+                "is why none of §7's five frailty arms touched this axis and why none "
+                "should be built. Five arms already fitted agree: `full_window` "
+                "**+0.2739** CRPS, `three_state` **+0.2965**, `duration_covariates` "
+                "**+0.1619**, `calibrated_fallback` **+0.0149**, and `hybrid` — which "
+                "rearranges absences maximally and draws its count from the incumbent's "
+                "own pmf — reproduces CRPS **10.0057**, PIT **0.0939** and tail error "
+                "**0.0406** to every decimal. So the instrument is a ladder at the unit DK "
+                "actually scores, holding `gp` fixed at its realized value and varying only "
+                "the layout. On 751 single-team validation player-seasons the exchangeable "
+                "layout puts a **star** at **0.0361** dead scoring periods against an "
+                "observed **0.1202**, a longest dead run of **0.4602** against **2.3218**, "
+                "and P(three consecutive dead periods) of **0.0308** against **0.2816** — "
+                "**9.1× short**, on the players a roster is built around. The gradient is "
+                "monotone in role and it is the mirror of the head's own: `rho` is graded "
+                "narrowest for stars, so the head is right that a star's season *length* is "
+                "the most predictable thing on the board and silent on his absences being "
+                "the most concentrated.",
+        status="measured",
+        reproduce="make availability-exchangeability → "
+                  "outputs/predictions/availability_exchangeability.csv, "
+                  "outputs/predictions/availability_clustering.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("head", "calibration", "architecture"),
+    ),
+    Decision(
+        id="the-spell-layout-pays-most-of-the-exchangeability-cost",
+        topic="simulations",
+        claim="`games_played.allocate_spells` already pays **63–82%** of the "
+              "exchangeable-trials error, and it was selected against a gate it could not "
+              "pass. What is left is the **tenure** half, not the injury half.",
+        because="The layout step exists because `stan_games_played`'s Gate D is a marginal "
+                "gate and the `hybrid` arm's whole contribution is orthogonal to the "
+                "marginal, so it tied every bar and failed on the tie — shipped on a "
+                "judgement about what the simulator needs rather than on a gate outcome. "
+                "[[exchangeable-trials-are-invisible-at-the-season-count]] is the "
+                "retrospective vindication, arriving from a different direction: priced "
+                "against a uniform layout it recovers **81.5%** of the P(dead period) gap, "
+                "**63.4%** of P(run ≥ 3) and **111.6%** of the longest-run gap. **The "
+                "residual is named rather than guessed.** `allocate_spells` fits its "
+                "beta-geometric on **interior** spells only and places every spell at a "
+                "uniform random start, but **44.17%** of the head's 85,341 missed fitting-"
+                "row games are **tenure edge blocks** — a delayed first appearance or a "
+                "trailing absence, which `docs/games-played-plan.md` establishes is an "
+                "absorbing hitting time rather than a low recovery rate. Neither their "
+                "shape nor their position is being drawn, and the residual's **sign flips "
+                "by role** because of it: the layout overshoots the fringe bucket's longest "
+                "dead run (**10.7233** against **8.0224**, that bucket being **51.33%** "
+                "edge blocks) and undershoots stars (**1.7370** against **2.3218**). "
+                "Pooling the spell *shape* across roles is separately vindicated — mean "
+                "spell moves 15% across the whole role range against a **2.12×** spread in "
+                "spells per season, and the head already carries the rate through `gp`.",
+        status="measured",
+        reproduce="make availability-exchangeability → "
+                  "outputs/predictions/availability_exchangeability.csv, "
+                  "outputs/predictions/availability_clustering.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("simulator", "calibration"),
+    ),
+    Decision(
+        id="no-prior-role-bucket-grades-the-flat-axis",
+        topic="availability",
+        claim="The three-class **imputed role bucket** for players with no prior season is "
+              "**withdrawn**. The bucket carries dispersion; the population varies in "
+              "level. `role_bins`' lowest-bucket fallback stands, now as a measured claim.",
+        because="Taken 2026-08-11 and never implemented: rookies were to get a bucket from "
+                "draft position, returning veterans from their bucket at last appearance "
+                "conditioned on gap length, everyone else the lowest bucket — on the "
+                "argument that pooling **14.7%** of season-start roster minutes was 'a "
+                "silent shrug at a sixth of the league'. The population is real and the "
+                "rule was aimed at the wrong axis. On **2,616** no-design player-seasons "
+                "in the seasons selection may read, realized **level** spans **3.3260×** "
+                "across the five draft buckets (undrafted **0.2500** to lottery top-5 "
+                "**0.8316**) and the left tail spans its whole range (P(GP<10) **0.4264** "
+                "to **exactly 0.0000**), while realized **dispersion** spans **1.1557×** "
+                "(0.2992 to 0.3458) — flatter than the in-design role gradient the rule was "
+                "borrowing (1.5365×). Worse, applied as specified it points the wrong way: "
+                "a lottery top-5 pick's 26.84 mean MPG maps to `24-30` and its `rho` of "
+                "**0.2535** against a realized **0.2992**, telling the simulator the "
+                "least-known player on the board is *more* reliable than he is. Every "
+                "imputed error in the table is negative. What the measurement does uncover "
+                "is a defect on the ungraded axis: `sim/season.no_design_availability` "
+                "hands the whole population one pooled rate, and their implied `rho` of "
+                "**0.4337** is **27% wider** than the fallback bucket's 0.3176 — an "
+                "apples-to-apples reading, since they reach the simulator with a constant "
+                "`mu` and no covariates and the in-design control is **0.4143** on the same "
+                "footing.",
+        status="withdrawn",
+        replaced_by="The lowest-bucket fallback (`rho` 0.3176) stands — too narrow on eight "
+                    "of the nine measured no-design groups and too wide on one, by 0.0184, so "
+                    "it is both the better estimator and the conservative one. The live item is "
+                    "the LEVEL: one pooled rate for a population spanning 3.3×, logged in "
+                    "`docs/potential-to-dos.md` item 7 because it changes the simulator's "
+                    "draw path.",
+        caught_by="`make availability-no-prior`, run when "
+                  "`docs/availability-ship-plan.md` was retired into "
+                  "`docs/availability-window-plan.md` §8a. The invalidating check was named "
+                  "in the ship plan's own session-3 prompt — 'the buckets carry DISPERSION, "
+                  "not level' — and predicted the failure direction correctly. It was never "
+                  "run before the decision was recorded as taken.",
+        reproduce="make availability-no-prior → "
+                  "outputs/predictions/availability_no_prior.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-11",
+        tags=("head", "simulator"),
+    ),
 )

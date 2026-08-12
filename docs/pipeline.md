@@ -216,6 +216,35 @@ make availability-regime # the last two open axes on the availability head's fit
                        #   WITHDRAWS that round's diagnosis of it: fitted jointly, the same
                        #   coefficient partition does not beat the transplant.
 
+make availability-exchangeability
+                       # the head's TRIALS assumption — availability-window-plan §11 →
+                       #   outputs/predictions/availability_{clustering,exchangeability}.
+                       #   csv. numpy only, seconds, NOTHING IS FITTED, and that is the
+                       #   finding: `gp` is invariant to the arrangement, so C and rho
+                       #   enter its variance only through C + rho*(n - C) and no
+                       #   likelihood over gp can separate them. Five already-fitted
+                       #   non-exchangeable arms agree; `hybrid` reproduces CRPS, PIT and
+                       #   the tail error to every decimal. So the instrument is a ladder
+                       #   at the SCORING PERIOD holding gp fixed at its realized value:
+                       #   observed vs `allocate_spells` (ships) vs uniform placement
+                       #   (what the beta-binomial asserts). The assumption understates a
+                       #   star's P(3 consecutive dead periods) by 9.1x and the shipped
+                       #   layout already pays 63-82% of it. What is left is the TENURE
+                       #   half — 44.17% of missed games are edge blocks the layout gives
+                       #   neither the right shape nor the right position.
+
+make availability-no-prior
+                       # what the players the head has NO ROW FOR realize —
+                       #   availability-window-plan §8a → outputs/predictions/
+                       #   availability_no_prior.csv. Descriptive, seconds. Built to settle
+                       #   a decision that was taken and never implemented, and it
+                       #   WITHDRAWS it: the role bucket carries DISPERSION, which spans
+                       #   1.1557x across draft buckets, while the population's LEVEL spans
+                       #   3.3260x. Applied as specified the rule would hand a lottery
+                       #   top-5 pick a narrower rho than he realizes. `role_bins`'
+                       #   lowest-bucket fallback stands and is now measured rather than
+                       #   assumed.
+
 make weekly-scores     # Gate A at the unit a LINEUP is set at: observed against
                        #   simulated dk_pts per player per scoring period, on train and
                        #   validation → outputs/predictions/weekly_score_{index,period,

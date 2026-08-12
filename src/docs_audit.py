@@ -190,6 +190,8 @@ MIXVAL = "outputs/predictions/availability_mixture_contest.csv"
 AREG = "outputs/predictions/availability_regime.csv"
 ASHRINK = "outputs/predictions/availability_shrinkage.csv"
 ARCONF = "outputs/predictions/availability_regime_confirmation.csv"
+ACLUST = "outputs/predictions/availability_clustering.csv"
+AEXCH = "outputs/predictions/availability_exchangeability.csv"
 #: §5b's block-window arm, rebuilt inside `make availability-regime` as the
 #: control the whole shrinkage comparison is read against.
 SPLICE = "splice8__intercept_workload"
@@ -4501,6 +4503,19 @@ def _readme() -> list[Claim]:
     add("14.7%", ROSTER_A, lambda: roster("undescribed"),
         "roster minutes with no usable prior-season row")
 
+    # ── the availability head's trials assumption (§2, availability) ──────────
+    # Two figures only, and deliberately the two that carry opposite halves of the
+    # sentence: the size of the error and the size of what already pays for it. An
+    # overview that quoted the first without the second would read as an open defect.
+    add("9.1×", AEXCH,
+        lambda: 1.0 / cell(AEXCH, "exchangeable_ratio", analysis="period_gap",
+                           population="30+ mpg", metric="p_dead_run"),
+        "star P(3 consecutive dead periods), exchangeable understatement")
+    add("81.5%", AEXCH,
+        lambda: cell(AEXCH, "recovered_share", analysis="period_gap", population="all",
+                     metric="p_dead_period"),
+        "pooled share of the exchangeability gap the shipped layout recovers")
+
     return C
 
 
@@ -5919,6 +5934,144 @@ def _availability_regime() -> list[Claim]:
     return C
 
 
+def _availability_exchangeability() -> list[Claim]:
+    """`docs/availability-window-plan.md` §11 — the exchangeable-trials assumption.
+
+    The round has no fitted arm, so what needs protecting is unusual: the claims here are
+    all *ratios between arms of the same ladder*, and every one of them is only meaningful
+    because the three arms carry identical games played. That equality is asserted inside
+    `layout_ladder` and pinned by `tests/test_availability_exchangeability.py` rather than
+    claimed here, since it is a `0.0` and not a figure.
+
+    Three groups, and each protects a different half of the verdict:
+
+    **The decomposition** (§11b). `edge_share` is what makes §11d's residual a *named*
+    mechanism rather than a shrug, and it is the number the `potential-to-dos.md` entry is
+    built on. The spell-shape rows are claimed because §11e result 4 turns them into a
+    standing licence to pool — a licence that would quietly expire if the shape gradient
+    grew and nobody noticed.
+
+    **The `gp` margin** (§11a). Every arm, including the two whose CRPS is a loss, because
+    the argument is that *all five* agree; a table that lost its losing rows would read as
+    cherry-picking. `hybrid`'s three columns are claimed against the floor's own values,
+    which is the marginal-neutrality proof.
+
+    **The period ladder** (§11c/§11d). Both ends of every gap and the recovered share, for
+    §10c's reason: the verdict is "materially wrong AND already mostly paid for", so an
+    audit that protected only the first half would let the second half rot.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, artifact: str, actual, label: str, **kw) -> None:
+        C.append(_c(quoted, artifact, actual, label, doc=AWIN, **kw))
+
+    def clu(analysis: str, population: str, column: str) -> float:
+        return cell(ACLUST, column, analysis=analysis, population=population)
+
+    def gpm(arm: str, column: str) -> float:
+        return cell(ACLUST, column, analysis="gp_margin", arm=arm)
+
+    def lay(population: str, arm: str, column: str) -> float:
+        return cell(AEXCH, column, analysis="period_layout", population=population,
+                    arm=arm)
+
+    def gap(population: str, metric: str, column: str) -> float:
+        return cell(AEXCH, column, analysis="period_gap", population=population,
+                    metric=metric)
+
+    # ── §11b: where the non-exchangeability comes from ────────────────────────
+    add("85,341", ACLUST, lambda: clu("missed_decomposition", "all", "missed_games"),
+        "missed games on the fitting rows", tol=0.5)
+    for quoted, population, column in (("55.83%", "all", "interior_share"),
+                                       ("44.17%", "all", "edge_share"),
+                                       ("48.67%", "<12 mpg", "interior_share"),
+                                       ("51.33%", "<12 mpg", "edge_share"),
+                                       ("57.78%", "12-24", "interior_share"),
+                                       ("42.22%", "12-24", "edge_share"),
+                                       ("60.48%", "30+ mpg", "interior_share"),
+                                       ("39.52%", "30+ mpg", "edge_share")):
+        add(quoted, ACLUST,
+            lambda p=population, c=column: clu("missed_decomposition", p, c),
+            f"{column} of missed games, {population}")
+    add("22,211", ACLUST,
+        lambda: clu("missed_decomposition", "<12 mpg", "missed_games"),
+        "missed games, fringe bucket", tol=0.5)
+    shape = [("all", "3.8587", "3.0660", "0.4906", "0.0551", "0.4871", "3.8703"),
+             ("<12 mpg", "5.5839", "3.1844", "0.4530", "0.0571", "0.4577", "4.5722"),
+             ("12-24", "4.4525", "2.8811", "0.4862", "0.0471", "0.4849", "4.5069"),
+             ("24-30", "2.6325", "3.3177", "0.5116", "0.0652", "0.4971", "3.1097"),
+             ("30+ mpg", "2.7621", "3.2261", "0.5367", "0.0669", "0.5291", "2.6223")]
+    for population, rate, mean, p1, p10, mu, kappa in shape:
+        for quoted, column in ((rate, "spells_per_season"), (mean, "mean_spell"),
+                               (p1, "p_spell_1"), (p10, "p_spell_ge10"),
+                               (mu, "bg_mu"), (kappa, "bg_kappa")):
+            add(quoted, ACLUST,
+                lambda p=population, c=column: clu("spell_shape", p, c),
+                f"interior spell {column}, {population}")
+
+    # ── §11a: the gp margin, every arm including the losses ───────────────────
+    margin = [("full_window", "10.2797", "+0.2739", "0.0755", "0.0496"),
+              ("three_state", "10.3466", "+0.2965", "0.1204", "0.0043"),
+              ("duration_covariates", "10.1676", "+0.1619", "0.0672", "0.0535"),
+              ("calibrated_fallback", "10.0207", "+0.0149", "0.1017", "0.0440"),
+              ("hybrid", "10.0057", "0.0000", "0.0939", "0.0406")]
+    for arm, crps, delta, pit, tail in margin:
+        for quoted, column in ((crps, "val_crps"), (delta, "crps_vs_floor"),
+                               (pit, "val_pit_ks"), (tail, "val_tail_error")):
+            add(quoted, ACLUST, lambda a=arm, c=column: gpm(a, c),
+                f"gp-margin {column}, {arm}")
+
+    # ── §11c: the period ladder, both ends of every gap ───────────────────────
+    ladder = [("all", "observed", "0.2447", "4.4634", "0.4607"),
+              ("all", "clustered", "0.2273", "4.7862", "0.3555"),
+              ("all", "exchangeable", "0.1509", "1.6862", "0.1729"),
+              ("<12 mpg", "clustered", "0.4738", "10.7233", "0.6469"),
+              ("<12 mpg", "observed", "0.4531", "8.0224", "0.6642"),
+              ("24-30", "observed", "0.1749", "3.4643", "0.4643"),
+              ("24-30", "clustered", "0.1253", "2.3189", "0.2351"),
+              ("24-30", "exchangeable", "0.0637", "0.6909", "0.0540"),
+              ("30+ mpg", "observed", "0.1202", "2.3218", "0.2816"),
+              ("30+ mpg", "clustered", "0.0892", "1.7370", "0.1526"),
+              ("30+ mpg", "exchangeable", "0.0361", "0.4602", "0.0308")]
+    for population, arm, dead, run, run3 in ladder:
+        for quoted, column in ((dead, "p_dead_period"), (run, "longest_dead_run"),
+                               (run3, "p_dead_run")):
+            add(quoted, AEXCH, lambda p=population, a=arm, c=column: lay(p, a, c),
+                f"period {column}, {population} {arm}")
+    add("751", AEXCH,
+        lambda: lay("all", "observed", "player_seasons"),
+        "single-team validation player-seasons in the period ladder", tol=0.5)
+
+    # ── §11d: what the shipped layout recovers ────────────────────────────────
+    for quoted, population, metric in (("81.5%", "all", "p_dead_period"),
+                                       ("111.6%", "all", "longest_dead_run"),
+                                       ("63.4%", "all", "p_dead_run"),
+                                       ("123.9%", "<12 mpg", "p_dead_period"),
+                                       ("168.0%", "<12 mpg", "longest_dead_run"),
+                                       ("91.4%", "<12 mpg", "p_dead_run"),
+                                       ("87.8%", "12-24", "p_dead_period"),
+                                       ("117.0%", "12-24", "longest_dead_run"),
+                                       ("74.8%", "12-24", "p_dead_run"),
+                                       ("55.4%", "24-30", "p_dead_period"),
+                                       ("58.7%", "24-30", "longest_dead_run"),
+                                       ("44.2%", "24-30", "p_dead_run"),
+                                       ("63.1%", "30+ mpg", "p_dead_period"),
+                                       ("68.6%", "30+ mpg", "longest_dead_run"),
+                                       ("48.6%", "30+ mpg", "p_dead_run")):
+        add(quoted, AEXCH,
+            lambda p=population, m=metric: gap(p, m, "recovered_share"),
+            f"recovered share, {population} {metric}")
+    # The three multiples §11c leads on, each derived from a pair already claimed above.
+    for quoted, population, metric in (("2.65×", "all", "longest_dead_run"),
+                                       ("3.3×", "30+ mpg", "p_dead_period"),
+                                       ("5.0×", "30+ mpg", "longest_dead_run"),
+                                       ("9.1×", "30+ mpg", "p_dead_run")):
+        add(quoted, AEXCH,
+            lambda p=population, m=metric: 1.0 / gap(p, m, "exchangeable_ratio"),
+            f"exchangeable understatement, {population} {metric}")
+    return C
+
+
 def _build() -> tuple[Claim, ...]:
     """Every claim, in doc order. One builder per doc — the registry is long enough that
     a single function made it hard to see which doc a section belonged to.
@@ -5930,7 +6083,7 @@ def _build() -> tuple[Claim, ...]:
                  + _established_facts() + _readme() + _shot_basis() + _games_played()
                  + _games_played_in_notes() + _train_validate_test() + _weekly()
                  + _minutes_window() + _availability_window()
-                 + _availability_regime())
+                 + _availability_regime() + _availability_exchangeability())
 
 
 CLAIMS: tuple[Claim, ...] = _build()
