@@ -429,14 +429,21 @@ is the part this entry is about, and it is *named* rather than inferred:
   blocks** — a delayed first appearance or a trailing absence — not interior spells.
   `docs/games-played-plan.md` establishes those are an absorbing hitting time rather than a
   low recovery rate, so both their shape and their position differ from what is being drawn.
-- **The residual's sign flips by role**, which is the signature of exactly that mismatch.
-  Against the observed longest dead run, the shipped layout **overshoots** the `<12 mpg`
-  bucket (10.7233 against 8.0224) and **undershoots** stars (1.7370 against 2.3218). The
-  fringe bucket is **51.33%** edge blocks, and scattering many interior spells over a mostly
-  absent season manufactures runs that were one block; a star's season-ending injury is one
-  long block at one end, and the pooled interior shape contains no such spell.
-- Edge share falls monotonically with role — 51.33% / 42.22% / 42.22% / 39.52% — so the
-  correction is role-graded without any role parameter being introduced.
+- **That 44.17% is two processes with opposite role signatures, and the target has to be
+  chosen accordingly.** Split by the panel's `status`, **20.68%** of missed games are edge
+  blocks the player was **not rostered** for — falling **13.3×** from fringe (36.46%) to star
+  (2.75%) — and **23.50%** are edge blocks he was rostered through, i.e. preseason and
+  season-ending injury, *rising* **2.5×** the other way (14.86% to 36.77%). Only the second
+  is an availability event. The first is a question about the head's denominator.
+- **The residual's sign flips by role, and the two causes are different.** The shipped layout
+  **overshoots** the `<12 mpg` bucket's longest dead run (10.7233 against 8.0224) because
+  36.46% of that bucket's missed games are one not-rostered block that the layout shatters
+  into scattered spells; it **undershoots** stars (1.7370 against 2.3218) because 36.77% of
+  theirs is a season-ending injury and a beta-geometric fitted on interior spells with a mean
+  of 3.2261 games has no draw that long.
+- **Trades are not the mechanism.** Multi-team player-seasons are excluded from the
+  measurement frame (593 of 4,027 fitting rows, 14.7%), so an ending tenure here is a player
+  leaving the league, not one continuing elsewhere.
 
 ### What to compare, and how
 
@@ -446,6 +453,14 @@ frame. So the arm is: draw pre-tenure and post-tenure lengths from those heads, 
 the ends, and hand `allocate_spells` only the interior remainder and the interior games as
 its schedule. `allocate_spells`' existing behaviour must be recoverable exactly at zero
 tenure, the same nesting discipline `n_rho = 1` and `U_n = 0` already carry.
+
+**Run the cheaper half first.** The not-rostered block is 20.68% of missed games and needs no
+new head at all — it is a contiguous run at an end, and placing it there rather than
+scattering it is a change to `allocate_spells`' placement step alone. It is also the half
+that produces the *largest* single residual (the fringe bucket's 168% overshoot). The
+still-rostered injury block is the half that needs the entry and exit heads. If the placement
+change alone closes the fringe overshoot, the second half can be priced on its own merits
+rather than bundled.
 
 Score it on `make availability-exchangeability`'s own ladder, which is built for this: the
 three arms become four, `gp` stays fixed at its realized value on every row, and the readout

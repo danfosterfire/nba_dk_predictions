@@ -5980,22 +5980,59 @@ def _availability_exchangeability() -> list[Claim]:
                     metric=metric)
 
     # ── §11b: where the non-exchangeability comes from ────────────────────────
+    # The `edge_share` rows are claimed alongside their two components deliberately: the
+    # aggregate is nearly flat across role and the components are not, which is the finding,
+    # and an audit that protected only the aggregate would let the split rot back into it.
     add("85,341", ACLUST, lambda: clu("missed_decomposition", "all", "missed_games"),
         "missed games on the fitting rows", tol=0.5)
-    for quoted, population, column in (("55.83%", "all", "interior_share"),
-                                       ("44.17%", "all", "edge_share"),
-                                       ("48.67%", "<12 mpg", "interior_share"),
-                                       ("51.33%", "<12 mpg", "edge_share"),
-                                       ("57.78%", "12-24", "interior_share"),
-                                       ("42.22%", "12-24", "edge_share"),
-                                       ("60.48%", "30+ mpg", "interior_share"),
-                                       ("39.52%", "30+ mpg", "edge_share")):
+    for quoted, population, column in (
+            ("55.83%", "all", "interior_share"),
+            ("44.17%", "all", "edge_share"),
+            ("20.68%", "all", "edge_not_rostered_share"),
+            ("23.50%", "all", "edge_still_rostered_share"),
+            ("46.81%", "all", "not_rostered_share_of_edge"),
+            ("0.88%", "all", "interior_not_rostered_share"),
+            ("48.67%", "<12 mpg", "interior_share"),
+            ("51.33%", "<12 mpg", "edge_share"),
+            ("36.46%", "<12 mpg", "edge_not_rostered_share"),
+            ("14.86%", "<12 mpg", "edge_still_rostered_share"),
+            ("71.04%", "<12 mpg", "not_rostered_share_of_edge"),
+            ("57.78%", "12-24", "interior_share"),
+            ("22.41%", "12-24", "edge_not_rostered_share"),
+            ("19.80%", "12-24", "edge_still_rostered_share"),
+            ("53.09%", "12-24", "not_rostered_share_of_edge"),
+            ("6.93%", "24-30", "edge_not_rostered_share"),
+            ("35.29%", "24-30", "edge_still_rostered_share"),
+            ("16.41%", "24-30", "not_rostered_share_of_edge"),
+            ("60.48%", "30+ mpg", "interior_share"),
+            ("39.52%", "30+ mpg", "edge_share"),
+            ("2.75%", "30+ mpg", "edge_not_rostered_share"),
+            ("36.77%", "30+ mpg", "edge_still_rostered_share"),
+            ("6.95%", "30+ mpg", "not_rostered_share_of_edge")):
         add(quoted, ACLUST,
             lambda p=population, c=column: clu("missed_decomposition", p, c),
             f"{column} of missed games, {population}")
     add("22,211", ACLUST,
         lambda: clu("missed_decomposition", "<12 mpg", "missed_games"),
         "missed games, fringe bucket", tol=0.5)
+    # §11b's target-convention note quotes four figures from a scratch measurement rather
+    # than from an artifact — the multi-team denominator comparison has no `make` target
+    # behind it, so it is presence-checked as `historical` rather than value-checked. The
+    # rule in `docs/docs-audit.md` is that an unbacked figure is either claimed this way or
+    # not quoted; silently leaving it unclaimed is the failure mode.
+    for quoted in ("165.75", "0.3006", "0.6132", "0.6879", "0.050%"):
+        add(quoted, ACLUST, lambda: float("nan"),
+            f"multi-team target convention, {quoted} (scratch, no target)",
+            historical=True)
+    # The two multiples §11b leads on, each the ratio of a pair already claimed above.
+    add("13.3×", ACLUST,
+        lambda: (clu("missed_decomposition", "<12 mpg", "edge_not_rostered_share")
+                 / clu("missed_decomposition", "30+ mpg", "edge_not_rostered_share")),
+        "not-rostered edge share, fringe over star")
+    add("2.5×", ACLUST,
+        lambda: (clu("missed_decomposition", "30+ mpg", "edge_still_rostered_share")
+                 / clu("missed_decomposition", "<12 mpg", "edge_still_rostered_share")),
+        "still-rostered edge share, star over fringe")
     shape = [("all", "3.8587", "3.0660", "0.4906", "0.0551", "0.4871", "3.8703"),
              ("<12 mpg", "5.5839", "3.1844", "0.4530", "0.0571", "0.4577", "4.5722"),
              ("12-24", "4.4525", "2.8811", "0.4862", "0.0471", "0.4849", "4.5069"),

@@ -24,6 +24,7 @@ import pandas as pd
 from src.models.availability_exchangeability import (ARRANGEMENT_TOL, _attach_gaps,
                                                      _longest_run, cell_index,
                                                      gp_margin_invariance,
+                                                     missed_decomposition,
                                                      layout_exchangeable, observed_layout,
                                                      period_statistics)
 from src.models.games_played import allocate_spells
@@ -119,3 +120,43 @@ def test_gaps_refuse_a_denominator_that_is_not_there():
 def test_gp_margin_invariance_tolerates_a_missing_artifact(tmp_path):
     """The citation is a convenience, not a dependency — a fresh clone still runs."""
     assert gp_margin_invariance(tmp_path).empty
+
+
+def test_missed_decomposition_splits_edge_blocks_by_roster_status():
+    """An edge block the player was not rostered for is not an absence, and must not pool
+    with one he was rostered through. The two run opposite ways across role, so pooling
+    them reports a flat aggregate over two real gradients."""
+    games = []
+    for g in range(10):
+        games.append({"season": "2022-23", "player_id": 1, "team_id": 5, "game_id": g,
+                      "team_game_index": g,
+                      # signed in game 4: not rostered before, then one interior miss
+                      "played": int(g >= 4 and g != 7),
+                      "in_appearance_window": int(g >= 4),
+                      "status": "not_rostered" if g < 4 else
+                                ("inactive" if g == 7 else "played")})
+    for g in range(10):
+        games.append({"season": "2022-23", "player_id": 2, "team_id": 5, "game_id": g,
+                      "team_game_index": g,
+                      # one interior miss, then a season-ending injury at game 6 —
+                      # rostered throughout, so the same 5 missed games and the same
+                      # aggregate edge share as player 1, from a different process
+                      "played": int(g < 6 and g != 2),
+                      "in_appearance_window": int(g < 6),
+                      "status": "inactive" if (g >= 6 or g == 2) else "played"})
+    panel = pd.DataFrame(games)
+    rows = pd.DataFrame({"season": ["2022-23"] * 2, "player_id": [1, 2],
+                         "role_bin": [1, 4]})
+    out = missed_decomposition(panel, rows).set_index("population")
+
+    assert out.loc["<12 mpg", "edge_not_rostered_games"] == 4
+    assert out.loc["<12 mpg", "edge_still_rostered_games"] == 0
+    assert out.loc["<12 mpg", "interior_games"] == 1
+    assert out.loc["30+ mpg", "edge_not_rostered_games"] == 0
+    assert out.loc["30+ mpg", "edge_still_rostered_games"] == 4
+    # The aggregate `edge_share` is identical for the two — 0.80 each — which is exactly
+    # the pooling this split exists to undo.
+    assert np.isclose(out.loc["<12 mpg", "edge_share"], 0.8)
+    assert np.isclose(out.loc["30+ mpg", "edge_share"], 0.8)
+    assert out.loc["<12 mpg", "not_rostered_share_of_edge"] == 1.0
+    assert out.loc["30+ mpg", "not_rostered_share_of_edge"] == 0.0

@@ -2179,25 +2179,72 @@ absences, so it reproduces CRPS, PIT and the tail error **to every decimal**: ma
 in arrangement, zero change in every marginal metric. Nothing on the `gp` margin can see this
 axis, and five arms agreeing is what turns that from an argument into a measurement.
 
-### 11b. Where the non-exchangeability actually comes from — and it is not mostly injuries
+### 11b. Where the non-exchangeability actually comes from — three processes, not two
 
-On the 4,027 fitting rows, single-team seasons only, the head's **85,341** missed games split
-into two processes that get conflated by the phrase "absences come in spells":
+**First, what is not here.** Multi-team player-seasons are excluded, `games_played`-style —
+**593** of the 4,027 fitting rows, **14.7%** of them. So a tenure that ends in this frame is
+*not* followed by games for a new team: a player who went on to play elsewhere is not in the
+population. What remains is players who left the league, or arrived in it late. Trades are a
+separate and larger phenomenon (12.2% of all player-seasons carrying 36.7% of full-window
+missed games) and they are out of scope here for the same reason they are out of scope for
+the head.
 
-| population | missed games | interior spells | **tenure edge blocks** |
-|---|---|---|---|
-| all | 85,341 | 55.83% | **44.17%** |
-| `<12 mpg` | 22,211 | 48.67% | **51.33%** |
-| `12-24` | 36,941 | 57.78% | 42.22% |
-| `24-30` | 13,121 | 57.78% | 42.22% |
-| `30+ mpg` | 13,068 | 60.48% | **39.52%** |
+> **The head's target is not symmetric across that population, and this is where to say so.**
+> `features.availability.season_availability` builds `gp` as a **league-wide** total —
+> "volume totals count every team the player appeared for" — while `team_games` is his
+> **last** team's schedule length. So for a multi-team row the numerator spans two teams and
+> the denominator spans one. It is the defensible choice rather than an oversight: a traded
+> player had roughly 82 NBA games available to him, not 164, and summing both teams'
+> schedules would give him a denominator of **165.75** on these rows and an availability of
+> 0.3006 against the shipped 0.6132. But it is an *approximation*, and its seam is visible —
+> the two teams' schedules are not synchronized, so a player can be offered 83 games against
+> an 82-game denominator. `build_design` takes `n = max(team_games, gp)` for exactly that
+> reason; on the 4,027 shipped-window fitting rows it fires **2 times (0.050%)**, both by a
+> single game. Against that, multi-team rows read `gp_share` **0.6132** against single-team
+> **0.6879**, so the convention is not inflating them.
+>
+> **Two heads make different choices about this population and only one of them wrote down
+> why.** `stan_games_played` fits on single-team seasons only (87.8%) and predicts for
+> everyone, because its per-(season, player, team) process double-counts a traded player's
+> absences. The availability head fits everyone. Both are defensible at their own unit; that
+> they differ is worth knowing before anyone assumes the two share a frame.
 
-A tenure edge block is a delayed first appearance or a trailing absence — one block at an end
-of the schedule, which `docs/games-played-plan.md` establishes is an **absorbing hitting
-time** rather than a low recovery rate. An interior spell is an injury with a return. They
-are different processes with different shapes and different positions, and **44.17% of the
-head's missed games are the first kind**. That share falls monotonically with role, which is
-the expected direction: a fringe player's absence is more often a roster fact.
+**Second, half of what remains is still not an availability event.** The panel carries
+`status` from 2006-07 and it is **99.98%** covered on this window, so an edge block can be
+split by whether the player was on an NBA roster at all. Doing that turns two processes into
+three:
+
+| population | missed games | interior spells | edge, **not rostered** | edge, **still rostered** | not-rostered share of edge |
+|---|---|---|---|---|---|
+| all | 85,341 | 55.83% | **20.68%** | **23.50%** | 46.81% |
+| `<12 mpg` | 22,211 | 48.67% | **36.46%** | 14.86% | **71.04%** |
+| `12-24` | 36,941 | 57.78% | 22.41% | 19.80% | 53.09% |
+| `24-30` | 13,121 | 57.78% | 6.93% | 35.29% | 16.41% |
+| `30+ mpg` | 13,068 | 60.48% | **2.75%** | **36.77%** | **6.95%** |
+
+Interior spells are **0.88%** `not_rostered`, which is the control that makes the flag
+readable: it is picking out tenure and not noise.
+
+**The aggregate edge share was two opposing gradients added together, and neither is flat.**
+Pooled it reads 44.17% and moves only 51.33% → 39.52% across the whole role range, which
+looks like a mild role effect. Split, the not-rostered half falls **13.3×** (36.46% → 2.75%)
+and the still-rostered half *rises* **2.5×** (14.86% → 36.77%). They are different events
+with opposite role signatures:
+
+- **Not rostered** is roster churn — a two-way call-up, a late signing, a player waived and
+  not re-signed. `docs/games-played-plan.md` measures it as 98.5%-per-game persistent, so
+  "absorbing" is right, and it is overwhelmingly a *fringe* phenomenon. **These games were
+  never his to miss**, and they are 20.68% of what the head fits as missed games.
+- **Still rostered but outside the appearance window** is preseason and season-ending injury,
+  and it is overwhelmingly a *star* phenomenon — **36.77%** of a 30+ mpg player's missed
+  games. `docs/games-played-plan.md` calls this "the highest-value population in the whole
+  head", and the structural proxy alone cannot see it.
+
+**This is a property of the head's target, stated plainly.** `team_games` is the team's whole
+schedule, so a player signed in January is scored `gp / 82` rather than `gp / 41`. That is
+deliberate — the draft happens before you know he will be signed, so the denominator is the
+one a forecast has — but it means roughly a fifth of the head's missed games are games in
+which the player was not an NBA player.
 
 The interior spells themselves are the reassuring half. Their **shape** is close to
 role-invariant while their **rate** is not:
@@ -2298,23 +2345,34 @@ scored at, and is **already 63–82% paid for at the pooled level** by a compone
 the deliverable without passing through the likelihood at all. The chain is better than its
 weakest likelihood because the correction lives one layer down.
 
-**The residual is real and it is role-shaped, and the mechanism is named rather than
-guessed.** `allocate_spells` fits its beta-geometric on **interior** spells only — the
-appearance window is its frame — and then places every spell at a uniform random start over
-the whole schedule. Both halves of that are wrong for the 44.17% of missed games that are
-tenure edge blocks: their shape is not the interior shape, and their position is not random,
-it is an end. The consequence is visible in the sign of the residual, which **flips by role**.
-For the fringe bucket the layout *overshoots* — longest dead run 10.7233 against an observed
-8.0224, a `recovered_share` of 168.0% — because that bucket's missed games are **51.33%** edge
-blocks and scattering many interior spells over a mostly-absent season manufactures runs that
-were one block. For stars it *undershoots* — 1.7370 against 2.3218 — because a season-ending
-injury is one long block at one end and the pooled interior shape has no such spell in it.
+**The residual is real, it is role-shaped, and §11b's split says the sign flip has two
+causes rather than one.** `allocate_spells` fits its beta-geometric on **interior** spells
+only — the appearance window is its frame — and then places every spell at a uniform random
+start over the whole schedule. Both halves of that are wrong for an edge block: its shape is
+not the interior shape, and its position is not random, it is an end. But the *two kinds* of
+edge block break it in opposite directions, which is why the residual does too:
+
+- **Fringe players — the layout overshoots**, longest dead run 10.7233 against an observed
+  8.0224, a `recovered_share` of 168.0%. **36.46%** of that bucket's missed games are games
+  he was **not rostered** for, which is one contiguous block at one end by construction, and
+  the layout shatters it into a season's worth of scattered interior spells. Manufacturing
+  many separate dead periods out of one block is exactly an overshoot.
+- **Stars — the layout undershoots**, 1.7370 against 2.3218. Only 2.75% of a star's missed
+  games are not-rostered, but **36.77%** are still-rostered edge absence — a season-ending
+  injury, one long block at one end — and a beta-geometric fitted on interior spells whose
+  mean is 3.2261 games has essentially no draw that long.
+
+*(This corrects the first version of this section, which attributed both signs to the pooled
+44.17% edge share. The share is nearly flat across role and could not have produced a sign
+flip; its two components are not flat and do.)*
 
 The fix is scoped and **not run here**: draw the tenure factors first (`stan_games_played`
 already fits an entry index and an exit index), lay the edge blocks at the ends, and give
 `allocate_spells` only the interior remainder. That is a change to the simulator's draw path,
 so it costs `make simulate-season` plus the whole contest layer downstream of it, and pricing
-it is a round of its own. It is logged in `docs/potential-to-dos.md` rather than scheduled.
+it is a round of its own. It is logged in `docs/potential-to-dos.md` rather than scheduled —
+and §11b sharpens what it should target, because the not-rostered fifth may be a question
+about the head's **denominator** rather than about the layout at all.
 
 ### 11e. What this settles
 
@@ -2332,9 +2390,14 @@ it is a round of its own. It is logged in `docs/potential-to-dos.md` rather than
 4. **Pooling the spell shape across roles is correct and now measured** (11b): the shape
    moves 15% across the role range where the rate moves 2.12×, and the head already carries
    the rate.
-5. **What is left is the tenure half, not the injury half.** 44.17% of missed games are edge
-   blocks that the layout models with neither the right shape nor the right position, and
-   the residual's sign flips by role because of it. That is the next thing worth building on
-   this axis, and it is a simulator change rather than a head change.
+5. **What is left is the tenure half, and it is two things rather than one.** 44.17% of
+   missed games are edge blocks the layout gives neither the right shape nor the right
+   position, and the residual's sign flips by role because its two components have opposite
+   role signatures: **20.68%** are games the player was **not rostered** for (fringe-driven,
+   13.3× across role, and arguably a question about the head's denominator rather than about
+   the layout) and **23.50%** are still-rostered preseason or season-ending injury
+   (star-driven, 2.5× the other way). Trades are not in this frame at all — multi-team rows
+   are excluded, 14.7% of the fitting rows — so none of it is a tenure that continued
+   somewhere else.
 6. **The head is unchanged.** `three_point_era` window, no season term, role-graded ρ,
    two-component mixture — §7i, untouched by §10 and untouched by this.

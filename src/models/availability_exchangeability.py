@@ -58,10 +58,18 @@ separates them is arrangement and cannot be anything else.
 ## Scope
 
 Nothing here fits a model or changes one. It is an instrument for an assumption, and the
-mitigation it prices — `allocate_spells` — already ships inside `sim/season.py`. Multi-team
-player-seasons are excluded from every population for `games_played.multi_team_seasons`'
-reason: the panel runs per (season, player, team) and a traded player reads as having missed
-half the season twice over, which is a roster fact wearing an availability costume.
+mitigation it prices — `allocate_spells` — already ships inside `sim/season.py`.
+
+**Multi-team player-seasons are excluded from every population** for
+`games_played.multi_team_seasons`' reason: the panel runs per (season, player, team) and a
+traded player reads as having missed half the season twice over, which is a roster fact
+wearing an availability costume. That is **593 of the 4,027 fitting rows (14.7%)**, and it
+matters for reading the decomposition below — an ending tenure in this frame is **not**
+followed by games for a new team, because a player who went on to play elsewhere is not
+here. What is left is players who left the league, or arrived in it late.
+
+**Half of what is left is still not an availability event**, and `missed_decomposition`
+splits it rather than pooling it. See that function.
 """
 
 from pathlib import Path
@@ -87,6 +95,12 @@ LAYOUT_REPS = 25
 #: three weeks of a zero in a best-ball lineup that seats 7 of 16 — long enough that the
 #: slot is not a slot, short enough to happen to a healthy star.
 DEAD_RUN = 3
+
+#: The panel `status` value meaning the player was not on an NBA roster for that game. It is
+#: 99.98% covered on the 2012-13+ window and ~1% of interior spells, so on an edge block it
+#: separates roster churn from injury cleanly. `docs/games-played-plan.md` measures it as
+#: 98.5%-per-game persistent, which is why "absorbing" is the right idealization.
+NOT_ROSTERED = "not_rostered"
 
 #: How large the exchangeable arm's error has to be, relative to the observed value, before
 #: a `recovered_share` is worth quoting. Below it the metric does not resolve the
@@ -124,34 +138,59 @@ def single_team_panel(panel: pd.DataFrame, rows: pd.DataFrame) -> pd.DataFrame:
 # ── Analysis 1: where the non-exchangeability comes from ──────────────────────
 
 def missed_decomposition(panel: pd.DataFrame, rows: pd.DataFrame) -> pd.DataFrame:
-    """Missed games split into **tenure edge blocks** and **interior spells**, by role.
+    """Missed games split into **interior spells** and two kinds of **tenure edge block**.
 
-    The two are different processes and only one of them is what "absences come in spells"
+    The three are different processes and only the first is what "absences come in spells"
     usually means. A late first appearance or an early last one is a single block at an end
     of the schedule — `games_played.py` establishes it is an absorbing hitting time rather
     than a low recovery rate — while an interior spell is an injury with a return.
 
-    This matters here because the shipped layout treats them alike: `allocate_spells` fits
-    its beta-geometric on interior spells only (the appearance window is its frame) and then
-    places every spell at a uniform random start over the whole schedule. So the share in
-    this table is the share of missed games whose shape and position the shipped layout is
-    **not** modelling.
+    **A trade is not one of the three, because trades are not in the frame.**
+    `single_team_panel` drops multi-team player-seasons, so an ending tenure here is not
+    followed by games for a new team: the player left the league rather than the roster.
+
+    **But half of what is left is still not an availability event, and the split is the
+    point.** The panel carries `status` from 2006-07 (99.98% covered on this window), and an
+    edge block is either `not_rostered` — the player was not on an NBA roster, so the game
+    was never his to miss — or `inactive`/`dnp`, which is preseason and season-ending
+    injury and is genuinely availability. The aggregate edge share hides that those two run
+    in **opposite directions** across role, which is why they are emitted separately: the
+    fringe bucket's edge blocks are mostly roster churn and a star's are mostly injury.
+
+    The interior column is the control that makes the split readable — interior spells are
+    ~1% `not_rostered`, so the status flag is picking out tenure and not noise.
     """
     sub = single_team_panel(panel, rows)
     keyed = rows.set_index(["season", "player_id"])["role_bin"]
     miss = sub[sub["played"] == 0].copy()
     miss["role_bin"] = [keyed.get((s, p), 0)
                         for s, p in zip(miss["season"], miss["player_id"])]
+    edge = miss["in_appearance_window"] == 0
+    not_rostered = miss["status"] == NOT_ROSTERED
     out = []
-    for label, group in [("all", miss)] + [(ROLE_LABELS[b - 1], miss[miss["role_bin"] == b])
-                                           for b in range(1, len(ROLE_LABELS) + 1)]:
-        total = len(group)
-        interior = int((group["in_appearance_window"] == 1).sum())
+    for label, mask in [("all", pd.Series(True, index=miss.index))] + [
+            (ROLE_LABELS[b - 1], miss["role_bin"] == b)
+            for b in range(1, len(ROLE_LABELS) + 1)]:
+        total = int(mask.sum())
+        if not total:
+            continue
+        interior = int((mask & ~edge).sum())
+        edge_off = int((mask & edge & not_rostered).sum())
+        edge_on = int((mask & edge & ~not_rostered).sum())
         out.append({"analysis": "missed_decomposition", "population": label,
                     "missed_games": total, "interior_games": interior,
-                    "edge_games": total - interior,
-                    "interior_share": interior / total if total else np.nan,
-                    "edge_share": (total - interior) / total if total else np.nan})
+                    "edge_games": edge_off + edge_on,
+                    "edge_not_rostered_games": edge_off,
+                    "edge_still_rostered_games": edge_on,
+                    "interior_share": interior / total,
+                    "edge_share": (edge_off + edge_on) / total,
+                    "edge_not_rostered_share": edge_off / total,
+                    "edge_still_rostered_share": edge_on / total,
+                    "not_rostered_share_of_edge":
+                        edge_off / (edge_off + edge_on) if edge_off + edge_on else np.nan,
+                    "interior_not_rostered_share":
+                        int((mask & ~edge & not_rostered).sum()) / interior
+                        if interior else np.nan})
     return pd.DataFrame(out)
 
 
@@ -407,7 +446,7 @@ def run(cfg: dict) -> dict[str, Path]:
     panel = pd.read_parquet(
         features_dir / "availability_panel.parquet",
         columns=["season", "player_id", "team_id", "game_id", "team_game_index",
-                 "played", "in_appearance_window"])
+                 "played", "in_appearance_window", "status"])
 
     # ── the decomposition and the pooled spell shape, on the FITTING rows only ─
     decomposition = missed_decomposition(panel, fit_rows)
@@ -419,8 +458,13 @@ def run(cfg: dict) -> dict[str, Path]:
 
     edge = decomposition[decomposition["population"] == "all"].iloc[0]
     print(f"\n  Missed games on the fitting rows: {edge['missed_games']:,} — "
-          f"{edge['interior_share']:.1%} interior spells, {edge['edge_share']:.1%} tenure "
-          f"edge blocks the shipped layout does not model")
+          f"{edge['interior_share']:.1%} interior spells, "
+          f"{edge['edge_not_rostered_share']:.1%} edge blocks the player was NOT ROSTERED "
+          f"for, {edge['edge_still_rostered_share']:.1%} edge blocks he was rostered "
+          f"through")
+    print(decomposition[["population", "missed_games", "interior_share",
+                         "edge_not_rostered_share", "edge_still_rostered_share",
+                         "not_rostered_share_of_edge"]].round(4).to_string(index=False))
     print(shape[["population", "spells_per_season", "mean_spell", "p_spell_ge10",
                  "bg_mu", "bg_kappa"]].round(4).to_string(index=False))
     if len(invariance):
