@@ -56,6 +56,36 @@
 // block — which is what preserves this file's load-bearing property that with a
 // normal(0, 1/sqrt(2*l2)) prior the posterior MODE is exactly the penalized MLE
 // `src/models/availability.py::BetaBinomialGLM` finds. A test pins the nesting.
+//
+// ── The optional low-availability mixture ────────────────────────────────────────────
+//
+//   y ~ (1 - pi_i) * BetaBinom(n, mu_i, rho_i)  +  pi_i * BetaBinom(n, mu_low, rho_low)
+//   pi_i = theta * inv_logit(z_i' gamma),  theta in [0, 1]
+//
+// The AVAILABILITY head only. `docs/availability-window-plan.md` §7c measured the low tail
+// as a separate EVENT rather than an extreme draw of a per-game rate: an Achilles rupture
+// in October is not a frailty, and one shape knob cannot make it one. Under
+// `a = mu(1-rho)/rho` the frailty's shape and its variance are the same parameter, so
+// `b < 1` — a density diverging exactly at "played every game" — is forced on 52.7% of
+// rows, and moving `rho` is why the single-component head could only halve the miss. A
+// second component with its OWN mean and dispersion halves the boundary error again
+// (0.0201 -> 0.0109) and ties on CRPS.
+//
+// `theta` is a BOUNDED scale on [0, 1] rather than an intercept inside the logit, and that
+// is the whole reason the nesting below is an equality instead of a limit: `theta = 0` is
+// an attainable parameter value where `gamma_0 -> -inf` is a statement about floating
+// point. `z` carries no intercept, because `theta` is the scale. `mu_low` is bounded at
+// `mu_low_max` so the two components cannot label-switch — with a scalar mean against a
+// covariate-driven one they are already distinguishable, and the bound makes it structural.
+//
+// **P = 0 disables the block EXACTLY, and so does theta = 0.** Two nestings, because two
+// different things could go wrong. `P = 0` gives zero-length `theta`, `mu_low`, `rho_low`
+// and `gamma`, so the parameter space, the priors and the likelihood are the five other
+// heads' unchanged model — the same device `S = 0` uses. With `P > 0` the mixture enters as
+// an ADDITIVE correction to the untouched beta-binomial line below, and at `pi = 0` that
+// correction is exactly `0.0` per row rather than a small number: the likelihood statement
+// those five heads have always fitted is still the one being evaluated, bit for bit. A test
+// pins both, on Stan's own `log_prob`.
 data {
   int<lower=0> N;
   int<lower=0> K;
@@ -69,9 +99,14 @@ data {
   int<lower=0> S;                     // training seasons; 0 disables the year effect
   array[N] int<lower=0> season_idx;   // 1..S, ignored (and all zero) when S == 0
   real<lower=0> year_sd_scale;        // half-normal scale on sigma_year
+  int<lower=0> P;                     // pi's covariates; 0 disables the mixture EXACTLY
+  matrix[N, P] Z;                     // standardized on TRAIN only; NO intercept column
+  real<lower=0> gamma_scale;          // normal scale on gamma, ignored when P == 0
+  real<lower=0, upper=1> mu_low_max;  // upper bound on the low component's mean
 }
 transformed data {
   int H = S > 0 ? 1 : 0;
+  int M = P > 0 ? 1 : 0;              // one mixture scalar each, or none at all
 }
 parameters {
   // Bounds mirror RHO_MIN / RHO_MAX in `src/models/availability.py` exactly, so this is
@@ -86,6 +121,13 @@ parameters {
   vector[K] beta;
   vector[S] year_z;                   // zero-length when S == 0
   vector<lower=0>[H] sigma_year;      // zero-length when S == 0
+  // All four zero-length when P == 0. `theta`'s lower bound of 0 is the nesting point and
+  // is attainable, which is the property `docs/availability-window-plan.md` §7b requires;
+  // `mu_low` and `rho_low` mirror the main component's own guard rails.
+  vector<lower=0, upper=1>[M] theta;
+  vector<lower=1e-6, upper=mu_low_max>[M] mu_low;
+  vector<lower=1e-6, upper=0.95>[M] rho_low;
+  vector[P] gamma;
 }
 model {
   // `eta` is local rather than a `transformed parameter`: it is one value per row, so
@@ -112,4 +154,42 @@ model {
   // magnitude more headroom, and it removes essentially all of the warmup rejections that
   // a wide-open linear predictor otherwise produces.
   y ~ beta_binomial(n, s .* inv_logit(eta), s .* inv_logit(-eta));
+
+  // The mixture, as a CORRECTION to the line above rather than a replacement for it:
+  //
+  //   log[(1-pi) L_main + pi L_low] = log L_main + log1m(pi) + log1p_exp(logit(pi) + d)
+  //
+  // with `d = log L_low - log L_main`. Writing it as a correction is what makes the
+  // nesting bit for bit: at `theta = 0` the whole block is skipped, so the target IS the
+  // untouched beta-binomial statement above rather than a value that rounds to it.
+  //
+  // `theta > 0` is the exact test, not a proxy — `pi_i = theta * inv_logit(.)` and
+  // `inv_logit` is strictly positive, so `pi` is zero on every row or on none. Branching
+  // on the scalar also keeps `log(0)` out of the autodiff graph entirely, which a per-row
+  // guard could not do vectorized: the limit of the correction as `pi -> 0` is 0, and a
+  // -inf whose adjoint is multiplied by a zero derivative is a nan rather than the zero it
+  // mathematically is. The sampler works on the unconstrained scale, where `theta = 0`
+  // sits at -inf and is never evaluated.
+  //
+  // Written through `lbeta` rather than through `beta_binomial_lpmf` because a mixture
+  // needs the per-row density BEFORE it is summed, and Stan's lpmf vectorizes to a sum —
+  // so the scalar form is a loop of 2N autodiff calls, which measured ~10x the cost of
+  // the whole rest of the fit. `lbeta` vectorizes, and the binomial coefficient is common
+  // to both components and cancels inside `d`, so it is never formed at all.
+  if (P > 0 && theta[1] > 0) {
+    vector[N] a = s .* inv_logit(eta);
+    vector[N] b = s .* inv_logit(-eta);
+    real s_low = (1 - rho_low[1]) / rho_low[1];
+    real a_low = s_low * mu_low[1];
+    real b_low = s_low * (1 - mu_low[1]);
+    vector[N] yv = to_vector(y);
+    vector[N] nv = to_vector(n);
+    vector[N] d = (lbeta(yv + a_low, nv - yv + b_low) - lbeta(a_low, b_low))
+                  - (lbeta(yv + a, nv - yv + b) - lbeta(a, b));
+    vector[N] pi = theta[1] * inv_logit(Z * gamma);
+    target += sum(log1m(pi)) + sum(log1p_exp(log(pi) - log1m(pi) + d));
+  }
+  if (P > 0) {
+    gamma ~ normal(0, gamma_scale);
+  }
 }

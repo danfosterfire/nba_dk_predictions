@@ -3447,6 +3447,97 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("head", "calibration"),
     ),
     Decision(
+        id="availability-mixture-ships-in-the-shared-stan-source",
+        topic="availability",
+        claim="**The low-availability mixture is ported and ships**, inside the shared "
+              "`betabinomial_glm.stan` rather than a fork — and the port reproduces the "
+              "ladder arm it is a port of, with its calibration margins **attenuated but "
+              "still clear of zero**.",
+        because="`stan.availability.mixture` turns on a second beta-binomial component for "
+                "the disrupted season, `π_i = θ·σ(z_i'γ)` with eight covariates on `π`. "
+                "**Both nestings are exact and asserted on Stan's own `log_prob`**: `P = 0` "
+                "makes `θ`, `μ_low`, `ρ_low` and `γ` zero-length, which is the parameter "
+                "space the file's five other heads have always had, and with `P > 0`, "
+                "`θ = 0` leaves the target **bit for bit** identical — equality on doubles, "
+                "not a tolerance — because the mixture enters as an *additive correction* to "
+                "the untouched beta-binomial statement and the correction is skipped at "
+                "`θ = 0`. The point MLE refitted on the same 4,027 windowed rows reproduces "
+                "`availability_likelihood.csv`'s `mixture` row to **0.000000** on all six "
+                "metrics, so what follows compares the port against the arm that was "
+                "selected. **D1's rule holds for the object that ships**, on its own paired "
+                "bootstrap: CRPS **+0.0113 [−0.0257, +0.0503]** (non-inferior), "
+                "`boundary_tail_error` **−0.0079 [−0.0088, −0.0043]**, `shoulder_error` "
+                "**−0.0013 [−0.0078, −0.0003]**. But the port keeps only **89%** of the "
+                "point MLE's boundary margin and **62%** of its shoulder margin, so quoting "
+                "§7c's 0.0108 as the shipped head's boundary error overstates it by 11% — "
+                "the shipped figures are 0.0120 boundary, 0.0243 shoulder, **0.0038** body "
+                "(the best on the table, and the body was never the selector). The Stan "
+                "*plug-in* fails the shoulder half where the posterior passes it, which is "
+                "the one qualitative disagreement between the two and the opposite of the "
+                "single-component port, where they differ by 0.002 CRPS and nothing else. "
+                "**No multimodality**, which the point MLE's need for multi-start had "
+                "flagged as the risk: four chains started at `θ = 0.02 / 0.08 / 0.25 / 0.50` "
+                "agree to **0.276** pooled posterior sds, R̂ **1.0073**, ESS 1,399, "
+                "**0** divergences, and the MLE sits inside the 95% credible interval for "
+                "**11 of 11** mixture terms. `π` is the same object it was at the optimum — "
+                "mean **4.82%**, running 1.23% → 10.58% across players, an **8.6×** spread. "
+                "Cost **366 s** against the single-component head's 94, and the first "
+                "implementation was ~10× worse than that: a per-row loop of "
+                "`beta_binomial_lpmf` that did not finish warmup in 20 minutes, fixed by "
+                "vectorized `lbeta` — a signal about the autodiff graph, not the geometry.",
+        status="built",
+        reproduce="make stan-availability-mixture → "
+                  "outputs/predictions/stan_availability_mixture.csv, "
+                  "outputs/predictions/stan_availability_mixture_parameters.csv, "
+                  "outputs/predictions/stan_availability_mixture_chains.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("head", "calibration", "stan"),
+    ),
+    Decision(
+        id="availability-mixture-artifacts-refuse-to-persist-it",
+        topic="availability",
+        claim="**`make posteriors` and `rehydrate_availability` refuse a mixture head "
+              "rather than persist one they cannot reconstruct** — and `make "
+              "stan-availability` was deliberately left un-rerun.",
+        because="`DesignRecipe` carries **one** scaler, and `π`'s covariate block "
+                "(`stan_availability.PI_FEATURES`) is not a subset of the mean's feature "
+                "list, so an artifact written today would carry `alpha`/`beta`/`rho` and "
+                "rehydrate as the **single-component head** with nothing raising — the same "
+                "failure mode `_finish` already refuses for a year random effect, one level "
+                "over. Both call sites therefore raise with the wiring named. Separately, "
+                "the port check writes its own artifacts "
+                "(`stan_availability_mixture*.csv`) instead of overwriting "
+                "`stan_availability_metrics.csv`, because ~40 quoted port figures across "
+                "`docs/availability-plan.md`, `docs/facts-archive.md` and "
+                "`docs/model-development-notes.md` are audited against that file. So "
+                "`make docs-audit` is green over a **consistent** set of figures describing "
+                "the single-component head, and will go red the moment `make "
+                "stan-availability` runs — which is the intended alarm, recorded here so it "
+                "is not read as a regression.",
+        status="blocked",
+        unblocks="Give `DesignRecipe` a second design block — π's feature list and its own "
+                 "scaler — then wire it through `posteriors.availability_artifact`, add "
+                 "`theta_draws` / `mu_low_draws` / `rho_low_draws` / `gamma_draws` to "
+                 "`_thinned`'s name list, and reconstruct π in `rehydrate_availability`. "
+                 "Two traps: `response=\"mean_mu\"` serves the reference prediction through "
+                 "`mu_draws`, which under a mixture is the MAIN component's mean rather "
+                 "than the predictive one, so `roundtrip()` would verify the wrong quantity "
+                 "and pass; and a dataclass field default does not survive unpickling, so "
+                 "artifacts written before the new fields exist raise `AttributeError` "
+                 "instead of falling back — read them through `getattr` or add a "
+                 "`__setstate__`. Then re-run `make stan-availability` and refresh the "
+                 "quoted port figures, keeping the single-component ones as "
+                 "`historical=True` rows.",
+        reproduce="make stan-availability-mixture → "
+                  "outputs/predictions/stan_availability_mixture.csv",
+        source="docs/availability-mixture-ship-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("head", "provenance"),
+    ),
+    Decision(
         id="simulator-reimplements-the-availability-draw",
         topic="simulations",
         claim="**The simulator re-implements the availability head instead of drawing "

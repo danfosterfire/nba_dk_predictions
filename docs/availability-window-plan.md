@@ -999,21 +999,32 @@ point mass on one side and nothing beside it will always miss.
 
 **Not settled.**
 
-- **Which likelihood — though §7f narrowed it to one candidate.** `mixture` is the only arm
-  that improves **every** regional metric (boundary, shoulders, point masses, body) while
+> ✅ **Two of the four below closed on 2026-08-12** — the likelihood question and the cost of
+> a port — and §7h is the measurement. `mixture` is selected under D1, ported behind
+> `stan.availability.mixture`, and its verdict survives the port with the calibration margins
+> attenuated but still clear of zero. The two that remain are the last two.
+
+- ~~**Which likelihood**~~ ✅ **Settled 2026-08-12** — `mixture` ships (`D1`, §7h). Kept
+  below because the *argument* is the useful part, and because it records what the decision
+  cost: adopting it means the objective for this head is tail calibration with a CRPS guard,
+  which is a change of rule and not a metric. **`mixture` is the only arm** that improves
+  **every** regional metric (boundary, shoulders, point masses, body) while
   tying on CRPS, the only one whose selector win replicates on the rolling harness, and the
   only one whose **shoulder** win replicates *in sign* — it reduces the magnitude of that
   error on both readings, where the reference's own error points in opposite directions.
   `beta_rect` wins CRPS and moves the shoulder by pushing a level, so it helps on one
-  reading and hurts on the other; `logitnormal` is a measured failure. What is still not settled is whether a
-  CRPS-neutral calibration win is a shipping criterion for this head — every availability
-  decision to date has been taken on mean CRPS with a paired bootstrap, and adopting
-  `mixture` means deciding the objective is tail calibration. That is a judgement call about
-  what the head is *for*, not a number this ladder can produce.
-- **What a Stan port would cost.** Nothing ships from this ladder. A port of `mixture` adds
-  a covariate block and a component to `betabinomial_glm.stan`, which four other heads share
-  — the same transplant discipline `n_rho` needed, and a session's work rather than a
-  parameter.
+  reading and hurts on the other; `logitnormal` is a measured failure. Whether a
+  CRPS-neutral calibration win is a shipping criterion for this head was the judgement call
+  the ladder could not produce a number for, and `docs/availability-mixture-ship-plan.md` D1
+  made it — **stated before the arm it admits was ported**, which is the point of writing a
+  rule down rather than inferring it from the arm that happened to win.
+- ~~**What a Stan port would cost.**~~ ✅ **Measured 2026-08-12** (§7h). It cost a covariate
+  block and an additive correction in `betabinomial_glm.stan` — which six other heads share,
+  and which `P = 0` and `θ = 0` both leave bit-for-bit unchanged — plus **3.9×** the sampler
+  time. The prediction that this was "a session's work rather than a parameter" was right.
+  What the estimate missed is that the port **attenuates** the win it ports: 89% of the
+  boundary margin and 62% of the shoulder margin survive, so the shipped head is a slightly
+  weaker version of the arm that was selected.
 - ~~**Whether the pinned `l2` is doing the work** (§7d).~~ ✅ **Closed 2026-08-11** — a null,
   moved to the settled list above.
 - **The exchangeable-trials assumption**, which none of these arms touches. Absences come in
@@ -1021,6 +1032,116 @@ point mass on one side and nothing beside it will always miss.
   extra parameter — and one 40-game spell and forty single-game absences give identical `gp`
   and very different distributions. A beta-binomial absorbs the variance inflation from that
   clustering but not its shape, and neither does any arm above.
+
+### 7h. The Stan port — measured 2026-08-12, and it reproduces the ladder
+
+`make stan-availability-mixture` → `stan_availability_mixture.csv`,
+`stan_availability_mixture_parameters.csv`, `stan_availability_mixture_chains.csv`,
+`stan_availability_mixture_diagnostics.csv`.
+
+The mixture is now in `src/stan/betabinomial_glm.stan` behind `P`, the number of covariates
+on `π`, and in `stan_availability.StanAvailability` behind `stan.availability.mixture`.
+**Both nestings are exact and both are asserted on Stan's own `log_prob`**
+(`tests/test_stan_heads.py`): `P = 0` makes `θ`, `μ_low`, `ρ_low` and `γ` zero-length, which
+is the parameter space the other five heads on that file have always had; and with `P > 0`,
+`θ = 0` leaves the target **bit for bit** identical — equality on doubles, not a tolerance.
+That is possible because the mixture enters as an *additive correction* to the untouched
+beta-binomial statement rather than replacing it, and the correction is skipped entirely at
+`θ = 0`. `θ > 0` is the exact test rather than a proxy, since `π_i = θ·σ(z_i'γ)` and `σ` is
+strictly positive, so `π` is zero on every row or on none.
+
+**The point MLE refitted on the same rows reproduces §7c's row to 0.000000** on all six
+metrics — the check that the two tables describe the same population before any of the rest
+is comparable.
+
+| arm | CRPS | PIT KS | **boundary** | body | **shoulder** | point mass |
+|---|---|---|---|---|---|---|
+| `betabinom` *(reference, point MLE)* | 9.8125 | 0.0667 | 0.0201 | 0.0107 | 0.0253 | 0.0109 |
+| `mixture` *(point MLE — §7c's row, reproduced)* | 9.8237 | 0.0631 | **0.0108** | 0.0047 | **0.0235** | 0.0068 |
+| Stan plug-in | 9.8195 | 0.0643 | 0.0123 | 0.0045 | 0.0251 | 0.0073 |
+| **Stan posterior** *(what ships)* | 9.8239 | 0.0643 | **0.0120** | **0.0038** | **0.0243** | 0.0075 |
+
+**D1's rule holds for the object that ships, not only for the ladder row it is a port of.**
+Every margin is a paired bootstrap against the single-component reference on the same 883
+validation rows, because a boundary margin quoted bare is a prompt rather than a finding:
+
+| arm | CRPS vs `betabinom` | boundary vs `betabinom` | shoulder vs `betabinom` |
+|---|---|---|---|
+| `mixture` (point MLE) | +0.0112 [−0.0280, +0.0511] | −0.0089 [−0.0099, −0.0042] | −0.0021 [−0.0086, −0.0010] |
+| Stan plug-in | +0.0069 [−0.0320, +0.0478] | −0.0076 [−0.0085, −0.0046] | −0.0005 [−0.0070, **+0.0005**] ❌ |
+| **Stan posterior** | +0.0113 [−0.0257, +0.0503] | **−0.0079 [−0.0088, −0.0043]** ✅ | **−0.0013 [−0.0078, −0.0003]** ✅ |
+
+**Three things in that table are worth reading rather than skipping.**
+
+**1. The port attenuates the calibration win without losing it.** The shipped posterior keeps
+**89%** of the point MLE's boundary margin (−0.0079 against −0.0089) and **62%** of its
+shoulder margin (−0.0013 against −0.0021). Both still exclude zero and CRPS is still
+non-inferior, so D1 passes — but the arm that ships is a slightly weaker version of the arm
+that was selected, and quoting §7c's 0.0108 as the shipped head's boundary error would
+overstate it by 11%.
+
+**2. The plug-in fails the shoulder half and the posterior passes it**, which is the one
+place these two rows disagree qualitatively. The plug-in is one mixture at the posterior
+mean; the posterior is a mixture *over* the posterior, and integrating the parameter
+uncertainty is what pushes its shoulder error back down to −0.0013. This is the opposite of
+the pattern in the single-component port, where plug-in and posterior differ by 0.002 CRPS
+and nothing else — a reminder that "the posterior barely moves the marginal metric" was a
+statement about *that* likelihood.
+
+**3. The body improves most, and it was never the selector.** 0.0107 → **0.0038**, the best
+of any arm on the table including the point MLE's 0.0047. §7c result 6's finding — that no
+arm here repeats the season trend's failure of buying boundaries out of the middle — survives
+the port and gets stronger.
+
+**`π` is the same object it was at the point MLE.** Mean **4.82%** against 4.88%, running
+from **1.23%** at the 10th percentile of validation players to **10.58%** at the 90th, an
+**8.6×** spread against 8.8×. So the arm's distinguishing claim — that it can say *who* is at
+risk, where a wider frailty can only say that someone is — is a property of the fitted
+posterior and not of the optimizer.
+
+**The sampler behaved, and the multimodality the point MLE warned about did not appear.**
+R̂ **1.0073**, min ESS **1,399**, **0** divergences. The point MLE needed multi-start (§7b),
+so the four chains were started at `θ = 0.02 / 0.08 / 0.25 / 0.50` and reported **one at a
+time** — R̂ is the wrong instrument for a mixture, because four chains each stuck in a
+different mode can post a respectable R̂ while describing four different models. The largest
+between-chain gap is **0.276** pooled posterior sds, on `μ_low`; `θ` reads 0.1112 / 0.1072 /
+0.1073 / 0.1057 across chains started 25× apart. This posterior is unimodal where the
+optimizer's surface was not.
+
+**The MLE sits inside the 95% credible interval for 11 of 11 mixture terms**, at
+`θ` **0.1078** against 0.1116, `μ_low` **0.1133** against 0.1000 and `ρ_low` **0.0578**
+against 0.0441. That agreement is *weaker evidence than the coefficient block's* and the
+difference matters: the prior on `β` is `normal(0, 1/√(2·l2))`, which makes the posterior
+mode exactly the penalized MLE, so agreement there is a check with a defined answer. `θ`,
+`μ_low` and `ρ_low` are **bounded** parameters the ladder fits inside a box with no penalty,
+and `γ` carries a `normal(0, 2.5)` prior here and none there — the one number in this port
+that is a choice rather than an identity. The predictive table above is the check; the
+parameter table only localizes a disagreement if one appears. `γ`'s individual coefficients
+are the visible cost: `age` reads 0.39 ± 1.53 against the MLE's 1.14, because eight
+coefficients identified through 5% of the rows are weakly identified one at a time. What
+survives is what `π` does, which is item 3 above.
+
+**Cost: 366 s of sampler time against the single-component head's 94, a 3.9× increase.**
+Worth recording because the first implementation was **~10×** worse than that: written as a
+per-row loop of `beta_binomial_lpmf` calls it did not finish warmup in 20 minutes. A mixture
+needs the per-row density *before* it is summed and Stan's lpmf vectorizes to a sum, so the
+obvious form is a scalar loop; writing it through vectorized `lbeta` instead — with the
+binomial coefficient cancelling inside the component difference, so it is never formed —
+recovers almost all of it. The ship plan predicted that a slow fit would be "a signal about
+the geometry"; it was a signal about the autodiff graph, and the geometry is fine.
+
+**Two consumers are deliberately not wired for it and raise rather than mis-describe the
+head.** `posteriors.availability_artifact` and `rehydrate_availability` both refuse a mixture
+artifact, because `DesignRecipe` carries **one** scaler and `π`'s covariate block is not a
+subset of the mean's — a persisted artifact would rehydrate as the single-component head with
+nothing raising. That is §4 of `docs/availability-mixture-ship-plan.md`.
+
+**And one debt is opened here rather than closed.** `stan_availability_metrics.csv` and every
+port figure quoted against it in `docs/availability-plan.md`, `docs/facts-archive.md` and
+`docs/model-development-notes.md` still describe the **single-component** head — `make
+stan-availability` was not re-run, so `make docs-audit` stays green over a consistent set of
+figures rather than a half-refreshed one. Re-running it will move roughly forty quoted
+figures at once, which is the propagation session's job and not a port check's.
 
 ---
 
@@ -1046,16 +1167,20 @@ moving `P(missed ≤ 5)` from 16.9% toward the observed 12.1% changes a draft. O
 `make strategy-sweep` can, and it is expensive. Gate on it, or accept the calibration
 evidence plus the mechanical argument in §1.
 
-**3. Where the mixture lives in Stan.** `betabinomial_glm.stan` serves **six** heads
-(availability, minutes, four conversions, overtime onset). Either add an optional block with
-`π = 0` reproducing the current target bit for bit — the `n_rho` precedent, asserted on
-Stan's own `log_prob` — or fork a dedicated source for availability. The first has a working
-precedent from 2026-08-11 and is the rollback path; the second avoids touching five heads
-that did not ask for a change.
+**3.** ~~**Where the mixture lives in Stan.**~~ ✅ **Done 2026-08-12** (§7h). The optional
+block, not a fork: `betabinomial_glm.stan` serves **six** heads (availability, minutes, four
+conversions, overtime onset), and both nestings are exact on Stan's own `log_prob` — `P = 0`
+for the parameter space and `θ = 0` for the target, the latter *bit for bit* because the
+mixture enters as an additive correction to the untouched beta-binomial statement. The
+`n_rho` precedent held.
 
 **4. What `π`'s covariate block actually is.** The eight columns in `PI_COLS` are one reading
 of "age, prior absence, playoff workload". That is a shipped choice which lands in the
-persisted `DesignRecipe`, not a default.
+persisted `DesignRecipe`, not a default. **Kept as-is through the port** and now duplicated
+as `stan_availability.PI_FEATURES`, because `availability_window` imports `season_terms`
+which imports `stan_availability` and a top-level import would be a cycle — a test pins the
+two lists equal, since two copies of a list is exactly how a head comes to ship a different
+model from the one that was selected.
 
 **5.** ~~**Whether the `l2` confound is settled first**~~ ✅ **Settled 2026-08-11, and it was
 a null** (§7d). Eight penalties from 0 to 256 for every arm at the shipped window: the
@@ -1107,11 +1232,25 @@ the mixture goes in, re-run them once afterwards rather than twice.
 
 ### The order the evidence supports
 
-~~Fix the simulator's draw path → sweep `l2`~~ ✅ **both done 2026-08-11** → port with
-`π = 0` nesting asserted → re-run the two owed gates → then decide whether the strategy sweep
-is required. The first two were cheap and de-risked everything after them: one was a live
-break that the target reproduced, and the other was a null that removes the last stated
-qualification from §7c.
+~~Fix the simulator's draw path → sweep `l2`~~ ✅ **both done 2026-08-11** → ~~port with
+`π = 0` nesting asserted~~ ✅ **done 2026-08-12, §7h** → re-run the two owed gates → then
+decide whether the strategy sweep is required. The first two were cheap and de-risked
+everything after them: one was a live break that the target reproduced, and the other was a
+null that removes the last stated qualification from §7c.
+
+**What the port session leaves for the next one**, beyond the two owed gates:
+
+1. **`make posteriors` and `rehydrate_availability` raise on a mixture head**, by design —
+   `DesignRecipe` carries one scaler and `π`'s block needs its own. Wire the second design
+   block through `availability_artifact`, `_thinned`'s draw list and `rehydrate_availability`
+   before anything downstream can read this posterior.
+2. **`make stan-availability` has not been re-run**, so `stan_availability_metrics.csv` and
+   the ~40 port figures audited against it across `docs/availability-plan.md`,
+   `docs/facts-archive.md` and `docs/model-development-notes.md` still describe the
+   single-component head. `make docs-audit` is green over a *consistent* set of figures; it
+   will go red the moment that target runs, which is the intended alarm and not a surprise.
+   Refresh those quotes in the same session that re-runs it, keeping the beta-binomial port's
+   figures as `historical=True` rows the way the window round kept the pre-window ones.
 
 **One consequence to carry into the port's session.** The simulator's tensors were rebuilt,
 so everything downstream of `sim_tensor_*.npz` — `make bracket`, `make draft`,

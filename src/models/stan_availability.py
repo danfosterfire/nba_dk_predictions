@@ -67,6 +67,33 @@ only instrument that closes both tails, and it does so by shifting the whole dis
 down — so the body blows out and both CRPS and PIT degrade. A location instrument cannot
 fix a shape defect. Do not add one back.
 
+## And since 2026-08-12: a second component for the disrupted season
+
+`mixture=True` adds `pi_i * BetaBinom(mu_low, rho_low)` beside the main component, with
+eight covariates on `pi` — age, prior absence, playoff workload. The hypothesis it encodes
+is that the low tail is not a frailty at all: an Achilles rupture in October is a different
+*event*, not an extreme draw of a per-game rate, and under `a = mu(1-rho)/rho` the frailty's
+shape and its variance are one parameter, so no value of `rho` can put the mass where the
+data wants it. `docs/availability-window-plan.md` §7 laddered five likelihoods and this one
+halved the boundary error while tying on CRPS; §7h is the port.
+
+Three things about it belong where the code is.
+
+**`False` recovers the single-component head EXACTLY, and that is asserted rather than
+intended.** In `betabinomial_glm.stan` the mixture is `P = 0`, whose parameters are then
+zero-length; and even with `P > 0`, `theta = 0` leaves the target **bit for bit** unchanged,
+because the mixture enters as an additive correction to the untouched beta-binomial
+statement. Both are pinned on Stan's own `log_prob` in `tests/test_stan_heads.py`. That is
+the rollback path for a file six heads share.
+
+**The head is selected on tail calibration with a CRPS guard**, which is a change of rule
+recorded in `docs/availability-mixture-ship-plan.md` D1 and stated *before* this arm was
+ported. Do not re-decide it on mean CRPS; the mixture ties there by construction.
+
+**`predict_mean` returns the PREDICTIVE mean, not the main component's.** A mixture's mean is
+a weighted mean, and every scorer turns that number into MAE and R² in games — returning the
+main component's would credit the head with an accuracy its own predictive does not have.
+
 ## The trap that carries over, and the one that does not
 
 **`n = max(team_games, gp)` is still required.** 13 traded player-seasons (0.12%) have
@@ -121,7 +148,8 @@ from src.models.availability import (EPS, FEATURE_COLS, RHO_MAX, RHO_MIN,
                                      _sigmoid, build_design, evaluate,
                                      pit_table, season_start_dates)
 from src.models.held_out import selection_split
-from src.models.stan_utils import (YearTerm, compile_model, diagnostics_frame,
+from src.models.stan_utils import (GAMMA_SCALE, MU_LOW_MAX, YearTerm, chain_summary,
+                                   compile_model, diagnostics_frame, pi_block,
                                    posterior, prior_sd_for_l2, rho_block, sample,
                                    standardized, thin, warn_if_unconverged)
 
@@ -151,6 +179,44 @@ ROLE_RHO = True
 # consumer downstream of it addresses those two columns by name.
 ROLE_COL = "minutes_per_game_lag1"
 ROLE_BIN_COL = "rho_bin"
+
+# ── The low-availability mixture, ported 2026-08-11 ──────────────────────────────────
+#
+# `docs/availability-window-plan.md` §7c laddered five likelihoods and `mixture` won the
+# selector: `boundary_tail_error` **0.0109** against the single-component head's 0.0201,
+# `shoulder_error` −0.0021 [−0.0086, −0.0010], and a **tie** on CRPS (+0.011, interval
+# spanning zero). `docs/availability-mixture-ship-plan.md` D1 is the rule that makes that a
+# ship: this head is selected on tail calibration with a CRPS non-inferiority guard, stated
+# before the arm was measured rather than reverse-engineered from it.
+#
+# `False` recovers the single-component head EXACTLY — `P = 0` in the Stan source, whose
+# parameter block is then zero-length. That is the rollback path and it is asserted on
+# Stan's own `log_prob`, not merely intended.
+MIXTURE = True
+
+# `pi`'s covariate block. `docs/potential-to-dos.md` item 5 names three families — age,
+# prior absence, playoff workload — and this is that list made concrete. It is a **shipped
+# choice** (D5) rather than a default: it lands in the persisted `DesignRecipe`, and the
+# fitted `pi` runs from 1.2% to 10.8% across the 10th and 90th percentiles of players, so
+# the block carries real signal. Deliberately not the whole 19-column feature block:
+# nineteen more parameters on 4,027 rows would be measuring the penalty rather than the
+# mechanism.
+#
+# Held here rather than imported from `availability_window`, which imports `season_terms`,
+# which imports this module — a top-level import would be a cycle. A test pins the two
+# lists equal, so the ladder that selected the arm and the head that ships it cannot drift.
+PI_FEATURES = ["age", "age_sq", "gp_share_lag1", "trailing_missed_lag1",
+               "n_spells_lag1", "longest_spell_lag1",
+               "playoff_games_lag1", "career_minutes_lag1"]
+
+# Where the chains start on `theta`, one per chain. The point MLE of this likelihood needed
+# **multi-start** — begun at its own nesting point a three-class mixture sat on the bound
+# and reproduced the incumbent to four decimals — so four chains launched from the same
+# place would make per-chain agreement a statement about the initializer. 0 is the nesting
+# point, 0.08 and 0.25 bracket the plausible disruption rate (observed P(GP < 10) is 8.15%
+# on validation), and 0.50 is past any reading of it. `chain_summary` is what reads the
+# answer back.
+THETA_INITS = (0.02, 0.08, 0.25, 0.50)
 
 # Draws kept for the posterior-predictive mixture. Each draw costs one (rows x games+1)
 # beta-binomial evaluation, so this trades wall clock against Monte Carlo error in the
@@ -290,7 +356,9 @@ class StanAvailability(AvailabilityModel):
                  seed: int = 42, predictive_draws: int = PREDICTIVE_DRAWS,
                  year_column: str | None = None, metric: str | None = None,
                  first_season: str | None = FIRST_SEASON,
-                 role_rho: bool = ROLE_RHO):
+                 role_rho: bool = ROLE_RHO, mixture: bool = MIXTURE,
+                 pi_features: list[str] | None = None,
+                 gamma_scale: float = GAMMA_SCALE, mu_low_max: float = MU_LOW_MAX):
         if pmf_mode not in ("posterior", "plug_in"):
             raise ValueError(f"pmf_mode must be 'posterior' or 'plug_in'; got {pmf_mode!r}")
         self.l2 = l2
@@ -302,6 +370,9 @@ class StanAvailability(AvailabilityModel):
         self.metric = metric
         self.first_season = first_season
         self.role_rho = bool(role_rho)
+        self.mixture = bool(mixture)
+        self.pi_features = list(pi_features or PI_FEATURES)
+        self.gamma_scale, self.mu_low_max = float(gamma_scale), float(mu_low_max)
         self.year = YearTerm(year_column, seed=seed, stream=self.name)
 
     # ── The dispersion bins ───────────────────────────────────────────────────
@@ -340,6 +411,13 @@ class StanAvailability(AvailabilityModel):
 
         bins = self.bins(train)
         self.bin_counts = np.bincount(bins, minlength=self.n_rho + 1)[1:]
+        # `pi`'s design is standardized on the SAME fitting rows the mean's is, and by the
+        # same helper, so the two scalers describe one population. Kept as its own scaler
+        # rather than folded into the feature block: `PI_FEATURES` is a strict subset of a
+        # different list and its columns enter through a different link.
+        Z = None
+        if self.mixture:
+            (Z,), self.pi_scaler = standardized(train, [train], self.pi_features)
         data = {
             "N": len(train), "K": X.shape[1], "X": X,
             "n": n.tolist(), "y": y.tolist(),
@@ -351,6 +429,7 @@ class StanAvailability(AvailabilityModel):
             "intercept_scale": INTERCEPT_SCALE,
             **self.year.data(train),
             **rho_block(len(train), bins, self.n_rho),
+            **pi_block(len(train), Z, self.gamma_scale, self.mu_low_max),
         }
         share = float(np.clip(y.sum() / max(n.sum(), 1), EPS, 1 - EPS))
         inits = {"alpha": float(np.log(share / (1 - share))),
@@ -358,6 +437,18 @@ class StanAvailability(AvailabilityModel):
                  # The measured overdispersion, as a starting point — one per bin, since
                  # `rho` is a vector[n_rho] even when the vector has one entry.
                  "rho": [0.23] * self.n_rho}
+        if self.mixture:
+            # One init dict PER CHAIN, dispersed on `theta`. A mixture posterior can be
+            # multimodal — the point MLE of this arm needed multi-start — and four chains
+            # from one starting point would answer "did the chains agree with each other"
+            # with "they were never given the chance to disagree".
+            inits = [{**inits, "theta": [float(t)],
+                      # The point MLE's fitted values: a low component at about 8 games of
+                      # 82, tight around it. A start, not a prior — neither is stated.
+                      "mu_low": [0.10], "rho_low": [0.05],
+                      "gamma": np.zeros(len(self.pi_features)).tolist()}
+                     for t in np.resize(np.asarray(THETA_INITS, dtype=float),
+                                        self.chains)]
 
         model = compile_model(MODEL)
         fit, self.diagnostics = sample(
@@ -372,6 +463,7 @@ class StanAvailability(AvailabilityModel):
         # (draws x n_rho), and (draws x 1) when the dispersion is shared — so every
         # consumer indexes it the same way in both arms rather than branching.
         self.rho_draws = draws["rho"].reshape(len(self.alpha_draws), -1)
+        self._absorb_mixture(fit)
 
         # Posterior means, in the same layout as `BetaBinomialGLM.beta` (intercept first)
         # so the two coefficient vectors can be diffed element-wise.
@@ -385,11 +477,44 @@ class StanAvailability(AvailabilityModel):
         self.year.absorb(fit)
         return self
 
+    def _absorb_mixture(self, fit) -> None:
+        """Keep the mixture block's draws, and the per-chain record of how it mixed.
+
+        `chain_summary` is stored rather than printed because R-hat is the wrong instrument
+        here: four chains each stuck in a different mode can post a respectable R-hat while
+        describing four different models, and this likelihood is the one in the project
+        where that is a live possibility.
+        """
+        n_draws = len(self.alpha_draws)
+        if not self.mixture:
+            self.theta_draws = np.zeros(n_draws)
+            self.mu_low_draws = np.zeros(n_draws)
+            self.rho_low_draws = np.full(n_draws, RHO_MIN)
+            self.gamma_draws = np.zeros((n_draws, 0))
+            self.chains_table = pd.DataFrame()
+            return
+        draws = posterior(fit, ["theta", "mu_low", "rho_low", "gamma"])
+        self.theta_draws = draws["theta"].reshape(-1)
+        self.mu_low_draws = draws["mu_low"].reshape(-1)
+        self.rho_low_draws = draws["rho_low"].reshape(-1)
+        self.gamma_draws = draws["gamma"].reshape(n_draws, -1)
+        self.chains_table = chain_summary(fit, ["theta", "mu_low", "rho_low"])
+
     # ── Prediction ────────────────────────────────────────────────────────────
 
     def _design(self, df: pd.DataFrame) -> np.ndarray:
         X = df[self.features].to_numpy(dtype=float)
         return self.scaler.transform(np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0))
+
+    def _pi_design(self, df: pd.DataFrame) -> np.ndarray:
+        Z = df[self.pi_features].to_numpy(dtype=float)
+        return self.pi_scaler.transform(np.nan_to_num(Z, nan=0.0, posinf=0.0, neginf=0.0))
+
+    def _idx(self, keep: int | None = None) -> np.ndarray:
+        """The kept draw indices. One definition, because `mu_draws` and the mixture
+        block below must index the SAME draws — pairing a draw's `mu` with another
+        draw's `pi` would be a silent averaging of the posterior."""
+        return thin(len(self.alpha_draws), keep or self.predictive_draws)
 
     def mu_draws(self, df: pd.DataFrame, keep: int | None = None) -> tuple[np.ndarray,
                                                                           np.ndarray]:
@@ -400,27 +525,96 @@ class StanAvailability(AvailabilityModel):
         bucket's dispersion to another bucket's player. Under a shared dispersion every
         column of the returned matrix is the same number, which is what the scalar it
         replaced used to be.
+
+        **This is the MAIN component, not the predictive**, when the head carries a
+        mixture. `mixture_draws` supplies the rest and `predict_pmf` combines them; a
+        caller that wants "the head's mean" wants `predict_mean`.
         """
-        idx = thin(len(self.alpha_draws), keep or self.predictive_draws)
+        idx = self._idx(keep)
         # (rows x K) @ (K x draws) -> (rows x draws), then transposed to draws-major.
         eta = (self._design(df) @ self.beta_draws[idx].T
                + self.alpha_draws[idx][None, :] + self.year.shift(idx)[None, :])
         return _sigmoid(eta).T, self.rho_draws[np.ix_(idx, self.bins(df) - 1)]
 
+    def mixture_draws(self, df: pd.DataFrame, keep: int | None = None
+                      ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """`(pi, mu_low, rho_low)` on the same draws `mu_draws` returns.
+
+        `pi` is (draws x rows) because it carries covariates — the arm's distinguishing
+        claim is that it can say *who* is at risk. `mu_low` and `rho_low` are (draws,):
+        the low component is one disrupted season, not a per-player one. Without a
+        mixture `pi` is exactly zero and the two scalars are inert, so every consumer
+        below takes one path rather than branching.
+        """
+        idx = self._idx(keep)
+        if not self.mixture:
+            # Built rather than gathered, so a head assembled without a mixture block —
+            # a hand-built fixture, an artifact from before this existed — has one path
+            # through the predictive rather than an attribute it must remember to carry.
+            return (np.zeros((len(idx), len(df))), np.zeros(len(idx)),
+                    np.full(len(idx), RHO_MIN))
+        pi = self.theta_draws[idx][:, None] * _sigmoid(self.gamma_draws[idx]
+                                                       @ self._pi_design(df).T)
+        return pi, self.mu_low_draws[idx], self.rho_low_draws[idx]
+
     def rho_row(self, df: pd.DataFrame) -> np.ndarray:
         """Posterior-mean dispersion per row — the plug-in counterpart of `mu_draws`."""
         return self.rho_draws.mean(axis=0)[self.bins(df) - 1]
 
-    def predict_mean(self, df: pd.DataFrame) -> np.ndarray:
-        """Posterior mean of mu, or mu at the posterior mean, depending on the mode.
+    def pi_row(self, df: pd.DataFrame) -> np.ndarray:
+        """`pi` at the posterior mean — the plug-in counterpart of `mixture_draws`."""
+        if not self.mixture:
+            return np.zeros(len(df))
+        return float(self.theta_draws.mean()) * _sigmoid(
+            self._pi_design(df) @ self.gamma_draws.mean(axis=0))
 
-        The distinction is small but real — `E[mu]` and `mu(E[beta])` differ by Jensen's
+    def predict_mean(self, df: pd.DataFrame) -> np.ndarray:
+        """The **predictive** mean share — a weighted mean when there is a mixture.
+
+        `score_arm` and `evaluate` both turn this into MAE and R² in games, so returning
+        the main component's mean would credit the head with an accuracy its own
+        predictive does not have. `availability_window.MixtureFrailty.predict_mean` makes
+        the same choice for the same reason, and that is what keeps the two comparable.
+
+        Posterior mean of mu, or mu at the posterior mean, depending on the mode. The
+        distinction is small but real — `E[mu]` and `mu(E[beta])` differ by Jensen's
         inequality through `inv_logit` — and keeping them separate is what lets the
         plug-in row be a like-for-like comparison against the MLE.
         """
         if self.pmf_mode == "plug_in":
-            return _sigmoid(self.beta[0] + self._design(df) @ self.beta[1:])
-        return self.mu_draws(df)[0].mean(axis=0)
+            mu = _sigmoid(self.beta[0] + self._design(df) @ self.beta[1:])
+            if not self.mixture:
+                return mu
+            pi = self.pi_row(df)
+            return (1.0 - pi) * mu + pi * float(self.mu_low_draws.mean())
+        mus, _ = self.mu_draws(df)
+        pi, mu_low, _ = self.mixture_draws(df)
+        return ((1.0 - pi) * mus + pi * mu_low[:, None]).mean(axis=0)
+
+    def predictive_moments(self, df: pd.DataFrame, keep: int | None = None
+                           ) -> tuple[np.ndarray, np.ndarray]:
+        """(draws x rows) `E[Y | theta]` and `Var(Y | theta)` in games.
+
+        The law-of-total-variance decomposition `board_correlation` performs needs both
+        conditional moments, and under a mixture neither is the main component's: the
+        variance picks up the *between-component* term `pi(1-pi)(m_low - m_main)^2`, which
+        is exactly the extra spread the arm was adopted for. Computing it here rather than
+        inline keeps one expression of the mixture's moments.
+        """
+        mus, rhos = self.mu_draws(df, keep)
+        pi, mu_low, rho_low = self.mixture_draws(df, keep)
+        n = df["team_games"].to_numpy(dtype=float)
+
+        def moments(mu, rho):
+            return n * mu, n * mu * (1.0 - mu) * (1.0 + (n - 1.0) * rho)
+
+        m_main, v_main = moments(mus, rhos)
+        if not self.mixture:
+            return m_main, v_main
+        m_low, v_low = moments(mu_low[:, None], rho_low[:, None])
+        mean = (1.0 - pi) * m_main + pi * m_low
+        second = (1.0 - pi) * (v_main + m_main ** 2) + pi * (v_low + m_low ** 2)
+        return mean, second - mean ** 2
 
     def predict_samples(self, df: pd.DataFrame, seed: int = 0) -> np.ndarray:
         """(draws x rows) games played, drawn from the posterior predictive.
@@ -440,29 +634,57 @@ class StanAvailability(AvailabilityModel):
         Sampled as `p ~ Beta(a, b)` then `y ~ Binomial(n, p)`, the same two lines
         `StanMinutes.predict_samples` uses and orders of magnitude faster than
         `betabinom.rvs` at this shape.
+
+        Under a mixture the component is drawn **first**, per (draw, row), and the rate
+        comes from whichever one won. Drawing a rate from each and averaging would produce
+        a season somewhere between healthy and disrupted, which is precisely the season the
+        arm exists to say does not happen.
         """
         mus, rhos = self.mu_draws(df, self.predictive_draws)
+        pi, mu_low, rho_low = self.mixture_draws(df, self.predictive_draws)
         rng = np.random.default_rng(seed)
         a, b = _shapes(mus, rhos)
+        p = rng.beta(a, b)
+        if self.mixture:
+            a_low, b_low = _shapes(np.broadcast_to(mu_low[:, None], mus.shape),
+                                   np.broadcast_to(rho_low[:, None], mus.shape))
+            p = np.where(rng.random(p.shape) < pi, rng.beta(a_low, b_low), p)
         n = df["team_games"].to_numpy(int)
-        return rng.binomial(n[None, :], rng.beta(a, b)).astype(float)
+        return rng.binomial(n[None, :], p).astype(float)
 
     def predict_pmf(self, df: pd.DataFrame, max_games: int) -> np.ndarray:
         n = df["team_games"].to_numpy(int)
         k = np.arange(int(max_games) + 1)
         if self.pmf_mode == "plug_in":
-            return _plug_in_pmf(n, self.predict_mean(df), self.rho_row(df), k)
+            mu = _sigmoid(self.beta[0] + self._design(df) @ self.beta[1:])
+            if not self.mixture:
+                return _plug_in_pmf(n, mu, self.rho_row(df), k)
+            return _plug_in_pmf(n, mu, self.rho_row(df), k, pi=self.pi_row(df),
+                                mu_low=float(self.mu_low_draws.mean()),
+                                rho_low=float(self.rho_low_draws.mean()))
 
         # The predictive properly integrated over the posterior: a mixture of one
         # beta-binomial per draw, not one beta-binomial at the average parameter. This is
         # the whole reason for fitting in Stan, and it is strictly wider than the plug-in.
         mus, rhos = self.mu_draws(df)
+        pi, mu_low, rho_low = self.mixture_draws(df)
         out = np.zeros((len(df), len(k)))
         for lo in range(0, len(mus), CHUNK):
-            a, b = _shapes(mus[lo:lo + CHUNK], rhos[lo:lo + CHUNK])
-            pmf = betabinom.pmf(k[None, None, :], n[None, :, None],
-                                a[:, :, None], b[:, :, None])
-            out += np.nan_to_num(pmf).sum(axis=0)
+            hi = lo + CHUNK
+            a, b = _shapes(mus[lo:hi], rhos[lo:hi])
+            pmf = np.nan_to_num(betabinom.pmf(k[None, None, :], n[None, :, None],
+                                              a[:, :, None], b[:, :, None]))
+            if self.mixture:
+                # The low component varies by draw and by `n`, but not by player — one
+                # disrupted season, not one per row — so its shapes carry no row axis and
+                # broadcast against the schedule instead.
+                a_low, b_low = _shapes(mu_low[lo:hi], rho_low[lo:hi])
+                low = np.nan_to_num(betabinom.pmf(k[None, None, :], n[None, :, None],
+                                                  a_low[:, None, None],
+                                                  b_low[:, None, None]))
+                w = pi[lo:hi][:, :, None]
+                pmf = (1.0 - w) * pmf + w * low
+            out += pmf.sum(axis=0)
         return out / len(mus)
 
 
@@ -488,11 +710,23 @@ def rehydrate_availability(artifact, keep: int) -> StanAvailability:
                              predictive_draws=keep,
                              first_season=str(artifact.extras.get("fit_first_season") or "")
                              or None,
-                             role_rho=bool(artifact.extras.get("role_rho", False)))
+                             role_rho=bool(artifact.extras.get("role_rho", False)),
+                             mixture=bool(artifact.extras.get("mixture", False)))
     model.scaler = artifact.recipe.scaler
     model.alpha_draws = np.asarray(artifact.draws["alpha_draws"], dtype=float)
     model.beta_draws = np.asarray(artifact.draws["beta_draws"], dtype=float)
     model.rho_draws = np.asarray(artifact.draws["rho_draws"], dtype=float)
+    if model.mixture:
+        # Same rule as `role_rho` above, one level up: a mixture artifact rehydrated
+        # without its own draws would be a *different model* wearing the right name, and
+        # would read as the single-component head with no error anywhere.
+        raise NotImplementedError(
+            "this artifact was fitted with the low-availability mixture, and the "
+            "`DesignRecipe` does not yet carry pi's covariate block or its scaler — so "
+            "`pi` cannot be reconstructed for a new frame and the rehydrated head would "
+            "silently be the single-component one. Extend `posteriors.availability_artifact` "
+            "(docs/availability-mixture-ship-plan.md §4) before reading one.")
+    model._absorb_mixture(None)          # the inert block: `pi` is exactly zero
     if model.rho_draws.ndim == 1:
         model.rho_draws = model.rho_draws[:, None]
     if model.rho_draws.shape[1] != model.n_rho:
@@ -511,10 +745,23 @@ def _shapes(mu: np.ndarray, rho: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _plug_in_pmf(n: np.ndarray, mu: np.ndarray, rho: np.ndarray | float,
-                 k: np.ndarray) -> np.ndarray:
-    """`rho` is per row, so the plug-in view carries the grading the posterior one does."""
+                 k: np.ndarray, pi: np.ndarray | float = 0.0,
+                 mu_low: float = 0.0, rho_low: float = RHO_MIN) -> np.ndarray:
+    """`rho` is per row, so the plug-in view carries the grading the posterior one does.
+
+    And `pi` is per row, so it carries the mixture too. `pi = 0` returns the single
+    beta-binomial exactly, which is what the head does when the mixture is off.
+    """
     a, b = _shapes(np.asarray(mu, dtype=float), np.asarray(rho, dtype=float))
-    return np.nan_to_num(betabinom.pmf(k[None, :], n[:, None], a[:, None], b[:, None]))
+    pmf = np.nan_to_num(betabinom.pmf(k[None, :], n[:, None], a[:, None], b[:, None]))
+    pi = np.asarray(pi, dtype=float)
+    if not np.any(pi):
+        return pmf
+    a_low, b_low = _shapes(np.full(len(n), mu_low), np.full(len(n), rho_low))
+    low = np.nan_to_num(betabinom.pmf(k[None, :], n[:, None],
+                                      a_low[:, None], b_low[:, None]))
+    w = np.broadcast_to(pi, (len(n),))[:, None]
+    return (1.0 - w) * pmf + w * low
 
 
 # ── The port check ────────────────────────────────────────────────────────────
@@ -608,10 +855,10 @@ def board_correlation(stan: StanAvailability, frame: pd.DataFrame,
     and the residual copula. The board size therefore tracks the validation seasons' player
     count rather than the held-out one's.
     """
-    mus, rhos = stan.mu_draws(frame)
-    n = frame["team_games"].to_numpy(float)
-    conditional = n * mus * (1.0 - mus) * (1.0 + (n - 1.0) * rhos)
-    means = n * mus                                     # E[Y_i | theta], per draw per player
+    # Through the head's own moments, so a mixture contributes its between-component
+    # variance rather than being read as its main component. `pi = 0` recovers the single
+    # beta-binomial's `n mu (1-mu) [1 + (n-1) rho]` exactly.
+    means, conditional = stan.predictive_moments(frame)   # per draw per player
 
     rng = np.random.default_rng(seed)
     rows = []
@@ -638,12 +885,193 @@ def board_correlation(stan: StanAvailability, frame: pd.DataFrame,
     return pd.DataFrame(rows)
 
 
+# ── The mixture's own port check ──────────────────────────────────────────────
+#
+# The single-component port is checked coefficient by coefficient against the point MLE,
+# because the prior makes the posterior MODE exactly the penalized MLE and agreement is a
+# check with a defined answer. The mixture cannot be checked that way and it would be a
+# mistake to pretend otherwise: `theta`, `mu_low` and `rho_low` are BOUNDED parameters, the
+# ladder fits them inside a box with no penalty, `gamma` carries a prior here and none
+# there, and a bounded posterior mean is not its mode. So the check moves up one level —
+# to the *predictive*, scored by `availability_window.score_arm`, which is the same code
+# that produced the row this is a port of.
+#
+# Three arms, and each answers a different question:
+#
+#   `mixture_point_mle`    — the ladder's own arm, refitted here on the same rows. Should
+#                            reproduce `availability_likelihood.csv`'s `mixture` row to
+#                            four decimals; if it does not, the two frames differ and
+#                            nothing below is comparable.
+#   `stan_mixture_plug_in` — posterior means substituted for the optimum. The row that
+#                            should land NEAR the point MLE.
+#   `stan_mixture_posterior` — the predictive integrated over the posterior. The row a
+#                            consumer gets, and the one that may legitimately differ.
+
+MIXTURE_METRICS = ("val_crps", "val_pit_ks", "boundary_tail_error", "body_error",
+                   "shoulder_error", "point_mass_error")
+
+
+def mixture_parameters(mle, stan: StanAvailability) -> pd.DataFrame:
+    """The mixture block, point MLE against posterior — `theta`, `mu_low`, `rho_low`, `pi`.
+
+    `mle` is a fitted `availability_window.MixtureFrailty`, whose `extra` vector is
+    `[theta, logit mu_low, logit rho_low, gamma...]`. Reported term by term rather than as
+    one distance, because these four are on different scales and a single norm would be
+    dominated by whichever happened to be largest.
+    """
+    from src.models.availability_window import MU_LOW_MAX
+
+    rows = [{"term": "theta", "mle": float(np.clip(mle.extra[0], 0.0, 1.0)),
+             "draws": stan.theta_draws},
+            {"term": "mu_low",
+             "mle": float(np.clip(_sigmoid(mle.extra[1]), EPS, MU_LOW_MAX)),
+             "draws": stan.mu_low_draws},
+            {"term": "rho_low", "mle": float(mle._disp(mle.extra[2])),
+             "draws": stan.rho_low_draws}]
+    for j, name in enumerate(stan.pi_features):
+        rows.append({"term": f"gamma[{name}]", "mle": float(mle.extra[3 + j]),
+                     "draws": stan.gamma_draws[:, j]})
+    out = []
+    for row in rows:
+        draws = np.asarray(row["draws"], dtype=float)
+        out.append({
+            "term": row["term"], "mle": row["mle"],
+            "posterior_mean": float(draws.mean()),
+            "posterior_sd": float(draws.std(ddof=1)),
+            "q2_5": float(np.percentile(draws, 2.5)),
+            "q97_5": float(np.percentile(draws, 97.5))})
+    frame = pd.DataFrame(out)
+    frame["difference"] = frame["posterior_mean"] - frame["mle"]
+    frame["z_from_mle"] = frame["difference"] / frame["posterior_sd"].replace(0, np.nan)
+    frame["mle_inside_95"] = ((frame["mle"] >= frame["q2_5"])
+                              & (frame["mle"] <= frame["q97_5"]))
+    return frame
+
+
+def pi_profile(model, frame: pd.DataFrame) -> dict:
+    """What `pi` says, on whichever frame it is handed.
+
+    The arm's distinguishing claim is that it can name *who* is at risk — a flat `pi` would
+    make it a two-component mixture with a constant weight, which
+    `docs/availability-window-plan.md` §7c measured as worth nothing. So the spread across
+    players is reported, not only the mean.
+    """
+    pi = (model.pi_row(frame) if isinstance(model, StanAvailability)
+          else model._parts(model.extra, frame)[0])
+    return {"pi_mean": float(np.mean(pi)), "pi_sd": float(np.std(pi)),
+            "pi_p10": float(np.percentile(pi, 10)),
+            "pi_p90": float(np.percentile(pi, 90)),
+            "pi_spread": float(np.percentile(pi, 90) / max(np.percentile(pi, 10), 1e-12))}
+
+
+def mixture_port_check(cfg: dict, train: pd.DataFrame, val: pd.DataFrame,
+                       max_games: int, l2: float, seed: int,
+                       first_season: str | None = FIRST_SEASON,
+                       role_rho: bool = ROLE_RHO) -> dict:
+    """Fit the ladder's `mixture` arm and its Stan port on the same rows, score both.
+
+    Scored through `availability_window.score_arm` — the ladder's own scorer, imported
+    rather than reimplemented — so a difference between this table and
+    `availability_likelihood.csv` cannot be a difference between two implementations of
+    CRPS or of `boundary_tail_error`.
+    """
+    from src.models.availability_window import (LIKELIHOODS, MixtureFrailty, _tail_parts,
+                                                assert_nests, bootstrap_tail_errors,
+                                                paired_bootstrap, score_arm)
+
+    stan = StanAvailability(
+        l2=l2, pmf_mode="posterior", name="stan_mixture_posterior",
+        chains=int(cfg.get("chains", 4)), warmup=int(cfg.get("warmup", 1000)),
+        samples=int(cfg.get("samples", 1000)), seed=seed,
+        predictive_draws=int(cfg.get("predictive_draws", PREDICTIVE_DRAWS)),
+        first_season=first_season, role_rho=role_rho, mixture=True,
+        gamma_scale=float(cfg.get("availability", {}).get("pi_gamma_scale", GAMMA_SCALE)),
+        mu_low_max=float(cfg.get("availability", {}).get("mu_low_max", MU_LOW_MAX)))
+    fit_rows = stan.fitting_rows(train)
+
+    print(f"\nFitting the point-MLE arms on the same {len(fit_rows):,} windowed rows "
+          f"({', '.join(sorted(pd.Series(fit_rows['season']).unique()))[:20]}...):")
+    reference = LIKELIHOODS["betabinom"](l2=l2, features=list(FEATURE_COLS)).fit(fit_rows)
+    assert_nests(reference, fit_rows)
+    mle = MixtureFrailty(l2=l2, features=list(FEATURE_COLS)).fit(fit_rows)
+    gap = assert_nests(mle, fit_rows)
+    print(f"  `mixture` nests `betabinom` at pi = 0 to {gap:.3e} log-likelihood, from "
+          f"{mle.n_starts} starts (spread {mle.start_spread:.3f})")
+    print(f"  theta {float(np.clip(mle.extra[0], 0, 1)):.4f}, "
+          f"mu_low {float(_sigmoid(mle.extra[1])):.4f}, "
+          f"rho_low {float(mle._disp(mle.extra[2])):.4f}, "
+          f"train log-likelihood {mle.train_loglik:,.1f} against the reference's "
+          f"{mle.incumbent_loglik:,.1f}")
+
+    print(f"\nFitting the mixture in Stan ({stan.chains} chains x {stan.samples} draws)...")
+    stan.fit(train)
+    d = stan.diagnostics
+    print(f"  max R-hat {d['max_rhat']:.4f}, min ESS "
+          f"{min(d['min_ess_bulk'], d['min_ess_tail']):.0f}, "
+          f"{d['divergences']} divergences, {d['wall_clock_s']:.1f}s wall clock")
+
+    plug_in = StanAvailability(l2=l2, pmf_mode="plug_in", predictive_draws=1)
+    plug_in.__dict__.update({k: v for k, v in stan.__dict__.items()
+                             if k not in ("pmf_mode", "name")})
+    plug_in.pmf_mode, plug_in.name = "plug_in", "stan_mixture_plug_in"
+
+    rows, per_row, tails = [], {}, {}
+    y_val, n_val = val["gp"].to_numpy(), val["team_games"].to_numpy()
+    for name, model, source in (("betabinom_point_mle", reference, "point_mle"),
+                                ("mixture_point_mle", mle, "point_mle"),
+                                ("stan_mixture_plug_in", plug_in, "stan"),
+                                ("stan_mixture_posterior", stan, "stan")):
+        row, scores = score_arm(name, model, fit_rows, val, list(FEATURE_COLS),
+                                max_games, seed)
+        row["source"] = source
+        if name != "betabinom_point_mle":
+            row.update(pi_profile(model, val))
+        rows.append(row)
+        per_row[name] = scores
+        tails[name] = _tail_parts(model.predict_pmf(val, max_games), y_val, n_val)
+
+    # D1 evaluated on the object that SHIPS, not on the ladder row it is a port of. The
+    # rule is "improves the calibration metrics AND is CRPS non-inferior", and both halves
+    # are interval statements — a boundary margin quoted bare is what this project calls a
+    # prompt rather than a finding. Paired against the same single-component reference the
+    # ladder used, so the two tables are read the same way.
+    ref = "betabinom_point_mle"
+    for row in rows:
+        d, lo, hi = paired_bootstrap(per_row[row["arm"]], per_row[ref], seed=seed)
+        row.update({"crps_vs_betabinom": d, "crps_vs_betabinom_lo": lo,
+                    "crps_vs_betabinom_hi": hi})
+        row.update(bootstrap_tail_errors(tails[row["arm"]],
+                                         None if row["arm"] == ref else tails[ref],
+                                         seed=seed))
+    return {"stan": stan, "plug_in": plug_in, "mle": mle, "reference": reference,
+            "fit_rows": fit_rows, "scores": pd.DataFrame(rows),
+            "parameters": mixture_parameters(mle, stan),
+            "chains": stan.chains_table,
+            "diagnostics": diagnostics_frame([stan.diagnostics])}
+
+
+def ladder_row(path: Path, arm: str) -> pd.Series | None:
+    """The recorded `availability_likelihood.csv` row this port is a port of.
+
+    Read from disk rather than refitted, because the point of the comparison is that the
+    number in the artifact — the one `docs/availability-window-plan.md` §7c quotes and D1
+    was taken on — is the number this reproduces.
+    """
+    if not path.exists():
+        print(f"  no {path.name} on disk — run `make availability-window` for the "
+              f"recorded ladder row")
+        return None
+    table = pd.read_csv(path)
+    hit = table[table["arm"] == arm]
+    return None if hit.empty else hit.iloc[0]
+
+
 # ── The measurement, on whichever pair of frames it is handed ─────────────────
 
 def fit_and_score(train: pd.DataFrame, frame: pd.DataFrame, max_games: int,
                   cfg_stan: dict, l2: float, seed: int,
                   first_season: str | None = FIRST_SEASON,
-                  role_rho: bool = ROLE_RHO) -> dict:
+                  role_rho: bool = ROLE_RHO, mixture: bool = MIXTURE) -> dict:
     """Fit the point MLEs and the Stan head on `train`, score all four on `frame`.
 
     Split-agnostic on purpose. `run` hands it `(train, validation)`; when the workflow is
@@ -666,13 +1094,22 @@ def fit_and_score(train: pd.DataFrame, frame: pd.DataFrame, max_games: int,
       arm `docs/availability-window-plan.md` §4 actually selected
       (`three_point_era__none__role`). This is what the Stan head is a port *of*, so the
       two should agree, and the ladder's own CRPS is a third-party check on both.
+
+    A third arrives with the mixture, for the same reason: `mixture_mle` is
+    `availability_window.MixtureFrailty` on the same rows, which is the arm §7c selected
+    and the one the Stan head is then a port of. Scoring a mixture posterior only against
+    single-component point MLEs would read a *likelihood* change as a port discrepancy.
     """
     stan = StanAvailability(
         l2=l2, pmf_mode="posterior", chains=int(cfg_stan.get("chains", 4)),
         warmup=int(cfg_stan.get("warmup", 1000)),
         samples=int(cfg_stan.get("samples", 1000)), seed=seed,
         predictive_draws=int(cfg_stan.get("predictive_draws", PREDICTIVE_DRAWS)),
-        first_season=first_season, role_rho=role_rho)
+        first_season=first_season, role_rho=role_rho, mixture=mixture,
+        gamma_scale=float(cfg_stan.get("availability", {})
+                          .get("pi_gamma_scale", GAMMA_SCALE)),
+        mu_low_max=float(cfg_stan.get("availability", {})
+                         .get("mu_low_max", MU_LOW_MAX)))
     fit_rows = stan.fitting_rows(train)
 
     print(f"\nFitting the point MLEs on the same {len(fit_rows):,} windowed rows "
@@ -688,6 +1125,16 @@ def fit_and_score(train: pd.DataFrame, frame: pd.DataFrame, max_games: int,
         print("  role-graded rho: "
               + ", ".join(f"{k} {v:.4f}" for k, v in role_mle.rho_by_role.items())
               + f" ({role_mle.rho_spread:.2f}x spread)")
+    mixture_mle = None
+    if mixture:
+        from src.models.availability_window import MixtureFrailty, assert_nests
+        mixture_mle = MixtureFrailty(l2, features=list(stan.features)).fit(fit_rows)
+        mixture_mle.name = "mixture_mle"
+        gap = assert_nests(mixture_mle, fit_rows)
+        print(f"  mixture: theta {float(np.clip(mixture_mle.extra[0], 0, 1)):.4f}, "
+              f"mu_low {float(_sigmoid(mixture_mle.extra[1])):.4f}, "
+              f"rho_low {float(mixture_mle._disp(mixture_mle.extra[2])):.4f}, "
+              f"nests at pi = 0 to {gap:.3e}")
 
     print(f"\nFitting in Stan ({cfg_stan.get('chains', 4)} chains x "
           f"{cfg_stan.get('samples', 1000)} draws)...")
@@ -706,15 +1153,15 @@ def fit_and_score(train: pd.DataFrame, frame: pd.DataFrame, max_games: int,
                              if k not in ("pmf_mode", "name")})
 
     rows, pit_frames, prediction_frames = [], [], []
-    for model in [m for m in (mle, role_mle, plug_in, stan) if m is not None]:
+    for model in [m for m in (mle, role_mle, mixture_mle, plug_in, stan) if m is not None]:
         model_rows, predictions = evaluate(model, frame, max_games, seed)
         rows += model_rows
         prediction_frames.append(predictions)
         pit_frames.append(pit_table(predictions["pit"].to_numpy(), model.name))
 
     return {
-        "mle": mle, "role_mle": role_mle, "stan": stan, "plug_in": plug_in,
-        "fit_rows": fit_rows,
+        "mle": mle, "role_mle": role_mle, "mixture_mle": mixture_mle,
+        "stan": stan, "plug_in": plug_in, "fit_rows": fit_rows,
         "metrics": pd.DataFrame(rows),
         "coefficients": coefficient_comparison(
             mle, stan, stan.features,
@@ -739,6 +1186,7 @@ def run(cfg: dict) -> dict[str, Path]:
     l2 = float(cfg_av.get("glm_l2", 1.0))
     first_season = cfg_head.get("first_season", FIRST_SEASON)
     role_rho = bool(cfg_head.get("role_rho", ROLE_RHO))
+    mixture = bool(cfg_head.get("mixture", MIXTURE))
 
     design = availability_design(cfg)
     train, val = selection_split(design, test_seasons)
@@ -755,13 +1203,15 @@ def run(cfg: dict) -> dict[str, Path]:
           f"  log-likelihood non-finite at every rho, which under HMC poisons the "
           f"trajectory rather than just stopping an optimizer.")
     print(f"  Shipped configuration: fitting window {first_season or 'full'}+, "
-          f"dispersion {'graded by prior-MPG role' if role_rho else 'shared'} "
-          f"— docs/availability-window-plan.md §4.\n"
+          f"dispersion {'graded by prior-MPG role' if role_rho else 'shared'}, "
+          f"likelihood {'2-component mixture' if mixture else 'beta-binomial'} "
+          f"— docs/availability-window-plan.md §4 and §7.\n"
           f"  The window cuts the FITTING rows only; `availability_design` is untouched, "
           f"because six other\n  modules import it and would be silently re-scoped.")
 
     scored = fit_and_score(train, val, max_games, cfg_stan, l2, seed,
-                           first_season=first_season, role_rho=role_rho)
+                           first_season=first_season, role_rho=role_rho,
+                           mixture=mixture)
     mle, stan, plug_in = scored["mle"], scored["stan"], scored["plug_in"]
 
     metrics = scored["metrics"]
@@ -857,6 +1307,124 @@ def run(cfg: dict) -> dict[str, Path]:
     return paths
 
 
+def run_mixture_check(cfg: dict) -> dict[str, Path]:
+    """`make stan-availability-mixture` — the port check for the low-availability mixture.
+
+    A separate target from `make stan-availability`, and deliberately so. That one writes
+    the head's shipped metrics, which every quoted port figure in
+    `docs/availability-plan.md` and `docs/facts-archive.md` is audited against; this one
+    answers a different question —
+    does the Stan mixture reproduce the point-MLE arm `docs/availability-window-plan.md` §7c
+    selected — and writes its own artifacts, so a port check cannot silently move a
+    published headline.
+    """
+    out_dir = Path(cfg["evaluation"]["predictions_dir"])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cfg_av = cfg.get("features", {}).get("availability", {})
+    cfg_stan = cfg.get("stan", {})
+    cfg_head = cfg_stan.get("availability", {})
+    seed = int(cfg_stan.get("seed", cfg_av.get("seed", 42)))
+    l2 = float(cfg_av.get("glm_l2", 1.0))
+
+    design = availability_design(cfg)
+    train, val = selection_split(design, int(cfg_av.get("test_seasons", 2)))
+    max_games = int(design["team_games"].max())
+
+    print(f"Availability mixture port check: {len(train):,} offered / {len(val):,} scored "
+          f"({', '.join(sorted(val['season'].unique()))} as validation).")
+    print("  The held-out split is LOCKED and never materialized here. The window cuts the "
+          "FITTING\n  rows only, exactly as `make availability-window` cut them, or the "
+          "two tables would\n  describe different populations rather than different fits.")
+    missing = [c for c in PI_FEATURES if c not in design.columns]
+    if missing:
+        raise KeyError(f"pi's covariate block is missing {missing} from the design")
+    print(f"  pi's block: {len(PI_FEATURES)} columns, "
+          f"{int(design[PI_FEATURES].isna().sum().sum())} missing values")
+
+    scored = mixture_port_check(
+        cfg_stan, train, val, max_games, l2, seed,
+        first_season=cfg_head.get("first_season", FIRST_SEASON),
+        role_rho=bool(cfg_head.get("role_rho", ROLE_RHO)))
+    table = scored["scores"]
+
+    recorded = ladder_row(out_dir / "availability_likelihood.csv", "mixture")
+    recorded_ref = ladder_row(out_dir / "availability_likelihood.csv", "betabinom")
+    if recorded is not None:
+        for arm, row in (("mixture", recorded), ("betabinom", recorded_ref)):
+            if row is None:
+                continue
+            table = pd.concat([table, pd.DataFrame([{
+                "arm": f"ladder_{arm}", "source": "availability_likelihood.csv",
+                **{m: float(row[m]) for m in MIXTURE_METRICS if m in row}}])],
+                ignore_index=True)
+
+    print("\nThe port, against the row it is a port of "
+          "(`availability_likelihood.csv`'s `mixture`):")
+    print(table[["arm", "source", *MIXTURE_METRICS]].round(4).to_string(index=False))
+
+    print("\nD1's rule, applied to what SHIPS — calibration wins with a CRPS "
+          "non-inferiority guard,\n  every margin against the single-component reference "
+          "on the same 883 rows:")
+    guard = table[table["crps_vs_betabinom"].notna()]
+    print(guard[["arm", "crps_vs_betabinom", "crps_vs_betabinom_lo",
+                 "crps_vs_betabinom_hi", "boundary_vs_betabinom",
+                 "boundary_vs_betabinom_lo", "boundary_vs_betabinom_hi",
+                 "shoulder_vs_betabinom", "shoulder_vs_betabinom_lo",
+                 "shoulder_vs_betabinom_hi"]].round(4).to_string(index=False))
+
+    if recorded is not None:
+        got = table.loc[table["arm"] == "mixture_point_mle"].iloc[0]
+        gaps = {m: abs(float(got[m]) - float(recorded[m])) for m in MIXTURE_METRICS
+                if m in recorded}
+        worst = max(gaps, key=gaps.get)
+        print(f"\n  The point MLE refitted here against the recorded ladder row: largest "
+              f"gap {gaps[worst]:.6f} on {worst}.")
+        print("  Four decimals is the bar — the ladder and this module fit the same "
+              "likelihood on the\n  same rows with the same penalty, so anything larger "
+              "means the frames differ and the\n  Stan rows below are not comparable to "
+              "§7c at all.")
+
+    chains = scored["chains"]
+    if not chains.empty:
+        print("\nPer chain, on the parameters R-hat is the wrong instrument for:")
+        print(chains[["parameter", "chain", "mean", "sd", "spread_in_sds"]]
+              .round(4).to_string(index=False))
+        worst = chains["spread_in_sds"].max()
+        print(f"  Largest between-chain gap: {worst:.3f} pooled posterior sds. Four chains "
+              f"started at\n  theta = {THETA_INITS}, so this is a statement about the "
+              f"posterior rather than about\n  where the sampler was pointed. A multimodal "
+              f"fit shows up here and can hide from R-hat.")
+
+    print("\nThe mixture block, point MLE against the posterior:")
+    print(scored["parameters"][["term", "mle", "posterior_mean", "posterior_sd",
+                                "z_from_mle", "mle_inside_95"]]
+          .round(4).to_string(index=False))
+    print("  These are BOUNDED parameters fitted inside a box by the ladder and given a "
+          "prior here,\n  so the mode/MLE identity that pins the coefficient block does "
+          "not hold for them. The\n  predictive table above is the check; this is where a "
+          "disagreement would be localized.")
+
+    artifacts = {
+        "scores": (table, out_dir / "stan_availability_mixture.csv"),
+        "parameters": (scored["parameters"],
+                       out_dir / "stan_availability_mixture_parameters.csv"),
+        "chains": (chains, out_dir / "stan_availability_mixture_chains.csv"),
+        "diagnostics": (scored["diagnostics"],
+                        out_dir / "stan_availability_mixture_diagnostics.csv"),
+    }
+    paths = {}
+    for name, (frame, dest) in artifacts.items():
+        frame.to_csv(dest, index=False)
+        paths[name] = dest
+        print(f"Saved {len(frame):,} {name} rows → {dest}")
+    return paths
+
+
 if __name__ == "__main__":
+    import sys
+
     cfg = yaml.safe_load(open("configs/default.yaml"))
-    run(cfg)
+    if "--mixture-check" in sys.argv:
+        run_mixture_check(cfg)
+    else:
+        run(cfg)

@@ -13,7 +13,8 @@ PIP    := .venv/bin/pip
         season-total adp adp-draftkings adp-fantasypros adp-panel adp-profile \
         adp-status game-length serial-correlation component-rates \
         variance-budget residual-correlation season-effects \
-        stan stan-availability stan-minutes stan-components stan-composition \
+        stan stan-availability stan-availability-mixture stan-minutes \
+        stan-components stan-composition \
         stan-substitution season-terms games-played stan-games-played \
         stan-game-length posteriors model-cards minutes-unification composition-effects \
         scoring-periods draft-pool simulate-season weekly-scores bracket draft-sim \
@@ -200,6 +201,15 @@ availability-weighting:
 #   .venv/bin/python -c "import cmdstanpy; cmdstanpy.install_cmdstan()"
 stan-availability:
 	$(PYTHON) -m src.models.stan_availability
+
+# The low-availability mixture's port check — docs/availability-window-plan.md §7h. A
+# SEPARATE target from `stan-availability` on purpose: that one writes the head's shipped
+# metrics, which every quoted port figure in the docs is audited against, and this answers
+# a different question (does the Stan mixture reproduce the point-MLE arm §7c selected)
+# into its own artifacts. Held out of the `stan` aggregate for the same reason
+# `stan-substitution` is.
+stan-availability-mixture:
+	$(PYTHON) -m src.models.stan_availability --mixture-check
 
 # The games-played spell process — docs/games-played-plan.md. `games-played` is the numpy
 # reference and Gate 0: the collapse, the spell classes, the closed-form beta-geometric

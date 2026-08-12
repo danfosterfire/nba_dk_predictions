@@ -564,7 +564,8 @@ def test_the_head_gathers_each_rows_own_dispersion_into_its_predictive():
     from src.models.availability import predictive_pmf
     from src.models.stan_availability import StanAvailability
 
-    head = StanAvailability(features=["minutes_per_game_lag1"], first_season=None)
+    head = StanAvailability(features=["minutes_per_game_lag1"], first_season=None,
+                            mixture=False)
     frame = _role_frame([6.0, 18.0, 27.0, 36.0])
     # A fitted head, assembled by hand: zero slopes so every row shares one mean, and one
     # posterior draw so the mixture is a single beta-binomial per row.
@@ -618,14 +619,19 @@ def _lp(model, data, params, **kwargs):
 
 
 def _betabinomial_fixture(seed=0, n_rows=40, n_bins=3):
+    from src.models.stan_utils import pi_block
+
     rng = np.random.default_rng(seed)
     X = rng.normal(size=(n_rows, 2))
     data = {"N": n_rows, "K": 2, "X": X.tolist(),
             "n": [82] * n_rows, "y": rng.integers(0, 83, n_rows).tolist(),
             "beta_scale": 0.7, "intercept_scale": 5.0,
-            "S": 0, "season_idx": [0] * n_rows, "year_sd_scale": 0.25}
+            "S": 0, "season_idx": [0] * n_rows, "year_sd_scale": 0.25,
+            # The DISABLED mixture, which is what the other five heads on this file pass.
+            **pi_block(n_rows)}
     bins = rng.integers(1, n_bins + 1, n_rows)
-    params = {"alpha": 0.1, "beta": [0.2, -0.3], "year_z": [], "sigma_year": []}
+    params = {"alpha": 0.1, "beta": [0.2, -0.3], "year_z": [], "sigma_year": [],
+              "theta": [], "mu_low": [], "rho_low": [], "gamma": []}
     return data, bins, params, X
 
 
@@ -717,6 +723,230 @@ def test_rho_bin_gathers_the_dispersion_of_each_rows_own_bin():
     assert permuted != _lp(model, block, {**params, "rho": graded})
 
 
+# ── The low-availability mixture ─────────────────────────────────────────────
+#
+# Two levels again, and the split matters more here than it did for `rho_bin`. The Stan
+# target is where the nesting has to be exact, because five other heads read this file;
+# the python is where the *predictive* has to be the mixture, because a head that fits one
+# model and predicts another would pass every log_prob test in this section.
+
+def _pi_fixture(n_rows=40, n_cols=3, seed=3):
+    rng = np.random.default_rng(seed)
+    return rng.normal(size=(n_rows, n_cols))
+
+
+@needs_cmdstan
+def test_p_zero_and_theta_zero_both_nest_the_current_target_bit_for_bit():
+    """The rollback guarantee for the mixture, in both of its forms.
+
+    `betabinomial_glm.stan` serves six heads and only availability wants a mixture, so the
+    bar is the one `n_rho = 1` and `S = 0` already meet: not "close", **equal**. Two
+    nestings, because two different things could go wrong. `P = 0` is the parameter space
+    — the mixture block is zero-length, so the five other heads fit the model they always
+    have. `theta = 0` is the likelihood — the block exists and is switched off, which is
+    the state a *fitted* head passes through and the reason `theta` is bounded at 0 rather
+    than reached as `gamma_0 -> -inf`.
+
+    Equality on doubles, not a tolerance, because the mixture is written as an ADDITIVE
+    correction to the untouched beta-binomial statement and that correction is exactly
+    `0.0` at `pi = 0`. A tolerance here would hide the difference between "the same target"
+    and "a target that rounds to the same 15 digits".
+    """
+    from src.models.stan_utils import compile_model, pi_block
+
+    model = compile_model("betabinomial_glm")
+    data, _, params, _ = _betabinomial_fixture()
+    Z = _pi_fixture(data["N"])
+    rho = {"rho": [0.23]}
+    shared = {**data, "n_rho": 1, "rho_bin": [1] * data["N"]}
+
+    off = _lp(model, shared, {**params, **rho})
+    on = _lp(model, {**shared, **pi_block(data["N"], Z)},
+             {**params, **rho, "theta": [0.0], "mu_low": [0.1], "rho_low": [0.05],
+              "gamma": [0.0] * Z.shape[1]})
+    assert off == on
+
+    # `theta = 0` is `pi = 0` for ANY gamma, so switching the mixture off must not depend
+    # on where its covariate block happens to sit. What is left is the gamma prior, whose
+    # value is known in closed form — so this pins the likelihood contribution at exactly
+    # zero rather than at "small".
+    gamma = [0.4, -0.2, 0.9]
+    with_gamma = _lp(model, {**shared, **pi_block(data["N"], Z)},
+                     {**params, **rho, "theta": [0.0], "mu_low": [0.1],
+                      "rho_low": [0.05], "gamma": gamma})
+    prior = -0.5 * float(np.sum((np.asarray(gamma) / 2.5) ** 2))
+    assert abs((with_gamma - off) - prior) < 1e-9
+
+
+@needs_cmdstan
+def test_the_mixture_target_is_the_two_component_mixture_scipy_computes():
+    """The likelihood itself, against scipy, at the level of the target.
+
+    Differences between two parameter vectors are taken rather than the raw target, which
+    cancels the constants the `~` statements drop — the same device the shared-rho test
+    uses one section up. The gamma prior is the one term that does not cancel, so it is
+    added back explicitly instead of being absorbed into a tolerance.
+    """
+    from scipy.special import expit, logsumexp
+    from scipy.stats import betabinom
+
+    from src.models.stan_utils import compile_model, pi_block
+
+    model = compile_model("betabinomial_glm")
+    data, _, params, X = _betabinomial_fixture()
+    Z = _pi_fixture(data["N"])
+    rho, y = 0.23, np.asarray(data["y"])
+    block = {**data, "n_rho": 1, "rho_bin": [1] * data["N"], **pi_block(data["N"], Z)}
+    mu = expit(params["alpha"] + X @ np.asarray(params["beta"]))
+
+    def scipy_loglik(theta, mu_low, rho_low, gamma):
+        s = (1 - rho) / rho
+        main = betabinom.logpmf(y, 82, s * mu, s * (1 - mu))
+        s_low = (1 - rho_low) / rho_low
+        low = betabinom.logpmf(y, 82, s_low * mu_low, s_low * (1 - mu_low))
+        pi = theta * expit(Z @ np.asarray(gamma))
+        mixed = logsumexp(np.vstack([np.log1p(-pi) + main, np.log(pi) + low]), axis=0)
+        return mixed.sum() - 0.5 * float(np.sum((np.asarray(gamma) / 2.5) ** 2))
+
+    a = dict(theta=0.12, mu_low=0.10, rho_low=0.044, gamma=[0.4, -0.2, 0.9])
+    b = dict(theta=0.30, mu_low=0.22, rho_low=0.150, gamma=[-0.3, 0.5, 0.1])
+
+    def stan_lp(d):
+        return _lp(model, block, {**params, "rho": [rho], "theta": [d["theta"]],
+                                  "mu_low": [d["mu_low"]], "rho_low": [d["rho_low"]],
+                                  "gamma": d["gamma"]})
+
+    assert abs((stan_lp(a) - stan_lp(b))
+               - (scipy_loglik(**a) - scipy_loglik(**b))) < 1e-9
+
+
+def test_pi_block_disabled_is_one_state_rather_than_two_that_look_alike():
+    """`Z=None` is the disabled block; an empty `Z` is a mistake and raises.
+
+    The same contract `rho_block` and `year_block` carry — "off" has exactly one spelling,
+    so a head cannot half-enable a mixture by handing over a design it built from an empty
+    column list.
+    """
+    from src.models.stan_utils import pi_block
+
+    off = pi_block(7)
+    assert off["P"] == 0 and np.asarray(off["Z"]).shape == (7, 0)
+
+    on = pi_block(7, np.zeros((7, 3)))
+    assert on["P"] == 3
+
+    with pytest.raises(ValueError, match="DISABLED"):
+        pi_block(7, np.zeros((7, 0)))
+    with pytest.raises(ValueError, match="matching"):
+        pi_block(7, np.zeros((6, 3)))
+
+
+def test_pis_covariate_block_is_the_one_the_ladder_selected_on():
+    """D5, pinned. `PI_FEATURES` is a *shipped choice* that lands in the persisted recipe.
+
+    It is held in `stan_availability` rather than imported, because `availability_window`
+    imports `season_terms`, which imports `stan_availability` — a top-level import would be
+    a cycle. Two copies of a list is exactly how a head comes to ship a different model
+    from the one that was selected, so the equality is asserted rather than trusted.
+    """
+    from src.models.availability_window import PI_COLS
+    from src.models.stan_availability import PI_FEATURES
+
+    assert PI_FEATURES == PI_COLS
+
+
+def _mixture_head(n_draws=1, theta=0.0, mu_low=0.10, rho_low=0.05):
+    """A fitted-shaped mixture head, assembled by hand — no sampler, no design build."""
+    from src.models.stan_availability import PI_FEATURES, StanAvailability
+
+    identity = type("I", (), {"transform": staticmethod(lambda x: np.zeros_like(x))})()
+    head = StanAvailability(features=["minutes_per_game_lag1"], first_season=None,
+                            mixture=True)
+    head.scaler, head.pi_scaler = identity, identity
+    head.alpha_draws = np.zeros(n_draws)
+    head.beta_draws = np.zeros((n_draws, 1))
+    head.rho_draws = np.tile(np.array([[0.30, 0.25, 0.20, 0.15]]), (n_draws, 1))
+    head.theta_draws = np.full(n_draws, float(theta))
+    head.mu_low_draws = np.full(n_draws, float(mu_low))
+    head.rho_low_draws = np.full(n_draws, float(rho_low))
+    head.gamma_draws = np.zeros((n_draws, len(PI_FEATURES)))
+    head.predictive_draws = n_draws
+    frame = _role_frame([6.0, 18.0, 27.0, 36.0])
+    for column in PI_FEATURES:
+        frame[column] = 0.0
+    return head, frame
+
+
+def test_theta_zero_reproduces_the_single_component_predictive_exactly():
+    """The python half of the nesting, and it is a different claim from the Stan half.
+
+    A head can fit the nested target and still *predict* the mixture — `pi` reaches the
+    predictive through three separate methods — so the rollback has to hold there too.
+    Exact equality: at `theta = 0` the weight is identically zero, so the convex
+    combination is the main component and not a blend of it with a negligible other.
+    """
+    head, frame = _mixture_head(theta=0.0)
+    mixed = head.predict_pmf(frame, 82)
+    mixed_mean = head.predict_mean(frame)
+    head.mixture = False
+    assert np.array_equal(mixed, head.predict_pmf(frame, 82))
+    assert np.array_equal(mixed_mean, head.predict_mean(frame))
+
+
+def test_the_predictive_is_the_convex_combination_and_the_mean_is_the_mixtures():
+    """`pi` has to reach the pmf, the mean and the moments — and be the SAME `pi` in each.
+
+    The trap this is arranged around is a head whose pmf carries the mixture while
+    `predict_mean` returns the main component's mean: `score_arm` turns that mean into MAE
+    and R², so the head would be credited with an accuracy its own predictive does not
+    have. `availability_window.MixtureFrailty.predict_mean` makes the same choice, which is
+    what keeps the ladder row and the port comparable at all.
+    """
+    from src.models.availability import predictive_pmf
+
+    head, frame = _mixture_head(theta=0.4)
+    pi, mu_low, rho_low = head.mixture_draws(frame)
+    # gamma = 0, so inv_logit(0) = 0.5 and pi is half of theta on every row.
+    assert np.allclose(pi, 0.2)
+
+    main = np.vstack([predictive_pmf(np.array([82]), np.array([0.5]), r, 82)[0]
+                      for r in (0.30, 0.25, 0.20, 0.15)])
+    low = predictive_pmf(np.full(4, 82), np.full(4, 0.10), 0.05, 82)
+    assert np.allclose(head.predict_pmf(frame, 82), 0.8 * main + 0.2 * low, atol=1e-12)
+    assert np.allclose(head.predict_mean(frame), 0.8 * 0.5 + 0.2 * 0.10)
+
+    # And the moments the board decomposition reads are the MIXTURE's, which carries a
+    # between-component term a single beta-binomial has no way to produce.
+    grid = np.arange(83)
+    pmf = head.predict_pmf(frame, 82)
+    mean, variance = head.predictive_moments(frame)
+    assert np.allclose(mean.mean(axis=0), (pmf * grid).sum(axis=1))
+    assert np.allclose(variance.mean(axis=0),
+                       (pmf * grid ** 2).sum(axis=1) - (pmf * grid).sum(axis=1) ** 2)
+
+
+def test_the_sampler_draws_a_component_before_it_draws_a_rate():
+    """A disrupted season is a different season, not an average of two.
+
+    Drawing a rate from each component and averaging would produce a player who plays 60
+    games in every world — precisely the season the arm exists to say does not happen. The
+    signature of doing it right is a **bimodal** predictive, so the low mode is counted
+    directly rather than checked through a moment that both implementations would match.
+    """
+    head, frame = _mixture_head(n_draws=4000, theta=0.5)
+    samples = head.predict_samples(frame, seed=7)
+    assert samples.shape == (4000, 4)
+    # pi = 0.25 per row, and the low component puts nearly all of its mass under 20 games
+    # where the main one (mu = 0.5) puts a minority of its own. The analytic comparison is
+    # the substantive check; the bound beside it only rules out a sampler that ignored the
+    # mixture entirely, which would land near the main component's share alone.
+    share_low = (samples < 20).mean(axis=0)
+    analytic = (head.predict_pmf(frame, 82)[:, :20]).sum(axis=1)
+    assert np.allclose(share_low, analytic, atol=0.02)
+    main_only = (head.predict_pmf(frame, 82)[:, :20].sum(axis=1) - 0.25) / 0.75
+    assert np.all(share_low > main_only + 0.05)
+
+
 # ── End to end, with a real sampler ──────────────────────────────────────────
 
 @needs_cmdstan
@@ -752,7 +982,8 @@ def test_stan_posterior_mean_reproduces_the_penalized_mle():
     # `make stan-availability` against `RoleGradedBetaBinomial`, on the real design.
     stan = StanAvailability(l2=1.0, features=features, warmup=750, samples=750,
                             chains=4, predictive_draws=100,
-                            first_season=None, role_rho=False).fit(frame)
+                            first_season=None, role_rho=False,
+                            mixture=False).fit(frame)
 
     assert stan.diagnostics["divergences"] == 0
     assert stan.diagnostics["max_rhat"] <= 1.01
@@ -783,7 +1014,7 @@ def test_posterior_predictive_obeys_the_law_of_total_variance():
 
     stan = StanAvailability(features=features, warmup=400, samples=400, chains=2,
                             predictive_draws=200, first_season=None,
-                            role_rho=False).fit(frame)
+                            role_rho=False, mixture=False).fit(frame)
     plug_in = StanAvailability(features=features, pmf_mode="plug_in")
     plug_in.__dict__.update({k: v for k, v in stan.__dict__.items()
                              if k not in ("pmf_mode", "name")})
@@ -829,7 +1060,7 @@ def test_shared_beta_induces_board_correlation_a_point_estimate_cannot():
 
     stan = StanAvailability(features=features, warmup=400, samples=400, chains=2,
                             predictive_draws=200, first_season=None,
-                            role_rho=False).fit(frame)
+                            role_rho=False, mixture=False).fit(frame)
     board = board_correlation(stan, frame, sizes=(15, 150, None), n_subsets=50)
     assert (board["shared_beta_sd"] > 0).all()
     assert (board["inflation"] > 1.0).all()

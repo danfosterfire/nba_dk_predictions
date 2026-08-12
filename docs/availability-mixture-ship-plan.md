@@ -179,6 +179,41 @@ calibration and ties CRPS — but it decides whether §7c result 3 stands as wri
 
 ## 3. Session 2 — the Stan port
 
+> ✅ **Done 2026-08-12. The port reproduces the ladder, and the two risks this section named
+> both turned out to be the other way round.** Full record in
+> `docs/availability-window-plan.md` §7h; `make stan-availability-mixture`.
+>
+> **Both nestings are exact and asserted on `log_prob`**: `P = 0` for the parameter space,
+> and `θ = 0` for the target *bit for bit*, because the mixture enters as an additive
+> correction to the untouched beta-binomial line rather than replacing it. The point MLE
+> refitted on the same rows reproduces §7c's `mixture` row to **0.000000** on all six
+> metrics, so the port is compared against the arm that was selected and not against a
+> lookalike.
+>
+> **D1 passes for the object that ships**, on its own paired bootstrap rather than the
+> ladder's: CRPS **+0.0113 [−0.0257, +0.0503]** (non-inferior), boundary **−0.0079 [−0.0088,
+> −0.0043]**, shoulder **−0.0013 [−0.0078, −0.0003]**. The port **attenuates** the win —
+> 89% of the boundary margin and 62% of the shoulder margin survive — which is the one thing
+> this section did not anticipate and the reason §7h quotes the shipped figures rather than
+> §7c's.
+>
+> **Neither planned risk fired; a third one did.** Multimodality did not appear — four chains
+> started at `θ = 0.02 / 0.08 / 0.25 / 0.50` agree to **0.276** pooled sds at R̂ **1.0073**,
+> 0 divergences, the MLE inside the 95% interval for 11 of 11 mixture terms. And the fit did
+> not stay cheap: **366 s against 94**, 3.9×. The first implementation was ~10× worse than
+> *that* — a per-row loop of `beta_binomial_lpmf` that did not finish warmup in 20 minutes —
+> and rewriting it through vectorized `lbeta` recovered it. So the slow fit was a signal
+> about the autodiff graph, not about the geometry, which is the opposite of what this
+> section predicted.
+>
+> **`PI_COLS` was kept** (D5), and is now duplicated as `stan_availability.PI_FEATURES` with
+> a test pinning the two equal — `availability_window` imports `season_terms` imports
+> `stan_availability`, so a top-level import is a cycle.
+>
+> Two things session 4 inherits: `make posteriors` and `rehydrate_availability` **raise** on
+> a mixture head rather than mis-describe it, and `make stan-availability` was deliberately
+> not re-run, so ~40 audited port figures still describe the single-component head.
+
 Add the mixture to `src/stan/betabinomial_glm.stan` behind data-supplied switches, exactly as
 `n_rho`/`rho_bin` was added. `π = 0` must reproduce the current target bit for bit, asserted
 on Stan's own `log_prob` so the other five heads on that file are provably untouched.
@@ -228,6 +263,38 @@ Once the posterior exists: `make posteriors` (the recipe needs `π`'s design blo
 scaler), `make model-cards` (the predictive is drawn through the head's own
 `predict_samples`), and the simulator, which session 1 has already made able to read a
 graded artifact.
+
+> ⚠️ **Session 2 turned the first of those into a hard stop rather than a to-do.**
+> `posteriors.availability_artifact` and `rehydrate_availability` both **raise** when the
+> head carries a mixture, because `DesignRecipe` holds one scaler and `π`'s covariate block
+> is not a subset of the mean's — a persisted artifact would rehydrate as the
+> single-component head and nothing would object. Wire the second design block through
+> `availability_artifact`, `_thinned`'s draw name list (`theta_draws`, `mu_low_draws`,
+> `rho_low_draws`, `gamma_draws`) and `rehydrate_availability` first; everything else in this
+> section is downstream of it.
+>
+> **Two traps in that wiring, both found while writing this and neither obvious from the
+> call sites.**
+>
+> 1. **The round-trip would check the wrong quantity and pass.** `availability_artifact`
+>    declares `response="mean_mu"`, and `_reference_prediction` serves that through
+>    `mu_draws` — which under a mixture is the **main component's** mean, not the
+>    predictive one `predict_mean` returns. So `artifact.roundtrip()` would compare the
+>    recipe against a number the shipped head never reports and succeed. Either give the
+>    head its own `response` or route `mean_mu` through `predict_mean`; do not loosen
+>    `PREDICTION_TOL`. This is the same failure class the round-trip exists to catch, one
+>    level up from where it looks.
+> 2. **A dataclass default does not survive unpickling.** Artifacts are `pickle.dump`ed
+>    whole, so every artifact written before `DesignRecipe` gains `pi_features` / `pi_scaler`
+>    restores *without* those attributes — `recipe.pi_features` then raises `AttributeError`
+>    rather than falling back to the field default, on every existing head and every window.
+>    Read them through `getattr(recipe, ..., default)` or give the class a `__setstate__`.
+>
+> **And re-run `make stan-availability` here**, which session 2 deliberately did not. It
+> moves ~40 quoted port figures across `docs/availability-plan.md`, `docs/facts-archive.md`
+> and `docs/model-development-notes.md` at once and `make docs-audit` will go red until they
+> are refreshed — keep the single-component figures as `historical=True` rows, the way the
+> window round kept the pre-window ones.
 
 **Two gates are owed from the *window* round and have not been re-run**
 (`availability-window-plan.md` §5.1): `season-total`'s Gate E and `stan-games-played`, both of

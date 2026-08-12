@@ -20,7 +20,7 @@ from src.models.season_terms import (SEASON_TREND, _finalize, add_role_terms, ad
                                      apply_override, availability_arms,
                                      coverage_from_pmf, coverage_from_samples,
                                      oracle_override, realized_season_dk, season_arms)
-from src.models.stan_utils import YearTerm, rho_block, year_block
+from src.models.stan_utils import YearTerm, pi_block, rho_block, year_block
 
 
 def _has_cmdstan() -> bool:
@@ -472,8 +472,13 @@ def test_S_zero_nests_exactly_inside_the_year_effect_model(name):
                 # The shared-dispersion block, the same way `year_block()` gives the
                 # no-year-effect one: this test is about the year term, so the dispersion
                 # is held at the arm every head but availability fits.
-                **rho_block(N)}
-        pars = {"alpha": 0.3, "beta": [0.5, -0.2], "rho": [0.12]}
+                **rho_block(N),
+                # And the disabled low-availability mixture, for the same reason: `P = 0`
+                # makes its parameters zero-length, so this stays a test about the year
+                # term rather than about two optional blocks at once.
+                **pi_block(N)}
+        pars = {"alpha": 0.3, "beta": [0.5, -0.2], "rho": [0.12],
+                "theta": [], "mu_low": [], "rho_low": [], "gamma": []}
     else:
         data = {"N": N, "K": K, "X": X, "y": rng.poisson(4.0, N).tolist(),
                 "exposure": np.full(N, 100.0).tolist(), "beta_scale": 1.0,

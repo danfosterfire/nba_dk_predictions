@@ -203,6 +203,33 @@ stan:
     # MLE — and grading it never hurt a metric in the ladder. `false` is the shared scalar,
     # which is `n_rho = 1` in `src/stan/betabinomial_glm.stan` and nests exactly.
     role_rho: true
+    # The low-availability MIXTURE — a second component for the disrupted season, with
+    # covariates on its weight. `make availability-window` laddered five likelihoods and
+    # this one halved the selector: boundary_tail_error 0.0109 against 0.0201, shoulder
+    # error -0.0021 [-0.0086, -0.0010], and a TIE on CRPS (+0.011, interval spanning
+    # zero). It ships because this head is selected on tail calibration with a CRPS
+    # non-inferiority guard — a rule stated in docs/availability-mixture-ship-plan.md D1
+    # BEFORE the arm was measured, not inferred from the arm that won.
+    #
+    # `false` recovers the single-component head EXACTLY: `P = 0` in
+    # `src/stan/betabinomial_glm.stan`, whose mixture parameters are then zero-length.
+    # Asserted on Stan's own `log_prob`, the same discipline `n_rho = 1` carries.
+    #
+    # ⚠️ Two consumers are NOT yet wired for it and raise rather than mis-describe the
+    # head: `make posteriors` (the DesignRecipe carries one scaler and pi's covariate
+    # block needs its own) and `rehydrate_availability`. That is session 3 of
+    # docs/availability-mixture-ship-plan.md. `make stan-availability-mixture` is the
+    # port check and needs neither.
+    mixture: true
+    # Normal scale on pi's coefficients. Weakly informative on standardized columns —
+    # the point MLE leaves them unpenalized inside a +/-5 box, which has no Bayesian
+    # analogue, so this is the one number in the port that is a choice rather than the
+    # `1/sqrt(2*l2)` identity.
+    pi_gamma_scale: 2.5
+    # A "disrupted season" is one where the player misses more than half the schedule.
+    # The bound is what stops the two components from label-switching — structural rather
+    # than hopeful, and the point MLE fitted mu_low = 0.0999, well clear of it.
+    mu_low_max: 0.5
 
   minutes:
     # Prior-season total minutes required before a row is fitted. Matches the component

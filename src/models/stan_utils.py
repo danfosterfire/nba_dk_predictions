@@ -131,6 +131,89 @@ def rho_block(n_rows: int, bins: "np.ndarray | None" = None,
     return {"n_rho": total, "rho_bin": idx.tolist()}
 
 
+# The low component's mean cannot exceed this. A "disrupted season" is one where the
+# player misses more than half the schedule, and the bound is what stops the two
+# components from label-switching — structural rather than hopeful. Mirrors
+# `availability_window.MU_LOW_MAX`, which the point-MLE ladder fitted under.
+MU_LOW_MAX = 0.5
+
+# Normal scale on `gamma`, pi's covariate block. Weakly informative on standardized
+# columns: at 2.5 a one-sd move in any covariate is free to swing the disruption odds by
+# well over the 8.8x spread the point MLE fitted, so this rules out divergent coefficients
+# rather than shrinking real ones. Deliberately NOT `prior_sd_for_l2(l2)`: the penalty in
+# `availability_window` reaches `beta[1:]` only and leaves gamma unpenalized inside a box,
+# which has no Bayesian analogue — so this is the one place the port is a choice rather
+# than the identity `prior_sd_for_l2` makes everywhere else.
+GAMMA_SCALE = 2.5
+
+
+def pi_block(n_rows: int, Z: "np.ndarray | None" = None,
+             gamma_scale: float = GAMMA_SCALE,
+             mu_low_max: float = MU_LOW_MAX) -> dict:
+    """The low-availability mixture's data block for `betabinomial_glm`.
+
+    That file declares `P`, `Z`, `gamma_scale` and `mu_low_max` unconditionally because
+    Stan has no optional data. Passing `Z=None` returns the **disabled** block — `P = 0`
+    and a zero-column design — which makes `theta`, `mu_low`, `rho_low` and `gamma`
+    zero-length and the model bit-for-bit the one that existed before the mixture was
+    added, in the same way `year_block`'s `S = 0` and `rho_block`'s `n_rho = 1` are. Every
+    head that does not want a mixture gets it from here rather than hand-writing four keys,
+    so "disabled" has exactly one definition and the nesting is pinned in one place.
+
+    `Z` carries **no intercept column**: `theta` is the scale, and an intercept inside the
+    logit would put the nesting point at `gamma_0 -> -inf` instead of at an attainable
+    parameter value.
+    """
+    if Z is None:
+        return {"P": 0, "Z": np.zeros((int(n_rows), 0)),
+                "gamma_scale": float(gamma_scale), "mu_low_max": float(mu_low_max)}
+    Z = np.asarray(Z, dtype=float)
+    if Z.ndim != 2 or len(Z) != int(n_rows):
+        raise ValueError(f"Z must be (rows x P) matching {n_rows} rows; got {Z.shape}")
+    if Z.shape[1] == 0:
+        raise ValueError("an empty Z is the DISABLED block — pass Z=None for it, so that "
+                         "'no mixture' is one state rather than two that look alike")
+    return {"P": int(Z.shape[1]), "Z": Z, "gamma_scale": float(gamma_scale),
+            "mu_low_max": float(mu_low_max)}
+
+
+def chain_summary(fit, names: list[str]) -> pd.DataFrame:
+    """Per-chain posterior means, for a target that R-hat alone does not police.
+
+    R-hat compares between-chain to within-chain variance and is the right diagnostic for a
+    unimodal posterior explored at different rates. It is the **wrong** one for a mixture:
+    four chains that each sit in a different mode, none of them mixing, can post a
+    respectable R-hat while describing four different models. The point MLE of this
+    likelihood needed multi-start for exactly that reason
+    (`docs/availability-window-plan.md` §7b), so the chains are reported one at a time and
+    `spread_in_sds` — the largest gap between two chain means, in pooled posterior sds — is
+    the number to read.
+    """
+    draws = fit.draws(concat_chains=False)          # (iterations, chains, columns)
+    columns = list(fit.column_names)
+    rows = []
+    for name in names:
+        for j, column in enumerate(columns):
+            if column != name and not column.startswith(f"{name}["):
+                continue
+            values = np.asarray(draws[:, :, j], dtype=float)
+            pooled_sd = float(values.std(ddof=1))
+            means = values.mean(axis=0)
+            for chain in range(values.shape[1]):
+                rows.append({
+                    "parameter": column, "chain": chain + 1,
+                    "mean": float(means[chain]),
+                    "sd": float(values[:, chain].std(ddof=1)),
+                    "q2_5": float(np.percentile(values[:, chain], 2.5)),
+                    "q97_5": float(np.percentile(values[:, chain], 97.5)),
+                    "pooled_mean": float(values.mean()),
+                    "pooled_sd": pooled_sd,
+                    "spread_in_sds": float((means.max() - means.min()) / pooled_sd)
+                    if pooled_sd > 0 else 0.0,
+                })
+    return pd.DataFrame(rows)
+
+
 class YearTerm:
     r"""One implementation of the year random effect, held by all four head classes.
 

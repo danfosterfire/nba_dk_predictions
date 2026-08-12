@@ -80,10 +80,10 @@ from src.models.availability import (EPS, FEATURE_COLS, RHO_MAX, RHO_MIN,
 from src.models.held_out import selection_split
 from src.models.stan_availability import availability_design
 from src.models.stan_utils import (YearTerm, compile_model, crps_from_samples,
-                                   diagnostics_frame, ks_uniform,
-                                   pit_from_samples, posterior,
-                                   prior_sd_for_l2, rho_block, sample, standardized,
-                                   thin, warn_if_unconverged)
+                                   diagnostics_frame, ks_uniform, pi_block,
+                                   pit_from_samples, posterior, prior_sd_for_l2,
+                                   rho_block, sample, standardized, thin,
+                                   warn_if_unconverged)
 
 MODEL = "betabinomial_glm"
 OWN = "logit_share_lag1"
@@ -285,7 +285,11 @@ class StanMinutes:
              # model exactly. The graded arm is availability's alone — see
              # docs/availability-window-plan.md and §6 for the same question here, which
              # is measured but not yet laddered.
-             **rho_block(len(train))},
+             **rho_block(len(train)),
+             # And no low-availability mixture: `pi_block()` with no design is `P = 0`,
+             # which makes that block's parameters zero-length and this target the one
+             # this head has always fitted. Availability's alone, for now.
+             **pi_block(len(train))},
             chains=self.chains, warmup=self.warmup, samples=self.samples,
             seed=self.seed, label=self.name, metric=self.metric,
             # `rho` is a vector[n_rho] in the Stan source, so its init is a list even

@@ -119,9 +119,9 @@ from src.models.games_played import (allocate_spells, beta_shapes,
                                      simulated_hazard_by_streak,
                                      variance_inflation)
 from src.models.stan_availability import availability_design
-from src.models.stan_utils import (compile_model, diagnostics_frame, posterior,
-                                   prior_sd_for_l2, rho_block, sample, standardized,
-                                   thin, warn_if_unconverged)
+from src.models.stan_utils import (compile_model, diagnostics_frame, pi_block,
+                                   posterior, prior_sd_for_l2, rho_block, sample,
+                                   standardized, thin, warn_if_unconverged)
 
 BINOMIAL_MODEL = "betabinomial_glm"
 DURATION_MODEL = "betageometric_duration"
@@ -331,7 +331,13 @@ class BetaBinomialHead:
              # One dispersion for every row: `rho_block()` with no bins is the shared-rho
              # model exactly. Entry, exit and onset are counts over a schedule rather than
              # over a role, so there is no bin variable here to grade on.
-             **rho_block(len(train))},
+             **rho_block(len(train)),
+             # And no low-availability mixture: `pi_block()` with no design is `P = 0`,
+             # which makes that block's parameters zero-length and this target the one
+             # entry, exit and onset have always fitted. The spell process is the
+             # STRUCTURAL alternative to a mixture, so it is the last head that would
+             # want one bolted on.
+             **pi_block(len(train))},
             chains=self.chains, warmup=self.warmup, samples=self.samples,
             seed=self.seed, label=self.name,
             # Every head here inits at the intercept-only solution with zero slopes:

@@ -752,6 +752,16 @@ def availability_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorA
                        .get("test_seasons", 2))
     l2 = float(cfg.get("features", {}).get("availability", {}).get("glm_l2", 1.0))
 
+    if bool(cfg_head.get("mixture", False)):
+        raise NotImplementedError(
+            "stan.availability.mixture is on and this artifact builder cannot persist it: "
+            "the `DesignRecipe` carries one scaler, and `pi`'s covariate block "
+            "(`stan_availability.PI_FEATURES`) needs its own. Wire the second design block "
+            "through here, through `_thinned`'s draw list and through "
+            "`rehydrate_availability` — docs/availability-mixture-ship-plan.md §4 — rather "
+            "than shipping an artifact that silently describes a different model. Raised "
+            "before the fit, so nine minutes of sampler time are not spent on it.")
+
     design = availability_design(cfg)
     offered, val = windowed(design, window, test_seasons)
     probe = probe_rows(val)
@@ -763,7 +773,13 @@ def availability_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorA
         samples=int(cfg_stan.get("samples", 1000)),
         seed=int(cfg_stan.get("seed", 42)),
         first_season=cfg_head.get("first_season", FIRST_SEASON),
-        role_rho=bool(cfg_head.get("role_rho", True))).fit(offered)
+        role_rho=bool(cfg_head.get("role_rho", True)),
+        # Refused rather than dropped, the same rule `_finish` applies to a year random
+        # effect. The mixture's `pi` needs its OWN covariate block and scaler in the
+        # recipe — `PI_FEATURES` is not a subset of `FEATURE_COLS`' scaler — and until
+        # `DesignRecipe` carries a second one, persisting these draws would produce an
+        # artifact that rehydrates as the single-component head with nothing raising.
+        mixture=False).fit(offered)
     seconds = time.perf_counter() - started
 
     # The rows the head fitted, taken from the head's own `fitting_rows` rather than

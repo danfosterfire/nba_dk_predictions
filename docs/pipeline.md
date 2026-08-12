@@ -82,6 +82,12 @@ are the artifact worth keeping.
 
 ```bash
 make stan-availability # port of the point-MLE beta-binomial + the posterior it buys
+make stan-availability-mixture
+                       # the LOW-AVAILABILITY MIXTURE's port check — the same head with
+                       #   a second component for the disrupted season, scored against
+                       #   the point-MLE arm `make availability-window` selected. Its own
+                       #   artifacts, deliberately: `stan-availability` writes the figures
+                       #   `make docs-audit` pins, and a port check must not move them
 make stan-minutes      # min | available, trials = real game length (NEVER 48)
 make stan-components   # 8 NB count heads + 3 beta-binomial conversion heads
 make stan-composition  # the team-game minutes COMPOSITION — the per-game allocation

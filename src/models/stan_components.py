@@ -86,10 +86,10 @@ from src.models.component_rates import (BIO_COLS, CONTEXT_COLS, CONVERSION_HEADS
                                         impute, nb_nll)
 from src.models.held_out import selection_split
 from src.models.stan_utils import (YearTerm, compile_model, crps_from_samples,
-                                   diagnostics_frame, ks_uniform,
-                                   pit_from_samples, posterior,
-                                   prior_sd_for_l2, rho_block, sample, standardized,
-                                   thin, warn_if_unconverged)
+                                   diagnostics_frame, ks_uniform, pi_block,
+                                   pit_from_samples, posterior, prior_sd_for_l2,
+                                   rho_block, sample, standardized, thin,
+                                   warn_if_unconverged)
 
 COUNT_MODEL = "negbinomial_glm"
 CONVERSION_MODEL = "betabinomial_glm"
@@ -284,7 +284,11 @@ class StanConversion:
              "intercept_scale": INTERCEPT_SCALE, **self.year.data(live),
              # One dispersion for every row: `rho_block()` with no bins is the shared-rho
              # model exactly, which is what these four conversion heads have always fitted.
-             **rho_block(len(live))},
+             **rho_block(len(live)),
+             # And no low-availability mixture: `pi_block()` with no design is `P = 0`,
+             # which makes that block's parameters zero-length and this target the one
+             # these four heads have always fitted.
+             **pi_block(len(live))},
             chains=self.chains, warmup=self.warmup, samples=self.samples,
             seed=self.seed, label=self.name, metric=self.metric,
             # `rho` is a vector[n_rho] in the Stan source, so its init is a list even
