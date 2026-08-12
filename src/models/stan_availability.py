@@ -145,6 +145,13 @@ FIRST_SEASON = "2012-13"
 # never hurt a single metric in the ladder.
 ROLE_RHO = True
 
+# The column the buckets are cut on, and the column the assignment is written to. Named
+# constants because they are a *contract* rather than an implementation detail: the
+# persisted posterior carries the cut as a recipe step, so `posteriors.py` and every
+# consumer downstream of it addresses those two columns by name.
+ROLE_COL = "minutes_per_game_lag1"
+ROLE_BIN_COL = "rho_bin"
+
 # Draws kept for the posterior-predictive mixture. Each draw costs one (rows x games+1)
 # beta-binomial evaluation, so this trades wall clock against Monte Carlo error in the
 # predictive. 400 puts the MC error on a CRPS of ~10.8 games well below 0.001.
@@ -234,6 +241,17 @@ def restrict_window(frame: pd.DataFrame, first_season: str | None) -> pd.DataFra
     return frame[years >= first_year]
 
 
+def role_edges(role_rho: bool = ROLE_RHO) -> list[float]:
+    """The bucket edges `role_bins` cuts on — the fitted state the artifact has to carry.
+
+    Under a shared dispersion this is one interval covering the whole line, which is
+    `n_rho = 1` and reproduces the all-ones assignment exactly. Written as edges rather than
+    special-cased downstream so the persisted recipe has one shape in both arms: a consumer
+    reconstructs `rho_bin` by cutting on these, and never has to know which arm it holds.
+    """
+    return [float(e) for e in ROLE_EDGES] if role_rho else [-np.inf, np.inf]
+
+
 def role_bins(frame: pd.DataFrame, role_rho: bool = ROLE_RHO) -> np.ndarray:
     """1-based prior-MPG role bucket per row — the `rho_bin` the Stan source gathers on.
 
@@ -253,7 +271,7 @@ def role_bins(frame: pd.DataFrame, role_rho: bool = ROLE_RHO) -> np.ndarray:
     """
     if not role_rho:
         return np.ones(len(frame), dtype=int)
-    mpg = frame["minutes_per_game_lag1"].to_numpy(dtype=float)
+    mpg = frame[ROLE_COL].to_numpy(dtype=float)
     idx = pd.cut(mpg, ROLE_EDGES, labels=False)
     return np.nan_to_num(np.asarray(idx, dtype=float), nan=0.0).astype(int) + 1
 
@@ -404,6 +422,31 @@ class StanAvailability(AvailabilityModel):
             return _sigmoid(self.beta[0] + self._design(df) @ self.beta[1:])
         return self.mu_draws(df)[0].mean(axis=0)
 
+    def predict_samples(self, df: pd.DataFrame, seed: int = 0) -> np.ndarray:
+        """(draws x rows) games played, drawn from the posterior predictive.
+
+        The head scores through `predict_pmf` — an explicit 0..83 grid, which is affordable
+        here and is not at the minutes head's 0..4,000 — so nothing in the fitting path ever
+        needed a sampler. `make model-cards` does: an ECDF ribbon is one *replicate dataset*
+        per posterior draw, which is a draw and not a pmf.
+
+        It lives here rather than in the card for the reason `docs/model-cards-plan.md`
+        makes load-bearing: no second implementation of any head's predictive. That mattered
+        the moment `rho` became a vector — the card's generic beta-binomial branch takes one
+        dispersion per draw, and applying a star's `rho` to a fringe player's mean is exactly
+        the silent failure a card renders as a good-looking picture. `mu_draws` already
+        gathers each row's own bucket, so drawing through it cannot make that mistake.
+
+        Sampled as `p ~ Beta(a, b)` then `y ~ Binomial(n, p)`, the same two lines
+        `StanMinutes.predict_samples` uses and orders of magnitude faster than
+        `betabinom.rvs` at this shape.
+        """
+        mus, rhos = self.mu_draws(df, self.predictive_draws)
+        rng = np.random.default_rng(seed)
+        a, b = _shapes(mus, rhos)
+        n = df["team_games"].to_numpy(int)
+        return rng.binomial(n[None, :], rng.beta(a, b)).astype(float)
+
     def predict_pmf(self, df: pd.DataFrame, max_games: int) -> np.ndarray:
         n = df["team_games"].to_numpy(int)
         k = np.arange(int(max_games) + 1)
@@ -421,6 +464,44 @@ class StanAvailability(AvailabilityModel):
                                 a[:, :, None], b[:, :, None])
             out += np.nan_to_num(pmf).sum(axis=0)
         return out / len(mus)
+
+
+def rehydrate_availability(artifact, keep: int) -> StanAvailability:
+    """A `StanAvailability` carrying a persisted artifact's draws, scaler and bin arm.
+
+    The counterpart of `minutes_unification.rehydrate_minutes`, and here for the same
+    reason: a consumer that wants this head's predictive should get *this head*, not a
+    re-derivation of it beside the artifact. `make model-cards` is the caller.
+
+    **`role_rho` comes from the artifact, never from the class default.** The default is
+    what ships *today*; an artifact is a record of what was fitted, and a shared-dispersion
+    posterior rehydrated under a graded default would index a one-column `rho_draws` with
+    bucket 2 and raise — or, worse, would not. `rho_draws` is (draws x n_rho) in both arms,
+    which is what keeps the two on one path.
+
+    `bin_counts` and the row-weighted scalar `rho` are deliberately absent: both are
+    properties of the *fitting* rows, which an artifact does not carry, and a plausible-looking
+    stand-in computed from the scored frame would be a different number wearing the same name.
+    """
+    model = StanAvailability(features=list(artifact.recipe.features),
+                             pmf_mode="posterior", name="rehydrated/availability",
+                             predictive_draws=keep,
+                             first_season=str(artifact.extras.get("fit_first_season") or "")
+                             or None,
+                             role_rho=bool(artifact.extras.get("role_rho", False)))
+    model.scaler = artifact.recipe.scaler
+    model.alpha_draws = np.asarray(artifact.draws["alpha_draws"], dtype=float)
+    model.beta_draws = np.asarray(artifact.draws["beta_draws"], dtype=float)
+    model.rho_draws = np.asarray(artifact.draws["rho_draws"], dtype=float)
+    if model.rho_draws.ndim == 1:
+        model.rho_draws = model.rho_draws[:, None]
+    if model.rho_draws.shape[1] != model.n_rho:
+        raise ValueError(
+            f"the artifact carries {model.rho_draws.shape[1]} dispersion column(s) and its "
+            f"`role_rho={model.role_rho}` arm gathers {model.n_rho}. The persisted head and "
+            f"the bin assignment disagree; re-run `make posteriors --groups availability` "
+            f"rather than reading one bucket's dispersion onto another bucket's players.")
+    return model
 
 
 def _shapes(mu: np.ndarray, rho: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

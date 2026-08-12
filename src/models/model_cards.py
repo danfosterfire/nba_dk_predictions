@@ -93,8 +93,8 @@ import pandas as pd
 import yaml
 
 from src.models.held_out import selection_split
-from src.models.posteriors import (DESIGN_TOL, team_game_probe, load_all, posteriors_dir,
-                                   require_window)
+from src.models.posteriors import (DESIGN_TOL, fit_first_season, team_game_probe, load_all,
+                                   posteriors_dir, require_window)
 from src.models.stan_utils import ks_uniform, pit_from_samples, thin
 
 # The only window whose coefficients may describe a validation row. See the module
@@ -593,14 +593,33 @@ def _frames(head: str, raw_train, raw_val, design_train, design_val, features,
 
 
 def availability_frames(cfg: dict, artifacts: dict) -> dict[str, HeadFrames]:
-    """The beta-binomial games-played-out-of-team-games head. No variant ladder."""
+    """The beta-binomial games-played-out-of-team-games head. No variant ladder.
+
+    **Two season axes, and only one of them is the split.** `_split_pair` decides which
+    seasons are eligible; the head then truncates its *fitting* rows to a recent suffix of
+    them (`stan.availability.first_season`, 2012-13 since 2026-08-11), and that truncation is
+    re-applied here through the head's own `restrict_window`. Skipping it would not fail
+    quietly: the population anchor compares this frame against the row count and season span
+    `posteriors.py` recorded, so it would raise. That is the point — the anchor is what makes
+    "which rows did this head see" a checked claim rather than a convention.
+
+    `fit_first_season` comes from the artifact rather than from config, for the reason
+    `composition_frames` reads its own truncation the same way: the artifact records what was
+    fitted and the config is a knob that can move under it.
+
+    **The truncation is on the fitting rows only.** Validation is scored unfiltered, which is
+    the head's own rule — a shorter fitting window is a bias-variance trade on the fit, not a
+    claim about which rows may be predicted — so the card's validation half covers every
+    season the split allows.
+    """
     art = artifacts.get("availability")
     if art is None:
         return {}
-    from src.models.stan_availability import availability_design
+    from src.models.stan_availability import availability_design, restrict_window
 
     test_seasons = _test_seasons(cfg)
     train, val = _split_pair(availability_design(cfg), test_seasons)
+    train = restrict_window(train, str(art.extras.get("fit_first_season") or "") or None)
     return {"availability": _frames("availability", train, val, train, val,
                                     art.recipe.features)}
 
@@ -1371,6 +1390,12 @@ def _rehydrated(head: str, art, cfg: dict, keep: int):
     sequential capped allocation and the thinning in front of each all live in the head, and
     the card is supposed to describe the head as it ships.
 
+    **Availability moved onto this path on 2026-08-11 and it was not cosmetic.** It used to
+    fall through to `family_draws`, whose beta-binomial branch takes one dispersion per draw —
+    correct while `rho` was a scalar, and wrong the moment the head graded it by prior-MPG
+    role. `StanAvailability.mu_draws` gathers each row's own bucket, so drawing through the
+    head is what keeps a star's dispersion off a fringe player's mean.
+
     **The composition is rehydrated with the shipped per-(player, season) sigma**, because
     that is what `rehydrate_composition` gives every other consumer and the whole point of it
     living there is that nobody has to remember to apply it. The index carries the value.
@@ -1398,6 +1423,10 @@ def _rehydrated(head: str, art, cfg: dict, keep: int):
         model.rho_draws = np.asarray(art.draws["rho_draws"], dtype=float)
         model.rho = float(model.rho_draws.mean())
         return model
+    if head == "availability":
+        from src.models.stan_availability import rehydrate_availability
+
+        return rehydrate_availability(art, keep)
     if head == "minutes":
         from src.models.minutes_unification import rehydrate_minutes
 
@@ -1429,8 +1458,15 @@ def family_draws(art, spec: ResponseSpec, frame: pd.DataFrame, keep: int,
     if art.family == "betabinomial":
         from src.models.stan_minutes import beta_shapes
 
-        rho = np.asarray(thinned.draws["rho_draws"], dtype=float).reshape(-1)
-        a, b = beta_shapes(mu, rho[:, None])
+        rho = np.asarray(thinned.draws["rho_draws"], dtype=float)
+        if rho.ndim > 1 and rho.shape[1] > 1:
+            raise ValueError(
+                f"{art.head} carries a {rho.shape[1]}-column `rho_draws` — a dispersion "
+                f"graded by bin — and this branch has one dispersion per draw and no bin "
+                f"assignment to gather on. Flattening it would apply an arbitrary bucket's "
+                f"dispersion to every row. Give the head a `predict_samples` and rehydrate "
+                f"it in `_rehydrated`, as `availability` does.")
+        a, b = beta_shapes(mu, rho.reshape(-1)[:, None])
         trials = np.rint(frame[spec.trials].to_numpy(dtype=float)).astype(np.int64)
         return rng.binomial(trials[None, :], rng.beta(a, b)).astype(float)
 
@@ -2050,6 +2086,12 @@ def index_row(head: str, art, frames: HeadFrames, check: dict,
         "row_filter": frames.row_filter,
         "n_draws": art.n_draws,
         "fit_window": provenance.get("fit_window", ""),
+        # The second season axis, and NOT the one above. `fit_window` is which split may be
+        # fitted (`train` / `train_val` / `full`); this is which recent suffix of that split
+        # the head chose to fit, empty for the heads that fit everything the window offers.
+        # `first_season` below is neither — it is the fitted frame's observed span, which
+        # equals the truncation when there is one and predates it when there is not.
+        "fit_first_season": fit_first_season(art),
         "first_season": provenance.get("first_season", ""),
         "last_season": provenance.get("last_season", ""),
         "response": art.response,

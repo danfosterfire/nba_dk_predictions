@@ -91,7 +91,7 @@ adds a fifth in `check_predictive` (plus two Monte-Carlo bars, below):
 
 **Check 2 is tautological for the nine heads whose recipe carries no design steps** — their
 raw frame *is* their design frame, so the comparison is an identity. The index says so per
-head in `design_check` (`ladder` for the eleven that carry steps, `vacuous` for the nine
+head in `design_check` (`ladder` for the fourteen that carry steps, `vacuous` for the six
 that do not), which is the difference between a gate and a green tick that means nothing.
 Check 4 is non-vacuous for every head, which is why it is run rather than assumed redundant.
 
@@ -113,12 +113,12 @@ draw.
 | artifact | grain | rows | size | what it feeds |
 |---|---|---|---|---|
 | `model_card_index.csv` | head | **20** | 17 KB | the head selector, the *unit* every page must state, and each head's role in the shipped chain |
-| `model_card_coefficients.csv` | head × term | **311** | 45 KB | the sorted credible-interval panel (block 4) |
+| `model_card_coefficients.csv` | head × term | **314** | 46 KB | the sorted credible-interval panel (block 4) |
 | `model_card_features.csv` | head × feature × split × bin | **14,892** | 2.1 MB | the small-multiple histograms and the n/mean/sd/missing table (block 2) |
 | `model_card_feature_corr.csv` | head × split × feature × feature | **8,920** | 767 KB | the correlation heatmap and the pairs that earn a density (block 3) |
-| `model_card_feature_density.parquet` | head × pair × split × 2-D bin | **93,608** | 536 KB | the on-demand joint density beside that heatmap (block 3) |
-| `model_card_ecdf.csv` | head × split × grid point | **2,977** | 328 KB | the observed ECDF over the predictive ribbon (block 5) |
-| `model_card_calibration.csv` | head × split × panel × 2-D bin | **11,689** | 973 KB | fitted-against-observed, as density (block 6) |
+| `model_card_feature_density.parquet` | head × pair × split × 2-D bin | **93,456** | 536 KB | the on-demand joint density beside that heatmap (block 3) |
+| `model_card_ecdf.csv` | head × split × grid point | **2,975** | 328 KB | the observed ECDF over the predictive ribbon (block 5) |
+| `model_card_calibration.csv` | head × split × panel × 2-D bin | **11,595** | 966 KB | fitted-against-observed, as density (block 6) |
 | `model_card_quantile.csv` | head × split × panel × row | **8,768** | 724 KB | the QQ-uniform and the residual against rank-transformed predicted (block 6) |
 | `model_card_sample.parquet` | head × split × row | **54,375** | 1.0 MB | the bounded scatter overlaid on both of those densities (block 6) |
 
@@ -126,7 +126,7 @@ draw.
 half adds 724 KB and the `residual_fitted` panel it replaced was 1.5 MB. Twenty
 heads across four classes — availability
 (5), minutes (2), box-score components (11), game length (2) — carrying 268 coefficients, 20
-intercepts and 23 dispersion terms over 92 distinct features. `make model-cards` runs in
+intercepts and 26 dispersion terms over 92 distinct features. `make model-cards` runs in
 about **10 seconds** and needs **no CmdStan**: it refits nothing and runs no sampler, and
 imports the head modules for their variant ladders and their own predictive.
 
@@ -137,8 +137,8 @@ Carries the head's identity (`head`, `label`, `model_class`, `class_label`), its
 `dispersion`, `coefficient_scale`), its **role in the shipped chain** (`chain_role`,
 `chain_role_label`, `in_draw_path`, `chain_role_note` — added 2026-08-10 by step 2 of
 `docs/dashboard-revision-plan.md`), its **population** (`n_fit`, `n_validation`,
-`n_frame_rows`, `row_filter`, `first_season`, `last_season`, `fit_window`, `n_draws`,
-`n_features`, `n_terms`, `n_density_pairs`), its
+`n_frame_rows`, `row_filter`, `first_season`, `last_season`, `fit_window`,
+`fit_first_season`, `n_draws`, `n_features`, `n_terms`, `n_density_pairs`), its
 **sampler provenance** (`max_rhat`, `divergences`, `converged`, `git_sha`, `built_at`), its
 **verification** (`recipe_design_error`, `roundtrip_prediction_error`, `design_check`,
 `verified`), — added by session 3b — its **predictive** (`response_label`,
@@ -147,11 +147,22 @@ Carries the head's identity (`head`, `label`, `model_class`, `class_label`), its
 `predictive_bias`, `ecdf_band_mc`, `ecdf_band_gated`, `player_season_sigma`) and — added by
 step 3 of `docs/dashboard-revision-plan.md` — its **quantile residual** (`quantile_scope`,
 `quantile_reason`, `quantile_ks_train`, `quantile_ks_validation`, `quantile_ks_mc`,
-`quantile_ks_gated`, `quantile_weighting`). 55 columns.
+`quantile_ks_gated`, `quantile_weighting`). 56 columns.
 
 **Both splits' KS distances ship as their own columns, which `predictive_bias` does not
 do**, and the difference is what each is for: the bias is a *gate* and collapses to its worst
 split, while the KS is a *reading* the page tiles per split beside the panel it belongs to.
+
+**`fit_window` and `fit_first_season` are two different season axes and a page must not read
+one as the other.** `fit_window` is which *split* was eligible — `train` for every row in this
+file, guarded by `posteriors.require_window`. `fit_first_season` is which recent *suffix* of
+that split the head chose to fit, and it is empty for eighteen of the twenty heads: `2012-13`
+for availability since 2026-08-11, and `1996-97` for the composition, whose pilot window is a
+declared knob that currently sits at the whole history. They are
+orthogonal, so a truncated head and an untruncated one sit in the same directory and pass the
+same window guard while describing different populations. `first_season` is neither — it is
+the fitted frame's observed *span*, which equals the truncation where there is one and
+predates it where there is not, and a test on the shipped index asserts that identity.
 
 That last block exists so a page can state what it drew rather than implying it drew
 everything. Three of those columns are load-bearing and none is derivable from the other
@@ -328,7 +339,7 @@ actually look like"; a full pair-plot matrix answers the second at 150–400 pan
 reads. So the joint is precomputed for the pairs the first question points at, and the page
 draws one of them at a time.
 
-`head × pair × split × 2-D bin` on an **18 × 18** grid, empty cells dropped — 93,608 cells
+`head × pair × split × 2-D bin` on an **18 × 18** grid, empty cells dropped — 93,456 cells
 over 720 panels, a median of 133 occupied cells each. Coarser than the feature histograms'
 30 bins because a 2-D cell holds 1/n of the rows a 1-D bar does, and a finer grid buys
 resolution nothing has the rows to fill. Every pair carries the `r` of the split it is drawn
@@ -389,21 +400,45 @@ cell's mass onto a single draw. `predictive_weighted` says so in the index.
 
 ### The rule: the head's own predictive, or its own parameters
 
-**Thirteen of the twenty heads expose a `predict_samples`** — the seven counts, the four
-conversions, the marginal minutes head and the composition — and those are rehydrated around
-their persisted draws and called, exactly as `src/models/minutes_unification.py` does. The
-minutes and composition heads reuse *that module's* rehydrators rather than a second copy,
-so the composition is drawn **with the shipped `sim.minutes.player_season_sigma = 0.450`**
-injected, which is what every other consumer gets. `player_season_sigma` is in the index
-because a page comparing this card against `stan_composition_metrics.csv` has to know.
+**Fourteen of the twenty heads expose a `predict_samples`** — the seven counts, the four
+conversions, the marginal minutes head, the composition and, since 2026-08-11, availability —
+and those are rehydrated around their persisted draws and called, exactly as
+`src/models/minutes_unification.py` does. The minutes and composition heads reuse *that
+module's* rehydrators rather than a second copy, so the composition is drawn **with the
+shipped `sim.minutes.player_season_sigma = 0.450`** injected, which is what every other
+consumer gets. `player_season_sigma` is in the index because a page comparing this card
+against `stan_composition_metrics.csv` has to know.
 
-**The other seven never draw at all.** Availability, the three games-played binomial heads
-and overtime onset score through an explicit pmf; the two beta-geometric heads score through
-a log-likelihood. There is no `predict_samples` to call, so `family_draws` takes the per-draw
-*parameters* from the artifact's own `mu_draws` and the head family's own shape function
+**The other six never draw at all.** The three games-played binomial heads and overtime onset
+score through an explicit pmf; the two beta-geometric heads score through a log-likelihood.
+There is no `predict_samples` to call, so `family_draws` takes the per-draw *parameters* from
+the artifact's own `mu_draws` and the head family's own shape function
 (`stan_minutes.beta_shapes` for the `rho` beta-binomial, `games_played.beta_shapes` for the
 `kappa` frailty) and writes only the sampling call — one line per family. Check 5 is what
 keeps that honest.
+
+#### Availability moved off `family_draws`, and the move was forced
+
+It scored through a pmf like the other five and was drawn like them, until it graded its
+dispersion by prior-MPG role (`docs/availability-window-plan.md` §4) and `rho_draws` became
+`(draws × 4)`. **`family_draws` has one dispersion per draw and no bin assignment to gather
+on**, so the shared-`rho` expression it was written for — `rho.reshape(-1)[:, None]` — would
+have broadcast a longer vector against `mu` and landed a star's dispersion on a fringe
+player's mean. Nothing would have raised, and a boundary miss is precisely what such a card
+is read for.
+
+So the head grew its own `StanAvailability.predict_samples`, which draws through `mu_draws` —
+already gathering each row's own bucket — and `_rehydrated` returns the real head. The
+generic branch now **raises by name** on a multi-column `rho_draws` rather than flattening it,
+because the fix for the next graded head is a `predict_samples`, not a guess at its bins. Its
+`predictive_bias` is **+0.05%**, so check 5 confirms the drawn mean still reproduces the
+head's own.
+
+The artifact carries the assignment as a `cut` recipe step writing `rho_bin` — the same door
+`src/sim/season.py` already opens on the composition — so a consumer reconstructs which `rho`
+applies to which player without refitting and without importing the head. That step is also
+why availability's `design_check` moved from `vacuous` to `ladder`: it now has fitted state to
+disagree about.
 
 ### Check 5, and why the beta-geometrics get a sharper version
 
@@ -444,7 +479,7 @@ point. Measured, at 100 / 200 / 400 draws:
 | head | 100 | **200 (shipped)** | 400 |
 |---|---|---|---|
 | `game_length_depth` | 0.0346 | **0.0145** | 0.0073 |
-| `availability` | 0.0190 | **0.0135** | 0.0102 |
+| `availability` | 0.0158 | **0.0097** | 0.0079 |
 | `gp_entry` | 0.0148 | **0.0107** | 0.0054 |
 | `minutes` | 0.0139 | **0.0074** | 0.0081 |
 | `ast` | 0.0091 | **0.0071** | 0.0065 |
@@ -483,16 +518,24 @@ axis.
 
 **Read the size of the miss, not a pass/fail.** At n ≈ 10⁴ the ribbon is ±1–2 ECDF points
 wide and every head in the project falls outside it somewhere. On the training split the
-observed curve sits inside the 95% band at 22% of grid points for `availability`, 10% for
+observed curve sits inside the 95% band at 39% of grid points for `availability`, 10% for
 `minutes` and 7% for the composition. That is what a posterior predictive check does at this
 sample size rather than a defect, and the useful reading is the largest vertical distance
-from `q50`: **0.037** for availability, **0.055** for minutes, **0.051** for the composition
+from `q50`: **0.036** for availability, **0.055** for minutes, **0.050** for the composition
 and **0.080** for `gp_onset`. A page that renders in-or-out as a verdict will report that
 every head fails.
 
+**Availability's coverage rose from 22% to 39% of grid points when the windowed, role-graded
+head shipped, and the reading that matters did not follow it.** The two grid points the whole
+round exists for — P(GP < 10) and P(GP ≥ 82) — are still outside the band on validation, at
+5.66% against an observed 8.15% and 4.30% against 2.72%. The miss halved; it did not close.
+`docs/availability-window-plan.md` §1b is the record, and it is the sharpest argument in this
+file for reporting the size of a miss rather than a coverage share: the share moved 17 points
+while the defect the head was refitted for stayed outside its band.
+
 ### `model_card_calibration.csv` — the density panel
 
-`head × split × panel × 2-D bin` over a 30 × 30 grid, **empty cells dropped** — 11,689 rows
+`head × split × panel × 2-D bin` over a 30 × 30 grid, **empty cells dropped** — 11,595 rows
 against the 36,000 a dense grid would carry. Binned rather than per-row for the reason the
 whole contract is binned: the composition's scatter is 631,158 points per panel, which is not
 an artifact but a copy of the data.
@@ -624,7 +667,8 @@ Not a result this doc is claiming, but worth recording since nothing had ever dr
 heads before and a page reader will see it: **the three games-played binomial heads
 over-predict their own observable at the row mean** — `gp_onset` predicts 5.30 spell onsets
 per player-season against 4.08 realized, `gp_exit` 6.80 against 5.83, `gp_entry` 4.51 against
-4.27 — while `availability` is nearly unbiased (54.5 against 55.2 games). It is the head and
+4.27 — while `availability` is nearly unbiased (53.5 against 54.1 games on its own 2012-13
+window). It is the head and
 not the emitter: the drawn predictive reproduces the head's own reported mean to 0.06%, and
 the posterior mean of `mu` agrees with the plug-in one to within 0.1%. The suspect is a
 beta-binomial with heavy dispersion on a target with 64% zeros (`gp_exit`), whose *mean* is
@@ -664,7 +708,7 @@ is the expensive half:
 
 ## Tests
 
-`tests/test_model_cards.py`, plain `assert` with synthetic builders, **95 tests** (34 from
+`tests/test_model_cards.py`, plain `assert` with synthetic builders, **99 tests** (34 from
 session 3a, 31 from 3b, 9 from session 4's density, 6 from the chain role, 15 from the
 quantile residual). The heads are real `PosteriorArtifact`s with their draws **injected**
 rather than sampled — the same stance `tests/test_posteriors.py` takes, and for the same

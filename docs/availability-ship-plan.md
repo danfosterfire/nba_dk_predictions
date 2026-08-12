@@ -150,7 +150,38 @@ any figure in docs/ or README.md that this refit moved, in this session.
 
 ---
 
-## Session 2 — posteriors and model cards, and the payoff check
+## Session 2 — posteriors and model cards, and the payoff check ✅ **landed 2026-08-11**
+
+> **The payoff check came back "narrowed, not closed", and sessions 4 and 6 should be read
+> in that light.** On validation the two boundary misses go 5.21% → **5.66%** against an
+> observed 8.15%, and 5.95% → **4.30%** against an observed 2.72% — signed errors closing
+> 15% and 51%, the excursion past the 95% band closing 46% and 78%, and **both still
+> outside the band**. `docs/availability-window-plan.md` §1b is the record. So the CRPS and
+> PIT wins stand and "the head misses both ends of its own distribution" is still true of
+> the head that ships. Session 6's question — whether a better-calibrated tail moves any
+> strategy verdict — should expect a *smaller* effect than the round was scoped for.
+>
+> **What the next session inherits:**
+>
+> - **`rho_draws` is (1,000 × 4)** in the persisted artifact, and the assignment travels with
+>   it as a `cut` recipe step: `art.recipe.transform(frame)["rho_bin"]` rebuilds it on any
+>   frame, exactly as `src/sim/season.py:819` already does for the composition. Extras carry
+>   `n_rho`, `rho_bin_column`, `rho_bin_source`, `rho_bin_edges`, `rho_labels` and `role_rho`.
+>   Fitted means are **0.3176 / 0.2701 / 0.2535 / 0.2067** fringe → star.
+> - **`src/sim/season.py:646` is now broken and session 4 is the fix.**
+>   `np.full(ctx["n_players"], ctx["avail_rho"][draw])` broadcasts one dispersion per draw,
+>   and `ctx["avail_rho"]` is a (draws × 4) matrix as of this session. It raises rather than
+>   silently mis-drawing, which is the right failure, but `make simulate-season` will not run
+>   until session 4 lands.
+> - **The head grew a `predict_samples`**, and `model_cards._rehydrated` calls it. The
+>   generic `family_draws` beta-binomial branch now raises on a multi-column `rho_draws`
+>   instead of flattening it.
+> - **Two season axes, named apart**: `provenance["fit_window"]` (train/train_val/full) and
+>   `extras["fit_first_season"]` (2012-13). Both reach the manifest and the model-card index;
+>   `posteriors.fit_first_season` is the one reader, and it also takes the composition's older
+>   `first_season` spelling.
+> - The card's population is now **4,027 fit / 883 val** and its `design_check` moved from
+>   `vacuous` to `ladder`, because the head finally has fitted state in its recipe.
 
 **Cost:** `make posteriors` for the availability head only; `make model-cards` is minutes.
 

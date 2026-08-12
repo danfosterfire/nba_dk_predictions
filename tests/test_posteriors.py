@@ -125,6 +125,69 @@ def test_unknown_step_kind_raises_rather_than_silently_skipping():
         P._apply_step({"kind": "not_a_step"}, pd.DataFrame({"x": [1.0]}))
 
 
+@pytest.mark.parametrize("role_rho", [True, False])
+def test_the_cut_step_reproduces_the_availability_heads_own_role_bins(role_rho):
+    """The recipe's whole job: which `rho` applies to which player, without refitting.
+
+    Checked against `role_bins` itself rather than against a hand-written expectation, on
+    the values that decide it — a NaN prior season, both sides of every edge, and a value
+    above the top one. Getting any of those wrong hands a player another bucket's dispersion
+    and renders as a perfectly good-looking card.
+    """
+    from src.models.stan_availability import (ROLE_BIN_COL, ROLE_COL, role_bins,
+                                              role_edges)
+
+    frame = pd.DataFrame({ROLE_COL: [np.nan, 0.0, 11.9, 12.0, 12.1, 24.0, 29.9, 30.0,
+                                     59.9, 60.0, 61.0, -3.0]})
+    step = {"kind": "cut", "column": ROLE_COL, "edges": role_edges(role_rho),
+            "name": ROLE_BIN_COL}
+    rebuilt = P._apply_step(step, frame)[ROLE_BIN_COL].to_numpy()
+    assert list(rebuilt) == list(role_bins(frame, role_rho))
+    assert rebuilt.min() >= 1
+
+
+def test_a_shared_dispersion_cut_puts_every_row_in_one_bin():
+    """`role_rho=False` is `n_rho = 1`, and the recipe has to nest it rather than branch."""
+    from src.models.stan_availability import ROLE_COL, role_edges
+
+    frame = pd.DataFrame({ROLE_COL: [np.nan, -10.0, 0.0, 35.0, 1e6]})
+    out = P._apply_step({"kind": "cut", "column": ROLE_COL,
+                         "edges": role_edges(False), "name": "rho_bin"}, frame)
+    assert set(out["rho_bin"]) == {1}
+
+
+def test_the_fit_window_and_the_season_truncation_are_different_columns():
+    """Two season axes that must never be read as one another.
+
+    `fit_window` says which split may be fitted; `fit_first_season` says which suffix of it
+    was. A head that fits everything the window offers reports `""` for the second, which is
+    what makes a truncated head distinguishable from an untruncated one *in the same
+    directory* — the only thing `require_window` cannot tell apart.
+    """
+    truncated = P.PosteriorArtifact(
+        head="availability", head_label="availability", family="betabinomial",
+        response="mean_mu", recipe=P.DesignRecipe("base", [], None),
+        extras={"fit_first_season": "2012-13"},
+        provenance={"fit_window": "train", "first_season": "2012-13"})
+    plain = P.PosteriorArtifact(
+        head="reb", head_label="reb", family="negbinomial", response="mean_count",
+        recipe=P.DesignRecipe("base", [], None), extras={},
+        provenance={"fit_window": "train", "first_season": "1997-98"})
+    # The composition had the truncation first, under a flatter name; the reader takes both
+    # so that renaming its key never becomes the price of adding the column.
+    legacy = P.PosteriorArtifact(
+        head="composition", head_label="composition", family="composition",
+        response="eta", recipe=P.DesignRecipe("base", [], None),
+        extras={"first_season": "2016-17"},
+        provenance={"fit_window": "train", "first_season": "2016-17"})
+
+    assert P.fit_first_season(truncated) == "2012-13"
+    assert P.fit_first_season(plain) == ""
+    assert P.fit_first_season(legacy) == "2016-17"
+    # The distinction is only visible when the two disagree, which is the untruncated head.
+    assert plain.provenance["first_season"] != P.fit_first_season(plain)
+
+
 # ── The round trip, per family ────────────────────────────────────────────────
 
 def _count_artifact(variant: str, component: str = "reb", n_knots: int = 4):

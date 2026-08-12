@@ -273,3 +273,115 @@ minutes heads. Three things it settled, so they are not re-opened here:
 
 What remains open is item 3's question and the low tail's likelihood — both carried in that
 doc's "what this leaves" section rather than here.
+
+---
+
+## 5. A different frailty for the availability head — the boundary is welded to the variance
+
+**Compare the beta-binomial's Beta frailty against likelihoods whose boundary behaviour is a
+*separate* parameter from its dispersion.** Opened 2026-08-11, after the windowed role-graded
+head shipped and `model_card_ecdf.csv` showed the defect it was refitted for had **narrowed
+without closing**: on validation P(GP < 10) went 5.21% → **5.66%** against an observed 8.15%,
+and P(GP ≥ 82) went 5.95% → **4.30%** against an observed 2.72%, both still outside the 95%
+band (`docs/availability-window-plan.md` §1b).
+
+This is the item `availability-window-plan.md` §5.3 opens with three candidates. It is here
+rather than there because the mechanism is now measured, which changes what the candidates
+should be.
+
+### Why: the head has one shape knob and the data wants two
+
+Under the shipped parameterization `a = μ(1−ρ)/ρ` and `b = (1−μ)(1−ρ)/ρ`, so the frailty's
+*shape* and its *variance* are the same parameter. **`b < 1` makes the Beta density diverge at
+`p = 1`** — an integrable spike sitting exactly on "played every game" — and that happens
+whenever
+
+```
+ρ > (1 − μ) / (2 − μ)
+```
+
+A **scratch measurement** over the persisted `train` posterior (posterior-mean `μ` and `ρ`,
+883 validation rows; five lines of numpy over `posteriors/train/availability.pkl`, no `make`
+target behind it yet):
+
+| bucket | n | μ | ρ | a | b | share with b<1 | realized P(GP = team_games) |
+|---|---|---|---|---|---|---|---|
+| `<12 mpg` | 153 | 0.416 | 0.3176 | 0.89 | 1.25 | 11.8% | 0.7% |
+| `12-24` | 363 | 0.619 | 0.2701 | 1.67 | 1.03 | 48.8% | 2.2% |
+| **`24-30`** | 169 | 0.732 | 0.2535 | 2.15 | **0.79** | **82.2%** | 3.6% |
+| **`30+ mpg`** | 198 | 0.757 | 0.2067 | 2.91 | **0.93** | **66.2%** | 4.5% |
+
+**52.7% of validation rows carry that spike, and it concentrates where the statistic lives.**
+For a 30+ mpg player the threshold is ρ > 0.196 and the fitted value is **0.2067** — the head
+needs that dispersion to match the observed variance, and any value above 0.196 puts a
+divergence at a full schedule. One parameter is being asked to set the variance and the
+boundary behaviour at once, and the data wants them in opposite directions. That is why
+`three_point_era__none__role` could only halve the miss: it moved ρ, and ρ is the wrong knob.
+
+It also explains the *asymmetry* the ECDF shows. Only 13.5% of rows have `a < 1`, so the head
+has a spike at the top for half the league and one at the bottom for a seventh of it — while
+the observed data wants the reverse.
+
+### What to compare, in cost order
+
+| arm | what it frees | nests the incumbent at | cost |
+|---|---|---|---|
+| **re-score the tenure decomposition** on `boundary_tail_error` | nothing — it is already fitted | n/a | **zero**, the pmf is on disk |
+| **disrupted-season mixture** `π_i·(low) + (1−π_i)·BetaBinom` | the low tail, as a separate event | `π = 0` | one Stan block |
+| **finite-mixture (Heckman–Singer) frailty**, K latent classes | the whole shape | `K = 1` | `log_sum_exp`, ordered means |
+| **logit-normal frailty** (binomial GLMM) | boundary behaviour — it *cannot* diverge | — | one non-centred block |
+| beta-rectangular, `θ·U(0,1) + (1−θ)·Beta` | tail mass, symmetrically | `θ = 0` | one parameter, a control |
+
+**1. Re-scoring the existing tenure decomposition is free and might already be the answer.**
+`stan_games_played` *is* the structural alternative — entry index × exit index × within-tenure
+chain, built because "a departure is an absorbing hitting time, not a low recovery rate" — and
+it has never been compared on this statistic. Gate D was CRPS-shaped, `stan_games_played_gp_pmf.csv`
+is already an artifact, and §5.3 records that its oracle-tenure arm scores **7.2265** against
+the incumbent's 10.0057. A head that loses on the mean and wins on the boundary is the same
+"one posterior, two units, opposite verdicts" pattern `make minutes-unification` already found,
+and it would be settled by reading a file rather than by fitting anything.
+
+**2. The low tail is plausibly not a frailty at all.** An Achilles rupture in October is a
+different event, not an extreme draw of a per-game rate. Covariates for `π` are already in
+`FEATURE_COLS` (age, prior-season absence, the playoff-workload block).
+
+**3. The finite mixture is the version that commits to no mechanism.** K support points reach
+the shoulders at 2–15 and 70–80 games directly, no divergence is possible, and the
+beta-binomial is its continuous limit. Note the role-graded `ρ` is already a crude version of
+it — graded on *observed* prior MPG — and its measured spread is only **1.54×**, which is what
+a weak proxy for a latent durability class would look like.
+
+**4. Fit the logit-normal because it should fail the other way.** Its tails are lighter than
+the Beta's at both ends, so it ought to fix the high tail by construction and worsen the low
+one. That separates "the frailty's shape is wrong" from "a component is missing", which no
+single arm can do on its own.
+
+Skip Kumaraswamy, the simplex distribution and the generalized beta: different algebra, same
+single-shape-knob problem.
+
+### The deeper caveat, which points back at arm 1
+
+**The exchangeable-trials assumption is itself suspect.** Absences come in *spells* — measured
+in this repo as beta-geometric, beating the geometric by **11,278** log-likelihood points at
+one extra parameter. A beta-binomial absorbs the variance inflation from that clustering but
+not its shape: one 40-game spell and forty single-game absences give identical `gp` and very
+different distributions. So the low tail is plausibly a *duration* phenomenon rather than a
+rate one, which is the same conclusion arm 1 reaches from the other direction.
+
+### What would settle it
+
+`make availability-window` runs all of these as-is. **The selector must stay
+`boundary_tail_error` with `body err` reported beside it** — §4 of
+`availability-window-plan.md` already showed an arm can buy both boundaries by wrecking the
+middle, and the arms with the best boundary coverage there were the worst models. Confirm on
+the rolling-origin harness (§4b) before believing any margin, and hold every arm to the
+house nesting discipline: `π = 0`, `K = 1`, `θ = 0` must each reproduce the shipped posterior,
+the way `n_rho = 1` and `U_n = 0` already do.
+
+### What would falsify it
+
+The mixture and the finite-mixture arms buying the boundaries at the same body cost the season
+trend paid, in which case the honest conclusion is that 82 games out of a fixed schedule is
+simply not a beta-binomial and the tenure decomposition is the only structural answer. The
+other way it fails is CRPS: an arm that fixes the shape and loses the mean is not shippable
+against a head whose mean function is the largest measured lever in the project.

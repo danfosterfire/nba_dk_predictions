@@ -738,6 +738,78 @@ def test_a_head_that_can_draw_is_drawn_through_its_own_predict_samples():
     assert drawn.shape == (32, len(frame))
 
 
+def test_a_graded_dispersion_refuses_the_generic_beta_binomial_branch():
+    """The failure that moved availability onto `predict_samples`, pinned.
+
+    `family_draws` has one dispersion per draw and no bin assignment to gather on, so a
+    (draws x n_rho) `rho_draws` used to `reshape(-1)` into a longer vector that broadcast
+    against `mu` — a star's dispersion landing on a fringe player's mean, on a card that
+    renders perfectly. Raising by name is the only honest option here: the fix is a head
+    with its own predictive, not a guess at the bins.
+    """
+    train = _raw(120, seed=54)
+    art = _artifact(train, FEATURES)
+    art.draws["rho_draws"] = np.tile(np.array([0.32, 0.27, 0.25, 0.21]), (200, 1))
+    with pytest.raises(ValueError, match="graded by bin"):
+        M.family_draws(art, COUNTED, _counted(_design_from(train)), keep=32, seed=1)
+
+    # One column is the shared arm and still goes through, so the guard is on the grading
+    # rather than on the shape — an artifact written as (draws x 1) is not a graded head.
+    art.draws["rho_draws"] = np.full((200, 1), 0.28)
+    assert M.family_draws(art, COUNTED, _counted(_design_from(train)),
+                          keep=32, seed=1).shape[0] == 32
+
+
+def test_availability_is_rehydrated_into_its_own_head_and_gathers_rho_per_row():
+    """The card must draw through `StanAvailability`, dispersion bucket by bucket.
+
+    Two things at once, because either alone would pass while the other was broken: that
+    `_rehydrated` returns the real head (so `draw_predictive` is byte-identical to the
+    head's own `predict_samples`), and that the head hands each row the `rho` of its own
+    prior-MPG bucket rather than one number for everybody.
+    """
+    from src.models.stan_availability import ROLE_BIN_COL, ROLE_COL, StanAvailability
+
+    train = _raw(150, seed=55)
+    art = _artifact(train, FEATURES)
+    art.head = "availability"
+    art.extras = {"dispersion": "rho_draws", "role_rho": True, "n_rho": 4,
+                  "rho_bin_column": ROLE_BIN_COL, "rho_bin_source": ROLE_COL,
+                  "fit_first_season": "2012-13"}
+    # Four wildly separated buckets, so a mis-gather cannot hide inside sampling noise.
+    art.draws["rho_draws"] = np.tile(np.array([0.60, 0.30, 0.15, 0.05]), (200, 1))
+
+    frame = _design_from(train)
+    frame["team_games"] = 82.0
+    frame[ROLE_COL] = np.tile([5.0, 18.0, 27.0, 40.0], len(frame) // 4 + 1)[:len(frame)]
+
+    model = M._rehydrated("availability", art, cfg={}, keep=32)
+    assert isinstance(model, StanAvailability)
+    assert model.role_rho and model.n_rho == 4
+
+    spec = M.RESPONSES["availability"]
+    drawn = M.draw_predictive("availability", art, spec, frame, cfg={}, keep=32, seed=7)
+    assert np.array_equal(drawn, model.predict_samples(frame, 7))
+    assert drawn.shape == (32, len(frame)) and drawn.max() <= 82
+
+    # The dispersion actually reached the draw: a fringe row's predictive is wider than a
+    # star's at the same mean scale, which is the whole content of the graded arm.
+    _, rhos = model.mu_draws(frame, 32)
+    assert np.allclose(rhos[:, 0], 0.60) and np.allclose(rhos[:, 3], 0.05)
+
+
+def test_a_rehydrated_head_refuses_a_dispersion_that_does_not_match_its_bins():
+    """An artifact and an arm that disagree is a silent mis-gather, so it raises."""
+    from src.models.stan_availability import rehydrate_availability
+
+    train = _raw(60, seed=56)
+    art = _artifact(train, FEATURES)
+    art.extras = {"dispersion": "rho_draws", "role_rho": True}
+    art.draws["rho_draws"] = np.full((200, 2), 0.3)      # two columns, four buckets
+    with pytest.raises(ValueError, match="dispersion column"):
+        rehydrate_availability(art, keep=8)
+
+
 def test_a_family_with_no_sampling_law_raises_rather_than_being_guessed_at():
     train = _raw(60, seed=26)
     art = _artifact(train, FEATURES)
@@ -1155,6 +1227,26 @@ def test_the_shipped_index_never_reaches_a_held_out_season():
     assert seasons, "no head reports a fit season span"
     assert max(seasons) <= "2021-22"
     assert set(index["fit_window"]) == {M.WINDOW}
+
+
+def test_the_shipped_index_separates_the_fit_window_from_the_season_truncation():
+    """Two season axes on one row, and a page must be able to tell them apart.
+
+    `fit_window` is which split may be fitted and is one value for the whole file;
+    `fit_first_season` is which suffix of it a head chose, and is empty for the heads that
+    fit whatever the window offers. Where a head does truncate, its fitted span has to
+    *start* at the truncation — a card whose population began earlier would be describing
+    rows the coefficients never saw.
+    """
+    index = _shipped("model_card_index.csv").set_index("head")
+    assert "fit_first_season" in index.columns
+    assert index["fit_window"].nunique() == 1
+
+    truncated = index[index["fit_first_season"].astype(str).str.len() > 0]
+    for head, row in truncated.iterrows():
+        assert str(row["first_season"]) == str(row["fit_first_season"]), head
+    if "availability" in index.index:
+        assert str(index.loc["availability", "fit_first_season"]) == "2012-13"
 
 
 def test_every_shipped_head_is_verified_and_declares_a_unit():

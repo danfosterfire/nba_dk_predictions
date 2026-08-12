@@ -3076,7 +3076,16 @@ REGISTRY: tuple[Decision, ...] = (
                 "being wrong about a dead roster slot and an iron man — the two events "
                 "a Round-1 knockout turns on. `docs/potential-to-dos.md` item 4 "
                 "recorded the high half **backwards**; the head over-predicts a full "
-                "schedule, by 2.19×.",
+                "schedule, by 2.19×. **Re-read 2026-08-11 against the windowed, "
+                "role-graded head that now ships, and it narrowed without closing**: "
+                "**5.66%** against 8.15% and **4.30%** against 2.72%, so the signed "
+                "errors fall 15% and 51% and the excursion past the band falls 46% and "
+                "78% — and *both are still outside it*. The shoulder moves with them "
+                "(P(GP ≤ 75) 78.3% → **81.0%** against 84.6%). Coverage over the whole "
+                "training curve rose from 22% to **39%** of grid points, which is "
+                "exactly why the size of the miss is the reading and a coverage share "
+                "is not. What remains is a functional-form limit of the beta-binomial, "
+                "not a window or a pooling one.",
         status="measured",
         reproduce="make model-cards → outputs/predictions/model_card_ecdf.csv",
         source="docs/availability-window-plan.md",

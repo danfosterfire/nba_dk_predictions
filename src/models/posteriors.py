@@ -65,6 +65,24 @@ The window is stamped into every artifact regardless, and `require_window` is th
 consumer can refuse the wrong one instead of discovering it in a result — the leak it prevents
 is quiet, because a backtest reading heads fitted at a wider window has read those seasons
 *through the coefficients*, and no frame-level split guard can see that.
+
+## The fit window is not the season truncation, and they are named apart
+
+A second season axis arrived with the windowed availability head (2026-08-11) and the
+composition's pilot window before it, and the two are easy to confuse because both are "which
+seasons are in the fit":
+
+| axis | what it decides | where it lives | what enforces it |
+|---|---|---|---|
+| **fit window** | which *split* may be fitted — `train` / `train_val` / `full` | `provenance["fit_window"]`, and the directory | `require_window`, `assert_unlocked` |
+| **season truncation** | which recent *suffix* of that split is actually fitted | `extras["fit_first_season"]` | the head's own `fitting_rows`, re-applied by `model_cards` |
+
+They are orthogonal: a `train` head truncated at 2012-13 and a `train` head over the full
+history sit in the same directory, pass the same `require_window`, and are different models.
+`fit_first_season` therefore reaches the manifest as its own column rather than being left to
+`provenance["first_season"]`, which is a *readout* of the fitted frame's span and would say
+`2012-13` for a truncated head and a full-window head fitted on a frame that happens to start
+there.
 """
 
 from __future__ import annotations
@@ -196,6 +214,22 @@ def _apply_step(step: dict, frame: pd.DataFrame) -> pd.DataFrame:
         values = frame[step["column"]].to_numpy(dtype=float)
         out[step["name"]] = np.searchsorted(np.asarray(step["edges"], dtype=float),
                                             values, side="right") + 1
+    elif kind == "cut":
+        # `stan_availability.role_bins`, as a recipe step: explicit interval edges that
+        # close BOTH ends, 1-based, with anything outside them — a NaN prior season, or a
+        # value above the top edge — falling into the LOWEST bucket.
+        #
+        # A second binning kind rather than a flag on `bins` above, because the two are
+        # different conventions and collapsing them would make the difference invisible at
+        # the call site: `bins` holds INTERIOR quantile cuts that `searchsorted` extends to
+        # +/- infinity, so it has no outside, where these edges are constants with an
+        # outside that has to be given a rule. Both write a 1-based `rho_bin`; only this
+        # one can be handed a value the fit never saw.
+        out = frame.copy()
+        idx = pd.cut(frame[step["column"]].to_numpy(dtype=float),
+                     np.asarray(step["edges"], dtype=float), labels=False)
+        out[step["name"]] = (np.nan_to_num(np.asarray(idx, dtype=float), nan=0.0)
+                             .astype(int) + 1)
     elif kind == "join":
         # A per-unit feature block joined on keys, with ONE missingness indicator for the
         # whole block and train means for the holes — `stan_composition.attach_team_context`
@@ -684,17 +718,42 @@ def _reference_prediction(model, response: str, frame: pd.DataFrame,
 
 
 def availability_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorArtifact:
-    """The beta-binomial games-played-out-of-team-games head. No variant ladder."""
+    """The beta-binomial games-played-out-of-team-games head. No variant ladder.
+
+    **Two season axes, and they are orthogonal.** `window` is the *split* axis — which of
+    train / train_val / full is eligible to be fitted, the thing `require_window` guards and
+    `posteriors/<window>/` is namespaced by. `fit_first_season` is the *truncation* axis —
+    which recent suffix of that split the head actually fits, `stan.availability.first_season`
+    in config and `StanAvailability.fitting_rows` in code. A `train` artifact truncated at
+    2012-13 and a `train` artifact over the full history are the same window and different
+    heads; conflating them would let a consumer that correctly refuses the wrong split accept
+    the wrong model. So they carry different names, live in different places (provenance
+    against extras), and both reach the manifest.
+
+    The provenance is recorded over the **truncated** frame, which is what makes
+    `model_cards.verify`'s population anchor a real check: it compares the rebuilt fitting
+    frame against `n_fit_rows` and the season span, and recording the pre-truncation frame
+    would anchor the card to a population the coefficients never saw.
+
+    The dispersion is a vector over prior-MPG role buckets, so the artifact also has to say
+    which entry applies to which row. That goes in as a `cut` recipe step writing `rho_bin`,
+    the same door `src/sim/season.py` already opens on the composition
+    (`art.recipe.transform(frame)["rho_bin"]`) — a consumer reconstructs the assignment for
+    any frame, including a 2026-27 board, without refitting and without importing the head.
+    """
     from src.models.availability import FEATURE_COLS
-    from src.models.stan_availability import StanAvailability, availability_design
+    from src.models.stan_availability import (FIRST_SEASON, ROLE_BIN_COL, ROLE_COL,
+                                              StanAvailability, availability_design,
+                                              role_edges)
 
     cfg_stan = cfg.get("stan", {})
+    cfg_head = cfg_stan.get("availability", {})
     test_seasons = int(cfg.get("features", {}).get("availability", {})
                        .get("test_seasons", 2))
     l2 = float(cfg.get("features", {}).get("availability", {}).get("glm_l2", 1.0))
 
     design = availability_design(cfg)
-    fit_frame, val = windowed(design, window, test_seasons)
+    offered, val = windowed(design, window, test_seasons)
     probe = probe_rows(val)
 
     started = time.perf_counter()
@@ -702,15 +761,35 @@ def availability_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorA
         l2=l2, pmf_mode="posterior", chains=int(cfg_stan.get("chains", 4)),
         warmup=int(cfg_stan.get("warmup", 1000)),
         samples=int(cfg_stan.get("samples", 1000)),
-        seed=int(cfg_stan.get("seed", 42))).fit(fit_frame)
+        seed=int(cfg_stan.get("seed", 42)),
+        first_season=cfg_head.get("first_season", FIRST_SEASON),
+        role_rho=bool(cfg_head.get("role_rho", True))).fit(offered)
     seconds = time.perf_counter() - started
+
+    # The rows the head fitted, taken from the head's own `fitting_rows` rather than
+    # re-derived from config here: the truncation is the head's, and a second expression of
+    # it is a second thing that can drift out of step with the coefficients.
+    fit_frame = model.fitting_rows(offered)
+    steps = [{"kind": "cut", "column": ROLE_COL, "edges": role_edges(model.role_rho),
+              "name": ROLE_BIN_COL}]
 
     return _finish(
         head="availability", head_label="availability", family="betabinomial",
         response="mean_mu", variant="base", features=list(FEATURE_COLS), model=model,
-        fit_frame=fit_frame, probe_transformed=probe, probe_raw=probe, steps=[],
+        fit_frame=fit_frame, probe_transformed=probe, probe_raw=probe, steps=steps,
         builder="src.models.stan_availability.availability_design",
-        extras={"successes": "gp", "trials": "team_games", "dispersion": "rho_draws"},
+        extras={"successes": "gp", "trials": "team_games", "dispersion": "rho_draws",
+                # The dispersion axis: which `rho_draws` column applies to which row.
+                "n_rho": int(model.n_rho), "rho_bin_column": ROLE_BIN_COL,
+                "rho_bin_source": ROLE_COL,
+                "rho_bin_edges": np.asarray(role_edges(model.role_rho), dtype=float),
+                "rho_labels": list(model.rho_labels),
+                "role_rho": bool(model.role_rho),
+                # The season-truncation axis. NOT `provenance["fit_window"]`, and not
+                # `provenance["first_season"]` either — that one is a *readout* of the
+                # frame's own span, where this is the knob that produced it.
+                "fit_first_season": str(model.first_season or ""),
+                "n_rows_before_truncation": int(len(offered))},
         window=window, cfg_stan=cfg_stan, draws_kept=draws_kept, seconds=seconds)
 
 
@@ -1180,6 +1259,21 @@ def selected_specs(cfg: dict) -> dict[str, str]:
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+def fit_first_season(artifact: PosteriorArtifact) -> str:
+    """The season truncation a head applied *inside* its fit window, or `""` for none.
+
+    One reader for two spellings: the availability head writes `fit_first_season` and the
+    composition — which had the truncation first, under the flatter name — writes
+    `first_season`. Renaming the composition's key would silently reinterpret every artifact
+    already on disk, so the reader takes both instead. Do not add a third spelling.
+
+    Distinct from `provenance["first_season"]`, which is the observed span of the fitted
+    frame rather than the knob that produced it.
+    """
+    return str(artifact.extras.get("fit_first_season")
+               or artifact.extras.get("first_season") or "")
+
+
 def manifest_row(artifact: PosteriorArtifact, check: dict, dest: Path) -> dict:
     p = artifact.provenance
     return {
@@ -1191,6 +1285,10 @@ def manifest_row(artifact: PosteriorArtifact, check: dict, dest: Path) -> dict:
         "n_draws": artifact.n_draws,
         "n_draws_before_thinning": p["posterior_draws_before_thinning"],
         "fit_window": p["fit_window"],
+        # The OTHER season axis — the truncation inside the window. Empty for the eighteen
+        # heads that fit whatever the window hands them. See the module docstring's table:
+        # `first_season` below is the fitted frame's observed span, not this.
+        "fit_first_season": fit_first_season(artifact),
         "n_fit_rows": p["n_fit_rows"],
         "first_season": p["first_season"],
         "last_season": p["last_season"],

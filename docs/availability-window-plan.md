@@ -38,6 +38,42 @@ ceiling; both errors make a drafted roster look *more reliable than it is*, whic
 every strategy axis that trades ceiling against reliability — stacking, handcuffing,
 diversification. `README.md` already calls this head the largest lever on the season total.
 
+### 1b. What the shipped head does to it — measured 2026-08-11, and it does not close
+
+The windowed, role-graded head is now what `make posteriors` and `make model-cards` carry, so
+the card above can be re-read against the same statistic. **Both misses narrowed and neither
+came inside the band.** Validation, the split the defect was stated on and the only one whose
+population did not change:
+
+| | observed | predicted, incumbent | predicted, shipped | outside the band by |
+|---|---|---|---|---|
+| P(GP < 10) | **8.15%** | 5.21% [3.85, 6.68] | **5.66%** [4.42, 7.36] | 1.47 pp → **0.79 pp** |
+| P(GP ≥ 82) | **2.72%** | 5.95% [4.75, 7.81] | **4.30%** [3.17, 6.12] | 2.04 pp → **0.45 pp** |
+
+Read the third column against the second and the fourth on its own. The signed errors go
+−2.94 → **−2.49** pp and +3.23 → **+1.59** pp, which is 15% of the low-tail miss and 51% of
+the high-tail one; the *excursion past the 95% band* falls by 46% and 78%, because the shorter
+window also widens the band. The shoulder the defect's second symptom named moves with them —
+P(GP ≤ 75) on validation goes 78.3% → **81.0%** against an observed 84.6%, closing 43% of that
+gap. The point-MLE ladder in §4 predicted errors of −0.0230 and +0.0126 for this arm; the
+Bayesian head's posterior predictive reads −0.0249 and +0.0159, so the two independent
+measurements agree in direction and to within a fifth of a percentage point.
+
+**So the CRPS and PIT wins in §4 stand and the headline claim does not.** "The head misses
+both ends of its own distribution" is still true of the head that ships. What §4 bought is a
+smaller miss on the same side of the same band, not a calibrated boundary — which is exactly
+what result 4 said in advance: *the low tail is a functional-form limit of the beta-binomial*,
+and the high tail is a shape the only instrument that closes it (a season trend) closes by
+wrecking the body. The remaining instrument is a different frailty, not a different window.
+
+**Train is not a like-for-like row.** The window cuts the *fitting* rows, so the training card
+now describes 4,027 player-seasons from 2012-13 rather than 9,478 from 1997-98, and its
+observed column moves with the population: P(GP ≥ 82) reads 3.82% observed against 4.57%
+predicted, where the incumbent read 6.60% against 7.56%. The head did not get better at the
+2000s; it stopped being asked about them.
+
+`make model-cards` → `outputs/predictions/model_card_ecdf.csv`, `head == "availability"`.
+
 ---
 
 ## 2. The league moved, and the shape of the movement is measured
@@ -287,6 +323,15 @@ grading, and too small to be the whole defect at 1.26–1.47×.
    covariate-dependent `rho` rather than bucketed; or accepting that entry/exit is the real
    process and revisiting the tenure decomposition (`docs/games-played-plan.md`), whose
    oracle-tenure arm already scores **7.2265** against the incumbent's 10.0057.
+
+   **Sharpened 2026-08-11 and moved to `docs/potential-to-dos.md` item 5.** The mechanism is
+   now measured rather than suspected: `a` and `b` are both functions of `(μ, ρ)`, so the
+   frailty's boundary behaviour and its variance are the *same parameter*. `b < 1` — a
+   density that diverges at `p = 1` — holds on **52.7%** of validation rows and on **82.2%**
+   of the `24-30 mpg` bucket, because it is implied by `ρ > (1 − μ)/(2 − μ)` and the fitted
+   `ρ` sits just above that threshold for every high-`μ` bucket. That is why moving `ρ` could
+   only halve the miss, and it reframes the candidate list around likelihoods that free the
+   boundary from the dispersion.
 4. ~~**Selection multiplicity.**~~ ✅ **Closed** by §4b — 13 origins and 5,142 fitting-half
    rows. The window and the role-graded dispersion both replicate; the trend's apparent
    pooled gain turned out to be two COVID origins.
