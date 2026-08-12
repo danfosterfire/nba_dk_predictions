@@ -19,80 +19,37 @@ realistic tournament rules.
 ## Where to find context
 
 Context for this project is stored across various .md files in ./docs. Refer 
-to the relevant docs for the task at hand. The docs are:
+to the relevant docs for the task at hand.
+
+**This section is a router, not a summary.** One line per doc saying what it covers and
+when to open it — no findings, no figures, no dates. Detail belongs in the doc itself.
+The docs are:
 
   - project-spec.md: Project overview and core rules for implementation. 
   **Always read this.**
   - adp-plan.md: Plan and notes for collecting average draft position ("adp") data
   - availability-plan.md: Plan and notes for modeling availability (games played 
   and minutes per game). Work completed and mostly archival.
-  - availability-ship-plan.md: **Ephemeral scaffolding**, written 2026-08-11 — a 
-  six-session work plan with one prepared prompt per session for shipping the 
-  2012-13 window and role-graded `rho` into `stan_availability.py` and propagating 
-  it through posteriors, model cards, the simulator, the games-played floor and the 
-  contest layer. Carries the three traps that would otherwise bite (do **not** filter 
-  `availability_design` — six modules import it; the Stan change is a transplant of 
-  `composition_glm.stan`'s `n_rho`/`rho_bin` pattern; every session must end with 
-  `make docs-audit` green because it is a gate). Delete it when the round lands, as 
-  `dashboard-build-prompts.md` was.
-  - availability-window-plan.md: The fitting window, the season trend, and where the 
-  beta-binomial's `rho` lives — opened 2026-08-11 when `model_card_ecdf.csv` showed the 
-  availability head missing **both** ends of its own distribution in opposite directions, 
-  invisible to every metric it had been gated on. Carries the era break test (a sup-F scan 
-  against a Monte-Carlo null), the `make availability-window` ladder that crosses window × 
-  season term × dispersion, and the three results it settled: a 2012-13 window plus a 
-  role-graded `rho` is the shippable arm, a season trend is a **null** because it buys the 
-  boundaries by wrecking the body, and `rho` is pooled across *players* rather than across 
-  *seasons*. Read this before changing the availability head's fitting window or adding a 
-  season term to it. Its last section carries the same question, measured but not yet 
-  laddered, for the two minutes heads. **`make availability-weighting` (2026-08-11) 
-  is its follow-up**: four ways to *spend* old seasons rather than keep or discard 
-  them — `l2` x lookback, separate `beta`/`rho` windows, exponential season decay, 
-  and per-coefficient-block windowing — selected on a rolling harness over the 
-  fitting half and then confirmed once on validation. The measurement that stands 
-  is that the drift is in the **level**, not the relationships: 5 of 20 columns 
-  carry it, and windowing the age and absence blocks makes the head *worse*. 
-  **None of the four beats the plain window on validation**, so nothing new ships, 
-  and one mechanism explains all four — they lean on the COVID trough.
-  - dashboard-plan.md: Plan and notes for the streamlit dashboard. As of 
-  2026-08-08 the dashboard is a **data-visualization surface**, not a project 
-  walkthrough — read this before adding or editing a view. Its nine-page 
-  "expansion" shipped 2026-08-10 and the revision round below added a tenth page 
-  the same day; the "Charter amendment 2026-08-10" subsection 
-  sets the three bounds the one page of prose (the Overview) exists under, and 
-  each step has a "Step N, as built" section. **Bound 1 was amended 2026-08-10** 
-  when the Overview was rewritten as a paper — "opens above the fold, scrolls no 
-  further than one screen more", a measured ceiling — and bound 2 gained a half: 
-  a typed sentence on that page carries no digit at all. 
-  `dashboard-build-prompts.md`, the 
-  ten one-per-session build prompts, was ephemeral scaffolding and was deleted 
-  when the expansion landed.
-  - dashboard-revision-plan.md: The round *after* the expansion, planned 
-  2026-08-10 — five one-per-session steps (appearance, which availability head 
-  ships, DHARMa-style quantile residuals, a dk_pts page at the unit the contest is 
-  decided at, and the Overview as a paper). It inherits every rule 
-  `dashboard-plan.md` set; read that 
-  one first. Three of the five items turned out to have different answers than the 
-  request assumed, and the doc records why. **All five shipped 2026-08-10** and each 
-  has an "as built" section: the appearance is now Streamlit's own setting, with 
-  the page chrome generated into `.streamlit/config.toml` by `make 
-  dashboard-config`; every head declares its role in the shipped chain; block 6 
-  of the model pages is a scaled quantile residual rather than a raw one; the 
-  dashboard has a tenth page, **Weekly scores**, which is Gate A at the scoring 
-  period (`make weekly-scores`, `src/sim/weekly.py`); and the Overview is now a 
-  four-section paper rather than five hero tiles, which cost a charter amendment. 
-  Step 4's unit moved from the 
-  tournament round to the **week** mid-session at the user's request, and the doc 
-  records both the request and what the change cost. Its prompts appendix was 
-  ephemeral scaffolding and was deleted when the round landed.
+  - availability-mixture-ship-plan.md: **Ephemeral scaffolding** — the settled decisions 
+  and per-session work plan for shipping the availability head's mixture likelihood. 
+  Delete it when the round lands.
+  - availability-ship-plan.md: **Ephemeral scaffolding** — the per-session work plan 
+  for shipping the windowed, role-graded availability head. Delete it when the round 
+  lands, as `dashboard-build-prompts.md` was.
+  - availability-window-plan.md: The availability head's fitting window, season term, 
+  dispersion and **likelihood**. Read it before changing any of those; its last section 
+  lists what a new likelihood would have to decide and what it would inherit.
+  - dashboard-plan.md: The dashboard's charter and pages. The dashboard is a 
+  **data-visualization surface**, not a project walkthrough — read this before adding 
+  or editing a view.
+  - dashboard-revision-plan.md: The revision round after the dashboard expansion. It 
+  inherits every rule `dashboard-plan.md` sets; read that one first.
   - data-quirks.md: Notes and findings in exploring the raw data.
   - dk_best_ball_rules.md: Copy of the tournament rules for draft kings best 
   ball tournaments **always read this**.
-  - docs-audit.md: How the two documentation guards work — `make docs-audit` 
-  (re-derives every quoted result from its artifact, a gate; sampler timings are 
-  presence-checked only) and `make 
-  dashboard-audit` (registry drift, a report). Read this before editing a 
-  quoted figure or adding a doc to the audit.
+  - docs-audit.md: How the two documentation guards work — `make docs-audit` (a gate) 
+  and `make dashboard-audit` (a report). Read this before editing a quoted figure or 
+  adding a doc to the audit.
   - eda-plan.md: Plan and notes for exploratory data analysis and feature 
   reduction. Work completed and mostly archival at this point.
   - facts-archive.md: Known facts, do not re-derive. Refer to this if we 
@@ -101,21 +58,12 @@ to the relevant docs for the task at hand. The docs are:
   completed and mostly archival at this point.
   - injuries_paper.md: Copy of a study on workload contributing to achilles 
   tendon ruptures in basketball players. Archival.
-  - model-cards-plan.md: The contract between the fitted heads and the dashboard's 
-  model detail pages — what `make model-cards` writes, and the four rules the emitter 
-  inherits (`selection_split` only, the `train` posterior window, a build-time recipe 
-  check that fails rather than writing a wrong artifact, and a predictive drawn through 
-  each head's own `predict_samples` whose mean must reproduce that head's own). Read 
-  this before adding a `model_card_*` artifact or changing a head's variant ladder. 
-  Since 2026-08-10 every head also declares a **`chain_role`** — what the simulator 
-  does with it, in a closed vocabulary, pinned against `src/sim/` by a test rather 
-  than merely written down. Sixteen of the twenty heads are in the draw path; 
-  `gp_entry`, `gp_exit`, `gp_onset` and the marginal `minutes` head are not. The 
-  ninth artifact, `model_card_quantile.csv`, is DHARMa's scaled quantile residual 
-  and **replaced** the calibration file's raw-residual panel; its KS distance is 
-  reported and never thresholded.
   - minutes-composition-plan.md: Plan and notes for the production version of 
   the minutes-played model. Work completed and mostly archival at this point.
+  - model-cards-plan.md: The contract between the fitted heads and the dashboard's 
+  model detail pages — what `make model-cards` writes, the rules the emitter inherits, 
+  and each head's declared `chain_role`. Read this before adding a `model_card_*` 
+  artifact or changing a head's variant ladder.
   - model-development-notes.md: Detailed notes and findings developed during
   the model selection and fitting processes. Archival unless we reopen model 
   selection questions.

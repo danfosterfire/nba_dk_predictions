@@ -276,10 +276,35 @@ doc's "what this leaves" section rather than here.
 
 ---
 
-## 5. A different frailty for the availability head — the boundary is welded to the variance
+## 5. ✅ A different frailty for the availability head — MEASURED 2026-08-11
 
-**Compare the beta-binomial's Beta frailty against likelihoods whose boundary behaviour is a
-*separate* parameter from its dispersion.** Opened 2026-08-11, after the windowed role-graded
+**All five arms and the free arm are measured. `docs/availability-window-plan.md` §7 is the
+live document**; what follows is the motivation that opened the item, kept because the
+mechanism it derived is what the ladder then tested. Four things it settled, so they are not
+re-opened here:
+
+- **The free arm is a null.** The tenure decomposition loses on the boundary too —
+  `boundary_tail_error` **0.0333** against the shipped head's 0.0202, the worst of any arm —
+  and makes the *same two errors on the same sides*. The **7.2265** cited below is the
+  `within_tenure` **oracle** arm (`selectable: False`, 751 rows), not a forecast. §7a.
+- **The low tail is not a frailty phenomenon.** `mixture` halves the selector to **0.0109**
+  and ties on CRPS; `logitnormal`, which removes the divergence entirely, fails the *other*
+  way and is a worse fit of the same data at the same parameter count. A missing component,
+  not a wrong shape. §7c results 1–2.
+- **The one-parameter control wins CRPS** (`beta_rect`, −0.056 [−0.096, −0.015]) and loses
+  the boundary to `mixture`. Tail mass is what CRPS wants; *which* tail is what the boundary
+  wants. §7c result 3.
+- **The divergence share moved but is not the mechanism** — 52.1% of predictive mass →
+  32–38%, while `ρ` falls at every bucket without collapsing. §7c result 5.
+
+Nothing ships from there: it is a point-MLE ladder, and an arm that wins earns a Stan port in
+a later session.
+
+---
+
+**The motivation, as written when the item opened.** Compare the beta-binomial's Beta frailty
+against likelihoods whose boundary behaviour is a *separate* parameter from its dispersion.
+Opened 2026-08-11, after the windowed role-graded
 head shipped and `model_card_ecdf.csv` showed the defect it was refitted for had **narrowed
 without closing**: on validation P(GP < 10) went 5.21% → **5.66%** against an observed 8.15%,
 and P(GP ≥ 82) went 5.95% → **4.30%** against an observed 2.72%, both still outside the 95%

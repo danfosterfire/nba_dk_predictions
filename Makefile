@@ -171,10 +171,15 @@ component-rates:
 availability-model:
 	$(PYTHON) -m src.models.availability
 
-# The fitting-window x season-trend ladder for the availability head, scored on TAIL
-# COVERAGE rather than only CRPS — the shipped head misses both ends of its own
-# distribution and no marginal metric it has ever been gated on can see that. Point MLE,
-# no CmdStan, seconds: an arm earns a Stan port here, it does not ship from here.
+# The fitting-window x season-trend x dispersion x LIKELIHOOD ladder for the availability
+# head, scored on TAIL COVERAGE rather than only CRPS — the shipped head misses both ends
+# of its own distribution and no marginal metric it has ever been gated on can see that.
+# The fourth axis was added 2026-08-11 once the mechanism was measured: `a` and `b` are both
+# functions of `(mu, rho)`, so the frailty's boundary behaviour and its variance are the
+# SAME parameter, which is why moving `rho` could only halve the miss. It varies the frailty
+# with the other three axes held at the shipped arm, and every arm reproduces the incumbent
+# at its own nesting parameter values. Point MLE, no CmdStan, minutes: an arm earns a Stan
+# port here, it does not ship from here.
 availability-window:
 	$(PYTHON) -m src.models.availability_window
 

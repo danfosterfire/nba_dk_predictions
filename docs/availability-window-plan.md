@@ -1,4 +1,4 @@
-# Availability window plan: the fitting window, a season trend, and where `rho` lives
+# Availability window plan: the fitting window, a season trend, where `rho` lives, and which likelihood
 
 The availability head misses **both ends** of its own distribution, in opposite directions,
 and no metric it has ever been gated on can see that. This doc is the measurement of why,
@@ -196,7 +196,15 @@ bucket on the full window: **0.3084** for `<12 mpg` against **0.2456** for `30+ 
 **1.26×** spread (1.47× on the 2012-13 window). Direction is sensible — fringe players are
 more variable — but it is far milder than the composition head's **2.07×**. Grading it is a
 small, consistent, nearly free win (−0.017 CRPS on the full window, −0.020 on the era one)
-and it never hurts a single metric in the table.
+and it never hurts a single metric **in the table as it stood**.
+
+> ⚠️ **Scoped 2026-08-11**, when §7f added a shoulder column the table did not have. Role
+> grading is a **wash** there: `shoulder_error` goes 0.0280 → **0.0290** on the full window
+> and 0.02092 → 0.02104 on the era one. So "never hurts a single metric" was true of the
+> four thresholds then measured and is not true in general. It still wins CRPS, PIT,
+> `boundary_tail_error` and `point_mass_error`, so the decision stands — but the
+> unqualified version of the claim does not, and a metric added later is exactly how that
+> kind of sentence gets found out.
 
 **4. The low tail survives every instrument.** The best non-trend arm moves P(GP<10) error
 from −0.0290 to −0.0230 — about a fifth of it. The window does essentially nothing for it
@@ -323,6 +331,11 @@ grading, and too small to be the whole defect at 1.26–1.47×.
    covariate-dependent `rho` rather than bucketed; or accepting that entry/exit is the real
    process and revisiting the tenure decomposition (`docs/games-played-plan.md`), whose
    oracle-tenure arm already scores **7.2265** against the incumbent's 10.0057.
+
+   ✅ **Measured 2026-08-11 — see §7.** All five likelihood arms and the free arm are on the
+   ladder. The tenure decomposition is a **null** (§7a), the low tail is a **missing
+   component** rather than a wrong frailty shape (§7c results 1–2), and the divergence share
+   moved without being the mechanism (§7c result 5). Nothing ships from there.
 
    **Sharpened 2026-08-11 and moved to `docs/potential-to-dos.md` item 5.** The mechanism is
    now measured rather than suspected: `a` and `b` are both functions of `(μ, ρ)`, so the
@@ -489,3 +502,550 @@ moves 0.1279 → 0.1161 across 1996-97 → 2023-24, about 9%, and has partially 
 > rather than those heads' own row filters, so they are directional. The 10.4× is far too
 > large for a population definition to flip; the −15.2% is not, and should be rebuilt
 > through each head's own design before anyone acts on it.
+
+---
+
+## 7. The fourth axis: the likelihood — measured 2026-08-11
+
+§4 settled that no instrument on the *mean* closes the boundary, and §5.3 recorded why in
+arithmetic rather than in hypothesis: under `a = μ(1−ρ)/ρ` and `b = (1−μ)(1−ρ)/ρ` the
+frailty's **shape** and its **variance** are the same parameter, so `b < 1` — a Beta density
+that diverges at `p = 1`, sitting exactly on "played every game" — is forced whenever
+`ρ > (1−μ)/(2−μ)`. That is why moving `ρ` could only halve the miss.
+
+So the fourth axis varies the **frailty**, holding window, season term and dispersion at the
+shipped arm (`three_point_era`, `none`, `role`). It is deliberately **not** crossed with the
+full grid: 19 arms was already the multiplicity problem §4b exists to answer, and crossing
+would make it 95.
+
+`make availability-window` → `availability_likelihood.csv`,
+`availability_likelihood_rolling.csv`.
+
+**Every arm reproduces the head it extends at its own nesting parameter values**, asserted on
+the log-likelihood rather than written down. `π = 0`, `g = 0` and `θ = 0` are each a *finite,
+attainable* parameter value rather than a limit — which is why `π` is `θ·σ(γ'z)` with `θ`
+bounded rather than `σ(γ₀ + γ'z)`, and why the ordering constraint is a bounded increment
+rather than `exp(s)`. Mixture weights sit on the boundary of their parameter space, and a
+nesting check that has to be taken as `γ₀ → −∞` is a statement about floating point rather
+than about the model. `logitnormal` is the one arm that does not nest the incumbent, by
+design, and is pinned to the **binomial** instead. That is the `n_rho = 1` / `U_n = 0`
+discipline, and the rollback path.
+
+### 7a. The free arm first: the tenure decomposition loses on the boundary too
+
+`stan_games_played` is the structural alternative to a frailty, and §5.3 nominated it because
+it had never been scored on this statistic. Its composite pmf was already on disk, so the
+comparison cost a file read. Scored on the **same 883 validation rows**, with the pre-window
+incumbent reproducing `stan_games_played_gates.csv`'s **10.005738** Gate D bar exactly:
+
+| arm | CRPS | vs `betabinom` [95%] | PIT KS | **boundary err** | body err |
+|---|---|---|---|---|---|
+| incumbent `full__none__shared` | 10.0057 | *(context)* | 0.0939 | 0.0314 | 0.0083 |
+| shipped Stan head (2012-13 + role `ρ`) | 9.8156 | *(context)* | 0.0667 | **0.0202** | 0.0108 |
+| **tenure decomposition** `duration_covariates` | **10.1625** | **+0.350 [+0.227, +0.473]** | 0.0672 | **0.0333** | 0.0102 |
+
+*(the bootstrap column is against §7c's `betabinom` reference at CRPS 9.8125; the first two
+rows are carried for context and are scored on the same 883 rows by the same code.)*
+
+**A head that loses on the mean also loses on the boundary.** 0.0333 is the worst
+`boundary_tail_error` of every arm measured in this doc — worse than the incumbent it was
+built to structurally replace, by **+0.0132** with a paired interval of **[+0.0117, +0.0146]**,
+clear of zero in the wrong direction. The direction of the errors is what makes it worth the
+read: it makes the **same two errors on the same sides**, and the low one is *larger*.
+
+| | observed | incumbent | shipped | tenure |
+|---|---|---|---|---|
+| err P(GP < 10) | 0.0815 | −0.0290 | −0.0247 | **−0.0328** |
+| err P(GP = full) | 0.0272 | +0.0337 | +0.0159 | **+0.0339** |
+
+Its PIT KS is as good as the shipped head's, so it is a well-calibrated distribution that is
+still wrong at both ends, and its **body** is the one thing it wins (−0.0019 at 41 games).
+
+> ⚠️ Two corrections to the motivation that nominated it. The **7.2265** §5.3 quotes is the
+> `within_tenure` arm, flagged `oracle_tenure: True, selectable: False` in
+> `stan_games_played.py:151` — it holds tenure at its **observed** value and covers 751 rows,
+> so it is not a forecast and was never a candidate. The forecastable arm is
+> `duration_covariates`. And "a head that loses on the mean wins on the boundary" was the
+> hypothesis; the measurement says it loses on both.
+
+**The defect surviving a change of generative structure is the useful half.** An entry ×
+exit × two-state-chain model with beta-geometric spells is not a beta-binomial in any
+respect, and it reproduces the beta-binomial's two boundary errors in direction and
+magnitude. That is evidence the missing ingredient is a **component**, not a frailty shape —
+which is what the ladder below then separates directly.
+
+### 7b. The five likelihoods
+
+| arm | frees | nests the incumbent at |
+|---|---|---|
+| `betabinom` | nothing — the reference row | — |
+| `mixture` | the low tail, as a separate **event**: `π_i·BetaBinom(μ_low, ρ_low) + (1−π_i)·BetaBinom(μ_i, ρ_i)`, with covariates on `π` | `θ = 0` |
+| `finite_mix` | the whole shape — K latent durability classes with **ordered** mean offsets | `g = 0` |
+| `logitnormal` | boundary behaviour — a binomial GLMM, whose frailty *cannot* diverge | **does not** (nests the binomial) |
+| `beta_rect` | tail mass, symmetrically — `θ·U(0,1) + (1−θ)·Beta`, the one-parameter control | `θ = 0` |
+
+Two implementation notes that changed what the arms could find.
+
+**`finite_mix`'s components are beta-binomials, not binomials, and the nesting rule forced
+it.** The pure Heckman–Singer device puts K support points in place of the continuous mixing
+distribution, and at K = 1 that is a *binomial* rather than the incumbent. Beta-binomial
+components with ordered offsets nest the incumbent exactly and contain the pure version as
+the `ρ → 0` corner of the same family — so the fitted `ρ` becomes the readout rather than an
+assumption.
+
+**Multi-start is not optional here, and skipping it produced a false null.** Started at its
+own nesting point, a three-class mixture sat on the bound, reported success, and reproduced
+the incumbent to four decimals — because at `g = 0` every class carries identical
+responsibility and the surface is flat in exactly the direction that separates them. With
+separated starts the same arm finds a structure worth 21.9 log-likelihood points. The
+`start_loglik_spread` column records this per arm: **21.9** and **29.3** for `finite_mix` at
+K = 3 and K = 4, against **0.007** for `mixture` and **0.002** for `beta_rect`. The finite
+mixtures are genuinely multimodal; the other two are not.
+
+### 7c. The ladder
+
+Observed on validation: P(<10) **0.0815**, P(full) **0.0272**, P(<41) 0.2911, P(<60) 0.5300.
+The selector is `boundary_tail_error`; `body_error` is reported beside it and **never
+averaged in**, per §3.
+
+| arm | params | CRPS | vs `betabinom` [95%] | PIT KS | **boundary err** | body err | diverges at `p=1` |
+|---|---|---|---|---|---|---|---|
+| `betabinom` *(reference, joint)* | 24 | 9.8125 | — | 0.0667 | 0.0201 | 0.0107 | **52.1%** |
+| `betabinom_two_stage` *(§4's arm)* | — | 9.8247 | +0.012 [−0.017, +0.041] | 0.0588 | 0.0178 | 0.0203 | — |
+| **`mixture`** | 35 | 9.8237 | +0.011 [−0.028, +0.051] | 0.0631 | **0.0109** | 0.0047 | 37.8% |
+| `beta_rect` | 25 | **9.7561** | **−0.056 [−0.096, −0.015]** | 0.0599 | 0.0165 | 0.0032 | 35.3% |
+| `finite_mix` (K=3) | 28 | 9.7667 | −0.046 [−0.076, −0.014] | 0.0620 | 0.0181 | **0.0012** | 32.4% |
+| `finite_mix` (K=4) | 30 | **9.7390** | **−0.074 [−0.106, −0.039]** | 0.0577 | 0.0169 | 0.0016 | 34.6% |
+| `finite_mix` (K=2) | 26 | 9.8114 | −0.001 [−0.004, +0.002] | 0.0667 | 0.0201 | 0.0094 | 49.4% |
+| `logitnormal` | 24 | 9.8616 | +0.049 [−0.057, +0.155] | 0.0801 | 0.0195 | 0.0116 | **0.0%** |
+| `tenure_decomposition` | — | 10.1625 | +0.350 [+0.227, +0.473] | 0.0672 | 0.0333 | 0.0102 | — |
+
+*(`diverges at p=1` is the share of predictive **mass** sitting under a frailty with `b < 1`,
+which is the same statistic as §5.3's row share on a one-component head and a real one on the
+alternatives. K=2 and K=4 are a sensitivity on K, not competitors for selection.)*
+
+**The selector gets an interval too**, because a boundary margin quoted bare is the thing
+this project calls a prompt rather than a finding. `boundary_tail_error` is a *non-linear*
+statistic — two absolute values of differences of means — so the bootstrap resamples rows and
+recomputes it rather than averaging a per-row score, paired inside the row the way the CRPS
+one is:
+
+| arm | boundary err | vs `betabinom` [95%] | clears |
+|---|---|---|---|
+| `betabinom` | 0.0201 [0.0100, 0.0294] | — | — |
+| **`mixture`** | **0.0109** [0.0030, 0.0203] | **−0.0089 [−0.0099, −0.0042]** | ✅ |
+| `beta_rect` | 0.0165 | −0.0035 [−0.0041, −0.0019] | ✅ |
+| `finite_mix` (K=3) | 0.0181 | −0.0020 [−0.0023, −0.0017] | ✅ |
+| `logitnormal` | 0.0195 | −0.0004 [−0.0082, **+0.0108**] | ❌ |
+| `tenure_decomposition` | 0.0333 | **+0.0132 [+0.0117, +0.0146]** | ❌ *(worse)* |
+
+`logitnormal` is the only fitted arm whose interval spans zero, and the tenure
+decomposition's is clear of zero **in the wrong direction** — both of which are the point
+rather than an inconvenience.
+
+**The reference row is refitted jointly, and that is a finding in itself.** Every arm here is
+a joint MLE of its own likelihood, while `RoleGradedBetaBinomial` fits `β` under a shared `ρ`
+and then profiles `ρ` per bucket holding the mean fixed. Scoring a profiled reference against
+joint alternatives would confound the likelihood with the estimator, so the reference was
+refitted jointly — and **joint estimation of the same model is worth −0.012 CRPS for free**
+(9.8125 against 9.8247), landing beside the Stan port's 9.8136 plug-in. §5.1 recorded that
+gap as something "the joint fit" bought and attributed it to the Bayesian fit; it is the
+estimator, and the point MLE reproduces it.
+
+**Six results.**
+
+**1. A missing component beats a different shape, and one arm was built to prove it either
+way.** `logitnormal`'s frailty *cannot* diverge — its density vanishes at both ends — so if
+the boundary mass were a shape defect it should fix the high tail by construction and worsen
+the low one. **That is exactly what happened.** It is the only arm whose full-schedule error
+changes *sign* (−0.0072, where every Beta arm over-predicts), it posts the worst low-tail
+error of any fitted arm (−0.0319 against the reference's −0.0253), and its
+`boundary_tail_error` barely moves (0.0195 against 0.0201) because the two cancel. It is also
+a genuinely **worse fit of the same data** — training log-likelihood **−16,331.5** against
+the reference's −16,239.2 at the *same* parameter count (20 coefficients + 4 dispersions in
+both). Both are log-likelihoods of the same counts under the same dominating measure, so
+that is a like-for-like 92-point loss. Removing the divergence does not close
+the boundary; it trades one end for the other.
+
+**2. So the low tail is not a frailty phenomenon, and `mixture` is the arm that says so.**
+Giving the disrupted season its own component halves the selector: `boundary_tail_error`
+**0.0109** against 0.0201, with the low-tail error going −0.0253 → **−0.0132** and the
+full-schedule error +0.0150 → **+0.0085**. It posts the best training log-likelihood of every
+arm (**−16,174.5**, a gain of **64.6** over the reference) and it is a **tie** on CRPS
+(+0.011, interval spanning zero). What it fits is interpretable: `θ = 0.112` with a mean
+`π` of **4.9%**, a low component centred at `μ_low = 0.0999` — about **8 games of 82**, and
+not at its bound — and `ρ_low = 0.044`. An Achilles rupture in October is a different event,
+not an extreme draw of a per-game rate, and the head can now say so.
+
+**And `π`'s covariates carry real signal**, which is the arm's own distinguishing claim: it
+can say *who* is at risk, where a wider frailty can only say that someone is. `π` runs from
+**1.2%** at the 10th percentile of players to **10.8%** at the 90th, a **8.8×** spread on
+age, prior absence and playoff workload. A flat `π` would have made this a two-component
+mixture with a constant weight — i.e. `finite_mix` at K = 2, which buys nothing.
+
+**3. The one-parameter control wins CRPS — but only on the metrics that cannot see the
+shoulder.** `beta_rect` adds a single uniform component and beats the reference by
+**−0.056 CRPS** [−0.096, −0.015] while improving PIT (0.0599), the boundary (0.0165) and the
+body (0.0032). It costs **one** unpenalized parameter against `mixture`'s eleven, and it
+beats `mixture` on CRPS while losing to it on the boundary. Read together with result 2:
+*tail mass* is what CRPS wants, and *which* tail is what the boundary wants. A symmetric
+hedge buys the first and only half of the second.
+
+> ⚠️ **Qualified by §7f.** Flat mass everywhere also pushes the 71–81 error from +0.0186 to
+> **+0.0273**, so `beta_rect` is the *worst* Beta arm on `shoulder_error` (0.0290 against the
+> reference's 0.0253). Its CRPS win is real and its calibration win is confined to the two
+> regions §3's metric set happened to measure.
+
+**4. Three durability classes, and the third is the ceiling.** `finite_mix` at K = 2 is the
+incumbent to within noise (−0.001, interval spanning zero) — two classes buy nothing. K = 3
+finds offsets **0.000 / 1.690 / 5.097** at weights **0.082 / 0.910 / 0.008**: a fragile 8%, a
+typical 91%, and a vanishing iron-man class. K = 4 scores best on CRPS (−0.074) and its
+fitted structure is K = 3 relabelled — offsets **0.000 / 2.185 / 2.187 / 5.235** at weights
+**0.040 / 0.000 / 0.951 / 0.009**, with two classes collapsed onto each other and one carrying
+zero weight. **Its extra CRPS is not extra structure**, which is the reason K is reported as
+a sensitivity rather than swept for a winner.
+
+**5. The shape diagnostic moved, and it is not the operative variable.** The reference puts
+**52.1%** of predictive mass under a divergent frailty — reproducing §5.3's 52.7% scratch
+measurement on the Stan posterior, which is the check that the two readings are of the same
+thing. Every arm that improved anything moved it down by 15–20 points of mass (`finite_mix`
+32.4%, `beta_rect` 35.3%, `mixture` 37.8%), and every one of them also pulled `ρ` down at
+every role bucket — the reference's **0.3167 / 0.2690 / 0.2523 / 0.2056** becomes
+`finite_mix`'s 0.2855 / 0.2217 / 0.1950 / 0.1484. So the added component *absorbs* dispersion,
+which is what "the classes are doing the frailty's job" looks like. But `ρ` does not collapse
+toward zero, so the shoulders want a continuous frailty **and** a discrete one — and the arm
+that eliminates divergence entirely is the arm that fails. **The divergence is a symptom of
+the single shape knob, not the mechanism of the miss.**
+
+**6. No arm repeats the season trend's failure, so this axis is not a null.** §4's warning
+was that the arms with the best boundary coverage were the worst models — a location shift
+closes both tails and blows out the body. Nothing here does that: every arm that improves the
+boundary **also** improves the body, `mixture` from 0.0107 to 0.0047 and `finite_mix` to
+0.0012. The trap the ladder was built to detect did not fire.
+
+### 7d. The confound, stated rather than corrected
+
+**`l2 = 1.0` is pinned across arms so the contrast is the likelihood alone — and a fixed
+penalty is not neutral between them.** The penalty reaches `β[1:]` only, so `mixture` carries
+**eleven** extra unpenalized parameters against the incumbent's zero, `finite_mix` four, and
+`beta_rect` one. Every margin in §7c is therefore an **upper bound** on the likelihood's own
+contribution, and the arms are not equally advantaged by it. §5.6 records the same confound
+one axis over, where `l2` was pinned across lookbacks of very different row counts and turned
+out to matter. It is stated rather than corrected because correcting it means sweeping `l2`
+per arm, which is a second selection axis on a ladder that already has a multiplicity problem.
+
+That the confound cuts *against* the reading is worth noting: the arm that wins the selector
+is the one it favours most, and the arm that wins CRPS carries one extra parameter.
+
+### 7e. Confirmation on the rolling harness — and only one finding survives it
+
+Eight arms on 883 validation rows is the same multiplicity and power problem §4b was built
+for, so the axis goes through the same instrument: 13 origins across the fitting half, each
+arm fitted on the 8 seasons before the origin and scoring the origin season itself, **5,142
+rows and not one of them a validation or held-out row**. Lookback 8 is §4b's interior CRPS
+optimum and the closest fitting-half analogue of the 2012-13 window — an absolute first
+season means nothing at a 2011 origin.
+
+| arm | CRPS | vs `betabinom` [95%] | origins won | PIT KS | **boundary err** [95% vs ref] | body err |
+|---|---|---|---|---|---|---|
+| `betabinom` *(reference)* | 9.9040 | — | — | 0.0361 | 0.0209 | **0.0042** |
+| `beta_rect` | **9.8985** | −0.0055 [−0.0212, +0.0102] | **9/13** | 0.0344 | 0.0170 [−0.0038: −0.0040, −0.0037] | 0.0052 |
+| **`mixture`** | 9.9031 | −0.0009 [−0.0170, +0.0162] | 7/13 | 0.0356 | **0.0126** [**−0.0083: −0.0085, −0.0080**] | 0.0090 |
+| `finite_mix` (K=3) | 9.9051 | +0.0011 [−0.0093, +0.0116] | 8/13 | 0.0339 | 0.0201 [−0.0008: −0.0009, −0.0007] | 0.0055 |
+| `logitnormal` | 10.0534 | **+0.1494 [+0.0970, +0.2047]** | 1/13 | 0.0479 | 0.0114 [−0.0095: −0.0157, −0.0034] | 0.0156 |
+
+**1. The CRPS wins do not replicate.** On validation `beta_rect`, `finite_mix` and
+`finite_mix_k4` all beat the reference with intervals clear of zero (−0.056, −0.046, −0.074).
+On 5.8× the rows their margins shrink by roughly an order of magnitude and every interval
+spans zero — and `finite_mix`'s **sign flips**. `beta_rect` is the most consistent of them at
+9 of 13 origins, but −0.0055 CRPS is not the −0.056 the validation row reads. **Read the
+validation CRPS column as one draw, not as a result.**
+
+**2. The boundary result does replicate, and it is `mixture`'s.** 0.0209 → **0.0126** is a
+**−40%** cut against validation's −46%, and the two paired intervals overlap squarely:
+**−0.0083 [−0.0085, −0.0080]** here against −0.0089 [−0.0099, −0.0042] there. Same arm, same
+direction, same size, from disjoint rows — the only figure in this section that reproduces
+across the two readings. Its CRPS is a tie in both (−0.0009 here, +0.011 there).
+`beta_rect`'s smaller boundary gain also reproduces almost exactly (−19% here against −18%
+on validation). `finite_mix`'s effectively does **not**: −0.0008 against validation's −0.0020,
+an order of magnitude below `mixture`'s and 4% of the reference's error. So of the three arms
+that improved the selector on validation, one is a solid effect, one is a modest one, and one
+is real but negligible.
+
+**3. `logitnormal` is the second clean instance of §4's trap, and §7f says exactly what it
+does with the mass.** It posts the *best* boundary error of any arm here (0.0114), and
+unlike on validation the gain is **significant** — −0.0095 [−0.0157, −0.0034]. It pays for it
+with the **worst** CRPS by a factor of thirty (+0.1494, interval nowhere near zero), the worst
+PIT, the worst body error (0.0156, 3.7× the reference's), and 1 of 13 origins. It is again the
+only arm whose full-schedule error is **negative** (−0.0090). **An arm can buy the boundary
+outright and still be the worst model on the table** — which is exactly what the season trend
+did in §4, and exactly why `body_error` is reported beside the selector rather than averaged
+into it. Had `boundary_tail_error` been the only column, this arm would have won the axis.
+§7f identifies the mechanism: it cannot put mass at exactly 82, so it relocates it into
+71-81, where its error is **+0.0621** against the reference's +0.0186. The boundary
+"improvement" is mass moved a few games down the schedule, and a metric with a point mass on
+one side and nothing beside it cannot tell the two apart.
+
+**4. On the harness, the boundary is bought partly out of the body — which it was not on
+validation.** The reference has the *best* body error here (0.0042) and every alternative is
+worse; `mixture` goes 0.0042 → 0.0090. On validation every alternative *improved* the body.
+The trade is real but small, and it is the honest qualification on result 2.
+
+> The limit §5b recorded applies unchanged: every origin here is exactly **one** season ahead
+> and sits inside the training half, while validation is one *and two* seasons ahead and on
+> the far side of a regime transient. The harness answers multiplicity and power; it does not
+> replace the validation reading. What it did here is what it did to the season trend —
+> separate a robust effect from a lucky one, in both directions.
+
+### 7f. The metric set was asymmetric, and the upper shoulder was the larger miss
+
+Added 2026-08-11, after the axis had already been scored. The defect in §1 is stated as
+"too little in the shoulders at 2–15 and **70–80** games", and **nothing in this ladder ever
+measured 70–80**:
+
+| region | what was measured before |
+|---|---|
+| `GP = 0` | nothing — folded into `below_10` |
+| `GP < 10` | ✅ the low half of `boundary_tail_error`, a ten-game-wide shoulder |
+| `GP < 41`, `< 60` | ✅ `body_error` |
+| **60 → 81** | **nothing at all** |
+| `GP = team_games` | ✅ the high half — but a **single point mass** |
+
+So the selector was asymmetric: a wide region on one side against one point on the other.
+Three additions fix it, and all three are reported beside the existing summaries rather than
+folded into them.
+
+**1. Upper thresholds counted in games missed.** `missed ≤ 11` and `≤ 5` are ">70 of 82" and
+">76 of 82" — and unlike `gp > 70` they are the *same event* in a 66-game season, which is
+the same schedule-invariance argument the `full_schedule` threshold already made.
+
+**2. Exclusive bands** — `zero` / `1–9` / `missed 1–11` / `missed 0` — because a cumulative
+lets errors of **opposite sign inside one tail cancel**, and §1 measured exactly that: the
+head over-predicts `P(GP ≤ 1)` while under-predicting `P(GP < 10)`.
+
+**3. A localized shape distance**, `low_shape_ks` / `high_shape_ks`: the largest gap anywhere
+on the calibration curve within 15 games of each end. A band is one number per region and
+can be right on average while the distribution *inside* it is the wrong shape.
+
+#### What it found on the head that ships
+
+| region | predicted | observed | error |
+|---|---|---|---|
+| `GP = 0` | 0.69% | **0.00%** | **+0.0069** |
+| `GP` 1–9 | 5.00% | 8.15% | **−0.0316** |
+| **missed 1–11** (71–81 games) | 24.29% | 22.42% | **+0.0187** |
+| `GP` = full | 4.30% | 2.72% | +0.0158 |
+| **missed ≤ 5** (77+ games) | **16.92%** | **12.12%** | **+0.0480** |
+
+**The upper shoulder is a bigger miss than the upper boundary** — +0.0187 across 71–81 games
+against +0.0158 at exactly 82, and **+0.0480** cumulatively at 77+ games, three times the
+boundary error. `high_shape_ks` is **0.0480** against `low_shape_ks`'s 0.0252, so the
+worst-calibrated region of the whole distribution is 77–82 games, and no metric in §3's set
+pointed at it. And the low tail's two halves do err in opposite directions: **+0.69 pp** at
+exactly zero — an event that occurs **zero times** in 883 validation rows — against
+**−3.16 pp** at 1–9. `below_10` was netting them to −0.0247.
+
+#### Three things this changes
+
+**1. The window looks better, not worse.** Its largest single effect is on the region nobody
+was measuring: `high_shape_ks` **0.0744 → 0.0402** and `missed ≤ 5` error 0.0744 → 0.0402, a
+46% cut. The shipped decision is *more* justified than the metrics it was made on showed.
+
+**2. A single threshold can be perfect while the shape is worse — measured, not argued.**
+`three_point_era__trend__role`, §4's null, gets `missed ≤ 5` error to **−0.00006** — exact —
+while its `high_shape_ks` is **0.0547**, *worse* than the non-trend arm's 0.0402. It nails one
+point on the upper curve and undershoots badly at missed 6–15, because a location shift has
+to overshoot somewhere. That is the clearest argument in this doc for a shape distance over
+one more threshold.
+
+**3. It reorders §7c, and against the arm that won CRPS.**
+
+| arm | boundary | **shoulder** [95% vs ref] | point mass | `low_shape_ks` | `high_shape_ks` |
+|---|---|---|---|---|---|
+| `betabinom` *(reference)* | 0.0201 | 0.0253 | 0.0109 | 0.0258 | 0.0469 |
+| **`mixture`** | **0.0109** | **0.0235** [−0.0021: −0.0086, −0.0010] ✅ | **0.0068** | **0.0132** | 0.0414 |
+| `beta_rect` | 0.0165 | **0.0290** [+0.0034: −0.0030, +0.0042] ❌ | 0.0083 | 0.0242 | 0.0421 |
+| `finite_mix` (K=3) | 0.0181 | 0.0274 [+0.0019] ❌ | 0.0114 | 0.0250 | 0.0410 |
+| `finite_mix` (K=4) | 0.0169 | 0.0269 [+0.0014] ❌ | 0.0121 | 0.0222 | 0.0414 |
+| `logitnormal` | 0.0195 | **0.0480** [+0.0223: +0.0158, +0.0246] ❌ | 0.0046 | 0.0319 | 0.0592 |
+| `tenure_decomposition` | 0.0333 | 0.0215 [−0.0028: −0.0148, +0.0152] | 0.0170 | 0.0344 | 0.0538 |
+
+**On validation, `mixture` is the only fitted arm that improves the shoulders**, and the only
+one that improves *every* regional metric while tying on CRPS. Its `low_shape_ks` of
+**0.0132** against 0.0258 is the largest single calibration gain on the table.
+
+**`beta_rect`'s CRPS win comes with a shoulder regression here.** A uniform component adds
+flat mass *everywhere*, which buys CRPS and the boundary and pushes the 71–81 error from
++0.0186 up to **+0.0273** — the worst of the Beta arms. The `finite_mix` arms do the same
+thing more mildly. So "the one-parameter control wins" is true only on the metrics that
+cannot see the shoulder, and §7c result 3 should be read with that beside it.
+
+#### The rolling harness, and one sign that does not replicate
+
+| arm | shoulder err | vs `betabinom` [95%] | err band 71–81 |
+|---|---|---|---|
+| `betabinom` *(reference)* | 0.0214 | — | **−0.0222** |
+| **`mixture`** | **0.0078** | **−0.0128 [−0.0138, −0.0064]** ✅ | −0.0046 |
+| `beta_rect` | 0.0152 | −0.0061 [−0.0064, −0.0057] ✅ | −0.0113 |
+| `finite_mix` (K=3) | 0.0205 | −0.0009 [−0.0011, −0.0007] ✅ | −0.0195 |
+| `logitnormal` | 0.0289 | +0.0075 [−0.0043, +0.0193] ❌ | **+0.0421** |
+
+**1. `mixture`'s shoulder win replicates and is larger here** — a **60%** cut against
+validation's 8%, on 5.8× the rows, with an interval nowhere near zero. Of everything measured
+on this axis it is the most robust single effect.
+
+**2. `beta_rect`'s shoulder effect does not replicate *in sign*, and the reason is
+instructive.** The reference **under**-predicts the 71–81 band on the fitting half (−0.0222)
+and **over**-predicts it on validation (+0.0186). Flat mass moves that band one way, so it
+helps where the reference is short and hurts where it is long. `mixture` improves it in
+**both** readings despite the reference's error pointing in opposite directions — reducing a
+magnitude rather than pushing a level. That is the difference between a hedge and a component,
+and it is the strongest argument on this axis for `mixture` over `beta_rect`.
+
+**3. The fitting half shows the divergence mechanism more cleanly than validation does.**
+There the head over-predicts the exact iron man (+0.0252) *and* under-predicts the 71–81 band
+(−0.0222) — mass piled on the boundary and pulled out of the shoulder immediately below it,
+which is what a Beta density with `b < 1` does, drawn to scale. On validation both errors are
+positive because the level is off as well. §1's U-shape is a fitting-half property first.
+
+**4. `logitnormal`'s mass relocation replicates exactly.** It is the only arm that pushes the
+71–81 band *positive* (+0.0421 against a reference of −0.0222), the same direction and the
+same mechanism as its +0.0621 on validation.
+
+**And the shape metric supplies `logitnormal`'s mechanism.** Its high-shoulder error is
+**+0.0621** against the reference's +0.0186 — 3.3×, the worst on the table — while its
+full-schedule error is the only *negative* one. It cannot put mass at exactly 82, so it piles
+it into 71–81. **The "best boundary error of any arm" the rolling harness credited it with in
+§7e was mass relocation into the shoulder, not calibration** — which is what a metric with a
+point mass on one side and nothing beside it will always miss.
+
+### 7g. What this settles, and what it does not
+
+**Settled.**
+
+- **The tenure decomposition is not the answer** (§7a). A null, recorded so it is not rebuilt.
+- **The low tail is a missing component, not a wrong frailty shape.** The arm that adds a
+  component halves the boundary error in both readings, on overlapping intervals from
+  disjoint rows; the arm that removes the divergence entirely fails the other way in both.
+  Those two facts together are what no single arm could have established, and they are why
+  `logitnormal` was fitted despite being expected to lose.
+- **The selector needs the body column beside it, demonstrated a second time.** On the
+  rolling harness `logitnormal` posts the largest and a *significant* boundary gain of any
+  arm and is simultaneously the worst model on the table. §4 found that pattern in the season
+  trend; this is the independent replication of it, in a different instrument.
+- **The divergence is a symptom, not the mechanism.** 52.1% of predictive mass → 32–38% on
+  the arms that helped, `ρ` falling at every bucket without collapsing, and the arm at 0%
+  being the worst model — which §7f resolves into a mass-relocation story rather than a
+  calibration one.
+- **The metric set was asymmetric and is no longer** (§7f). The upper shoulder turned out to
+  be a *larger* miss than the upper boundary it was pooled next to, and it was the region the
+  window helped most. A metric added after the fact is also what found the one overclaim in
+  §4 result 3.
+- **Joint estimation of the shipped head is worth −0.012 CRPS for free**, and §5.1's
+  attribution of that gap to the Bayesian fit was wrong about the cause.
+
+**Not settled.**
+
+- **Which likelihood — though §7f narrowed it to one candidate.** `mixture` is the only arm
+  that improves **every** regional metric (boundary, shoulders, point masses, body) while
+  tying on CRPS, the only one whose selector win replicates on the rolling harness, and the
+  only one whose **shoulder** win replicates *in sign* — it reduces the magnitude of that
+  error on both readings, where the reference's own error points in opposite directions.
+  `beta_rect` wins CRPS and moves the shoulder by pushing a level, so it helps on one
+  reading and hurts on the other; `logitnormal` is a measured failure. What is still not settled is whether a
+  CRPS-neutral calibration win is a shipping criterion for this head — every availability
+  decision to date has been taken on mean CRPS with a paired bootstrap, and adopting
+  `mixture` means deciding the objective is tail calibration. That is a judgement call about
+  what the head is *for*, not a number this ladder can produce.
+- **What a Stan port would cost.** Nothing ships from this ladder. A port of `mixture` adds
+  a covariate block and a component to `betabinomial_glm.stan`, which four other heads share
+  — the same transplant discipline `n_rho` needed, and a session's work rather than a
+  parameter.
+- **Whether the pinned `l2` is doing the work** (§7d). The cheapest way to find out is to
+  sweep `l2` for `betabinom` alone and see how much of `beta_rect`'s CRPS margin survives a
+  reference that is regularized as favourably as the alternatives are.
+- **The exchangeable-trials assumption**, which none of these arms touches. Absences come in
+  *spells* — beta-geometric, beating the geometric by 11,278 log-likelihood points at one
+  extra parameter — and one 40-game spell and forty single-game absences give identical `gp`
+  and very different distributions. A beta-binomial absorbs the variance inflation from that
+  clustering but not its shape, and neither does any arm above.
+
+---
+
+## 8. If `mixture` is to ship: what has to be decided, and what is already owed
+
+Scoped 2026-08-11. Nothing here is a measurement; it is the list of judgement calls and
+debts a Stan port would run into, written down so the port is not the place they get
+discovered.
+
+### The decisions
+
+**1. Is this head selected on CRPS, or on calibration?** The load-bearing one. Every
+availability decision to date has been taken on **mean CRPS with a paired bootstrap**.
+`mixture` *ties* CRPS (+0.011, interval spanning zero) and wins every regional metric.
+Shipping it means deciding the objective for this head is tail calibration. `README.md` §4
+already argues that position — *"A model that improves marginal CRPS by 1% and gets the
+correlation structure wrong is worth less here than one that does the reverse"* — but it has
+never been the stated rule for **this** head, and the call should be made before more numbers
+arrive rather than reverse-engineered from them.
+
+**2. Does a shape win need a contest-level demonstration first?** Nobody has shown that
+moving `P(missed ≤ 5)` from 16.9% toward the observed 12.1% changes a draft. Only
+`make strategy-sweep` can, and it is expensive. Gate on it, or accept the calibration
+evidence plus the mechanical argument in §1.
+
+**3. Where the mixture lives in Stan.** `betabinomial_glm.stan` serves **six** heads
+(availability, minutes, four conversions, overtime onset). Either add an optional block with
+`π = 0` reproducing the current target bit for bit — the `n_rho` precedent, asserted on
+Stan's own `log_prob` — or fork a dedicated source for availability. The first has a working
+precedent from 2026-08-11 and is the rollback path; the second avoids touching five heads
+that did not ask for a change.
+
+**4. What `π`'s covariate block actually is.** The eight columns in `PI_COLS` are one reading
+of "age, prior absence, playoff workload". That is a shipped choice which lands in the
+persisted `DesignRecipe`, not a default.
+
+**5. Whether the `l2` confound is settled first** (§7d). The mixture carries eleven
+unpenalized parameters. Its boundary and shoulder wins are large and replicated so they
+probably survive, but the honest order is to sweep `l2` for the reference arm before porting.
+Point MLE, minutes to run.
+
+### Two debts that predate this axis
+
+**1. The simulator re-implements this head rather than drawing through it, and it is already
+out of sync.** `src/sim/season.py:645-648` inlines the beta-binomial draw with a **scalar**
+dispersion:
+
+```python
+a, b = beta_shapes(ctx["avail_mu"][draw],
+                   np.full(ctx["n_players"], ctx["avail_rho"][draw]))
+```
+
+`FIT_WINDOW = "train"` (`season.py:176`), and the persisted `train` posterior has carried
+`rho_draws` of shape **(1000, 4)** with `n_rho: 4` since the role-graded head shipped. Loading
+the real artifact and evaluating that expression at a realistic player count raises
+`ValueError: could not broadcast input array from shape (4,) into shape (500,)`. Nothing
+between the load (`season.py:851`) and the use reshapes it. The `train_val` artifact is still
+`(1000,)` with `role_rho: None` — it predates the window round entirely — so one window
+raises and the other is silently stale.
+
+> Verified by inspection and by evaluating the expression against the loaded artifact.
+> `make simulate-season` has **not** been run end to end to confirm the failure surfaces
+> there, and it should be, because that is the difference between a broken target and a
+> broken line.
+
+This is a debt from the window round, not from the mixture — but the mixture makes the same
+line worse, since `π`, `μ_low`, `ρ_low` and `π`'s design matrix would all have to be inlined
+too. **The fix is for the simulator to draw through the head's own `predict_samples`**, which
+is the rule `docs/model-cards-plan.md` already makes load-bearing: *no second implementation
+of any head's predictive*. Doing that first makes a mixture port nearly free downstream.
+
+**2. Two gates are owed from the window round.** §5.1 records that `season-total`'s Gate E
+and `stan-games-played` — both of which hold this head as a floor — have not been re-run. If
+the mixture goes in, re-run them once afterwards rather than twice.
+
+### The order the evidence supports
+
+Fix the simulator's draw path → sweep `l2` → port with `π = 0` nesting asserted → re-run the
+two owed gates → then decide whether the strategy sweep is required. The first two are cheap
+and de-risk everything after them.

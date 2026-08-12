@@ -3278,6 +3278,296 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("head", "calibration"),
     ),
     Decision(
+        id="the-availability-low-tail-is-a-missing-component-not-a-frailty-shape",
+        topic="availability",
+        claim="**The boundary miss is a missing component, not a wrong frailty shape.** "
+              "Giving the disrupted season its own mixture component halves the boundary "
+              "error; removing the Beta's divergence entirely does not.",
+        because="The fourth axis of `make availability-window` varies the LIKELIHOOD with "
+                "window, season term and dispersion held at the shipped arm. Two arms "
+                "settle it between them. **`logitnormal` was fitted because it should fail "
+                "the OTHER way** — a logit-normal frailty's density vanishes at both ends "
+                "rather than diverging — and it did: it is the only arm whose "
+                "full-schedule error changes **sign** (−0.0072, where every Beta arm "
+                "over-predicts), it posts the worst low-tail error of any fitted arm "
+                "(−0.0319 against −0.0253), its `boundary_tail_error` barely moves "
+                "(**0.0195** against 0.0201) because the two cancel, and it is a worse fit "
+                "of the same data at the **same** parameter count (training log-likelihood "
+                "−16,331.5 against −16,243.0). **`mixture` — `π·BetaBinom(μ_low, ρ_low) + "
+                "(1−π)·BetaBinom`, covariates on π — halves the selector to 0.0109**, a "
+                "paired **−0.0089 [−0.0099, −0.0042]** "
+                "against 0.0201, moving P(GP<10) error −0.0253 → **−0.0132** and P(full) "
+                "+0.0150 → **+0.0085**, on the best training log-likelihood of any arm and "
+                "a **tie** on CRPS (+0.011, interval spanning zero). What it fits is "
+                "legible: θ = 0.112, mean π **4.9%**, a low component at μ_low = **0.0999** "
+                "— about **8 games of 82**, not at its bound — and ρ_low = 0.044, with π "
+                "running from **1.2%** to **10.8%** across the 10th and 90th percentiles of "
+                "players, so its covariates say WHO rather than only that someone is. "
+                "An Achilles rupture in "
+                "October is a different event, not an extreme draw of a per-game rate. "
+                "**The divergence share moved without being the mechanism**: 52.1% of "
+                "predictive mass under a divergent frailty (reproducing §5.3's 52.7% "
+                "scratch reading on the Stan posterior) falls to 32–38% on every arm that "
+                "improved anything, and `ρ` falls at every role bucket without collapsing — "
+                "so the added component absorbs dispersion, but the shoulders still want a "
+                "continuous frailty as well as a discrete one. **Confirmed on the rolling "
+                "harness — and it is the ONLY finding on this axis that replicates.** Over "
+                "13 origins and 5,142 fitting-half rows, `mixture` cuts the boundary error "
+                "0.0209 → **0.0126** (−40%, against validation's −46%) at CRPS parity "
+                "(−0.0009, interval spanning zero), and the two paired intervals overlap "
+                "squarely — **−0.0083 [−0.0085, −0.0080]** here against −0.0089 [−0.0099, "
+                "−0.0042] there, from disjoint rows. `logitnormal` fails the same way in "
+                "both: here its boundary gain is the largest of any arm and **significant** "
+                "(−0.0095 [−0.0157, −0.0034]) and it is still the worst model on the table — "
+                "worst CRPS by a factor of thirty (+0.1494 [+0.0970, +0.2047]), worst PIT, "
+                "worst body (0.0156, 3.7× the reference's), 1 of 13 origins, and again the "
+                "only negative full-schedule error. **Had the selector been the only column, "
+                "that arm would have won the axis** — which is why `body_error` is reported "
+                "beside it and never averaged in. One qualification the "
+                "validation reading did not show: on the harness the reference has the "
+                "**best** body error (0.0042) and `mixture` pays 0.0090 for its boundary. "
+                "**Nothing ships from here**: this is a point-MLE ladder and an arm that "
+                "wins earns a Stan port.",
+        status="measured",
+        reproduce="make availability-window → "
+                  "outputs/predictions/availability_likelihood.csv, "
+                  "outputs/predictions/availability_likelihood_rolling.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-11",
+        date="2026-08-11",
+        tags=("head", "calibration"),
+    ),
+    Decision(
+        id="a-one-parameter-tail-hedge-wins-crps-and-loses-the-boundary",
+        topic="availability",
+        claim="**Tail mass is what CRPS wants; *which* tail is what the boundary wants.** A "
+              "one-parameter beta-rectangular control beats the reference on CRPS and "
+              "loses the boundary to an eleven-parameter mixture.",
+        because="`beta_rect` — `θ·U(0,1) + (1−θ)·Beta`, one bounded parameter, in the "
+                "ladder as a control — beats the jointly-fitted reference by **−0.056 "
+                "CRPS** [−0.096, −0.015] while improving PIT (0.0599 against 0.0667), the "
+                "boundary (**0.0165** against 0.0201) and the body (0.0032 against 0.0107). "
+                "It costs **one** unpenalized parameter against `mixture`'s eleven, and it "
+                "beats `mixture` on CRPS while losing to it on the selector. A symmetric "
+                "hedge buys the CRPS and only half the boundary. Two supporting readings. "
+                "**Three durability classes, and the third is the ceiling**: `finite_mix` "
+                "at K=2 is the incumbent to within noise (−0.001, interval spanning zero), "
+                "K=3 finds offsets 0.000 / 1.690 / **5.097** at weights 0.082 / 0.910 / "
+                "0.008, and K=4 scores best on CRPS (−0.074) with a fitted structure that "
+                "is K=3 **relabelled** — two classes collapsed onto each other at 2.185 and "
+                "2.187, one carrying zero weight — so its extra CRPS is not extra "
+                "structure. And **multi-start is not optional**: started at its own nesting "
+                "point a three-class mixture sat on the bound, reported success and "
+                "reproduced the incumbent to four decimals, because at `g = 0` every class "
+                "carries identical responsibility and the surface is flat in the direction "
+                "that separates them. Separated starts are worth **21.9** and **29.3** "
+                "log-likelihood points at K=3 and K=4, against 0.007 for `mixture`. **The "
+                "**And on the shoulders it REGRESSES**: flat mass everywhere pushes the "
+                "71-81 error from +0.0186 to **+0.0273**, the worst of the Beta arms, so its "
+                "`shoulder_error` is 0.0290 against the reference's 0.0253. Its CRPS win is "
+                "real and its calibration win is confined to the two regions the metric set "
+                "happened to measure. **The pinned `l2` is a stated confound**: the penalty "
+                "reaches `β[1:]` only, so every margin here is an upper bound on the "
+                "likelihood's own contribution and the arms are not equally advantaged. "
+                "**And the CRPS wins do NOT replicate.** On 13 rolling origins and 5,142 "
+                "fitting-half rows every margin shrinks by roughly an order of magnitude "
+                "and every interval spans zero — `beta_rect` −0.0055 [−0.0212, +0.0102] at "
+                "9/13 origins, and `finite_mix`'s sign **flips** to +0.0011. Read the "
+                "validation CRPS column as one draw rather than as a result; the boundary "
+                "column is the half that replicates.",
+        status="measured",
+        reproduce="make availability-window → "
+                  "outputs/predictions/availability_likelihood.csv, "
+                  "outputs/predictions/availability_likelihood_rolling.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-11",
+        date="2026-08-11",
+        tags=("head", "calibration"),
+    ),
+    Decision(
+        id="joint-estimation-of-the-role-graded-rho-is-free",
+        topic="availability",
+        claim="The **0.011 CRPS** §5.1 credited to the Bayesian fit is an **estimator** "
+              "effect, not a Bayesian one — the point MLE reproduces it.",
+        because="`RoleGradedBetaBinomial` fits `β` under a shared `ρ` and then profiles `ρ` "
+                "per bucket holding the mean fixed; the likelihood axis needed a reference "
+                "fitted the same way as its alternatives, so the same model was refitted "
+                "**jointly**. It reads CRPS **9.8125** against the two-stage **9.8247** — "
+                "−0.012 for free — landing beside the Stan port's 9.8136 plug-in and "
+                "9.8155 posterior. Its jointly fitted dispersions, **0.3167 / 0.2690 / "
+                "0.2523 / 0.2056** across the four prior-MPG buckets, sit beside the Stan "
+                "posterior's 0.3176 / … / 0.2064. So \"the joint fit trades a little "
+                "calibration for a little sharpness\" is right about the trade and wrong "
+                "about the cause: it is joint estimation, and NUTS is not what buys it.",
+        status="measured",
+        reproduce="make availability-window → "
+                  "outputs/predictions/availability_likelihood.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-11",
+        date="2026-08-11",
+        tags=("head",),
+    ),
+    Decision(
+        id="availability-head-selected-on-calibration-with-a-crps-guard",
+        topic="availability",
+        claim="**The availability head is selected on tail calibration with a CRPS guard**, "
+              "not on mean CRPS. Decided 2026-08-11, before the arm it admits was ported.",
+        because="An arm ships if it improves the tail calibration metrics **and** its CRPS is "
+                "*non-inferior* — the paired-bootstrap interval must exclude a material loss. "
+                "This is a **change of rule**: every prior decision on this head was taken on "
+                "mean CRPS with a paired bootstrap, and under that rule nothing ships from "
+                "the likelihood axis, because `mixture` ties and `beta_rect`'s win does not "
+                "replicate. The reason to move is in `README.md` §4 — *“a model that "
+                "improves marginal CRPS by 1% and gets the correlation structure wrong is "
+                "worth less here than one that does the reverse”* — and in the contest: a "
+                "dead roster slot and an iron man are the two events a Round-1 knockout turns "
+                "on, and both errors make a drafted roster look **more reliable than it is**, "
+                "which biases every strategy axis that trades ceiling against reliability. "
+                "The guard is what stops a future arm buying tails with real accuracy. "
+                "`mixture` passes it: CRPS **+0.011** [−0.028, +0.051] against "
+                "`boundary_tail_error` **−0.0089** [−0.0099, −0.0042] and `shoulder_error` "
+                "**−0.0021** [−0.0086, −0.0010] on validation, and **−0.0128** [−0.0138, "
+                "−0.0064] on the rolling harness. **Three further calls settled the same "
+                "day**: the Stan port is *not* gated on a `make strategy-sweep` readout — "
+                "port first, measure the contest value after; the mixture goes into the "
+                "shared `betabinomial_glm.stan` with `π = 0` reproducing the current target "
+                "bit for bit, asserted on Stan's own `log_prob`, rather than into a fork; and "
+                "the simulator fix plus the `l2` sweep come **before** the port so it carries "
+                "no unresolved question. `docs/availability-mixture-ship-plan.md` is the work "
+                "plan.",
+        status="settled",
+        reproduce="make availability-window → "
+                  "outputs/predictions/availability_likelihood.csv, "
+                  "outputs/predictions/availability_likelihood_rolling.csv",
+        source="docs/availability-mixture-ship-plan.md",
+        reviewed="2026-08-11",
+        date="2026-08-11",
+        tags=("head", "calibration"),
+    ),
+    Decision(
+        id="simulator-reimplements-the-availability-draw",
+        topic="simulations",
+        claim="**The simulator re-implements the availability head instead of drawing "
+              "through it, and it is out of sync with the head that ships.**",
+        because="`src/sim/season.py:645-648` inlines the beta-binomial draw with a "
+                "**scalar** dispersion — `np.full(n_players, avail_rho[draw])` — while "
+                "`FIT_WINDOW = \"train\"` and the persisted `train` posterior has carried "
+                "`rho_draws` of shape **(1000, 4)** with `n_rho: 4` since the role-graded "
+                "head shipped on 2026-08-11. Loading the real artifact and evaluating that "
+                "expression raises `ValueError: could not broadcast input array from shape "
+                "(4,) into shape (500,)`, and nothing between the load at `season.py:851` "
+                "and the use reshapes it. The `train_val` artifact is still `(1000,)` with "
+                "`role_rho: None` — it predates the window round — so one window raises and "
+                "the other is **silently stale**. Verified by inspection and by evaluating "
+                "the expression against the loaded artifact; `make simulate-season` has not "
+                "been run end to end to confirm where the failure surfaces. **The fix is to "
+                "draw through the head's own `predict_samples`**, which is the rule "
+                "`docs/model-cards-plan.md` already makes load-bearing — no second "
+                "implementation of any head's predictive. **Corrected 2026-08-11**: that "
+                "is the wrong fix here. `predict_samples` returns **games played** for design "
+                "rows, and the simulator needs the **rate** — it applies one rate to each of a "
+                "player's *cells*, of which a mid-season trade gives more than one, and hands "
+                "the count to `allocate_spells`. The fix is to gather each player's `rho_bin` "
+                "from the availability artifact's own recipe, mirroring `season.py:819` for "
+                "the composition head. Three traps: `rho_bin` is **1-based** (verified against "
+                "`role_bins`), `rho_draws` is `(draws,)` on a shared artifact and `(draws, K)` "
+                "on a graded one so both must work, and no-design players need the lowest "
+                "bucket. Scheduled as session 1 of "
+                "`docs/availability-mixture-ship-plan.md`.",
+        status="open",
+        unblocks="Gather each player's `rho_bin` from the availability artifact's recipe in "
+                 "`src/sim/season.py` instead of assuming a scalar dispersion, then run "
+                 "`make simulate-season` end to end — the failure has only been reproduced "
+                 "at the expression level, never through the target.",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-11",
+        date="2026-08-11",
+        tags=("head", "simulator"),
+    ),
+    Decision(
+        id="the-availability-metric-set-was-asymmetric",
+        topic="availability",
+        claim="**The upper shoulder is a larger miss than the upper boundary — and nothing "
+              "measured it.** The tail metric set had a ten-game-wide region on one side "
+              "and a single point mass on the other.",
+        because="`boundary_tail_error` pairs `P(GP < 10)`, a ten-game shoulder, with "
+                "`P(GP = team_games)`, one point — so **60 to 81 games was measured by "
+                "nothing**, while the defect is stated as \"too little in the shoulders at "
+                "2-15 and **70-80** games\". Three additions close it: upper thresholds "
+                "counted in **games missed** (schedule-invariant, unlike `gp > 70`), "
+                "**exclusive bands** so opposite-sign errors inside one tail cannot cancel, "
+                "and a **localized shape distance** — the largest gap anywhere on the "
+                "calibration curve within 15 games of each end. On the shipped head: the "
+                "71-81 band errs **+0.0187** against +0.0158 at exactly 82, and `missed ≤ 5` "
+                "(77+ games) errs **+0.0480**, three times the boundary miss; `high_shape_ks` "
+                "**0.0480** against `low_shape_ks` 0.0252, so the worst-calibrated region of "
+                "the whole distribution is 77-82 games. The low tail's halves do err in "
+                "opposite directions — **+0.69 pp** at exactly zero, an event with **zero** "
+                "occurrences in 883 validation rows, against **−3.16 pp** at 1-9 — and "
+                "`below_10` was netting them to −0.0247. **Three consequences.** The window "
+                "looks *better*: `high_shape_ks` 0.0744 → **0.0402**, its largest single "
+                "effect, on the region nobody was watching. A single threshold can be "
+                "perfect while the shape is worse — the season-trend null gets `missed ≤ 5` "
+                "to **−0.00006** with a `high_shape_ks` of 0.0547, *worse* than the "
+                "non-trend arm's 0.0402, because a location shift must overshoot somewhere. "
+                "And it reorders the likelihood axis against the CRPS winner: `mixture` is "
+                "the only fitted arm that improves the shoulders on validation (−0.0021 "
+                "[−0.0086, −0.0010]) while `beta_rect` regresses — and on the rolling "
+                "harness `mixture`'s shoulder win is **−0.0128 [−0.0138, −0.0064]**, a 60% "
+                "cut, the most robust single effect on the axis. **`beta_rect`'s shoulder "
+                "effect does not replicate in sign**: the reference *under*-predicts the "
+                "71-81 band on the fitting half (−0.0222) and *over*-predicts it on "
+                "validation (+0.0186), so flat mass helps where the reference is short and "
+                "hurts where it is long, while `mixture` reduces the magnitude on both. "
+                "That is the difference between a hedge and a component.",
+        status="measured",
+        reproduce="make availability-window → "
+                  "outputs/predictions/availability_window.csv, "
+                  "outputs/predictions/availability_likelihood.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-11",
+        date="2026-08-11",
+        tags=("head", "calibration"),
+    ),
+    Decision(
+        id="tenure-decomposition-loses-on-the-boundary-too",
+        topic="availability",
+        claim="**The tenure decomposition is not the structural answer to the boundary "
+              "miss.** A head that loses on the mean also loses on the boundary — it "
+              "makes the *same two errors, on the same sides*, and the low one is worse.",
+        because="`stan_games_played` is the structural alternative to a frailty — entry "
+                "index × exit index × a within-tenure two-state chain with beta-geometric "
+                "spells, built because \"a departure is an absorbing hitting time, not a "
+                "low recovery rate\" — and it had never been compared on this statistic, "
+                "because Gate D was CRPS-shaped. Its composite pmf is already on disk, so "
+                "the comparison cost a file read. On the **same 883 validation rows**, "
+                "`duration_covariates` reads `boundary_tail_error` **0.0333** against the "
+                "shipped head's **0.0202** and the pre-window incumbent's 0.0314 — the "
+                "worst of every arm in the ladder, **+0.0132 [+0.0117, +0.0146]** against "
+                "the reference on a paired bootstrap, clear of zero in the wrong "
+                "direction — and CRPS **10.1625**, +0.350 [+0.227, +0.473]. It under-predicts a "
+                "dead pick by **−0.0328** where the shipped head misses by −0.0247, and "
+                "over-predicts an iron man by **+0.0339** against +0.0159. Its PIT KS "
+                "(0.0672) is as good as the shipped head's, so it is a well-calibrated "
+                "distribution that is still wrong at both ends, and its **body** is the "
+                "one thing it wins (−0.0019 at 41 games). Two corrections to the "
+                "motivation that opened this: the **7.2265** quoted for it is the "
+                "`within_tenure` arm, flagged `oracle_tenure` and `selectable=False` — it "
+                "holds tenure at its **observed** value on 751 rows, so it is not a "
+                "forecast and was never a candidate; and \"a head that loses on the mean "
+                "wins on the boundary\" was the hypothesis, not the measurement. **The "
+                "defect surviving a change of generative structure is the useful half**: "
+                "it is evidence the missing ingredient is a component rather than a "
+                "frailty shape.",
+        status="null",
+        reproduce="make availability-window → "
+                  "outputs/predictions/availability_likelihood.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-11",
+        date="2026-08-11",
+        tags=("head", "calibration", "null"),
+    ),
+    Decision(
         id="spell-simulator-not-built",
         topic="simulations",
         claim="~~The residual copula over a shared `min` draw is not built.~~ **Both halves "
