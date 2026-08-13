@@ -46,9 +46,9 @@ docstring is the general one: *anything that scores the shipped head goes throug
 ## Verified green at the end of the pass
 
 ```
-make docs-audit        # 0 disagreements, 0 stale claims, 3,309 figures checked
+make docs-audit        # 0 disagreements, 0 stale claims, 3,341 figures checked
 make dashboard-audit   # 0 orphaned artifacts, 0 pending constants
-pytest tests/          # 1,781 passed
+pytest tests/          # 1,792 passed
 ```
 
 `make dashboard-audit` reports 241 `reviewed`-date drifts. That is a report rather than a gate
