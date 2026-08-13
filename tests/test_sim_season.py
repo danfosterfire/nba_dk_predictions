@@ -460,3 +460,44 @@ def test_scoring_slots_partition_the_tournament_into_twenty_periods(tmp_path):
 def test_artifact_name_round_trips_the_head_naming():
     assert S.artifact_name("fg3a|fga") == "fg3a_given_fga"
     assert S.artifact_name("reb") == "reb"
+
+
+def test_no_design_level_arm_defaults_to_the_shipped_key_and_refuses_an_unknown_one():
+    """A typo in `sim.availability.no_design_level` must not fall back to the incumbent.
+
+    Silently reading a misspelled arm as `pooled` would run a whole sweep against the
+    behaviour the arm was configured to replace, and every artifact it wrote would carry a
+    provenance field saying otherwise.
+    """
+    assert S.no_design_level_arm({}) == S.SHIPPED_LEVEL_ARM
+    assert S.no_design_level_arm(
+        {"sim": {"availability": {"no_design_level": "pooled"}}}) == "pooled"
+    with pytest.raises(ValueError, match="no_design_level"):
+        S.no_design_level_arm({"sim": {"availability": {"no_design_level": "draftt"}}})
+
+
+def test_no_design_team_minutes_reads_a_share_of_a_fixed_pot(tmp_path):
+    """The team-level check the zero-sum argument asks for, on arithmetic rather than draws.
+
+    Two teams, one no-design player each, and simulated minutes that are right on the league
+    total while being wrong on both teams in opposite directions — the exact failure a
+    league-wide share cannot see and the reason this row is per team.
+    """
+    grid = pd.DataFrame({"player_id": [1, 2, 3, 4], "team_id": [10, 10, 20, 20],
+                         "game_id": [900, 900, 900, 900]})
+    targets = pd.DataFrame({
+        "player_id": [1, 2, 3, 4], "season": "2022-23", "season_type": "regular",
+        "game_id": 900, "played": 1, "min": [20.0, 80.0, 20.0, 80.0]})
+    targets.to_parquet(tmp_path / "component_targets.parquet")
+    cfg = {"data": {"features_dir": str(tmp_path)}}
+    ctx = {"season": "2022-23", "grid": grid, "player_ids": np.array([1, 2, 3, 4]),
+           # Players 1 and 3 are the no-design ones; the Series index is the membership.
+           "no_design_availability": pd.Series([0.4, 0.4], index=[1, 3])}
+    sim = {"player_minutes": np.array([40.0, 60.0, 0.0, 100.0])}
+
+    out = S.no_design_team_minutes(cfg, ctx, sim)
+    assert out["n"] == 2
+    # League-wide the simulator is exactly right — 40 of 200 against a realized 40 of 200.
+    assert np.isclose(out["value"], 0.2) and np.isclose(out["bar_value"], 0.2)
+    # Per team it is wrong by 0.2 in each direction, which nets to zero and does not cancel.
+    assert np.isclose(out["mae"], 0.2) and np.isclose(out["bias"], 0.0)

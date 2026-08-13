@@ -244,6 +244,14 @@ make availability-no-prior
                        #   top-5 pick a narrower rho than he realizes. `role_bins`'
                        #   lowest-bucket fallback stands and is now measured rather than
                        #   assumed.
+                       # §8b is the LADDER on the axis that survived →
+                       #   availability_no_design_level.csv. Four pooling KEYS over one
+                       #   estimator, so `pooled` reproduces the shipped scalar exactly.
+                       #   `tenure_draft` ships: CRPS 9.8689 against the incumbent's
+                       #   14.4551 on validation, and it beats the runner-up too, because
+                       #   a draft bucket is a 3.17x gradient for a FIRST appearance and a
+                       #   near-flat for a RETURN. Consumed by
+                       #   sim.availability.no_design_level.
 
 make weekly-scores     # Gate A at the unit a LINEUP is set at: observed against
                        #   simulated dk_pts per player per scoring period, on train and

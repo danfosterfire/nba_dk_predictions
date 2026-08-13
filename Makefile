@@ -230,10 +230,17 @@ availability-absence:
 
 # What the players the head has NO ROW FOR actually realize — rookies and returning
 # veterans, who reach the simulator through `sim/season.no_design_availability` rather than
-# through the design. Built to settle `docs/availability-window-plan.md` §8 decision 2,
-# which specified grading their ROLE BUCKET in three classes. The bucket carries
-# dispersion, not level, so the decision is only worth implementing if the classes differ
-# in dispersion — and they do not. numpy only, seconds.
+# through the design. Two rounds, in the order they ran.
+#
+# §8a settled `docs/availability-window-plan.md` §8 decision 2, which specified grading
+# their ROLE BUCKET in three classes. The bucket carries dispersion, not level, so the
+# decision is only worth implementing if the classes differ in dispersion — and they do not.
+#
+# §8b is the ladder on the axis that survived. The arms are pooling KEYS over ONE estimator
+# — the realized `gp / team_games` of rows carrying that key over seasons strictly before
+# the target — so `pooled` reproduces the shipped scalar exactly and the comparison is a
+# mean function against a mean function. Scored through the beta-binomial the simulator
+# itself applies, at the fringe bucket's rho. `tenure_draft` ships. numpy only, seconds.
 availability-no-prior:
 	$(PYTHON) -m src.models.availability_no_prior
 

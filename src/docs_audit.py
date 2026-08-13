@@ -197,6 +197,11 @@ AEXCH = "outputs/predictions/availability_exchangeability.csv"
 # interaction as its own row, the compound's `lambda` profile, and the block's own
 # composition. The interaction file is separate rather than folded into the arm table
 # because an effect is a difference between two rows and cannot be a column on either.
+# §8b's level ladder — `make availability-no-prior`. Two analyses in one file: `level_arm`
+# (an arm x split summary) and `level_pairwise` (every ordered pair of arms). The pairwise
+# rows are a separate analysis rather than more columns because the runner-up comparison is
+# the one that settled the design, and a delta between two arms cannot be a column on either.
+ANOP_L = "outputs/predictions/availability_no_design_level.csv"
 AABS = "outputs/predictions/availability_absence.csv"
 AABS_I = "outputs/predictions/availability_absence_interaction.csv"
 AABS_L = "outputs/predictions/availability_absence_lambda.csv"
@@ -5303,14 +5308,14 @@ def _weekly() -> list[Claim]:
     argues for its own figures. The metric table, the spreads and the per-period profile
     are checked by nothing else, and they are what a reader takes away.
     """
-    facets = (("week", "train", "13,022", "52.74", "49.87", "29.94", "−2.87", "0.3979",
-               "20.35"),
-              ("week", "validation", "13,141", "53.40", "51.26", "28.77", "−2.14",
-               "0.4631", "19.46"),
-              ("double_week", "train", "2,298", "93.24", "88.13", "50.86", "−5.11",
-               "0.4534", "34.47"),
-              ("double_week", "validation", "2,319", "98.51", "95.87", "53.16", "−2.64",
-               "0.4212", "36.11"))
+    facets = (("week", "train", "13,022", "52.74", "50.02", "29.93", "−2.72", "0.3985",
+               "20.34"),
+              ("week", "validation", "13,141", "53.40", "51.05", "28.72", "−2.35",
+               "0.4658", "19.40"),
+              ("double_week", "train", "2,298", "93.24", "88.43", "50.85", "−4.81",
+               "0.4542", "34.41"),
+              ("double_week", "validation", "2,319", "98.51", "95.52", "53.10", "−2.99",
+               "0.4225", "36.03"))
     columns = ("n", "observed_mean", "predicted_mean", "mae", "bias", "r2", "crps")
     C: list[Claim] = []
     for period_type, split, *quoted in facets:
@@ -5323,11 +5328,11 @@ def _weekly() -> list[Claim]:
         _c("30,780", WEEK_INDEX, lambda: total(WEEK_INDEX, "n"),
            "player-periods scored", doc=SIMS),
         # The spread, which is what a max over sixteen players is most sensitive to.
-        _c("0.923", WEEK_INDEX, lambda: _week_spread_ratio(largest=False),
+        _c("0.927", WEEK_INDEX, lambda: _week_spread_ratio(largest=False),
            "narrowest simulated/observed sd ratio", doc=SIMS),
-        _c("0.971", WEEK_INDEX, lambda: _week_spread_ratio(largest=True),
+        _c("0.969", WEEK_INDEX, lambda: _week_spread_ratio(largest=True),
            "widest simulated/observed sd ratio", doc=SIMS),
-        _c("29.18", WEEK_INDEX, lambda: _week("point_sd"),
+        _c("29.40", WEEK_INDEX, lambda: _week("point_sd"),
            "one-week train point-prediction sd", doc=SIMS),
         _c("49.05", WEEK_INDEX, lambda: _week("observed_sd"),
            "one-week train observed sd", doc=SIMS),
@@ -5341,26 +5346,34 @@ def _weekly() -> list[Claim]:
            "one-week validation observed zero share", doc=SIMS),
         _c("17.95%", WEEK_INDEX, lambda: _week("predicted_zero_share"),
            "one-week train simulated zero share", doc=SIMS),
-        _c("19.00%", WEEK_INDEX,
+        _c("19.07%", WEEK_INDEX,
            lambda: _week("predicted_zero_share", split="validation"),
            "one-week validation simulated zero share", doc=SIMS),
         # Calibration, read as a distance and never as a verdict.
-        _c("0.0171", WEEK_INDEX, lambda: _week_extreme("ks", largest=False),
+        _c("0.0208", WEEK_INDEX, lambda: _week_extreme("ks", largest=False),
            "narrowest KS distance", doc=SIMS),
-        _c("0.0600", WEEK_INDEX, lambda: _week_extreme("ks", largest=True),
+        _c("0.0582", WEEK_INDEX, lambda: _week_extreme("ks", largest=True),
            "widest KS distance", doc=SIMS),
-        _c("0.1066", WEEK_QUANTILE, lambda: _week_line_gap(largest=False),
+        _c("0.1150", WEEK_QUANTILE, lambda: _week_line_gap(largest=False),
            "narrowest quantile-line gap", doc=SIMS),
-        _c("0.1417", WEEK_QUANTILE, lambda: _week_line_gap(largest=True),
+        _c("0.1607", WEEK_QUANTILE, lambda: _week_line_gap(largest=True),
            "widest quantile-line gap", doc=SIMS),
         # The only bars in the target, and both are on the budget rather than the model.
-        _c("0.0074", WEEK_INDEX, lambda: _week_extreme("ecdf_band_mc"),
+        _c("0.0079", WEEK_INDEX, lambda: _week_extreme("ecdf_band_mc"),
            "worst ribbon half-sample disagreement", doc=SIMS),
-        _c("0.0056", WEEK_INDEX, lambda: _week_extreme("ks_mc"),
+        _c("0.0022", WEEK_INDEX, lambda: _week_extreme("ks_mc"),
            "worst KS half-sample disagreement", doc=SIMS),
         *[_c(quoted, WEEK_INDEX, lambda: float("nan"),
-             f"pre-layout half-sample bar reading, {quoted}", doc=SIMS, historical=True)
-          for quoted in ("0.0061", "0.0027")],
+             f"pre-grading half-sample bar reading, {quoted}", doc=SIMS, historical=True)
+          for quoted in ("0.0074", "0.0056")],
+        # The pre-grading facet column, quoted in the note beside the live table for the
+        # same reason the layout round quoted its own: the claim is the movement.
+        *[_c(quoted, WEEK_INDEX, lambda: float("nan"),
+             f"pre-grading weekly reading, {quoted}", doc=SIMS, historical=True)
+          for quoted in ("−2.87", "−2.14", "−5.11", "−2.64", "20.35", "19.46", "34.47",
+                         "36.11", "49.87", "51.26", "88.13", "95.87", "0.923", "0.971",
+                         "0.0171", "0.0600", "0.1066", "0.1417", "19.00%",
+                         "−1.88", "−3.03", "−2.28", "−1.60", "−1.19")],
         # The pre-`tenure_merge` readings, quoted in the prose beside the live ones because
         # the layout round's whole downstream claim is the movement rather than the level.
         # Presence-checked: an artifact holds one value per row, not its history.
@@ -5369,15 +5382,15 @@ def _weekly() -> list[Claim]:
           for quoted in ("−2.93", "−2.26", "−3.61", "−1.21", "20.39", "19.63",
                          "16.9%", "18.2%", "0.920", "0.954", "0.0265", "0.0639")],
         # Where the season-total bias actually sits, week by week.
-        _c("−1.88", WEEK_PERIOD, lambda: _week_period_bias(0),
+        _c("−2.31", WEEK_PERIOD, lambda: _week_period_bias(0),
            "validation bias in week 1", doc=SIMS),
-        _c("−3.03", WEEK_PERIOD, lambda: _week_period_bias(1),
+        _c("−3.38", WEEK_PERIOD, lambda: _week_period_bias(1),
            "validation bias in week 2", doc=SIMS),
-        _c("−2.28", WEEK_PERIOD, lambda: _week_period_bias(2),
+        _c("−2.55", WEEK_PERIOD, lambda: _week_period_bias(2),
            "validation bias in week 3", doc=SIMS),
-        _c("−1.60", WEEK_PERIOD, lambda: _week_period_bias(12),
+        _c("−1.78", WEEK_PERIOD, lambda: _week_period_bias(12),
            "validation bias in week 13", doc=SIMS),
-        _c("−1.19", WEEK_PERIOD, lambda: _week_period_bias(16),
+        _c("−1.31", WEEK_PERIOD, lambda: _week_period_bias(16),
            "validation bias in week 17", doc=SIMS),
         # The pre-`tenure_merge` profile, quoted beside the live one because the finding is
         # that the SHAPE went away — a flat −2 where there used to be a monotone ramp.
@@ -5385,7 +5398,7 @@ def _weekly() -> list[Claim]:
              f"pre-layout weekly bias profile, {quoted}", doc=SIMS, historical=True)
           for quoted in ("−5.28", "−4.99", "−3.27", "−1.08", "−0.70")],
         # Gate A's own season-total bias, so the weekly row is read against it.
-        _c("−22.9", SIM_GATE_A, lambda: _season_total_bias(largest=True),
+        _c("−26.5", SIM_GATE_A, lambda: _season_total_bias(largest=True),
            "smallest season-total bias", doc=SIMS),
         # The same row's earlier readings, kept in the prose because the bullet's argument is
         # that a −69 dk_pts fault dwarfs everything measured on the head since. They are
@@ -5395,7 +5408,7 @@ def _weekly() -> list[Claim]:
         _c("−21.2", SIM_GATE_A, lambda: float("nan"),
            "season-total bias at the role-graded dispersion fix", doc=SIMS,
            historical=True),
-        _c("−72.8", SIM_GATE_A, lambda: _season_total_bias(largest=False),
+        _c("−73.4", SIM_GATE_A, lambda: _season_total_bias(largest=False),
            "largest season-total bias", doc=SIMS),
     ]
     return C
@@ -6483,6 +6496,144 @@ def _availability_absence() -> list[Claim]:
     return C
 
 
+def _availability_no_design_level() -> list[Claim]:
+    """`docs/availability-window-plan.md` §8b — the no-design availability LEVEL.
+
+    Three groups, and the reason each is here rather than left to prose.
+
+    **The ladder** — every arm on both splits, not only the winner. The incumbent's
+    validation R² of −0.0865 is the sharpest statement in the section (one rate is worse
+    than that population's own mean) and it belongs to a *losing* arm, so an audit that
+    guarded only `tenure_draft` would let it rot. `pooled`'s CRPS is claimed for the same
+    reason the comparator row is claimed in the composition round: it is the control.
+
+    **Both margin families, with their bounds.** Against the incumbent *and* against the
+    runner-up, because the arms are nested keys and "the extra key earns its place" is a
+    separate finding from "grading beats not grading" — §8b would still be worth shipping if
+    the first held and the second did not, and it would be a different arm.
+
+    **The mechanism table** (the rookie/returning rates by bucket) is NOT claimed here: it is
+    a point-in-time cut of the pooling window quoted in prose, and the estimator that
+    produces it is exercised by `tests/test_availability_no_prior.py` rather than persisted
+    per cell. What the audit protects is the scored consequence of it.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, artifact: str, actual, label: str, **kw) -> None:
+        C.append(_c(quoted, artifact, actual, label, doc=AWIN, **kw))
+
+    def lvl(name: str, split: str, column: str) -> float:
+        return cell(ANOP_L, column, analysis="level_arm", arm=name, split=split)
+
+    def pair(name: str, reference: str, split: str, column: str) -> float:
+        return cell(ANOP_L, column, analysis="level_pairwise", arm=name,
+                    reference=reference, split=split)
+
+    ladder = [("pooled", "14.4551", "22.7988", "−0.0865", "1.0073", "0.3531"),
+              ("draft", "10.7612", "16.8625", "0.3269", "2.9957", "0.2399"),
+              ("tenure", "14.1700", "22.2125", "−0.0549", "1.4973", "0.3512"),
+              ("tenure_draft", "9.8689", "15.6068", "0.4316", "3.2529", "0.2087")]
+    for name, crps, mae, r2, spread, rho in ladder:
+        for quoted, column in ((crps, "crps"), (mae, "mae"), (r2, "r2_gp_share"),
+                               (spread, "mu_spread"), (rho, "rho_residual")):
+            add(quoted, ANOP_L, lambda n=name, c=column: lvl(n, "validation", c),
+                f"validation {name} {column}")
+    add("228", ANOP_L, lambda: lvl("pooled", "validation", "rows"),
+        "validation rows the level arms are scored on", tol=0.5)
+    add("2,529", ANOP_L, lambda: lvl("pooled", "rolling", "rows"),
+        "rolling rows the level arms are scored on", tol=0.5)
+    add("26", ANOP_L, lambda: lvl("pooled", "rolling", "n_seasons"),
+        "rolling origins", tol=0.5)
+    for quoted, name in (("15.0576", "pooled"), ("12.3164", "tenure_draft")):
+        add(quoted, ANOP_L, lambda n=name: lvl(n, "rolling", "crps"),
+            f"rolling {name} CRPS")
+    add("0.3480", ANOP_L, lambda: lvl("tenure_draft", "rolling", "rho_residual"),
+        "rolling residual rho under the shipped arm")
+
+    # A margin and its two bounds are three claims, on this file's standing convention.
+    margins = [("tenure_draft", "pooled", "validation",
+                ("−4.5862", "−5.6200", "−3.5764")),
+               ("tenure_draft", "pooled", "rolling",
+                ("−2.7413", "−3.0221", "−2.4488")),
+               ("tenure_draft", "draft", "validation",
+                ("−0.8923", "−1.6575", "−0.1332")),
+               ("tenure_draft", "draft", "rolling",
+                ("−0.3713", "−0.5562", "−0.1928")),
+               ("draft", "pooled", "validation",
+                ("−3.6939", "−4.7499", "−2.6323")),
+               ("tenure", "pooled", "validation",
+                ("−0.2851", "−0.6803", "+0.1314"))]
+    for name, reference, split, (point, lo, hi) in margins:
+        for quoted, column in ((point, "crps_delta"), (lo, "crps_delta_lo"),
+                               (hi, "crps_delta_hi")):
+            add(quoted, ANOP_L,
+                lambda n=name, r=reference, s=split, c=column: pair(n, r, s, c),
+                f"{split} {name} against {reference} ({column})")
+    # The origin counts, which are a different claim from the interval and the one the doc
+    # leans on for "not one season carrying twenty-five". 18 of 26 is quoted precisely
+    # because it is the WEAKER half and the prose says so.
+    for quoted, reference in (("24", "pooled"), ("18", "draft")):
+        add(quoted, ANOP_L,
+            lambda r=reference: pair("tenure_draft", r, "rolling", "origins_won"),
+            f"origins the shipped arm wins against {reference}", tol=0.5)
+    add("26", ANOP_L,
+        lambda: pair("tenure_draft", "pooled", "rolling", "origins"),
+        "origins the level arms are compared at", tol=0.5)
+    # `graded_share` on both splits. The validation one is the robustness claim — 1.000 means
+    # the shipped decision does not depend on where `MIN_CELL` was put — and a claim is the
+    # only thing that keeps it true after the pooling window next grows.
+    add("10.7%", ANOP_L,
+        lambda: 1.0 - lvl("tenure_draft", "rolling", "graded_share"),
+        "rolling rows taking a coarser key than the shipped one")
+    add("1.000", ANOP_L, lambda: lvl("tenure_draft", "validation", "graded_share"),
+        "validation rows taking the shipped arm's own key")
+
+    # The headline share, which is a ratio of two rows already claimed above. Quoted because
+    # "31.7% of the incumbent's CRPS" is the sentence a reader takes away, and a ratio that
+    # nothing derives is exactly the figure that survives its own numerator being refreshed.
+    add("31.7%", ANOP_L,
+        lambda: (lvl("pooled", "validation", "crps")
+                 - lvl("tenure_draft", "validation", "crps"))
+        / lvl("pooled", "validation", "crps"),
+        "share of the incumbent's CRPS the shipped arm removes")
+
+    # ── the simulator's readout, from Gate A's own artifact ──────────────────
+    #
+    # Only the SHIPPED column is claimed against a value. The `pooled` column is a
+    # counterfactual run rather than a superseded reading — reproducible by setting
+    # `sim.availability.no_design_level: pooled` and re-running `make simulate-season`, the
+    # same status the layout arms' comparison columns carry — so it is presence-checked.
+    def gate(season: str, check: str, column: str) -> float:
+        return cell(SIM_GATE_A, column, season=season, check=check)
+
+    for season, mae, crps, r2, bias in (
+            ("2022-23", "397.36", "276.48", "0.6589", "−26.50"),
+            ("2023-24", "398.45", "275.17", "0.6732", "−71.15")):
+        for quoted, column in ((mae, "mae"), (crps, "crps"), (r2, "r2"), (bias, "bias")):
+            add(quoted, SIM_GATE_A,
+                lambda s=season, c=column: gate(s, "season_total_dk", c),
+                f"{season} season-total {column} at the graded level")
+    for season, share, realized, error in (("2022-23", "0.1015", "0.1057", "0.0294"),
+                                           ("2023-24", "0.1079", "0.0992", "0.0472")):
+        add(share, SIM_GATE_A,
+            lambda s=season: gate(s, "no_design_team_minutes_share", "value"),
+            f"{season} simulated no-design league minutes share")
+        # The bar the per-team row is read against, so "right on average and wrong on all
+        # thirty rosters" cannot drift into a claim about a number that has moved.
+        add(realized, SIM_GATE_A,
+            lambda s=season: gate(s, "no_design_team_minutes_share", "bar_value"),
+            f"{season} realized no-design league minutes share")
+        add(error, SIM_GATE_A,
+            lambda s=season: gate(s, "no_design_team_minutes_share", "mae"),
+            f"{season} per-team no-design minutes share error")
+    for quoted in ("400.55", "400.00", "278.67", "276.41", "0.6516", "0.6721", "−22.89",
+                   "−64.13", "9.5291", "9.5517", "0.0355", "0.0563", "0.0984", "0.1023"):
+        C.append(_c(quoted, SIM_GATE_A, lambda: float("nan"),
+                    f"pooled-scalar counterfactual reading, {quoted}", doc=AWIN,
+                    historical=True))
+    return C
+
+
 def _build() -> tuple[Claim, ...]:
     """Every claim, in doc order. One builder per doc — the registry is long enough that
     a single function made it hard to see which doc a section belonged to.
@@ -6495,7 +6646,7 @@ def _build() -> tuple[Claim, ...]:
                  + _games_played_in_notes() + _train_validate_test() + _weekly()
                  + _minutes_window() + _availability_window()
                  + _availability_regime() + _availability_exchangeability()
-                 + _availability_absence())
+                 + _availability_absence() + _availability_no_design_level())
 
 
 CLAIMS: tuple[Claim, ...] = _build()

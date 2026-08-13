@@ -474,6 +474,32 @@ sim:
   availability:
     layout: tenure_merge
 
+    # WHICH RATE a rostered player the availability head has no row for is handed. The head
+    # is lag-1, so a rookie or a returning veteran is not in its frame at all — 106 of 539
+    # rostered players in 2022-23 — and he reaches the simulator through
+    # `sim/season.no_design_availability` instead. That used to be ONE pooled scalar for a
+    # population whose realized level spans 3.33x, so an undrafted call-up and a first
+    # overall pick were given the same availability.
+    #
+    # `make availability-no-prior` (§8b of docs/availability-window-plan.md) laddered the
+    # pooling KEY, holding the estimator fixed — the realized `gp / team_games` of rows
+    # carrying that key over seasons strictly before the target, which is
+    # `rookie_share_priors`' construction one column over. `tenure_draft` wins both splits
+    # against the incumbent and against every other arm, with intervals clear of zero.
+    #
+    # The tenure split is the half that is not obvious, and it is the half that keeps the
+    # arm honest: a draft bucket is a strong signal for a FIRST appearance (rookies realize
+    # 0.2613 undrafted to 0.8294 lottery top-5) and a weak one for a RETURN (0.2200 to
+    # 0.3837 over the same buckets, on a player whose draft night was a decade ago). Keying
+    # both on the bucket alone averages a gradient with a flat, and hands a returning
+    # ex-lottery pick 0.73 where he realizes 0.34.
+    #
+    #   pooled        one scalar for everybody — the previous behaviour, recoverable exactly
+    #   draft         draft bucket alone
+    #   tenure        rookie / returning alone
+    #   tenure_draft  rookie x draft bucket, returning pooled — SHIPPED
+    no_design_level: tenure_draft
+
   # `make scoring-periods` — the NBA week grid and DK's rounds on top of it.
   scoring_periods:
     # DK's tournament shape in NBA weeks: Round 1 is 17 weeks, then three double

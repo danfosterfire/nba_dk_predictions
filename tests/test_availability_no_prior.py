@@ -22,8 +22,10 @@ import numpy as np
 import pandas as pd
 
 from src.eda.season_effects import ROLE_LABELS
-from src.models.availability_no_prior import (FITTED_ROLE_RHO, classify, imputed_bucket,
-                                              ladder, primary_team_cells, realized,
+from src.models.availability_no_prior import (FITTED_ROLE_RHO, MIN_CELL, appearance_gap,
+                                              classify, implied_rho, imputed_bucket,
+                                              ladder, level_keys, level_rates,
+                                              level_tables, primary_team_cells, realized,
                                               spreads)
 
 
@@ -105,6 +107,133 @@ def test_imputed_error_is_negative_when_the_bucket_says_too_reliable():
 def _ab(mu: float, rho: float) -> tuple[float, float]:
     scale = (1.0 - rho) / rho
     return mu * scale, (1.0 - mu) * scale
+
+
+# ── §8b, the level ladder ─────────────────────────────────────────────────────
+#
+# The arms are pooling KEYS over one estimator, so the things worth pinning are the ways a
+# key can quietly be the wrong one: the incumbent has to nest exactly, the cross has to
+# refuse to hand a returning veteran a rookie's rate, a thin cell has to fall back rather
+# than be believed, and nothing may see the target season.
+
+def _history(rows: list[tuple[str, int, int, str, int]]) -> pd.DataFrame:
+    """(season, player_id, gp, draft_bucket, gap) → a no-design pooling history."""
+    return level_keys(pd.DataFrame(
+        [{"season": s, "player_id": p, "gp": gp, "team_games": 82,
+          "draft_bucket": bucket, "gap": gap} for s, p, gp, bucket, gap in rows]))
+
+
+def _bulk(season: str, n: int, gp: int, bucket: str, gap: int,
+          first_id: int = 0) -> list[tuple[str, int, int, str, int]]:
+    return [(season, first_id + i, gp, bucket, gap) for i in range(n)]
+
+
+def test_pooled_arm_reproduces_the_single_scalar_it_replaces():
+    """The nesting discipline `n_rho = 1` and `U_n = 0` already carry, one layer down.
+
+    `pooled` is not a degenerate case of the graded arm to be checked loosely — it is the
+    behaviour that shipped, and an arm that cannot reproduce it exactly makes every recorded
+    figure taken under it unreadable.
+    """
+    history = _history(_bulk("2019-20", 60, 20, "undrafted", 0)
+                       + _bulk("2019-20", 60, 70, "lottery_top5", 0, first_id=100))
+    rows = _history(_bulk("2020-21", 3, 0, "lottery_top5", 0))
+    rate, rung = level_rates(rows, level_tables(history, "2020-21",
+                                                ["2019-20", "2020-21"], "pooled"))
+    expected = (60 * 20 + 60 * 70) / (120 * 82)
+    assert np.allclose(rate, expected)
+    assert (rung == 0).all()          # the `all` rung IS the graded rung for this arm
+
+
+def test_the_cross_refuses_a_returning_veteran_his_draft_buckets_rookie_rate():
+    """The measured reason `tenure_draft` exists rather than `draft`.
+
+    A first-overall pick's bucket says 0.85 and a returning ex-lottery pick realizes half
+    that; keying both on the bucket alone averages a gradient with a flat. So the two arms
+    are asked for the same veteran's rate and required to disagree, in the direction the
+    ladder measured.
+    """
+    history = _history(_bulk("2019-20", 60, 70, "lottery_top5", 0)
+                       + _bulk("2019-20", 60, 24, "lottery_top5", 3, first_id=100))
+    veteran = _history([("2020-21", 500, 0, "lottery_top5", 3)])
+    seasons = ["2019-20", "2020-21"]
+    by_draft, _ = level_rates(veteran, level_tables(history, "2020-21", seasons, "draft"))
+    by_cross, _ = level_rates(veteran, level_tables(history, "2020-21", seasons,
+                                                    "tenure_draft"))
+    assert np.isclose(by_draft[0], (60 * 70 + 60 * 24) / (120 * 82))   # both classes pooled
+    assert np.isclose(by_cross[0], 24 / 82)                            # returning only
+    assert by_cross[0] < by_draft[0]
+
+
+def test_a_thin_cell_falls_back_a_rung_and_says_so():
+    """`MIN_CELL` is a reason to prefer a coarser key, and the rung index is the evidence.
+
+    A graded arm that silently fell back to the pooled rate on every row and a graded arm
+    that did nothing are the same table without this.
+    """
+    history = _history(_bulk("2019-20", MIN_CELL, 70, "lottery_top5", 0)
+                       + _bulk("2019-20", MIN_CELL - 1, 20, "undrafted", 0, first_id=200))
+    rows = _history([("2020-21", 1, 0, "lottery_top5", 0),
+                     ("2020-21", 2, 0, "undrafted", 0)])
+    rate, rung = level_rates(rows, level_tables(history, "2020-21",
+                                                ["2019-20", "2020-21"], "tenure_draft"))
+    assert rung[0] == 0 and np.isclose(rate[0], 70 / 82)     # its own cell clears
+    # The undrafted cell is one row short, so it takes `tenure_class` — every rookie pooled.
+    assert rung[1] == 1
+    pooled_rookies = (MIN_CELL * 70 + (MIN_CELL - 1) * 20) / ((2 * MIN_CELL - 1) * 82)
+    assert np.isclose(rate[1], pooled_rookies)
+
+
+def test_the_terminal_rung_applies_however_thin_it_is():
+    """A rate is not optional. Falling off the end of the ladder is an assertion, not a NaN,
+    and the last rung is therefore unconditional — a two-row league still returns a rate."""
+    history = _history(_bulk("2019-20", 2, 41, "undrafted", 0))
+    rows = _history([("2020-21", 9, 0, "lottery_top5", 0)])
+    rate, rung = level_rates(rows, level_tables(history, "2020-21",
+                                                ["2019-20", "2020-21"], "tenure_draft"))
+    assert np.isclose(rate[0], 0.5) and rung[0] == 2
+
+
+def test_the_rate_cannot_see_the_target_season_or_a_season_after_it():
+    """Point-in-time by construction, which is the property the whole estimator rests on.
+
+    Changing the target season's own outcomes — and a later season's — must leave its rate
+    bit-identical, or the simulator is being handed a number it could not have had.
+    """
+    seasons = ["2019-20", "2020-21", "2021-22"]
+    base = _bulk("2019-20", 60, 30, "undrafted", 0)
+    rows = _history([("2020-21", 7, 0, "undrafted", 0)])
+    before, _ = level_rates(rows, level_tables(_history(base), "2020-21", seasons, "draft"))
+    contaminated = _history(base + _bulk("2020-21", 60, 82, "undrafted", 0, first_id=300)
+                            + _bulk("2021-22", 60, 82, "undrafted", 0, first_id=600))
+    after, _ = level_rates(rows, level_tables(contaminated, "2020-21", seasons, "draft"))
+    assert np.allclose(before, after)
+
+
+def test_appearance_gap_labels_a_target_row_from_history_strictly_before_it():
+    """The simulator labels a season it has no outcomes for, so the two frames differ.
+
+    Getting this off by one turns every rookie into a returning veteran and hands the whole
+    incoming draft class a rate estimated on players who washed out of the league.
+    """
+    seasons = ["2018-19", "2019-20", "2020-21"]
+    history = pd.DataFrame({"season": ["2018-19", "2019-20"], "player_id": [1, 3]})
+    rows = pd.DataFrame({"season": "2020-21", "player_id": [1, 2, 3]})
+    assert list(appearance_gap(rows, history, seasons)) == [2, 0, 1]
+
+
+def test_implied_rho_generalizes_the_scalar_form_it_replaces():
+    """A graded arm and a flat one have to be measured with the same instrument, so the
+    vector form must reduce to the scalar one exactly where they overlap."""
+    rng = np.random.default_rng(11)
+    group = pd.DataFrame({"team_games": np.full(2000, 82),
+                          "gp": rng.binomial(82, rng.beta(*_ab(0.45, 0.3), size=2000)),
+                          "minutes": 0.0, "mpg": 8.0})
+    mu = float(group["gp"].sum() / group["team_games"].sum())
+    inflation, rho = implied_rho(group["gp"].to_numpy(), group["team_games"].to_numpy(),
+                                 np.full(len(group), mu))
+    assert np.isclose(realized(group)["rho_implied"], rho)
+    assert np.isclose(realized(group)["inflation"], inflation)
 
 
 def test_spread_refuses_a_ratio_over_a_genuine_zero():

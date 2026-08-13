@@ -7786,9 +7786,15 @@ REGISTRY: tuple[Decision, ...] = (
                 "with every week between −1.19 and −3.03, a 1.84-point range against 4.58. "
                 "A pre-tenure block belongs at the *start* of the schedule and the old "
                 "layout placed it uniformly at random, so a player signed in December was "
-                "simulated as available in October. **The contest layer is not re-run** — "
-                "`make bracket`, `make draft` and `make strategy-sweep` are owed, and §7l "
-                "says to expect a null because the drafting layer ranks.",
+                "simulated as available in October. **`make bracket` and `make draft-sim` "
+                "are re-run and `make strategy-sweep` is deliberately not**, which makes "
+                "`strategy_*.csv` the one stale stage in the repo. §7l says to expect a "
+                "null there because the drafting layer ranks — but the reason for deferring "
+                "is ordering rather than cost: `docs/potential-to-dos.md` item 7 grades the "
+                "no-design availability **level**, moving `gp` itself for ~14.7% of "
+                "season-start roster minutes where this change preserved it exactly, and a "
+                "level change moves rankings, which is the one channel the drafting layer "
+                "has. It would supersede a sweep run now.",
         status="settled",
         reproduce="make availability-exchangeability → "
                   "outputs/predictions/availability_exchangeability.csv, "
@@ -7866,9 +7872,8 @@ REGISTRY: tuple[Decision, ...] = (
         replaced_by="The lowest-bucket fallback (`rho` 0.3176) stands — too narrow on eight "
                     "of the nine measured no-design groups and too wide on one, by 0.0184, so "
                     "it is both the better estimator and the conservative one. The live item is "
-                    "the LEVEL: one pooled rate for a population spanning 3.3×, logged in "
-                    "`docs/potential-to-dos.md` item 7 because it changes the simulator's "
-                    "draw path.",
+                    "the LEVEL, and it was built: "
+                    "[[no-design-availability-is-graded-by-tenure-and-draft-slot]].",
         caught_by="`make availability-no-prior`, run when "
                   "`docs/availability-ship-plan.md` was retired into "
                   "`docs/availability-window-plan.md` §8a. The invalidating check was named "
@@ -7881,6 +7886,75 @@ REGISTRY: tuple[Decision, ...] = (
         reviewed="2026-08-12",
         date="2026-08-11",
         tags=("head", "simulator"),
+    ),
+    Decision(
+        id="no-design-availability-is-graded-by-tenure-and-draft-slot",
+        topic="availability",
+        claim="**A rostered player the availability head has no row for is no longer handed "
+              "the league's pooled rate.** He is pooled on whether this is his FIRST "
+              "appearance crossed with his draft bucket — `tenure_draft` — which cuts the "
+              "CRPS of that population's own availability from **14.4551** to **9.8689** "
+              "games on validation.",
+        because="The head is lag-1, so a rookie or a returning veteran is outside its frame "
+                "entirely — **106 of 539** rostered players in 2022-23 — and reaches the "
+                "simulator through `sim/season.no_design_availability` instead. That was one "
+                "scalar for a population whose realized level spans **3.3260×**, so an "
+                "undrafted call-up and a first overall pick were given the same "
+                "availability. It is not a marginal defect: one rate scores validation R² "
+                "**−0.0865** on these rows, i.e. **worse than predicting their own mean**, "
+                "against **0.4316** for the graded arm. The arms are pooling KEYS over one "
+                "estimator — the realized `gp / team_games` of rows carrying that key over "
+                "seasons strictly before the target, `rookie_share_priors`' construction one "
+                "column over — so `pooled` reproduces the shipped scalar exactly and the "
+                "comparison is a mean function against a mean function. The margin holds on "
+                "26 rolling origins (**−2.7413 [−3.0221, −2.4488]**) as well as on the two "
+                "validation seasons (**−4.5862 [−5.6200, −3.5764]**). "
+                "**The tenure half is the half that is not obvious, and it is what makes the "
+                "arm right rather than merely better**: a draft bucket is a **3.17×** "
+                "gradient for a first appearance (0.2613 undrafted to 0.8294 lottery top-5) "
+                "and a non-monotone **1.74×** near-flat for a return (0.2200 to 0.3837), "
+                "because the draft night is a decade old. Keying both on the bucket alone "
+                "hands a returning ex-top-5 pick **0.7491** where his class realizes "
+                "**0.3837** — the "
+                "same 'a key applied where its signal is not' error that withdrew "
+                "[[no-prior-role-bucket-grades-the-flat-axis]], one axis over. So the cross "
+                "is required, and it beats the bucket alone on both splits "
+                "(**−0.8923 [−1.6575, −0.1332]** on validation).",
+        status="settled",
+        reproduce="make availability-no-prior → "
+                  "outputs/predictions/availability_no_design_level.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("head", "simulator", "simulations"),
+    ),
+    Decision(
+        id="no-design-players-are-scored-through-the-team-minutes-pot",
+        topic="simulations",
+        claim="**The no-design availability level is priced at the TEAM, because that is its "
+              "only channel.** Not one of these players is a scorable unit — **0 of 106** in "
+              "2022-23 — so Gate A gains a `no_design_team_minutes_share` row rather than "
+              "reading its player-level ones alone.",
+        because="`docs/potential-to-dos.md` item 7 proposed reading the change on Gate A "
+                "'since these players are in the tensor'. They are in the **grid** and not "
+                "the tensor: a player with no prior season clears neither the component "
+                "heads' `≥ 200 prior minutes` filter nor the availability design, so every "
+                "row Gate A scores has a bit-identical `mu` under both arms. What moves is "
+                "which rostered players are on the floor, and a team-game's "
+                "`5 × game_length` is a **fixed pot** — so every minute given to a call-up "
+                "is taken from a teammate the tensor does score, and the errors are opposite "
+                "in sign across teams rather than cancelling. A league-wide share cannot see "
+                "that, which is why the row is a per-team share error. `simulate` therefore "
+                "accumulates minutes per ROSTERED player as well as per unit; realized "
+                "minutes are joined on `(player_id, game_id)` against the simulator's own "
+                "grid, so a traded player contributes exactly the games the grid gave him "
+                "and both sides share a denominator.",
+        status="built",
+        reproduce="make simulate-season → outputs/predictions/sim_season_gate_a.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("simulations", "provenance"),
     ),
     Decision(
         id="absence-composition-buys-the-mean-not-the-boundary",

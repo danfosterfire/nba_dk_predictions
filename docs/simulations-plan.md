@@ -1397,16 +1397,43 @@ separately because pooling them would hide the one figure that moves.
 
 | check | 2022-23 | 2023-24 | bar | artifact |
 |---|---|---|---|---|
-| season-total dk_pts MAE | **400.55** | **400.00** | 400.46 | `season_total_metrics.csv` |
-| …CRPS | **278.67** | **276.41** | 287.26 | " |
-| …R² | 0.6516 | 0.6721 | 0.7073 | " |
-| …bias | −22.89 | −64.13 | −3.06 | " |
-| games played CRPS | **9.5291** | **9.5517** | 10.0057 | `stan_games_played_metrics.csv` |
-| …bias, in games | **−0.113** | **−0.490** | — | " |
-| …pooled GP pmf total variation | **0.0654** | **0.0648** | — | `stan_games_played_gp_pmf.csv` |
-| bonus per played game | 0.1742 | 0.1697 | 0.1559 / 0.1626 realized | `bonus_calibration.csv` |
+| season-total dk_pts MAE | **397.36** | **398.45** | 400.46 | `season_total_metrics.csv` |
+| …CRPS | **276.48** | **275.17** | 287.26 | " |
+| …R² | 0.6589 | 0.6732 | 0.7073 | " |
+| …bias | −26.50 | −71.15 | −3.06 | " |
+| games played CRPS | **9.4831** | **9.5372** | 10.0057 | `stan_games_played_metrics.csv` |
+| …bias, in games | **−0.113** | **−0.560** | — | " |
+| …pooled GP pmf total variation | **0.0652** | **0.0636** | — | `stan_games_played_gp_pmf.csv` |
+| bonus per played game | 0.1737 | 0.1704 | 0.1559 / 0.1626 realized | `bonus_calibration.csv` |
 | …on **realized** minutes | **0.1535** | **0.1477** | 0.1559 / 0.1626 | `component_targets.parquet` |
-| season minutes sd, given GP | **319.82** | **316.37** | 302.75 | `minutes_unification.csv` |
+| season minutes sd, given GP | **320.54** | **315.12** | 302.75 | `minutes_unification.csv` |
+| **no-design team minutes share** | **0.1015** | **0.1079** | 0.1057 / 0.0992 realized | `component_targets.parquet` |
+| …per-team share error, MAE | **0.0294** | **0.0472** | — | " |
+
+> **Re-measured 2026-08-12 against the graded no-design availability level**
+> (`sim.availability.no_design_level = tenure_draft`,
+> `docs/availability-window-plan.md` §8b), and it added the last two rows. **The
+> games-played row is the control and it is a null**: not one of the 386 and 387 scored
+> units is a player the availability head has no row for, so no scored unit's `μ` moves and
+> the row *cannot* see this. Its gaps — −0.018 and +0.004 CRPS — are inside the seed range,
+> which had to be measured because changing any player's rate shifts the rng stream for every
+> player drawn after him, so two arms at one seed are not a paired comparison. Three seeds per
+> arm put the within-arm range at 0.073 and 0.037 on that row.
+>
+> The season total *does* move by more than the stream can explain: MAE 400.55 → **397.36**
+> and 400.00 → **398.45**, CRPS 278.67 → **276.48** and 276.41 → **275.17**, against seed
+> ranges of 1.44 / 0.66 and 1.14 / 0.76. **The channel is the minutes pot and nothing else** —
+> which rostered players are on the floor changes, a team-game's `5 × game_length` is fixed,
+> so the units the tensor does score get different minutes. The new team-level row is the
+> direct evidence: the per-team share error falls **17.2%** and **16.2%**. The bias deepens
+> (−22.89 → −26.50, −64.13 → −71.15) and that is real rather than noise — the simulator was
+> propping the veterans up with minutes that belonged to rookies, and the remaining
+> under-prediction of the season total is not this defect.
+>
+> ⚠️ **The pooled-scalar column, taken 2026-08-12 immediately before**, read MAE 400.55 /
+> 400.00, CRPS 278.67 / 276.41, R² 0.6516 / 0.6721, bias −22.89 / −64.13, games-played CRPS
+> 9.5291 / 9.5517 at bias −0.113 / −0.490, pmf TV 0.0654 / 0.0648, bonus 0.1742 / 0.1697,
+> minutes sd 319.82 / 316.37, and a per-team share error of 0.0355 / 0.0563.
 
 > **Re-measured 2026-08-12 against the `tenure_merge` availability layout**
 > (`docs/availability-window-plan.md` §13), which is what the simulator now draws. **Every
@@ -1524,14 +1551,22 @@ Both would have produced a completely plausible board.
   put them at **58.4** simulated games against a realized **30.1**, and because the minutes
   allocation is zero-sum that moved ~**29,500** minutes a season off the players the tensor
   scores — a season-total dk_pts bias of **−90.8**. They now get the expanding-window
-  empirical rate of no-design player-seasons in the earlier seasons selection may read
-  (**0.4303** for 2022-23), which is the same point-in-time device
-  `stan_composition.rookie_share_priors` already uses for their minutes share. The bias falls
-  to **−22.9** (it read −21.9 before the availability draw was fixed to read the head's
-  role-graded dispersion, −21.2 with that fix, −21.9 again under the mixture, and −22.9 under
-  the `tenure_merge` layout — the fault this bullet is about is worth −69 dk_pts and the
-  head's likelihood and layout are worth about one between them, so the four readings are the
-  same finding).
+  empirical rate of no-design player-seasons in the earlier seasons selection may read, which
+  is the same point-in-time device `stan_composition.rookie_share_priors` already uses for
+  their minutes share. The bias falls to **−22.9** (it read −21.9 before the availability
+  draw was fixed to read the head's role-graded dispersion, −21.2 with that fix, −21.9 again
+  under the mixture, and −22.9 under the `tenure_merge` layout — the fault this bullet is
+  about is worth −69 dk_pts and the head's likelihood and layout are worth about one between
+  them, so the four readings are the same finding).
+
+  **That rate is no longer one number** — it was **0.4303** for every one of them in 2022-23,
+  and it is now **0.2613 to 0.8294** on the same roster, pooled on whether this is the
+  player's first appearance crossed with his draft bucket
+  (`sim.availability.no_design_level = tenure_draft`,
+  `docs/availability-window-plan.md` §8b). The pooled scalar scored validation R² **−0.0865**
+  on this population — worse than predicting their own mean — against **0.4316** graded. It
+  is the same bullet's mechanism one step further in: the fault was scoring them at a rate
+  that was not theirs, and the league's rate is not theirs either.
 
 #### What the artifact carries, and the honest caveats
 
@@ -1579,10 +1614,23 @@ whole four-round structure: 2020-21 has **no Round 4 at all** (0 games in slot 1
 
 | facet | split | n | observed | predicted | MAE | bias | R² | CRPS |
 |---|---|---|---|---|---|---|---|---|
-| one week | train | 13,022 | 52.74 | 49.87 | 29.94 | **−2.87** | 0.3979 | 20.35 |
-| one week | validation | 13,141 | 53.40 | 51.26 | 28.77 | **−2.14** | 0.4631 | 19.46 |
-| double week | train | 2,298 | 93.24 | 88.13 | 50.86 | −5.11 | 0.4534 | 34.47 |
-| double week | validation | 2,319 | 98.51 | 95.87 | 53.16 | −2.64 | 0.4212 | 36.11 |
+| one week | train | 13,022 | 52.74 | 50.02 | 29.93 | **−2.72** | 0.3985 | 20.34 |
+| one week | validation | 13,141 | 53.40 | 51.05 | 28.72 | **−2.35** | 0.4658 | 19.40 |
+| double week | train | 2,298 | 93.24 | 88.43 | 50.85 | −4.81 | 0.4542 | 34.41 |
+| double week | validation | 2,319 | 98.51 | 95.52 | 53.10 | −2.99 | 0.4225 | 36.03 |
+
+> **Re-measured 2026-08-12 against the graded no-design availability level**
+> (`sim.availability.no_design_level = tenure_draft`,
+> `docs/availability-window-plan.md` §8b), which rebuilt all four tensors. The whole table
+> moves within a third of a point on MAE and CRPS and under 0.005 on R²; the largest move is
+> the double-week *train* bias, −5.11 → **−4.81**, on the smallest facet in the table. The
+> zero share moves the other way from the layout round — 17.95% → **17.95%** on one-week
+> train and 19.00% → **19.07%** on one-week validation, against observed 20.66% and 19.90%
+> — and the spread ratio widens slightly to **0.927–0.969×**. **Nothing here was aimed at
+> this gate**: the change moves minutes between rostered players, and these facets pool over
+> the players the tensor scores, so a small uniform drift is the expected signature and is
+> what appeared. The pre-grading column read bias −2.87 / −2.14 / −5.11 / −2.64, CRPS 20.35 /
+> 19.46 / 34.47 / 36.11 and predicted means 49.87 / 51.26 / 88.13 / 95.87.
 
 > **Re-measured 2026-08-12 against the `tenure_merge` availability layout**
 > (`docs/availability-window-plan.md` §13). **This is the gate that can see that change and
@@ -1598,17 +1646,18 @@ whole four-round structure: 2020-21 has **no Round 4 at all** (0 games in slot 1
 > the truth.** Simulated zero weeks go **16.9% → 17.95%** on one-week train against an
 > observed 20.7%, and **18.2% → 19.00%** on one-week validation against an observed 19.9% —
 > the validation gap closing from 1.7 to **0.9** points. The pooled spread ratio widens from
-> 0.920–0.954× to **0.923–0.971×** and the KS span narrows from 0.0265–0.0639 to
-> **0.0171–0.0600**. All three say the same thing from different directions: laying a
+> 0.920–0.954× to 0.923–0.971× and the KS span narrows from 0.0265–0.0639 to
+> 0.0171–0.0600. All three say the same thing from different directions: laying a
 > player's absences as real tenure blocks rather than scattering them puts more of the
 > distribution's mass where a best-ball lineup actually finds it, at the cost of nothing
 > visible in the mean.
 
 **The season-total bias is a weekly bias, and it used to be front-loaded.** Gate A reads
-−22.9 to −72.8 dk_pts on a season and this says where it comes from: about −2 a week, now
+**−26.5** to **−73.4** dk_pts on a season and this says where it comes from: about −2 a week, now
 spread evenly across them. Pooled over the two validation seasons the per-period bias runs
-**−1.88** in week 1, −3.03 in week 2, −2.28 in week 3, −1.60 by week 13 and **−1.19** by
-week 17, with every one of the seventeen weeks between −1.19 and −3.03.
+**−2.31** in week 1, −3.38 in week 2, −2.55 in week 3, −1.78 by week 13 and **−1.31** by
+week 17, with every one of the seventeen weeks between −1.31 and −3.38. (Before the
+no-design level was graded the same five read −1.88, −3.03, −2.28, −1.60 and −1.19.)
 
 > **This is the `tenure_merge` layout's second downstream result, and it was not the one it
 > was aimed at.** Under the previous layout the same profile read **−5.28** in week 1, −4.99
@@ -1624,32 +1673,34 @@ week 17, with every one of the seventeen weeks between −1.19 and −3.03.
 
 **The spread is the good news, and it is the statistic that matters most here.** A best-ball
 week is a max over sixteen players, so the weekly *spread* decides more of a lineup's score
-than the weekly mean does. Pooled over every row and draw the simulated sd is **0.923–0.971×**
-the observed on all four facets (it read 0.920–0.954× before the layout change). Three
+than the weekly mean does. Pooled over every row and draw the simulated sd is **0.927–0.969×**
+the observed on all four facets (0.923–0.971× before the no-design level was graded, and
+0.920–0.954× before the layout change). Three
 spreads are emitted and only one of them is comparable: the spread of the per-row posterior
-*means* (29.18 against an observed 49.05 on one-week train) is narrower **by construction**,
+*means* (**29.40** against an observed 49.05 on one-week train) is narrower **by construction**,
 because a mean over draws has averaged its own noise away, and reporting that one would claim
 a defect that was never measured.
 
 **About a fifth of player-weeks score nothing at all** — 20.7% / 19.9% observed on the
-one-week facets against **17.95% / 19.00%** simulated — and a season total averages that away
+one-week facets against **17.95% / 19.07%** simulated — and a season total averages that away
 completely. It is the clearest argument for scoring this unit: a zero week is survivable
 under a best-7-of-16 rule and a *cluster* of them is not, which is exactly what the spell
 process exists to produce. It is also the row the `tenure_merge` layout was aimed at, and the
 one it moved: those two figures read 16.9% and 18.2% under the previous layout.
 
 Calibration is read as a distance and never as a verdict, the rule the model pages already
-carry. KS distances span **0.0171–0.0600** (0.0265–0.0639 before the layout change); the QQ
-curve is S-shaped away from the diagonal and the binned quartile lines sit **0.1066–0.1417**
-off their own levels, both of which say the predictive is slightly *too narrow* — the same
+carry. KS distances span **0.0208–0.0582** (0.0171–0.0600 before the no-design level was
+graded, 0.0265–0.0639 before the layout change); the QQ
+curve is S-shaped away from the diagonal and the binned quartile lines sit **0.1150–0.1607**
+off their own levels (0.1066–0.1417 before the no-design level was graded), both of which say the predictive is slightly *too narrow* — the same
 finding the 0.92× spread ratio gives from the other direction. The rank-transformed panel adds what a single KS cannot see: all three
 quartile lines slide **upward** across the predicted range, i.e. the simulator over-predicts
 the player-weeks it ranks lowest and under-predicts the ones it ranks highest.
 
 The only bars in the target are on the **budget** rather than on the model: the 95% ribbon
 and the KS distance are each re-read on two interleaved halves of the 500 simulated seasons
-behind a panel, at `ECDF_BAND_TOL` / `KS_MC_TOL` = 0.02. Worst shipped readings are **0.0074**
-and **0.0056** (0.0061 and 0.0027 before the layout change — still an order of magnitude
+behind a panel, at `ECDF_BAND_TOL` / `KS_MC_TOL` = 0.02. Worst shipped readings are **0.0079**
+and **0.0022** (0.0074 and 0.0056 before the no-design level was graded — still an order of magnitude
 inside the bar). That budget was measured rather than assumed — at 250 / 500 / 1,000 / 2,000
 simulated seasons the ribbon statistic falls as 1/√D (0.0057 → 0.0044 → 0.0020 → 0.0014 on
 one-week train) while the KS distance itself moves by **≤ 0.0016**, so 500 buys the picture

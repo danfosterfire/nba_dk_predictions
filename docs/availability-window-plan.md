@@ -1699,14 +1699,188 @@ fitted, because a fitted `ρ` is residual to a covariate block these players do 
    toward false reliability on every row.
 2. **`role_bins`' lowest-bucket fallback stands**, and its docstring is now a measured claim
    rather than a hedge.
-3. **The live item is level, not dispersion.** `sim/season.no_design_availability` hands the
-   whole population one pooled rate while the classes span 3.3× — an undrafted free agent and
-   a top-5 pick are given the same availability. That is a real defect, it is the one the
-   3.3× spread licenses, and it is logged in `docs/potential-to-dos.md` rather than built
-   here, because it changes the simulator's draw path and costs `make simulate-season` plus
-   the whole contest layer.
+3. **The live item is level, not dispersion.** ✅ **Built and shipped 2026-08-12 — §8b.**
+   `sim/season.no_design_availability` handed the whole population one pooled rate while the
+   classes span 3.3× — an undrafted free agent and a top-5 pick were given the same
+   availability.
 4. **Nothing about the fitted head moves.** These rows are not in the head's frame and never
    were.
+
+### 8b. Grading the level — measured and shipped 2026-08-12
+
+`make availability-no-prior` → `availability_no_design_level.csv`, then `make simulate-season`.
+`sim.availability.no_design_level = tenure_draft` ships.
+
+**The arms are pooling keys over one estimator, not four estimators.** Each arm maps a
+no-design row to a key and hands it that key's realized `gp / team_games` over seasons
+strictly before the target — `no_design_availability`'s existing rule, and
+`stan_composition.rookie_share_priors`' construction one column over. `pooled` is the single
+key that shipped and it reproduces the previous scalar **exactly** (0.430323 for 2022-23,
+0.427183 for 2023-24), which is the nesting discipline `n_rho = 1` and `U_n = 0` already
+carry a layer up. Nothing is fitted, and every arm is scored through the beta-binomial the
+simulator itself applies — the arm's mean at the **fringe** bucket's `ρ` of 0.3176, which is
+what `availability_rho_bin` hands a player with no prior MPG — so a CRPS difference is a
+difference in the mean function and in nothing else.
+
+**Two things the entry in `docs/potential-to-dos.md` got wrong, both found before building.**
+
+*The bar it named does not exist.* The entry says "the bar is Gate A … since these players are
+in the tensor". They are not: **0 of 106** no-design players in 2022-23 and **0 of 122** in
+2023-24 are scorable units, because a player with no prior season clears neither the
+component heads' `≥ 200 prior minutes` filter nor the availability design. They are in the
+**grid**, not the tensor. So Gate A's `games_played` and `season_total_dk` rows cannot move
+directly, and the only channel this change has is the zero-sum one the entry names second —
+minutes displaced onto the teammates the tensor *does* score. That is why §8b adds a
+**team-level** Gate A row rather than reading the existing player-level ones alone.
+
+*The draft bucket is the wrong key on its own,* which is the measurement that decides the arm.
+Split by tenure, over the rows readable before 2022-23:
+
+| draft bucket | rookies: n | rate | returning: n | rate |
+|---|---|---|---|---|
+| undrafted | 700 | 0.2613 | 130 | 0.2200 |
+| second round | 569 | 0.4123 | 91 | 0.3149 |
+| late first | 400 | 0.5677 | 72 | 0.3812 |
+| lottery | 229 | 0.7355 | 42 | 0.3395 |
+| lottery top-5 | 127 | **0.8294** | 28 | **0.3837** |
+| *all* | 2,025 | 0.4535 | 363 | 0.3021 |
+
+**The bucket is a 3.17× gradient for a first appearance and a 1.74× near-flat for a return,
+and it is not even monotone there.** A player's draft night is a decade old by the time he
+comes back. Keying both classes on it averages a gradient with a flat, and because rookies
+outnumber returning veterans **127 to 28** in the top-5 cell the pooled bucket lands near the
+*rookie* end: `draft` hands a returning ex-top-5 pick **0.7491** where his class realizes
+**0.3837**. That is the same failure §8a withdrew decision 2 for — a key applied where its
+signal is not — one axis over, and it is why the shipped arm crosses the two rather than
+taking the obvious one.
+
+**Note what the shipped arm then does with him, because it is `MIN_CELL` doing its job.**
+Twenty-eight rows is below the 50 a cell needs to carry its own rate, so he falls back a rung
+to the returning pool's **0.3021** rather than to his 28-row cell's 0.3837. The threshold is
+set from the arithmetic and not from this table — 50 player-seasons at this population's `ρ`
+is an effective ~140 independent games, so a rate near 0.4 carries a standard error of ~0.04
+— and the fallback is a rung of the *same* ladder rather than a special case, which is why
+`graded_share` is a reported column: on the rolling origins **10.7%** of rows take a coarser
+key, and an arm that had silently fallen back on all of them would otherwise be
+indistinguishable from one that graded nothing.
+
+**On the split that selects, the threshold does nothing at all.** `graded_share` is **1.000**
+for every arm on validation — by 2022-23 the expanding window has 2,388 rows behind it and
+every cell clears 50 — so the shipped decision is not a function of where `MIN_CELL` was put.
+It only binds early in the rolling harness, which is the half it exists for.
+
+**The ladder.** 228 validation rows over the two target seasons, and 2,529 rows over 26
+rolling origins on the fitting half. Paired bootstrap on the CRPS differences.
+
+| arm | keys | val CRPS | Δ vs `pooled` | val MAE | val R² | `μ` spread | residual `ρ` |
+|---|---|---|---|---|---|---|---|
+| `pooled` | `all` | 14.4551 | — | 22.7988 | **−0.0865** | 1.0073 | 0.3531 |
+| `draft` | `draft_bucket → all` | 10.7612 | −3.6939 [−4.7499, −2.6323] | 16.8625 | 0.3269 | 2.9957 | 0.2399 |
+| `tenure` | `tenure_class → all` | 14.1700 | −0.2851 [−0.6803, **+0.1314**] | 22.2125 | −0.0549 | 1.4973 | 0.3512 |
+| **`tenure_draft`** | `tenure_draft → tenure_class → all` | **9.8689** | **−4.5862 [−5.6200, −3.5764]** | **15.6068** | **0.4316** | 3.2529 | **0.2087** |
+
+`tenure_draft` wins by **31.7%** of the incumbent's CRPS and it wins on the rolling origins
+too — 12.3164 against 15.0576, **−2.7413 [−3.0221, −2.4488]**, and it is ahead at **24 of 26**
+origins individually, so the margin is neither two seasons' worth of luck nor one season
+carrying twenty-five. **The runner-up is the comparison that settles the design**, because
+the arms are nested keys and the live question is whether the extra one earns its place:
+against `draft` alone, `tenure_draft` is **−0.8923 [−1.6575, −0.1332]** on validation and
+**−0.3713 [−0.5562, −0.1928]** rolling, both clear of zero — though at **18 of 26** origins
+rather than 24, which is the honest size of that half. `tenure` alone is a null on
+validation, which is the right shape: the class matters *through* the bucket, not beside it.
+
+**The sharpest form of it is the incumbent's R².** One scalar for this population scores
+**−0.0865** on validation: it is worse than predicting the population's own mean share, and
+against 0.4316 for the graded arm. A single rate was not a weak model of these players, it
+was an anti-model.
+
+**And it half-closes §8a's other finding for free.** §8a measured the population's
+unconditional implied `ρ` at 0.4337 against the fringe bucket's fitted 0.3176 and called the
+fallback "27% too narrow". Part of that dispersion was between-class variation in the
+**level**, which a flat mean pushes into the residual: under `tenure_draft` the residual `ρ`
+falls to **0.3480** on the rolling rows and **0.2087** on validation, so 0.3176 now brackets
+it rather than sitting below it. The fallback stands, and for a better reason than it did.
+
+**What the simulator does with it** — `make simulate-season`, 2,000 sims, `train` posteriors,
+both validation seasons, against the same run at `pooled`. The `tenure_draft` column is the
+shipped artifact and is audited; the `pooled` column is a **counterfactual**, regenerated by
+setting `sim.availability.no_design_level: pooled` and re-running the target, which is the
+same status the layout arms' comparison columns carry.
+
+**Read the resolution column first**: changing any player's rate shifts the rng stream for
+every player drawn after him, so a single-seed comparison of two arms is not a paired one.
+Each arm was therefore run at three seeds and the last column is the largest within-arm range
+across them.
+
+| | 2022-23 `pooled` | 2022-23 `tenure_draft` | gap | seed range |
+|---|---|---|---|---|
+| season-total dk_pts MAE | 400.55 | **397.36** | **−3.18** | 1.44 |
+| season-total CRPS | 278.67 | **276.48** | **−2.43** | 1.14 |
+| season-total R² | 0.6516 | **0.6589** | **+0.0072** | 0.0033 |
+| season-total bias | **−22.89** | −26.50 | −3.43 | 0.45 |
+| games-played CRPS | 9.5291 | 9.4831 | −0.018 | **0.073** |
+
+| | 2023-24 `pooled` | 2023-24 `tenure_draft` | gap | seed range |
+|---|---|---|---|---|
+| season-total dk_pts MAE | 400.00 | **398.45** | **−1.34** | 0.66 |
+| season-total CRPS | 276.41 | **275.17** | **−0.90** | 0.76 |
+| season-total R² | 0.6721 | 0.6732 | +0.0008 | **0.0020** |
+| season-total bias | **−64.13** | −71.15 | −6.36 | 1.08 |
+| games-played CRPS | 9.5517 | 9.5372 | +0.004 | **0.037** |
+
+**The games-played row is the control, and it is a null in both seasons** — the gap is inside
+the seed range and changes sign between them. It has to be: **no scored unit's `μ` moves**.
+The `μ` of every one of the 386 and 387 units is bit-identical across the two arms, because
+not one of them is a no-design player. A first single-seed reading of this table showed
+games-played CRPS improving in both seasons, and that was the rng stream and nothing else —
+which is the reason the seed column exists rather than a caveat about it.
+
+**What does move is the season total, by more than the stream can explain**, on MAE, CRPS and
+R² in 2022-23 and on MAE and CRPS in 2023-24. That is the whole mechanism arriving where it
+should: which rostered players are on the floor changes, so a team-game's fixed pot of
+`5 × game_length` minutes is divided differently, so the units the tensor *does* score get
+different minutes. The 3.3× the rates moved by shows up as single-digit dk_pts because it is
+being spent through a minutes allocation and not through a scored player's own rate.
+
+**The bias moves the wrong way and that is the honest half.** The simulator already
+under-predicts season totals, and giving high-draft rookies their real availability takes
+more minutes off the veterans, so the under-prediction deepens by 3.4 and 6.4 dk_pts. Both
+are outside the seed range, so it is real rather than noise. The reading is that the
+*allocation* was wrong in the direction this fixes and the *level* of the season total is
+wrong for some other reason — which the next row is the direct evidence for.
+
+**And the team-level row says the allocation moved toward the truth.** Gate A's new
+`no_design_team_minutes_share` compares, per team, the share of the season's minutes the
+no-design players absorbed, simulated against realized on the simulator's own grid rows.
+
+| | 2022-23 `pooled` | 2022-23 `tenure_draft` | 2023-24 `pooled` | 2023-24 `tenure_draft` |
+|---|---|---|---|---|
+| per-team share error, MAE | 0.0355 | **0.0294** | 0.0563 | **0.0472** |
+| per-team share error, bias | −0.0095 | **−0.0064** | **+0.0004** | +0.0061 |
+| league share, simulated | 0.0984 | **0.1015** | **0.1023** | 0.1079 |
+| league share, realized | 0.1057 | 0.1057 | 0.0992 | 0.0992 |
+
+**The per-team error falls by 17.2% and 16.2%, and 2023-24 is the season that shows why the
+row is per team.** There the pooled arm's *league* share is nearly perfect — a bias of
+**+0.0004** against a per-team MAE of **0.0563**. It is right on average and wrong on all
+thirty rosters, which is exactly the failure a league aggregate is blind to and the reason
+the entry's zero-sum argument had to be checked at the team. The graded arm gives up some of
+that league-level accuracy (its own league share drifts to +0.0087) and buys a sixth of the
+per-team error with it. That is the trade this change is: it does not know more about how many
+minutes rookies get in aggregate, it knows better **which** rookies get them.
+
+**What was re-run, and what was not.** All four tensors — the two validation seasons and the
+two training seasons `make weekly-scores` reads — because leaving a mix of arms on disk is the
+failure this repo keeps writing about, and the `.npz` now carries `no_design_level` beside
+`availability_layout` so a consumer holding two can tell them apart. `make weekly-scores`
+followed and moved by less than a third of a point on MAE and CRPS across all four facets,
+which is the expected signature: that gate pools over the players the tensor scores, and this
+change reaches them only through the minutes pot.
+
+**`make bracket`, `make draft` and `make strategy-sweep` were not re-run**, which adds to the
+debt §13 opened rather than clearing it. §7l is the reason to expect a null — the drafting
+layer *ranks*, so a distributional change has no channel through it — and `bracket_ev` is the
+row to read first if it turns out not to be.
 
 ### Two debts that predate this axis
 
@@ -2922,16 +3096,34 @@ Three disciplines it carries, each pinned by a test:
    identification argument is untouched: `gp` is invariant to the arrangement, so all of §13
    lives one layer down from the likelihood, exactly as §11e result 3 said the mitigation
    already did.
-4. **The contest reading is owed and is expected to be a null.** This is a change to the
-   simulator's draw path, so it costs `make simulate-season` plus `make bracket`, `make
-   draft` and `make strategy-sweep`. The first two are done (§13g); the contest layer is
-   **not re-run**. §7l found the drafting layer *ranks* and therefore has no channel for a
-   distributional improvement; if the sweep does move, `bracket_ev` is the column to read,
-   since a longer dead run inside a round is what a zero-consolation knockout is convex in.
+4. **The contest reading is owed, is expected to be a null, and is deliberately deferred.**
+   `make simulate-season`, `make weekly-scores`, `make bracket` and `make draft-sim` are all
+   re-run on the new tensor. **`make strategy-sweep` is not** — `strategy_*.csv` is the one
+   stale stage in the repo, and it predates the layout. §7l found the drafting layer *ranks*
+   and therefore has no channel for a distributional improvement; if the sweep does move,
+   `bracket_ev` is the column to read, since a longer dead run inside a round is what a
+   zero-consolation knockout is convex in.
+
+   **It is deferred on an ordering argument rather than on cost.** `docs/potential-to-dos.md`
+   item 7 grades the no-design availability *level*, and that is a change of a different kind
+   from this one: the layout preserves `gp` exactly and is invisible at the season unit,
+   while item 7 moves `gp` itself for ~14.7% of season-start roster minutes — a lottery
+   top-5 pick from the pooled 0.4223 to a realized 0.8316. Because minutes are zero-sum it
+   also displaces teammates who are not in that population, and because it is a **level**
+   change it moves *rankings*, which is the one channel §7l says the drafting layer has. So
+   item 7 would supersede a sweep run now, and a sweep is worth spending after it rather than
+   before. Item 8 would do the same only if the block ports, which its own falsification note
+   calls the less likely outcome.
 
 ### 13g. Downstream — two gates, and only one of them can see it
 
-`make simulate-season` and `make weekly-scores` are both re-run on all four tensors.
+`make simulate-season` and `make weekly-scores` are both re-run on all four tensors, and
+`make bracket` and `make draft-sim` behind them. The tensor also gained an
+`availability_layout` field in its provenance block, beside the composition variant and the
+injected σ and for the same reason: the layout changes the tensor materially while leaving
+every season marginal identical, so two tensors drawn under different layouts are otherwise
+indistinguishable. **Gate B is unmoved** — the field calibration reads MAE 5.922 / 9.082
+against its 17.0-pick bar, since ADP is not a function of the tensor.
 
 **Gate A is unmoved, and that is the confirmation rather than the disappointment.** Every
 games-played row is identical to four decimals — CRPS **9.5291** / **9.5517**, bias

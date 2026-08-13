@@ -441,11 +441,14 @@ not re-opened here:
   rows' own `(pre/missed, post/missed)` pairs conditions on exactly what is fixed, and
   transfers to the simulator's draw order unchanged. §13a.
 
-What remains open is the contest reading: this is a change to the simulator's draw path, and
-`make simulate-season` is re-run (Gate A unmoved to four decimals on every games-played row,
-which is the arrangement being orthogonal to the season unit) but `make bracket`, `make draft`
-and `make strategy-sweep` are **not**. §7l says to expect a null and to read `bracket_ev` if
-it is not.
+What remains open is the contest reading. `make simulate-season`, `make weekly-scores`,
+`make bracket` and `make draft-sim` are re-run on the new tensor — Gate A unmoved to four
+decimals on every games-played row, which is the arrangement being orthogonal to the season
+unit, and the scoring-period gate moving the two rows it should. **`make strategy-sweep` is
+not re-run, on purpose**, and `strategy_*.csv` is therefore the one stale stage in the repo.
+§7l says to expect a null there and to read `bracket_ev` if it is not — but the reason for
+deferring is **item 7 below**, not cost: a level change to the no-design availability rate
+supersedes any sweep run before it, for the reason that entry now carries.
 
 ---
 
@@ -525,8 +528,42 @@ factor, and the cheaper fix is to stop truncating.
 
 ---
 
-## 7. Grade the no-design availability *level*, which is one pooled rate for a 3.3× spread
+## 7. ✅ Grade the no-design availability *level* — MEASURED AND SHIPPED 2026-08-12
 
+**`docs/availability-window-plan.md` §8b is the live document**; what follows is the
+motivation that opened the item, kept because the population it named is the one the ladder
+then measured. `sim.availability.no_design_level = tenure_draft` ships. Four things it
+settled, so they are not re-opened here:
+
+- **The entry was right that the level is graded and wrong about the key.** The draft bucket
+  is a **3.17×** gradient for a *first* appearance (0.2613 undrafted to 0.8294 lottery top-5)
+  and a non-monotone **1.74×** near-flat for a *return* (0.2200 to 0.3837), because a
+  returning veteran's draft night is a decade old. Keying both classes on the bucket hands a
+  returning ex-top-5 pick **0.7491** where his class realizes **0.3837** — the same "a key
+  applied where its signal is not" error §8a withdrew decision 2 for, one axis over. So the
+  shipped arm is the **cross**, and it beats the bucket alone on both splits
+  (−0.8923 [−1.6575, −0.1332] on validation, −0.3713 [−0.5562, −0.1928] rolling). §8b.
+- **The defect was larger than "one rate for a 3.3× spread" implies.** The pooled scalar
+  scores validation R² **−0.0865** on its own population: worse than predicting their mean.
+  The graded arm scores 0.4316 and cuts CRPS from **14.4551** to **9.8689** games. §8b.
+- **The bar this entry named does not exist, and that changed what was built.** "The bar is
+  Gate A … since these players are in the tensor" — they are not. **0 of 106** no-design
+  players in 2022-23 are scorable units; they are in the *grid*. Every row Gate A scores has
+  a bit-identical `mu` under both arms, so the only channel is the zero-sum one, and Gate A
+  gained a **`no_design_team_minutes_share`** row to read it at the team.
+- **It half-closes §8a's other finding for free.** Part of the population's 0.4337
+  unconditional dispersion was between-class variation in the *level*; grading the mean drops
+  the residual `ρ` to **0.3480** rolling, so the fringe bucket's 0.3176 fallback now brackets
+  it rather than sitting 27% below it.
+
+What remains open is the contest reading, which this shares with item 6: the tensors moved
+and `make bracket`, `make draft` and `make strategy-sweep` were not re-run. §7l says to
+expect a null, because the drafting layer ranks and a distributional change has no channel
+through a ranking.
+
+---
+
+**The motivation, as written when the item opened.**
 **`sim/season.no_design_availability` returns a single scalar** — the pooled `gp / team_games`
 of no-design player-seasons strictly before the target — and every rostered player the
 availability head has no row for gets it. An undrafted free agent and a first overall pick
@@ -573,6 +610,27 @@ The bar is Gate A in `outputs/predictions/sim_season_gate_a.csv`, since these pl
 the tensor. Note what the pooled scalar already fixed once: scoring them at the head's
 *intercept* put them at 58.4 simulated games against a realized 30.1, and the scalar is the
 correction. This entry is the next term of the same series, not a new idea.
+
+### It is the item the contest layer is waiting on — noted 2026-08-12
+
+**`strategy_*.csv` is deliberately stale, and this entry is why.** Item 6 shipped a change to
+the simulator's draw path and re-ran everything behind it except the sweep. The reason to
+stop there rather than spend the hour is that this item would supersede the result, and the
+two changes are not the same kind:
+
+| | item 6's layout | this item |
+|---|---|---|
+| what moves | *where* a player's absences fall | *how many* games he plays |
+| `gp` at the season unit | **exactly preserved** | changes for ~14.7% of roster minutes |
+| Gate A | unmoved to four decimals | the entry's own bar |
+| channel to the draft board | none — §7l, the layer *ranks* | **rankings**, directly |
+
+A lottery top-5 pick moving from the pooled 0.4223 to a realized 0.8316 walks up the board,
+and because minutes are zero-sum it pushes teammates who are not in this population down it.
+That is the one channel §7l says the drafting layer has, so unlike the layout this can move
+the sweep's *conclusions* rather than only its digits. **Run the sweep after this, not
+before.** Item 8 carries the same caveat only if the block ports, which its own falsification
+note calls the less likely outcome.
 
 ### What would settle it
 
