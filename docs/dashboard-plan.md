@@ -406,7 +406,7 @@ weekly-scores page step 4 of `docs/dashboard-revision-plan.md` inserted at posit
 | 4 | **Minutes** | ✅ `views/minutes.py` over the generic renderer plus `minutes_unification.csv`, shipped 2026-08-10 | no — step 3 had already written them |
 | 5 | **Box-score components** | ✅ `views/components.py` over the generic renderer, shipped 2026-08-10 | no |
 | 6 | **Game length** | ✅ `views/game_length.py` over the generic renderer, shipped 2026-08-10 | no |
-| 7 | **Inputs beyond the heads** | ADP, injury capture, copula, serial correlation, bonus overdispersion | small |
+| 7 | **Inputs beyond the heads** | ADP, injury capture, copula, serial correlation, bonus overdispersion, the availability layout | small |
 | 8 | **Weekly scores** | ✅ `views/weekly.py` over `make weekly-scores`, shipped 2026-08-10 — Gate A at the scoring period | **six**, from a new emitter |
 | 9 | **Tournament & strategy** | ✅ `views/tournament.py`, shipped 2026-08-10 | no |
 | 10 | **Draft board** | today's `draft_room.py`, as a page | no |
@@ -1421,6 +1421,44 @@ The design in "Page 7" above stands as written — three blocks, the calendar as
 operational alarm, every calibrated input showing its `fit_window`. Four things it did not
 anticipate are below, and three of the four were found by *looking at a rendered figure*
 rather than by asserting about one.
+
+### Block 4 · the availability layout — added 2026-08-12
+
+**A fifth simulator input, and the first one on this page that is not a number.** The
+availability head draws *how many* games a player misses; where they fall is a separate
+choice made at draw time, because games played is invariant to the arrangement and no
+likelihood over it can carry one. `sim.availability.layout` ships `tenure_merge`
+(`docs/availability-window-plan.md` §13), and the block draws what it does and how close it
+lands: three scoring-period statistics against the realized season, per role bucket, plus
+the realized absence-spell distribution and the two keys the edge-block draw is resampled
+on.
+
+It belongs on this page rather than on Availability (page 3) for the same reason the copula
+does: **page 3 draws posteriors and this is not one.** It is chosen rather than fitted.
+
+**One charter rule the block needed, and it is new to this page.** The ladder artifact
+carries four *drawn* arms — the shipped one and the three that selected it — and the block
+draws exactly one of them, beside `observed`. The rejected arms are an argument for a
+choice, and an argument is what the walkthrough was removed for being; they live in the plan
+doc and in `dashboard/decisions.py`. Two consequences fall out of stating it:
+
+- **The block reads levels rather than the ladder's own `recovered_share`.** That statistic
+  is a ratio against the *exchangeable* arm, so quoting it would put a rejected arm on
+  screen through the denominator while appearing not to. Levels in each metric's own unit —
+  two shares and a run length — carry the same reading without one.
+- **`observed` is not an arm and stays.** It is the realized played/missed vector the layout
+  exists to reproduce, so it takes the hollow-ink reference marker `fig_coupling` and the
+  game-length page already use for "this is the target, not a rival model", and
+  `fig_layout_exposure` is a faceted dumbbell for that reason.
+
+`test_no_rejected_layout_arm_reaches_the_page_source` pins the rule as a **source scan**
+rather than a frame assertion, which is the level it has to be at: the failure mode is not a
+wrong figure but a caption that narrates the comparison, and a typed arm name would pass
+every check on the data.
+
+**One metric is deliberately absent.** `p_half_period` is nearly arrangement-invariant —
+`availability_exchangeability._attach_gaps` already declines to score it — so drawing it
+would read as a fourth diagnostic the layout fails rather than as a fact about that metric.
 
 ### The blocks are drawn in the opposite order to the way the plan lists them
 

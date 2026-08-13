@@ -27,7 +27,8 @@ from src.models.availability_exchangeability import (ARRANGEMENT_TOL, _attach_ga
                                                      missed_decomposition,
                                                      layout_exchangeable, observed_layout,
                                                      period_statistics)
-from src.models.games_played import allocate_spells
+from src.models.games_played import (EdgeResampler, _fit_within_gaps, allocate_spells,
+                                     edge_blocks, layout_tenure, missed_share_bin)
 
 
 def _panel(vectors: list[list[int]], period_size: int = 4) -> pd.DataFrame:
@@ -120,6 +121,130 @@ def test_gaps_refuse_a_denominator_that_is_not_there():
 def test_gp_margin_invariance_tolerates_a_missing_artifact(tmp_path):
     """The citation is a convenience, not a dependency — a fresh clone still runs."""
     assert gp_margin_invariance(tmp_path).empty
+
+
+# ── the tenure factor ─────────────────────────────────────────────────────────
+
+def test_tenure_layout_nests_the_shipped_one_at_zero_tenure():
+    """The house nesting discipline: no edge block anywhere must reproduce
+    `allocate_spells` exactly, not merely closely, on the same seed."""
+    gp = np.array([0, 5, 41, 70, 82])
+    team_games = np.full(5, 82)
+    zero = np.zeros(5, dtype=np.int64)
+    assert np.array_equal(
+        layout_tenure(gp, team_games, zero, zero, mu=0.49, kappa=3.9, seed=7),
+        allocate_spells(gp, team_games, mu=0.49, kappa=3.9, seed=7))
+
+
+def test_tenure_layout_preserves_games_played_and_lays_blocks_at_the_ends():
+    gp = np.array([40, 40, 40, 1])
+    team_games = np.full(4, 82)
+    pre = np.array([20, 0, 10, 40])
+    post = np.array([0, 20, 10, 41])
+    played = layout_tenure(gp, team_games, pre, post, mu=0.49, kappa=3.9, seed=3)
+    assert np.array_equal(played.sum(axis=1), gp)
+    # Each drawn block is a run of zeros flush against its end, and the game beside it is
+    # played — which is what makes the drawn length the block length rather than a lower
+    # bound on it. Row 3 is the degenerate case: one game played, both ends claimed.
+    for i in (0, 1, 2):
+        assert played[i, :pre[i]].sum() == 0
+        assert played[i, 82 - post[i]:].sum() == 0
+        if pre[i]:
+            assert played[i, pre[i]] == 1
+        if post[i]:
+            assert played[i, 82 - post[i] - 1] == 1
+
+
+def test_tenure_layout_refuses_a_block_longer_than_the_missed_total():
+    """Silently trimming it would move games played, and every gap in the ladder is only a
+    measurement of arrangement because no arm does that."""
+    try:
+        layout_tenure(np.array([70]), np.array([82]), np.array([10]), np.array([10]),
+                      mu=0.49, kappa=3.9)
+    except ValueError as exc:
+        assert "longer than the missed total" in str(exc)
+    else:
+        raise AssertionError("a 20-game edge block on 12 missed games was accepted")
+
+
+def test_overflow_policies_differ_only_in_what_they_do_with_the_excess():
+    """Eleven spells and four gaps. `collapse` throws the draw away and lays the missed
+    total as one block; `merge` fuses the shortest until it fits, so the count is the
+    geometric maximum. Both conserve the total, which is what keeps `gp` exact."""
+    lengths = [1, 1, 2, 1, 5, 1, 1, 3, 2, 1, 2]
+    rng = np.random.default_rng(0)
+    assert _fit_within_gaps(lengths, 4, sum(lengths), "collapse", rng) == [sum(lengths)]
+    merged = _fit_within_gaps(lengths, 4, sum(lengths), "merge", rng)
+    assert len(merged) == 4 and sum(merged) == sum(lengths)
+    # The long tail of the draw survives — merging fuses the shortest, so the 5 is intact.
+    assert max(merged) >= 5
+
+
+def test_overflow_merge_shortens_the_longest_dead_run_on_absent_rows():
+    """The whole point at the layout level: a heavily-absent row stops being one block."""
+    gp, team_games = np.full(200, 12), np.full(200, 82)
+    collapsed = allocate_spells(gp, team_games, mu=0.49, kappa=3.9, seed=1)
+    merged = allocate_spells(gp, team_games, mu=0.49, kappa=3.9, seed=1, overflow="merge")
+    assert np.array_equal(collapsed.sum(axis=1), merged.sum(axis=1))
+
+    def longest(mat):
+        return np.mean([_longest_run(mat[i] == 0) for i in range(len(mat))])
+
+    assert longest(merged) < longest(collapsed)
+
+
+def test_overflow_collapse_is_the_shipped_draw_untouched():
+    """The default may not move the rng stream, or every artifact drawn through
+    `allocate_spells` would shift on a change that was supposed to be opt-in."""
+    gp = np.array([10, 41, 70, 82])
+    team_games = np.full(4, 82)
+    assert np.array_equal(
+        allocate_spells(gp, team_games, mu=0.49, kappa=3.9, seed=11),
+        allocate_spells(gp, team_games, mu=0.49, kappa=3.9, seed=11, overflow="collapse"))
+
+
+def test_edge_blocks_read_the_leading_and_trailing_runs():
+    """The leading run of missed games *is* the pre-tenure block, by construction — that
+    identity is what lets the layout draw a block length without a fitted entry head."""
+    played = [0, 0, 0, 1, 1, 0, 1, 1, 0, 0]
+    panel = pd.DataFrame([
+        {"season": "2022-23", "player_id": 1, "team_id": 5, "game_id": g,
+         "team_game_index": g, "played": flag, "in_appearance_window": int(3 <= g <= 7),
+         "status": "not_rostered" if g < 3 else "inactive"}
+        for g, flag in enumerate(played)])
+    rows = pd.DataFrame({"season": ["2022-23"], "player_id": [1], "role_bin": [2]})
+    cell = edge_blocks(panel, rows).iloc[0]
+    assert (cell["pre"], cell["post"], cell["interior"]) == (3, 2, 1)
+    assert cell["missed"] == 6 and cell["gp"] == 4
+    assert cell["pre_not_rostered"] == 3 and cell["post_not_rostered"] == 0
+    assert np.isclose(cell["pre_frac"], 0.5)
+
+
+def test_missed_share_bins_are_fixed_edges_not_quantiles():
+    """A validation row has to land in the bucket a fitting row with the same missed share
+    lands in, which is the whole reason the edges are constants."""
+    bins = missed_share_bin(np.array([0, 4, 16, 40, 41, 82]), np.full(6, 82))
+    # 41/82 is exactly 0.50 and belongs to the top bucket — the bins are left-closed, so a
+    # boundary row lands in the same place on both halves of the split.
+    assert list(bins) == [1, 1, 2, 3, 4, 4]
+
+
+def test_edge_resampler_never_draws_more_edge_than_the_player_missed():
+    """Two fractions rounded independently can sum past 1.0; the draw has to resolve that
+    against the missed total or `layout_tenure` gets a negative interior."""
+    cells = pd.DataFrame({
+        "missed": [40, 40, 40], "team_games": [82, 82, 82], "gp": [42, 42, 42],
+        "role_bin": [1, 1, 1], "pre_frac": [0.5, 0.7, 0.34],
+        "post_frac": [0.5, 0.3, 0.67], "pre": [20, 28, 14], "post": [20, 12, 27]})
+    edges = EdgeResampler(cells)
+    gp = np.array([30, 60, 82, 1])
+    team_games = np.full(4, 82)
+    pre, post = edges.draw(gp, team_games, np.ones(4, dtype=np.int64),
+                           np.random.default_rng(0))
+    assert (pre + post <= team_games - gp).all()
+    assert (pre >= 0).all() and (post >= 0).all()
+    # A player who missed nothing gets no block, whatever the pool holds.
+    assert pre[2] == post[2] == 0
 
 
 def test_missed_decomposition_splits_edge_blocks_by_roster_status():

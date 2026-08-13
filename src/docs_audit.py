@@ -5303,14 +5303,14 @@ def _weekly() -> list[Claim]:
     argues for its own figures. The metric table, the spreads and the per-period profile
     are checked by nothing else, and they are what a reader takes away.
     """
-    facets = (("week", "train", "13,022", "52.74", "49.81", "30.07", "−2.93", "0.3957",
-               "20.39"),
-              ("week", "validation", "13,141", "53.40", "51.14", "29.06", "−2.26",
-               "0.4549", "19.63"),
-              ("double_week", "train", "2,298", "93.24", "89.63", "50.48", "−3.61",
-               "0.4615", "34.37"),
-              ("double_week", "validation", "2,319", "98.51", "97.31", "52.90", "−1.21",
-               "0.4216", "36.18"))
+    facets = (("week", "train", "13,022", "52.74", "49.87", "29.94", "−2.87", "0.3979",
+               "20.35"),
+              ("week", "validation", "13,141", "53.40", "51.26", "28.77", "−2.14",
+               "0.4631", "19.46"),
+              ("double_week", "train", "2,298", "93.24", "88.13", "50.86", "−5.11",
+               "0.4534", "34.47"),
+              ("double_week", "validation", "2,319", "98.51", "95.87", "53.16", "−2.64",
+               "0.4212", "36.11"))
     columns = ("n", "observed_mean", "predicted_mean", "mae", "bias", "r2", "crps")
     C: list[Claim] = []
     for period_type, split, *quoted in facets:
@@ -5323,55 +5323,79 @@ def _weekly() -> list[Claim]:
         _c("30,780", WEEK_INDEX, lambda: total(WEEK_INDEX, "n"),
            "player-periods scored", doc=SIMS),
         # The spread, which is what a max over sixteen players is most sensitive to.
-        _c("0.920", WEEK_INDEX, lambda: _week_spread_ratio(largest=False),
+        _c("0.923", WEEK_INDEX, lambda: _week_spread_ratio(largest=False),
            "narrowest simulated/observed sd ratio", doc=SIMS),
-        _c("0.954", WEEK_INDEX, lambda: _week_spread_ratio(largest=True),
+        _c("0.971", WEEK_INDEX, lambda: _week_spread_ratio(largest=True),
            "widest simulated/observed sd ratio", doc=SIMS),
-        _c("28.89", WEEK_INDEX, lambda: _week("point_sd"),
+        _c("29.18", WEEK_INDEX, lambda: _week("point_sd"),
            "one-week train point-prediction sd", doc=SIMS),
         _c("49.05", WEEK_INDEX, lambda: _week("observed_sd"),
            "one-week train observed sd", doc=SIMS),
-        # Zero weeks — the feature a season total averages away completely.
-        # Quoted as percentages, and `check_values` scales a `%` claim itself.
+        # Zero weeks — the feature a season total averages away completely, and the row the
+        # `tenure_merge` layout was aimed at. Quoted as percentages, and `check_values`
+        # scales a `%` claim itself.
         _c("20.7%", WEEK_INDEX, lambda: _week("zero_share"),
            "one-week train observed zero share", doc=SIMS),
         _c("19.9%", WEEK_INDEX,
            lambda: _week("zero_share", split="validation"),
            "one-week validation observed zero share", doc=SIMS),
-        _c("16.9%", WEEK_INDEX, lambda: _week("predicted_zero_share"),
+        _c("17.95%", WEEK_INDEX, lambda: _week("predicted_zero_share"),
            "one-week train simulated zero share", doc=SIMS),
-        _c("18.2%", WEEK_INDEX,
+        _c("19.00%", WEEK_INDEX,
            lambda: _week("predicted_zero_share", split="validation"),
            "one-week validation simulated zero share", doc=SIMS),
         # Calibration, read as a distance and never as a verdict.
-        _c("0.0265", WEEK_INDEX, lambda: _week_extreme("ks", largest=False),
+        _c("0.0171", WEEK_INDEX, lambda: _week_extreme("ks", largest=False),
            "narrowest KS distance", doc=SIMS),
-        _c("0.0639", WEEK_INDEX, lambda: _week_extreme("ks", largest=True),
+        _c("0.0600", WEEK_INDEX, lambda: _week_extreme("ks", largest=True),
            "widest KS distance", doc=SIMS),
-        _c("0.103", WEEK_QUANTILE, lambda: _week_line_gap(largest=False),
+        _c("0.1066", WEEK_QUANTILE, lambda: _week_line_gap(largest=False),
            "narrowest quantile-line gap", doc=SIMS),
-        _c("0.131", WEEK_QUANTILE, lambda: _week_line_gap(largest=True),
+        _c("0.1417", WEEK_QUANTILE, lambda: _week_line_gap(largest=True),
            "widest quantile-line gap", doc=SIMS),
         # The only bars in the target, and both are on the budget rather than the model.
-        _c("0.0061", WEEK_INDEX, lambda: _week_extreme("ecdf_band_mc"),
+        _c("0.0074", WEEK_INDEX, lambda: _week_extreme("ecdf_band_mc"),
            "worst ribbon half-sample disagreement", doc=SIMS),
-        _c("0.0027", WEEK_INDEX, lambda: _week_extreme("ks_mc"),
+        _c("0.0056", WEEK_INDEX, lambda: _week_extreme("ks_mc"),
            "worst KS half-sample disagreement", doc=SIMS),
+        *[_c(quoted, WEEK_INDEX, lambda: float("nan"),
+             f"pre-layout half-sample bar reading, {quoted}", doc=SIMS, historical=True)
+          for quoted in ("0.0061", "0.0027")],
+        # The pre-`tenure_merge` readings, quoted in the prose beside the live ones because
+        # the layout round's whole downstream claim is the movement rather than the level.
+        # Presence-checked: an artifact holds one value per row, not its history.
+        *[_c(quoted, WEEK_INDEX, lambda: float("nan"),
+             f"pre-layout weekly reading, {quoted}", doc=SIMS, historical=True)
+          for quoted in ("−2.93", "−2.26", "−3.61", "−1.21", "20.39", "19.63",
+                         "16.9%", "18.2%", "0.920", "0.954", "0.0265", "0.0639")],
         # Where the season-total bias actually sits, week by week.
-        _c("−5.28", WEEK_PERIOD, lambda: _week_period_bias(0),
+        _c("−1.88", WEEK_PERIOD, lambda: _week_period_bias(0),
            "validation bias in week 1", doc=SIMS),
-        _c("−4.99", WEEK_PERIOD, lambda: _week_period_bias(1),
+        _c("−3.03", WEEK_PERIOD, lambda: _week_period_bias(1),
            "validation bias in week 2", doc=SIMS),
-        _c("−3.27", WEEK_PERIOD, lambda: _week_period_bias(2),
+        _c("−2.28", WEEK_PERIOD, lambda: _week_period_bias(2),
            "validation bias in week 3", doc=SIMS),
-        _c("−1.08", WEEK_PERIOD, lambda: _week_period_bias(12),
+        _c("−1.60", WEEK_PERIOD, lambda: _week_period_bias(12),
            "validation bias in week 13", doc=SIMS),
-        _c("−0.70", WEEK_PERIOD, lambda: _week_period_bias(16),
+        _c("−1.19", WEEK_PERIOD, lambda: _week_period_bias(16),
            "validation bias in week 17", doc=SIMS),
+        # The pre-`tenure_merge` profile, quoted beside the live one because the finding is
+        # that the SHAPE went away — a flat −2 where there used to be a monotone ramp.
+        *[_c(quoted, WEEK_PERIOD, lambda: float("nan"),
+             f"pre-layout weekly bias profile, {quoted}", doc=SIMS, historical=True)
+          for quoted in ("−5.28", "−4.99", "−3.27", "−1.08", "−0.70")],
         # Gate A's own season-total bias, so the weekly row is read against it.
-        _c("−21.9", SIM_GATE_A, lambda: _season_total_bias(largest=True),
+        _c("−22.9", SIM_GATE_A, lambda: _season_total_bias(largest=True),
            "smallest season-total bias", doc=SIMS),
-        _c("−70.1", SIM_GATE_A, lambda: _season_total_bias(largest=False),
+        # The same row's earlier readings, kept in the prose because the bullet's argument is
+        # that a −69 dk_pts fault dwarfs everything measured on the head since. They are
+        # presence-checked: an artifact holds one value per row, not its history.
+        _c("−21.9", SIM_GATE_A, lambda: float("nan"),
+           "season-total bias before the tenure_merge layout", doc=SIMS, historical=True),
+        _c("−21.2", SIM_GATE_A, lambda: float("nan"),
+           "season-total bias at the role-graded dispersion fix", doc=SIMS,
+           historical=True),
+        _c("−72.8", SIM_GATE_A, lambda: _season_total_bias(largest=False),
            "largest season-total bias", doc=SIMS),
     ]
     return C
@@ -6116,6 +6140,106 @@ def _availability_exchangeability() -> list[Claim]:
         add(quoted, AEXCH,
             lambda p=population, m=metric: 1.0 / gap(p, m, "exchangeable_ratio"),
             f"exchangeable understatement, {population} {metric}")
+
+    # ── §13: the tenure factor and the overflow policy ────────────────────────
+    # The 2x2's four `recovered_share` columns are claimed for EVERY arm rather than only
+    # the winner, because the section's argument is the interaction: `merge` alone is a
+    # catastrophe and `tenure` alone moves the sign flip instead of closing it, and a table
+    # that kept only `tenure_merge` would read as a single-factor result.
+    def prof(population: str, bucket: str, column: str) -> float:
+        return cell(ACLUST, column, analysis="edge_profile", population=population,
+                    missed_share_bin=bucket)
+
+    def over(population: str, arm: str) -> float:
+        return cell(AEXCH, "overflow_rate", analysis="overflow_incidence",
+                    population=population, arm=arm)
+
+    def spell(population: str, arm: str, column: str) -> float:
+        return cell(AEXCH, column, analysis="layout_spell_shape", population=population,
+                    arm=arm)
+
+    # §13a — what the edge fraction is conditional on, which is the conditioning choice
+    for quoted, bucket, column in (
+            ("0.1321", "0%-10%", "mean_edge_frac"), ("0.7075", "0%-10%", "p_no_edge"),
+            ("0.0472", "0%-10%", "p_all_edge"),
+            ("0.1581", "10%-25%", "mean_edge_frac"), ("0.4953", "10%-25%", "p_no_edge"),
+            ("0.0165", "10%-25%", "p_all_edge"),
+            ("0.2296", "25%-50%", "mean_edge_frac"), ("0.3338", "25%-50%", "p_no_edge"),
+            ("0.0293", "25%-50%", "p_all_edge"),
+            ("0.5679", "50%-101%", "mean_edge_frac"), ("0.0829", "50%-101%", "p_no_edge"),
+            ("0.1434", "50%-101%", "p_all_edge")):
+        add(quoted, ACLUST, lambda b=bucket, c=column: prof("all", b, c),
+            f"edge profile {column}, missed share {bucket}")
+    for quoted, bucket in (("848", "0%-10%"), ("850", "10%-25%"), ("716", "25%-50%"),
+                           ("844", "50%-101%")):
+        add(quoted, ACLUST, lambda b=bucket: prof("all", b, "player_seasons"),
+            f"edge profile rows, missed share {bucket}", tol=0.5)
+    add("3,258", ACLUST, lambda: prof("all", "all", "player_seasons"),
+        "fitting player-seasons with a missed game", tol=0.5)
+    # Role moves the END rather than the amount — the pair that says so, and its multiple.
+    for quoted, population, column in (("0.2156", "<12 mpg", "mean_pre_frac"),
+                                       ("0.0519", "30+ mpg", "mean_pre_frac"),
+                                       ("0.1546", "<12 mpg", "mean_post_frac"),
+                                       ("0.1936", "30+ mpg", "mean_post_frac")):
+        add(quoted, ACLUST, lambda p=population, c=column: prof(p, "all", c),
+            f"edge profile {column}, {population}")
+    add("4.2×", ACLUST,
+        lambda: prof("<12 mpg", "all", "mean_pre_frac") / prof("30+ mpg", "all",
+                                                               "mean_pre_frac"),
+        "leading-block share, fringe over star")
+
+    # §13b — the overflow branch, and that it is role-graded rather than a guard
+    for quoted, population, arm in (("14.74%", "all", "clustered"),
+                                    ("41.28%", "<12 mpg", "clustered"),
+                                    ("15.21%", "12-24", "clustered"),
+                                    ("3.77%", "24-30", "clustered"),
+                                    ("2.32%", "30+ mpg", "clustered"),
+                                    ("7.99%", "all", "tenure"),
+                                    ("23.82%", "<12 mpg", "tenure"),
+                                    ("8.11%", "12-24", "tenure"),
+                                    ("1.23%", "24-30", "tenure"),
+                                    ("1.06%", "30+ mpg", "tenure")):
+        add(quoted, AEXCH, lambda p=population, a=arm: over(p, a),
+            f"overflow rate, {population} {arm}")
+    add("17.8×", AEXCH,
+        lambda: over("<12 mpg", "clustered") / over("30+ mpg", "clustered"),
+        "overflow rate, fringe over star")
+
+    # §13c — the 2x2, every arm on every arrangement-sensitive metric
+    grid = [("all", "p_dead_period", "0.8146", "0.4735", "1.1043", "0.9740"),
+            ("all", "longest_dead_run", "1.1162", "0.2707", "1.2124", "0.9612"),
+            ("all", "p_dead_run", "0.6343", "0.5579", "0.9282", "0.9186"),
+            ("<12 mpg", "p_dead_period", "1.2389", "0.2945", "1.5370", "1.1286"),
+            ("<12 mpg", "longest_dead_run", "1.6804", "0.0073", "1.5027", "0.9656"),
+            ("<12 mpg", "p_dead_run", "0.9138", "0.6865", "1.2793", "1.2125"),
+            ("12-24", "p_dead_period", "0.8781", "0.5022", "1.1787", "1.0571"),
+            ("12-24", "longest_dead_run", "1.1695", "0.2963", "1.2734", "1.0391"),
+            ("12-24", "p_dead_run", "0.7482", "0.6393", "1.0104", "1.0095"),
+            ("24-30", "p_dead_period", "0.5542", "0.4534", "0.8589", "0.8289"),
+            ("24-30", "longest_dead_run", "0.5870", "0.3762", "0.8984", "0.8518"),
+            ("24-30", "p_dead_run", "0.4415", "0.4143", "0.7047", "0.7047"),
+            ("30+ mpg", "p_dead_period", "0.6306", "0.5804", "0.8766", "0.8428"),
+            ("30+ mpg", "longest_dead_run", "0.6858", "0.5100", "0.9537", "0.8829"),
+            ("30+ mpg", "p_dead_run", "0.4858", "0.5032", "0.8396", "0.8350")]
+    for population, metric, shipped, merge, tenure, both in grid:
+        for quoted, column in ((shipped, "recovered_share"),
+                               (merge, "merge_recovered_share"),
+                               (tenure, "tenure_recovered_share"),
+                               (both, "tenure_merge_recovered_share")):
+            add(quoted, AEXCH,
+                lambda p=population, m=metric, c=column: gap(p, m, c),
+                f"{column}, {population} {metric}")
+    # §13d — the confirmation the arm was NOT selected on, so all five arms are claimed
+    realized = [("observed", "6.5433", "4.6009", "0.1015", "0.0269"),
+                ("clustered", "7.4263", "4.0539", "0.0562", "0.0224"),
+                ("merge", "8.8215", "3.4127", "0.0676", "0.0060"),
+                ("tenure", "6.1638", "4.8842", "0.0937", "0.0387"),
+                ("tenure_merge", "6.6575", "4.5220", "0.0932", "0.0285")]
+    for arm, rate, mean, p10, p30 in realized:
+        for quoted, column in ((rate, "spells_per_season"), (mean, "mean_spell"),
+                               (p10, "p_spell_ge10"), (p30, "p_spell_ge30")):
+            add(quoted, AEXCH, lambda a=arm, c=column: spell("all", a, c),
+                f"realized {column}, {arm}")
     return C
 
 

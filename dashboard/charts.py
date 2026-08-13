@@ -1567,6 +1567,67 @@ def fig_coupling(panel: pd.DataFrame, th: dict, slots: dict, title: str = "",
     return fig
 
 
+def fig_layout_exposure(panel: pd.DataFrame, th: dict, slots: dict, title: str = "",
+                        row_height: int = 132) -> go.Figure:
+    """What the shipped availability layout puts a roster through, against what happened.
+
+    `panel` is `inputs.layout_exposure()`. One facet per scoring-period statistic, because
+    the three are in different units — two shares and a run length — and one row per role
+    bucket inside each, so a reader reads **down** the facets to see the same four buckets
+    change places.
+
+    Drawn as a **dumbbell** for `fig_coupling`'s reason: the quantity a reader wants is the
+    gap, and the second series is not a rival model. `observed` is the realized played/missed
+    vector — the thing the layout exists to reproduce — so it takes the hollow ink marker
+    every reference on this site takes, and the shipped layout takes the page's colour slot.
+    Nothing else is drawn: the arms that selected this one are an argument, not an input.
+    """
+    metrics = list(dict.fromkeys(panel["metric_label"]))
+    fig = make_subplots(rows=len(metrics), cols=1, subplot_titles=metrics,
+                        vertical_spacing=min(0.16, 0.5 / max(len(metrics), 1)))
+    for note in fig.layout.annotations:
+        note.update(font=dict(color=th["ink"], size=13))
+
+    for index, metric in enumerate(metrics):
+        part = panel[panel["metric_label"] == metric]
+        rows = list(range(len(part)))
+        row = index + 1
+        for y, item in zip(rows, part.itertuples(index=False)):
+            fig.add_trace(go.Scatter(
+                x=[item.observed, item.shipped], y=[y, y], mode="lines",
+                showlegend=False, hoverinfo="skip",
+                line=dict(color=th["axis"], width=2)), row=row, col=1)
+        fig.add_trace(go.Scatter(
+            x=part["observed"], y=rows, mode="markers", name="what actually happened",
+            showlegend=index == 0, legendgroup="observed",
+            marker=dict(size=DOT + 2, color="rgba(0,0,0,0)", symbol="circle",
+                        line=dict(color=th["ink"], width=2)),
+            customdata=list(part["population"]),
+            hovertemplate="%{customdata}<br>realized %{x:,.4f}<extra>observed</extra>"),
+            row=row, col=1)
+        fig.add_trace(go.Scatter(
+            x=part["shipped"], y=rows, mode="markers", name="what the simulator draws",
+            showlegend=index == 0, legendgroup="shipped",
+            marker=dict(size=DOT + 2,
+                        color=_head_colors(th, part["head"], slots),
+                        line=dict(color=th["surface"], width=1)),
+            customdata=list(part["population"]),
+            hovertemplate="%{customdata}<br>simulated %{x:,.4f}<extra>shipped</extra>"),
+            row=row, col=1)
+
+        values = list(part["shipped"]) + list(part["observed"])
+        fig.update_xaxes(range=_bar_text_range(values, room=WIDE_BAR_TEXT_ROOM),
+                         row=row, col=1)
+        fig.update_yaxes(tickmode="array", tickvals=rows,
+                         ticktext=list(part["population"]), showgrid=False,
+                         zeroline=False, range=[len(part) - 0.5, -0.5], row=row, col=1)
+
+    fig.update_layout(title=title)
+    fig = apply_theme(fig, th, height=len(metrics) * row_height + 120)
+    fig.update_layout(margin=dict(l=8, r=8, t=64, b=8))
+    return fig
+
+
 # ── The four figures the inputs page owns ─────────────────────────────────────
 #
 # Page 7 draws things that are not model outputs, so two of these encode something no other

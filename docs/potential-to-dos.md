@@ -412,8 +412,44 @@ other way it fails is CRPS: an arm that fixes the shape and loses the mean is no
 against a head whose mean function is the largest measured lever in the project.
 ---
 
-## 6. Lay the tenure edge blocks separately from the interior spells
+## 6. ✅ Lay the tenure edge blocks separately from the interior spells — MEASURED AND SHIPPED 2026-08-12
 
+**`docs/availability-window-plan.md` §13 is the live document**; what follows is the
+motivation that opened the item, kept because the mechanism it named is what the ladder then
+tested. `sim.availability.layout = tenure_merge` ships. Four things it settled, so they are
+not re-opened here:
+
+- **The entry was right that a tenure factor was missing, and wrong about which key it
+  needs.** The edge fraction is conditional on *how much the player missed*, not on his role
+  — it runs 0.1321 → 0.5679 across missed-share bins while the four role buckets inside a bin
+  span about three points. §11b's role gradient on the pooled edge share is mostly a
+  composition effect. Role still keys the *end*: the leading block's share falls 4.2× from
+  fringe to star while the trailing block's rises. §13a.
+- **The falsifier this entry named fired, and it inverts the entry's remedy.** `allocate_spells`
+  collapses to one block when the draw wants more spells than the schedule has gaps, and that
+  fires on **41.28%** of fringe rows against **2.32%** of star rows. Removing it alone takes
+  the pooled longest-dead-run recovery from 1.1162 to **0.2707** — so "stop truncating" on
+  its own makes the simulator much worse, because the accident was doing most of the
+  clumping §11d credited to the beta-geometric. §13b.
+- **Neither half ships alone and the compound closes the sign flip.** `tenure_merge` lands
+  `longest_dead_run` recovery in **[0.852, 1.039]** across role against the shipped layout's
+  [0.587, 1.680], and independently reproduces the realized spell-length distribution it was
+  never scored on. §13c, §13d.
+- **The entry's proposed instrument — `stan_games_played`'s fitted entry and exit heads — is
+  the wrong one.** They do not condition on `gp`, and the ladder holds `gp` fixed, so they
+  would return blocks longer than the missed total. An empirical resample of the fitting
+  rows' own `(pre/missed, post/missed)` pairs conditions on exactly what is fixed, and
+  transfers to the simulator's draw order unchanged. §13a.
+
+What remains open is the contest reading: this is a change to the simulator's draw path, and
+`make simulate-season` is re-run (Gate A unmoved to four decimals on every games-played row,
+which is the arrangement being orthogonal to the season unit) but `make bracket`, `make draft`
+and `make strategy-sweep` are **not**. §7l says to expect a null and to read `bracket_ev` if
+it is not.
+
+---
+
+**The motivation, as written when the item opened.**
 **Give `sim/season.py`'s availability layout a tenure factor.** Today
 `games_played.allocate_spells` fits one pooled beta-geometric on **interior** spells — the
 appearance window is its frame — and then places every drawn spell at a uniform random start

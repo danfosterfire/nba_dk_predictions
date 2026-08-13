@@ -293,10 +293,18 @@ variance only through `C + ρ(n − C)` and are **not separately identified** �
 likelihood axis could have found this, and five already-fitted non-exchangeable arms agree,
 the marginal-neutral one reproducing CRPS, PIT and the tail error to every decimal. At the
 **scoring period** DK actually seats a lineup in, the assumption understates a star's chance
-of three consecutive dead weeks by **9.1×**. What pays for it is `allocate_spells` — the
-simulator's layout step, which recovers **81.5%** of the pooled gap and was shipped on a
-judgement rather than a gate. `make availability-exchangeability`,
-`docs/availability-window-plan.md` §11.
+of three consecutive dead weeks by **9.1×**. What pays for it is the simulator's **layout
+step**, one layer below the likelihood, which was shipped on a judgement rather than a gate
+and has now been re-measured and rebuilt. `allocate_spells` alone recovered **81.5%** of the
+pooled gap and left a residual whose sign flipped by role. That residual turned out to be two
+mechanisms: the **44.17%** of missed games that are tenure edge blocks, whose length and
+position an interior-fitted beta-geometric at a random start gets wrong, and an overflow
+branch that collapsed a heavily-absent row to one giant block on **41.28%** of fringe rows
+against **2.32%** of star rows. Neither fix ships alone — removing the branch on its own
+takes the pooled longest-dead-run recovery to **0.2707**, because the accident was doing most
+of the clumping — and together they land the recovery within 4% of 1.0 pooled and in
+**[0.852, 1.039]** across role. `sim.availability.layout = tenure_merge`,
+`make availability-exchangeability`, `docs/availability-window-plan.md` §11 and §13.
 
 **Minutes** in the shipped chain is [stan_minutes.py](src/models/stan_minutes.py): the
 marginal `min | available`, fitted season-collapsed as successes out of real game length,
@@ -620,7 +628,7 @@ concentrated
 entirely in the spline variants. Dropping the test side halved the component fit count from
 74 and cut sampler time from 305.0 to **137.4** minutes *while* raising every selection fit
 to full-length chains — which incidentally fixed the one fit that used to miss its R̂ bar.
-1,644 tests pass (`.venv/bin/python -m pytest tests/`).
+1,677 tests pass (`.venv/bin/python -m pytest tests/`).
 
 ---
 

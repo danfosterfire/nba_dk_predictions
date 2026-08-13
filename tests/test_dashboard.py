@@ -3973,6 +3973,159 @@ def test_the_window_facets_reshape_into_the_builder_the_minutes_page_already_has
         assert len(set(trace.marker.color)) == 2     # the simulator's window, and gray
 
 
+# ── Block 4 · the availability layout ─────────────────────────────────────────
+
+def _layout() -> dict[str, pd.DataFrame]:
+    """The two artifacts, carrying every arm the ladder compared — including the ones the
+    page must NOT draw. That is the point of the builder: the rejected arms are present in
+    the file, so a page that filtered them by accident rather than on purpose would pass a
+    test built from a pre-filtered frame."""
+    ladder, profile = [], []
+    levels = {"observed": (0.2447, 4.4634, 0.4607),
+              "tenure_merge": (0.2422, 4.3557, 0.4373),
+              "clustered": (0.2273, 4.7862, 0.3555),
+              "merge": (0.1953, 2.4379, 0.3335),
+              "tenure": (0.2545, 5.0533, 0.4401),
+              "exchangeable": (0.1509, 1.6862, 0.1729)}
+    for population in ("all", "<12 mpg", "12-24", "24-30", "30+ mpg"):
+        for arm, (dead, run, run3) in levels.items():
+            ladder.append({"analysis": "period_layout", "population": population,
+                           "arm": arm, "player_seasons": 751, "layouts": 25,
+                           "p_dead_period": dead, "p_half_period": 0.39,
+                           "longest_dead_run": run, "p_dead_run": run3})
+    for arm, mean in (("observed", 4.6009), ("tenure_merge", 4.5220),
+                      ("clustered", 4.0539), ("merge", 3.4127), ("tenure", 4.8842),
+                      ("exchangeable", 2.3784)):
+        ladder.append({"analysis": "layout_spell_shape", "population": "all", "arm": arm,
+                       "spells_per_season": 6.5, "mean_spell": mean,
+                       "p_spell_ge10": 0.10, "p_spell_ge30": 0.027, "max_spell": 81})
+    for bucket, frac, seasons in (("all", 0.2732, 3258), ("0%-10%", 0.1321, 848),
+                                  ("10%-25%", 0.1581, 850), ("25%-50%", 0.2296, 716),
+                                  ("50%-101%", 0.5679, 844)):
+        profile.append({"analysis": "edge_profile", "population": "all",
+                        "missed_share_bin": bucket, "player_seasons": seasons,
+                        "mean_edge_frac": frac, "p_no_edge": 0.41, "p_all_edge": 0.06,
+                        "mean_pre_frac": 0.10, "mean_post_frac": 0.17,
+                        "mean_pre_games": 2.0, "mean_post_games": 3.0})
+    for role, pre, post in (("<12 mpg", 0.2156, 0.1546), ("12-24", 0.1075, 0.1554),
+                            ("24-30", 0.0695, 0.1840), ("30+ mpg", 0.0519, 0.1936)):
+        profile.append({"analysis": "edge_profile", "population": role,
+                        "missed_share_bin": "all", "player_seasons": 500,
+                        "mean_edge_frac": 0.27, "p_no_edge": 0.41, "p_all_edge": 0.06,
+                        "mean_pre_frac": pre, "mean_post_frac": post,
+                        "mean_pre_games": 2.0, "mean_post_games": 3.0})
+    return {"layout": pd.DataFrame(ladder), "profile": pd.DataFrame(profile)}
+
+
+def test_the_layout_block_draws_only_the_arm_that_ships_and_the_thing_it_reproduces():
+    """The charter rule for this block, and the reason it is a test rather than a habit:
+    the ladder artifact carries four drawn arms and the page is a data-visualization
+    surface, not the argument that selected one. `observed` is not an arm — it is the
+    realized season the layout exists to reproduce — so it stays."""
+    frames = _layout()
+    panel = inputs.layout_exposure(frames["layout"])
+    assert set(panel["head"]) == {inputs.SHIPPED_LAYOUT}
+    drawn = set(panel.columns) & {"clustered", "merge", "tenure", "exchangeable"}
+    assert not drawn, f"the page is drawing a rejected arm: {sorted(drawn)}"
+    # Both series survive, and they are the shipped one and the target.
+    assert panel["shipped"].notna().all() and panel["observed"].notna().all()
+    shape = inputs.layout_spell_shape(frames["layout"])
+    assert list(shape.columns) == ["metric", "label", "shipped", "observed"]
+    assert shape.loc[shape["metric"] == "mean_spell", "shipped"].iloc[0] == 4.5220
+    assert shape.loc[shape["metric"] == "mean_spell", "observed"].iloc[0] == 4.6009
+
+
+def test_the_layout_block_reads_levels_rather_than_a_recovered_share():
+    """A `recovered_share` is a ratio against the exchangeable arm, which this page does
+    not draw — so quoting one would put a rejected arm on screen through the denominator.
+    Levels in the metric's own unit carry the same reading without it."""
+    panel = inputs.layout_exposure(_layout()["layout"])
+    assert "recovered_share" not in panel.columns
+    assert set(panel["unit"]) == {"share", "periods"}
+    run = panel[panel["metric"] == "longest_dead_run"]
+    assert (run["unit"] == "periods").all()
+    assert np.isclose(run["ratio"].iloc[0], 4.3557 / 4.4634)
+
+
+def test_the_layout_block_drops_the_metric_the_arrangement_cannot_move():
+    """`p_half_period` is nearly arrangement-invariant, which is a fact about that metric
+    rather than about the layout — `_attach_gaps` already declines to score it, and drawing
+    it here would read as a fourth diagnostic the layout fails."""
+    metrics = {m for m, _, _ in inputs.LAYOUT_METRICS}
+    assert "p_half_period" not in metrics
+    assert metrics == {"p_dead_period", "longest_dead_run", "p_dead_run"}
+
+
+def test_the_layout_headline_states_what_it_is_measured_against():
+    """A tile that showed only the simulated value would be a number with no scale —
+    0.2422 dead periods is meaningless without the 0.2447 beside it."""
+    headline = inputs.layout_headline(_layout()["layout"])
+    assert len(headline) == len(inputs.LAYOUT_METRICS)
+    for row in headline.itertuples(index=False):
+        assert "realized" in row.what
+    assert inputs.layout_rows_scored(_layout()["layout"]) == 751
+
+
+def test_the_two_draw_keys_are_read_off_their_own_margins():
+    """The edge fraction is keyed on how much he missed and the END is keyed on role, so
+    each table has to come off the margin that varies it — crossing them would report a
+    cell count as a gradient."""
+    profile = _layout()["profile"]
+    amount = inputs.layout_edge_profile(profile)
+    assert list(amount["missed_share_bin"]) == ["0%-10%", "10%-25%", "25%-50%",
+                                                "50%-101%"]
+    assert amount["mean_edge_frac"].is_monotonic_increasing
+    ends = inputs.layout_edge_ends(profile)
+    assert list(ends["population"]) == list(inputs.LAYOUT_ROLES)
+    # The two ends run opposite ways, which is why role is a key at all.
+    assert ends["mean_pre_frac"].is_monotonic_decreasing
+    assert ends["mean_post_frac"].is_monotonic_increasing
+
+
+def test_the_layout_block_survives_a_missing_artifact():
+    """A fresh clone has not run `make availability-exchangeability`, and the page must
+    still render its other three blocks."""
+    empty = pd.DataFrame()
+    assert inputs.layout_exposure(empty).empty
+    assert inputs.layout_headline(empty).empty
+    assert inputs.layout_spell_shape(empty).empty
+    assert inputs.layout_edge_profile(empty).empty
+    assert inputs.layout_edge_ends(empty).empty
+    assert inputs.layout_rows_scored(empty) == 0
+
+
+def test_no_rejected_layout_arm_reaches_the_page_source():
+    """The charter rule as a source scan, the way the `src/` import ban and the overview's
+    no-digits rule are pinned. The ladder compared four drawn arms and this page draws one;
+    the failure mode is not a wrong figure but a caption that *narrates the comparison*,
+    which no frame-level assertion would catch because the arm names would be typed rather
+    than read. `observed` is exempt — it is the target, not an arm."""
+    # Read from disk rather than importing: a view module pulls in streamlit, and every
+    # other charter rule here is a source scan for the same reason.
+    source = (ROOT / "dashboard" / "views" / "beyond_heads.py").read_text()
+    start = source.index("def layout_block")
+    end = source.index("# ── Page ──")
+    block = source[start:end]
+    for arm in ("clustered", "exchangeable", '"merge"', "'merge'", "recovered_share",
+                "recovered share"):
+        assert arm not in block, f"the layout block names a rejected arm: {arm}"
+
+
+def test_the_layout_figure_keeps_the_target_hollow_in_both_themes():
+    """The site-wide encoding for a reference that is not a rival model. If `observed`
+    took a categorical slot it would read as a second layout the reader should compare."""
+    panel = inputs.layout_exposure(_layout()["layout"])
+    for mode in ("light", "dark"):
+        th = theme.theme(mode)
+        fig = charts.fig_layout_exposure(panel, th, inputs.LAYOUT_SLOTS)
+        target = [t for t in fig.data if t.name == "what actually happened"]
+        shipped = [t for t in fig.data if t.name == "what the simulator draws"]
+        assert len(target) == len(shipped) == len(inputs.LAYOUT_METRICS)
+        assert all(t.marker.color == "rgba(0,0,0,0)" for t in target)
+        assert all(t.marker.line.color == th["ink"] for t in target)
+        assert all(set(s.marker.color) == {th["series"][0]} for s in shipped)
+
+
 # ── Page 7's figures ──────────────────────────────────────────────────────────
 
 def test_the_calendar_names_its_states_without_a_colourbar_over_three_integers():

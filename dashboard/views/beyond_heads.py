@@ -1,8 +1,8 @@
-"""Inputs beyond the heads — ADP, the capture programs, and the four calibrated numbers.
+"""Inputs beyond the heads — ADP, the capture programs, the calibrated numbers, the layout.
 
 Everything the simulator consumes that is **not a fitted coefficient**. That is a genuinely
 distinct kind of input and it was invisible on this dashboard until this page: the model
-pages draw posteriors, and none of these three families is one.
+pages draw posteriors, and none of these four families is one.
 
 1. **ADP.** A market forecast of the same target the model predicts, which makes it the most
    leakage-prone input in the repo and the one with the strictest dating rule. The block is
@@ -16,6 +16,18 @@ pages draw posteriors, and none of these three families is one.
    hiding it, because which window to consume is decided by what the number will be scored
    against, and the differences are small enough that consuming the wrong one would never
    announce itself.
+4. **The availability layout.** Added 2026-08-12, and the only input here that is not a
+   number. The availability head draws *how many* games a player misses and cannot say
+   *where* they fall, because games played is invariant to the arrangement — so the layout
+   is chosen at draw time. It earns a block because the unit it moves is the one DK scores:
+   twenty periods, best 7 of 16 seated in each.
+
+   **The block draws the arm that ships and the season it reproduces, and nothing else.**
+   The ladder artifact behind it carries four drawn arms; three of them are an argument for
+   the fourth, and an argument belongs in `docs/availability-window-plan.md` §13 and in the
+   decision log. That is also why the block reads *levels* rather than the ladder's own
+   `recovered_share`, which is a ratio against an arm this page does not draw.
+   `test_no_rejected_layout_arm_reaches_the_page_source` pins it.
 
 The pure layer is `dashboard/inputs.py`; nothing here computes a result, and nothing in this
 package imports `src/`.
@@ -27,7 +39,8 @@ import streamlit as st
 from dashboard import inputs, shell
 from dashboard.artifacts import eda_dir, features_dir, optional, predictions_dir, rel
 from dashboard.charts import (fig_adp_lag, fig_block_inflation, fig_calendar,
-                              fig_correlation, fig_ladder, fig_metric_facets)
+                              fig_correlation, fig_ladder, fig_layout_exposure,
+                              fig_metric_facets)
 
 #: How far back the calendar reaches. Long enough to cover a season's worth of daily
 #: captures and short enough that one missed day is still a visible cell.
@@ -54,6 +67,17 @@ def load_capture() -> tuple[pd.DataFrame, pd.DataFrame] | None:
     if calendar is None or programs is None:
         return None
     return calendar, programs
+
+
+@st.cache_data(show_spinner="Reading the availability layout…")
+def load_layout() -> dict[str, pd.DataFrame] | None:
+    """The two artifacts `make availability-exchangeability` writes."""
+    ladder = optional(predictions_dir() / inputs.LAYOUT_FILE, target=inputs.MAKE_LAYOUT)
+    profile = optional(predictions_dir() / inputs.LAYOUT_PROFILE_FILE,
+                       target=inputs.MAKE_LAYOUT)
+    if ladder is None or profile is None:
+        return None
+    return {"layout": ladder, "profile": profile}
 
 
 @st.cache_data(show_spinner="Reading the calibrated simulator inputs…")
@@ -331,6 +355,103 @@ def _bonus_table(rows: pd.DataFrame) -> pd.DataFrame:
     })
 
 
+# ── Block 4 · the availability layout ─────────────────────────────────────────
+
+def layout_block(frames: dict, th: dict) -> None:
+    ladder, clustering = frames["layout"], frames["profile"]
+    headline = inputs.layout_headline(ladder)
+    scored = inputs.layout_rows_scored(ladder)
+
+    for col, row in zip(st.columns(len(headline)), headline.itertuples(index=False)):
+        col.metric(row.label, row.text, help=f"{row.unit} — {row.what}")
+
+    left, right = st.columns([1.15, 1], gap="large")
+    with left:
+        st.plotly_chart(
+            fig_layout_exposure(inputs.layout_exposure(ladder), th, inputs.LAYOUT_SLOTS),
+            width="stretch", key="layout_exposure", config={"displayModeBar": False})
+        st.caption(
+            f"**The availability head says how many games a player misses; it cannot say "
+            f"where they fall.** Permuting a played/missed vector leaves games played "
+            f"exactly where it was, so the arrangement is chosen at draw time rather than "
+            f"fitted — which is what puts it on this page. It matters because DraftKings "
+            f"scores twenty periods and seats the best 7 of 16 in each, so what a roster is "
+            f"exposed to is not how many games a player missed but how many *periods* he is "
+            f"a guaranteed zero, and whether they come in a row. Read on "
+            f"**{scored:,}** single-team validation player-seasons, with games played held "
+            f"at its realized value on every row so nothing here is a marginal difference "
+            f"wearing an arrangement's clothes.")
+    with right:
+        st.plotly_chart(
+            fig_metric_facets(_edge_facet(inputs.layout_edge_profile(clustering)), th,
+                              inputs.EDGE_SLOTS, columns=1, row_height=190),
+            width="stretch", key="layout_edges", config={"displayModeBar": False})
+        st.caption(
+            "**What the draw conditions on.** A tenure edge block is a delayed first "
+            "appearance or a season that ended early — one contiguous run at an end of the "
+            "schedule, not an injury with a return. How much of a player-season's missed "
+            "time sits in one is a function of *how much he missed*, which is why that is "
+            "the key the block length is resampled within. Role is the second key, and it "
+            "moves which **end**: the leading block runs from "
+            f"{_ends_text(inputs.layout_edge_ends(clustering))}.")
+
+    with st.expander("Table view — the spell lengths the layout realizes, and the two "
+                     "draw keys"):
+        st.markdown("**Absence-spell lengths** · the layout is selected on scoring-period "
+                    "exposure, so this distribution is a statistic it was never scored "
+                    "against — reproducing it is independent evidence rather than a "
+                    "restatement")
+        st.dataframe(_spell_table(inputs.layout_spell_shape(ladder)), hide_index=True,
+                     width="stretch")
+        st.markdown("**Draw key 1 · how much he missed** · sets how much of it is an edge "
+                    "block")
+        st.dataframe(inputs.layout_edge_profile(clustering).round(4), hide_index=True,
+                     width="stretch")
+        st.markdown("**Draw key 2 · role** · sets which end the block sits at")
+        st.dataframe(inputs.layout_edge_ends(clustering).round(4), hide_index=True,
+                     width="stretch")
+
+
+def _edge_facet(profile: pd.DataFrame) -> pd.DataFrame:
+    """The edge profile in `fig_metric_facets`' schema — one facet, four rows.
+
+    Reused rather than given its own builder, for the reason `charts.py` states about the
+    copula and the window panel: this is a small fixed set of rows compared inside a facet,
+    which is that figure. Every row takes the same slot because no bin *ships* — the
+    gradient across them is the mechanism, and highlight-and-gray here would answer a
+    question ("which one is chosen?") that the figure is not about.
+    """
+    if profile.empty:
+        return pd.DataFrame(columns=["metric_label", "head", "label", "value", "text",
+                                     "reference"])
+    return pd.DataFrame({
+        "metric_label": "Share of a player-season's missed games in a tenure edge block",
+        "head": inputs.EDGE_KEY,
+        "label": [f"missed {b}" for b in profile["missed_share_bin"]],
+        "value": profile["mean_edge_frac"].to_numpy(),
+        "text": [f"{v:.3f}" for v in profile["mean_edge_frac"]],
+        "reference": [None] * len(profile),
+    })
+
+
+def _ends_text(ends: pd.DataFrame) -> str:
+    if ends.empty:
+        return "a late signing at one end to a season-ending injury at the other"
+    first, last = ends.iloc[0], ends.iloc[-1]
+    return (f"**{first['mean_pre_frac']:.3f}** of a {first['population']} player's missed "
+            f"games down to **{last['mean_pre_frac']:.3f}** of a {last['population']} "
+            f"player's, while the trailing block runs the other way "
+            f"({first['mean_post_frac']:.3f} to {last['mean_post_frac']:.3f})")
+
+
+def _spell_table(shape: pd.DataFrame) -> pd.DataFrame:
+    return pd.DataFrame({
+        "Statistic": shape["label"],
+        "What the simulator draws": shape["shipped"].round(4),
+        "What actually happened": shape["observed"].round(4),
+    })
+
+
 # ── Page ──────────────────────────────────────────────────────────────────────
 
 def render() -> None:
@@ -344,7 +465,8 @@ def render() -> None:
     adp = load_adp()
     capture = load_capture()
     calibrated = load_calibrated()
-    if adp is None and capture is None and calibrated is None:
+    layout = load_layout()
+    if adp is None and capture is None and calibrated is None and layout is None:
         return
 
     th = shell.current_theme()
@@ -363,8 +485,8 @@ def render() -> None:
             f"Read from `{rel(eda_dir())}`, `{rel(features_dir())}` and "
             f"`{rel(predictions_dir())}` — reproduce with `{inputs.MAKE_ADP}`, "
             f"`{inputs.MAKE_CALENDAR}`, `{inputs.MAKE_RESIDUAL}`, `{inputs.MAKE_SERIAL}`, "
-            f"`{inputs.MAKE_BONUS}` and `{inputs.MAKE_DISPERSION}`. Nothing on this page is "
-            f"refitted.")
+            f"`{inputs.MAKE_BONUS}`, `{inputs.MAKE_DISPERSION}` and "
+            f"`{inputs.MAKE_LAYOUT}`. Nothing on this page is refitted.")
 
     if capture is not None:
         st.markdown("---")
@@ -392,3 +514,13 @@ def render() -> None:
             "simulator. Each carries the fit window it was measured at, and the window is "
             "on screen because choosing it wrong is invisible in the output.")
         calibrated_block(calibrated, window, th)
+
+    if layout is not None:
+        st.markdown("---")
+        st.subheader("4 · The availability layout — where the missed games fall")
+        st.caption(
+            "A fifth input, and the only one here that is not a number. The availability "
+            "head draws how many games a player misses; where they land is a separate "
+            "choice made at draw time, because games played is the same count whichever "
+            "way the season is arranged.")
+        layout_block(layout, th)

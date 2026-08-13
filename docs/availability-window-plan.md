@@ -2730,3 +2730,230 @@ the corner rather than a model doing anything. Both readings, both harnesses, th
    this is the most expensive demonstration of that yet.
 6. **The head is unchanged.** `three_point_era` window, no season term, role-graded ρ,
    two-component mixture — §7i, untouched by §10, §11 and this.
+
+---
+
+## 13. The tenure factor in the layout — measured 2026-08-12, and it ships
+
+`make availability-exchangeability` → the same two artifacts, now carrying a **2×2 of
+layout arms**, an `edge_profile` table and an `overflow_incidence` table. numpy only,
+9 seconds, no CmdStan and no fit.
+
+This is `docs/potential-to-dos.md` item 6, opened by §11d. §11 closed with the
+exchangeability axis priced and one thing named but not run: `allocate_spells` fits its
+beta-geometric on **interior** spells and then places every drawn spell at a uniform random
+start over the whole schedule, and both halves of that are wrong for the **44.17%** of
+missed games that are tenure edge blocks. The residual's sign flipped by role — the fringe
+bucket's longest dead run overshot at a `recovered_share` of **1.6804** and the star
+bucket's undershot at **0.6858** — and §11d attributed the flip to the two kinds of edge
+block having opposite role signatures.
+
+**That attribution was half right, and finding the other half is what this round is worth.**
+There are two mechanisms, not one; they are role-shaped in the same direction; and neither
+ships alone.
+
+### 13a. What the edge fraction is actually conditional on — and it is not role
+
+The layout needs a rule mapping `(gp, team_games, role)` to a pre- and post-tenure block
+length. `edge_profile` is the table that chooses the conditioning, over the 3,258 fitting
+player-seasons with a missed game:
+
+| missed share of the schedule | player-seasons | mean edge fraction of missed games | P(no edge block) | P(all of it is edge) |
+|---|---|---|---|---|
+| 0–10% | 848 | **0.1321** | 0.7075 | 0.0472 |
+| 10–25% | 850 | **0.1581** | 0.4953 | 0.0165 |
+| 25–50% | 716 | **0.2296** | 0.3338 | 0.0293 |
+| 50%+ | 844 | **0.5679** | 0.0829 | 0.1434 |
+
+**The edge fraction roughly quadruples across how much a player missed, and inside any one
+of those bins the four role buckets span about three points.** So §11b's role gradient on
+the *pooled* edge share (51.33% fringe against 39.52% star) is mostly a composition effect:
+fringe players hold more of the high-missed-share seasons. The missed share is the axis, and
+a layout keyed on role alone would have been keyed on the wrong thing.
+
+**What role does carry is which end the block sits at**, which is §11b's two opposing
+processes showing up as position rather than as amount. Pooled over missed-share bins, the
+leading block's share of missed games falls **4.2×** from fringe to star (0.2156 → 0.0519) —
+the late signing — while the trailing block's *rises* (0.1546 → 0.1936) — the season-ending
+injury. So `EdgeResampler` keys on both: `(role bucket, missed-share bucket)`, resampling
+the fitting rows' own realized `(pre/missed, post/missed)` pairs with replacement.
+
+**The fitted entry and exit heads are not the right instrument here, and that is worth
+stating because §11d named them as the obvious one.** `stan_games_played`'s entry index is a
+beta-binomial on `entry_trials` that does not condition on `gp`, and this ladder holds `gp`
+fixed at its realized value — so on the tail it would routinely return a pre-tenure block
+longer than the missed total, which is not a layout at all. The empirical fractions condition
+on exactly the quantity the comparison fixes, and the simulator has the same conditional
+structure: `_sim_one` draws `gp` from the availability head and *then* lays it out.
+
+### 13b. The second mechanism, which nobody was looking for
+
+`allocate_spells` draws spell lengths until they cover the missed total and then places them
+in the gaps between played games. With `free` played games there are exactly `free + 1` gaps,
+and two spells in one gap are one longer spell — so when the draw wants more spells than
+that, something has to give. The shipped code **throws the entire draw away and lays the
+missed total as one block**.
+
+`overflow_incidence` is how often that fires, over 25 replicates on the 751 validation rows:
+
+| population | overflow rate, shipped layout | with the tenure factor |
+|---|---|---|
+| all | **14.74%** | 7.99% |
+| `<12 mpg` | **41.28%** | 23.82% |
+| `12-24` | 15.21% | 8.11% |
+| `24-30` | 3.77% | 1.23% |
+| `30+ mpg` | **2.32%** | 1.06% |
+
+**It fires on two in five fringe rows and one in forty-three star rows — an 17.8× role
+gradient in a branch that was written as a guard.** That is not a defensive corner; it is a
+role-graded modelling choice nobody made. `merge` is the alternative policy: fuse the two
+shortest drawn spells repeatedly until the draw fits, which conserves the missed total and
+the long tail of the draw and gives up only the resolution the schedule cannot represent.
+
+### 13c. The 2×2, and neither half ships alone
+
+Four drawn arms on the same 751 validation player-seasons, 25 layouts each, `gp` held at its
+realized value on every row and asserted. `recovered_share` is the fraction of the
+exchangeable arm's error each layout closes; 1.0 is the target and above 1.0 is an overshoot.
+
+**`longest_dead_run`**, the metric a tournament round is exposed to:
+
+| population | observed | `clustered` (shipped) | `merge` | `tenure` | **`tenure_merge`** |
+|---|---|---|---|---|---|
+| all | 4.4634 | 1.1162 | 0.2707 | 1.2124 | **0.9612** |
+| `<12 mpg` | 8.0224 | **1.6804** | 0.0073 | 1.5027 | **0.9656** |
+| `12-24` | 4.5809 | 1.1695 | 0.2963 | 1.2734 | **1.0391** |
+| `24-30` | 3.4643 | **0.5870** | 0.3762 | 0.8984 | **0.8518** |
+| `30+ mpg` | 2.3218 | **0.6858** | 0.5100 | 0.9537 | **0.8829** |
+
+**`p_dead_period`** and **`p_dead_run`** move the same way:
+
+| population | metric | `clustered` | `merge` | `tenure` | **`tenure_merge`** |
+|---|---|---|---|---|---|
+| all | `p_dead_period` | 0.8146 | 0.4735 | 1.1043 | **0.9740** |
+| all | `p_dead_run` | 0.6343 | 0.5579 | 0.9282 | **0.9186** |
+| `<12 mpg` | `p_dead_period` | 1.2389 | 0.2945 | 1.5370 | **1.1286** |
+| `<12 mpg` | `p_dead_run` | 0.9138 | 0.6865 | 1.2793 | **1.2125** |
+| `12-24` | `p_dead_period` | 0.8781 | 0.5022 | 1.1787 | **1.0571** |
+| `12-24` | `p_dead_run` | 0.7482 | 0.6393 | 1.0104 | **1.0095** |
+| `24-30` | `p_dead_period` | 0.5542 | 0.4534 | 0.8589 | **0.8289** |
+| `24-30` | `p_dead_run` | 0.4415 | 0.4143 | 0.7047 | **0.7047** |
+| `30+ mpg` | `p_dead_period` | 0.6306 | 0.5804 | 0.8766 | **0.8428** |
+| `30+ mpg` | `p_dead_run` | 0.4858 | 0.5032 | 0.8396 | **0.8350** |
+
+Read the two single-factor arms first, because they are why the compound is not obvious.
+
+**`merge` alone is a catastrophe, and it is the round's most useful row.** Stripping the
+collapse takes the pooled `longest_dead_run` recovery from 1.1162 to **0.2707**, and on the
+fringe bucket to **0.0073** — that arm is, on its own headline metric, indistinguishable from
+assuming exchangeable trials. **So the 111.6% longest-run recovery §11d credited to the
+shipped layout's beta-geometric is very largely the overflow branch instead.** The
+distribution the layout was designed around was doing much less of the work than the accident
+it falls back on. That is `docs/potential-to-dos.md` item 6's stated falsifier — "the layout
+already being right for the wrong reason" — confirmed, and it inverts the item's proposed
+remedy: "stop truncating" on its own makes the simulator materially worse.
+
+**`tenure` alone fixes the stars and makes the fringe worse**, which is the sign flip moving
+rather than closing. The star bucket's `longest_dead_run` goes 0.6858 → **0.9537** and its
+`p_dead_run` 0.4858 → **0.8396**; the fringe bucket's `p_dead_period` goes 1.2389 →
+**1.5370**. It compounds with the collapse, because a fringe row still overflows 23.8% of the
+time after its edge blocks are removed.
+
+**`tenure_merge` is the arm.** It replaces the accident with the mechanism, and the sign flip
+closes: `longest_dead_run` recovery spans **[0.852, 1.039]** across the four role buckets
+against the shipped layout's [0.587, 1.680], and `p_dead_period` spans [0.829, 1.129] against
+[0.554, 1.239]. Pooled, all three arrangement-sensitive metrics land within 4% of 1.0
+(0.9740, 0.9612, 0.9186).
+
+### 13d. The confirmation the arm was not selected on
+
+`layout_spell_shape` reads the absence-spell lengths each layout **realizes**, against the
+observed ones. Nothing in the 2×2 was selected on this — the selector is the period-unit
+`recovered_share` — so it is an independent check rather than a restatement:
+
+| arm | spells / season | mean spell | P(spell ≥ 10) | P(spell ≥ 30) |
+|---|---|---|---|---|
+| **observed** | **6.5433** | **4.6009** | **0.1015** | **0.0269** |
+| `clustered` | 7.4263 | 4.0539 | 0.0562 | 0.0224 |
+| `merge` | 8.8215 | 3.4127 | 0.0676 | 0.0060 |
+| `tenure` | 6.1638 | 4.8842 | 0.0937 | 0.0387 |
+| **`tenure_merge`** | **6.6575** | **4.5220** | **0.0932** | **0.0285** |
+
+The shipped layout is 45% short on P(spell ≥ 10); `tenure_merge` is within 8% on it and
+within 6% on P(spell ≥ 30), on all four columns at once. An arm chosen for its scoring-period
+exposure reproducing the spell-length distribution it was never scored against is the
+strongest evidence in this section that the mechanism is the right one rather than two
+compensating errors.
+
+### 13e. What ships, and the nesting
+
+`sim.availability.layout = tenure_merge`, consumed by `sim/season._sim_one`. The machinery
+lives in `games_played.py` beside `allocate_spells` — `edge_blocks`, `missed_share_bin`,
+`EdgeResampler`, `layout_tenure` — because it is a production draw path and not an
+instrument; `availability_exchangeability` imports it for the ladder.
+
+Three disciplines it carries, each pinned by a test:
+
+- **`pre = post = 0` on every row reproduces `allocate_spells` exactly**, same rng stream and
+  an identity splice, the way `n_rho = 1` and `U_n = 0` already nest their heads. And
+  `overflow="collapse"` leaves the draw untouched, so `layout: clustered` recovers the
+  previously shipped simulator bit for bit.
+- **Every arm preserves `gp` on every row.** `layout_tenure` raises rather than trims when an
+  edge block exceeds the missed total, because silently trimming would move games played and
+  every gap in the ladder is a measurement of arrangement only if nothing does.
+- **The pools are point-in-time.** `sim/season.tenure_edges` pools seasons strictly *before*
+  the target and only seasons selection may read — `no_design_availability`'s rule — and
+  restricts to the head's own `three_point_era` window, because a shipped rule transfers from
+  a ladder only if it is the ladder's rule. Multi-team player-seasons drop out inside
+  `edge_blocks`: a traded player's tenure with one team ends without his season ending, and
+  pooling that would teach the layout that stars vanish in February.
+
+### 13f. What this settles
+
+1. **The residual §11d named is closed, and it had two causes rather than one.** The tenure
+   factor is real and is what the star buckets were missing; the overflow branch is real and
+   is what the fringe bucket's overshoot was made of. §11d's mechanism was right about the
+   first and silent about the second.
+2. **A guard was carrying a modelling decision.** The collapse-to-one-block branch fires on
+   **41.28%** of fringe rows and **2.32%** of star rows, and removing it costs more than
+   everything the beta-geometric buys. Any branch with a 17.8× role gradient is a model, and
+   this one was never chosen, measured or written down.
+3. **The head is still unchanged, and still cannot be the thing that fixes this.** §11a's
+   identification argument is untouched: `gp` is invariant to the arrangement, so all of §13
+   lives one layer down from the likelihood, exactly as §11e result 3 said the mitigation
+   already did.
+4. **The contest reading is owed and is expected to be a null.** This is a change to the
+   simulator's draw path, so it costs `make simulate-season` plus `make bracket`, `make
+   draft` and `make strategy-sweep`. The first two are done (§13g); the contest layer is
+   **not re-run**. §7l found the drafting layer *ranks* and therefore has no channel for a
+   distributional improvement; if the sweep does move, `bracket_ev` is the column to read,
+   since a longer dead run inside a round is what a zero-consolation knockout is convex in.
+
+### 13g. Downstream — two gates, and only one of them can see it
+
+`make simulate-season` and `make weekly-scores` are both re-run on all four tensors.
+
+**Gate A is unmoved, and that is the confirmation rather than the disappointment.** Every
+games-played row is identical to four decimals — CRPS **9.5291** / **9.5517**, bias
+**−0.113** / **−0.490**, pmf total variation **0.0654** / **0.0648** — and the season total
+moves within sim noise. §11a says `gp` is invariant to the arrangement; Gate A scores season
+marginals; so an arrangement change *must* be invisible there, and it is.
+
+**At the scoring period it is visible, and it moves the two things it should.** The zero
+share — the simulated share of player-weeks scoring nothing, which is a dead period by
+definition — goes **16.9% → 17.95%** on one-week train against an observed 20.7%, and
+**18.2% → 19.00%** on validation against an observed 19.9%, closing the validation gap from
+1.7 points to **0.9**. The pooled spread ratio widens from 0.920–0.954× to **0.923–0.971×**
+and the KS span narrows from 0.0265–0.0639 to **0.0171–0.0600**.
+
+**And it collected a result it was not aimed at, which is the stronger one.**
+`docs/simulations-plan.md`'s weekly section carried an open defect: the season-total bias was
+a weekly bias **front-loaded at the start of the season**, running −5.28 in week 1, −4.99 in
+week 2 and −3.27 in week 3, monotone over the first six weeks on both splits, with that doc
+naming "the availability chain's early-season behaviour" as the suspect and nothing further.
+Under `tenure_merge` the same profile reads **−1.88**, −3.03, −2.28, and every one of the
+seventeen weeks now sits between **−1.19 and −3.03** — a 1.84-point range against 4.58, and
+week 1 down **64%**. The mechanism is the obvious one once the arm exists: **a pre-tenure
+block belongs at the start of the schedule**, and the previous layout placed it at a uniform
+random start, so a player signed in December was simulated as available in October. The
+suspect that doc named is confirmed, and what is left there is a level rather than a shape.

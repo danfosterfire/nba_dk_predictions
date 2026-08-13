@@ -1,6 +1,6 @@
 """Page 7's pure layer — everything the simulator consumes that is not a coefficient.
 
-Three families of input, and the only thing they have in common is the thing that makes them
+Four families of input, and the only thing they have in common is the thing that makes them
 a page: **none of them is a fitted coefficient, and every one of them is load-bearing.**
 
 1. **ADP** — the market's forecast of the same target the model predicts, and therefore the
@@ -14,6 +14,11 @@ a page: **none of them is a fitted coefficient, and every one of them is load-be
    dispersion, the ten-game block variance inflation and the bonus overdispersion. Each is
    *given* to the simulator rather than scored by it, each carries a `fit_window`, and the
    page shows the window rather than hiding it.
+4. **The availability layout** — where a player's missed games fall, which the availability
+   head cannot say because games played is invariant to the arrangement. The one input here
+   that is not a number, and the one whose diagnostic is at the scoring period rather than
+   the season. **Only the shipped arm and the observed target are read**; see
+   `SHIPPED_LAYOUT`.
 
 **No Streamlit import**, so every rule here is exercised as a plain function in
 `tests/test_dashboard.py` rather than through a rendered page, and no function reads a file:
@@ -46,6 +51,8 @@ RESIDUAL_FILE = "residual_correlation.csv"
 SERIAL_FILE = "serial_correlation.csv"
 BONUS_FILE = "bonus_calibration.csv"
 DISPERSION_FILE = "stan_minutes_dispersion.csv"
+LAYOUT_FILE = "availability_exchangeability.csv"
+LAYOUT_PROFILE_FILE = "availability_clustering.csv"
 
 MAKE_ADP = "make adp"
 MAKE_CALENDAR = "make capture-calendar"
@@ -53,6 +60,16 @@ MAKE_RESIDUAL = "make residual-correlation"
 MAKE_SERIAL = "make serial-correlation"
 MAKE_BONUS = "make component-targets"
 MAKE_DISPERSION = "make stan-minutes"
+MAKE_LAYOUT = "make availability-exchangeability"
+
+#: The availability layout `sim.availability.layout` ships — `src/sim/season.py::LAYOUT_ARMS`.
+#: The ladder artifact carries the arms that were compared to select it; **this page draws
+#: only this one and the observed target**, because a dashboard shows what the pipeline does
+#: and the rejected arms are a plan-doc argument (`docs/availability-window-plan.md` §13).
+SHIPPED_LAYOUT = "tenure_merge"
+#: The realized played/missed vectors — what the layout is trying to reproduce. Not a rival
+#: arm, which is why it is drawn as a hollow reference wherever it appears.
+OBSERVED_LAYOUT = "observed"
 
 #: The three fit windows every calibrated input is measured at, widest first. Pinned here
 #: rather than read off an artifact so a window silently disappearing is a failing test.
@@ -726,3 +743,161 @@ def widest_relative_spread(panel: pd.DataFrame) -> tuple[str, float]:
                  .sort_values("relative_spread", ascending=False))
     top = per_input.iloc[0]
     return str(top["label"]), float(top["relative_spread"])
+
+
+# ── The availability layout ───────────────────────────────────────────────────
+#
+# A fifth simulator input, and the one that is not a scalar. The availability head says *how
+# many* games a player misses; it cannot say *where* they fall, because `gp` is invariant to
+# the arrangement. So the layout is chosen at draw time rather than fitted, which is exactly
+# what puts it on this page rather than on the Availability model page.
+#
+# **Only the shipped arm and the observed target are read here.** The ladder artifact carries
+# the arms that selected `tenure_merge`; those are a plan-doc argument and a decision-log
+# entry, not a data visualization. What a reader of this page needs is what the simulator
+# does and how close it lands.
+
+#: The scoring-period statistics the layout is answerable for, in the order the block reads
+#: them, with the unit each is measured in. `p_half_period` is deliberately absent: the
+#: arrangement barely moves it, which is a fact about that metric rather than about the
+#: layout, and `availability_exchangeability._attach_gaps` already declines to score it.
+LAYOUT_METRICS = (
+    ("p_dead_period", "Share of scoring periods with zero games", "share"),
+    ("longest_dead_run", "Longest run of consecutive dead periods", "periods"),
+    ("p_dead_run", "Share of player-seasons hitting a 3-period dead run", "share"),
+)
+
+#: Highlight-and-gray again, and the same encoding the copula and window figures use: the
+#: thing that ships takes the colour, and the reference it is measured against stays ink.
+LAYOUT_SLOTS = {SHIPPED_LAYOUT: 0}
+
+#: The edge-profile figure's single row key. Every bin takes the same slot because none of
+#: them *ships* — the gradient across them is the mechanism, not a choice between them.
+EDGE_KEY = "edge_share"
+EDGE_SLOTS = {EDGE_KEY: 0}
+
+#: Role buckets bottom-to-top, so a reader reads *up* the axis toward the players a roster is
+#: built around — `eda.season_effects.ROLE_LABELS` order, which every other role-graded
+#: figure in the project uses.
+LAYOUT_ROLES = ("<12 mpg", "12-24", "24-30", "30+ mpg")
+
+
+def _layout_rows(ladder: pd.DataFrame, analysis: str) -> pd.DataFrame:
+    if ladder.empty or "analysis" not in ladder.columns:
+        return ladder.iloc[:0]
+    return ladder[ladder["analysis"] == analysis]
+
+
+def layout_exposure(ladder: pd.DataFrame) -> pd.DataFrame:
+    """Shipped layout against the realized one, per role bucket, per period statistic.
+
+    The block's main figure. Both series are levels in the metric's own unit rather than a
+    recovered share, because a share is a ratio against an arm this page does not draw.
+    """
+    rows = _layout_rows(ladder, "period_layout")
+    if rows.empty:
+        return pd.DataFrame(columns=["metric", "metric_label", "unit", "population",
+                                     "shipped", "observed", "ratio"])
+    keyed = rows.set_index(["population", "arm"])
+    out = []
+    for metric, label, unit in LAYOUT_METRICS:
+        for population in LAYOUT_ROLES:
+            if (population, SHIPPED_LAYOUT) not in keyed.index:
+                continue
+            shipped = float(keyed.loc[(population, SHIPPED_LAYOUT), metric])
+            observed = float(keyed.loc[(population, OBSERVED_LAYOUT), metric])
+            out.append({"metric": metric, "metric_label": label, "unit": unit,
+                        "population": population, "shipped": shipped,
+                        "observed": observed,
+                        # `charts._head_colors` keys the page's colour slot off this, the
+                        # way every other builder here does — the chart module never reads
+                        # this one, so the name travels on the frame rather than by import.
+                        "head": SHIPPED_LAYOUT,
+                        "ratio": shipped / observed if observed else float("nan")})
+    return pd.DataFrame(out)
+
+
+def layout_headline(ladder: pd.DataFrame) -> pd.DataFrame:
+    """The three pooled readings, as tiles: what ships, what is real, and the ratio."""
+    rows = _layout_rows(ladder, "period_layout")
+    if rows.empty:
+        return pd.DataFrame(columns=["label", "text", "unit", "what"])
+    keyed = rows.set_index(["population", "arm"])
+    out = []
+    for metric, label, unit in LAYOUT_METRICS:
+        shipped = float(keyed.loc[("all", SHIPPED_LAYOUT), metric])
+        observed = float(keyed.loc[("all", OBSERVED_LAYOUT), metric])
+        digits = 4 if unit == "share" else 3
+        out.append({"label": label, "unit": unit,
+                    "text": f"{shipped:,.{digits}f}",
+                    "observed": observed,
+                    "what": f"realized {observed:,.{digits}f} on the same rows"})
+    return pd.DataFrame(out)
+
+
+def layout_spell_shape(ladder: pd.DataFrame) -> pd.DataFrame:
+    """The absence-spell lengths the shipped layout **realizes**, against the observed ones.
+
+    The block's second figure, and it does a different job from the first: the layout was
+    chosen on scoring-period exposure, so the spell-length distribution is a statistic it was
+    never selected against and reproducing it is independent evidence rather than a
+    restatement.
+    """
+    rows = _layout_rows(ladder, "layout_spell_shape")
+    if rows.empty:
+        return pd.DataFrame(columns=["metric", "label", "shipped", "observed"])
+    keyed = rows.set_index(["population", "arm"])
+    wanted = (("spells_per_season", "Absence spells per season"),
+              ("mean_spell", "Mean spell length (games)"),
+              ("p_spell_ge10", "Share of spells reaching 10 games"),
+              ("p_spell_ge30", "Share of spells reaching 30 games"))
+    return pd.DataFrame([
+        {"metric": metric, "label": label,
+         "shipped": float(keyed.loc[("all", SHIPPED_LAYOUT), metric]),
+         "observed": float(keyed.loc[("all", OBSERVED_LAYOUT), metric])}
+        for metric, label in wanted])
+
+
+def layout_edge_profile(clustering: pd.DataFrame) -> pd.DataFrame:
+    """What the shipped layout conditions its edge-block draw on.
+
+    The mechanism, in one figure: the share of a player-season's missed games that sits in a
+    tenure edge block is a function of **how much he missed**, so that is the key the draw is
+    resampled within. Pooled over roles, because the role split is what the *ends* are keyed
+    on rather than the amount.
+    """
+    if clustering.empty or "analysis" not in clustering.columns:
+        return pd.DataFrame(columns=["missed_share_bin", "mean_edge_frac",
+                                     "player_seasons"])
+    rows = clustering[(clustering["analysis"] == "edge_profile")
+                      & (clustering["population"] == "all")
+                      & (clustering["missed_share_bin"] != "all")]
+    return (rows[["missed_share_bin", "mean_edge_frac", "p_no_edge", "player_seasons"]]
+            .reset_index(drop=True))
+
+
+def layout_edge_ends(clustering: pd.DataFrame) -> pd.DataFrame:
+    """Which *end* the block sits at, per role — the second key the draw is resampled on.
+
+    The two run opposite ways and that is the whole reason role is a key at all: a fringe
+    player's edge games are mostly a late first appearance, a star's are mostly a season that
+    ended early.
+    """
+    if clustering.empty or "analysis" not in clustering.columns:
+        return pd.DataFrame(columns=["population", "mean_pre_frac", "mean_post_frac"])
+    rows = clustering[(clustering["analysis"] == "edge_profile")
+                      & (clustering["missed_share_bin"] == "all")
+                      & (clustering["population"].isin(LAYOUT_ROLES))]
+    order = {label: i for i, label in enumerate(LAYOUT_ROLES)}
+    return (rows[["population", "mean_pre_frac", "mean_post_frac", "player_seasons"]]
+            .assign(_o=lambda f: f["population"].map(order))
+            .sort_values("_o").drop(columns="_o").reset_index(drop=True))
+
+
+def layout_rows_scored(ladder: pd.DataFrame) -> int:
+    """Player-seasons behind the block, for the caption to state rather than imply."""
+    rows = _layout_rows(ladder, "period_layout")
+    if rows.empty:
+        return 0
+    pooled = rows[(rows["population"] == "all") & (rows["arm"] == OBSERVED_LAYOUT)]
+    return int(pooled["player_seasons"].iloc[0]) if len(pooled) else 0

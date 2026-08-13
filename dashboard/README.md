@@ -3,7 +3,9 @@
 Data visualizations over the artifacts the pipeline wrote. **Ten pages** — the nine the
 expansion `docs/dashboard-plan.md` specifies, complete as of 2026-08-10 (the Overview, the
 PCA player-style fingerprint, all four model detail pages (Availability, Minutes, Box-score
-components, Game length), the inputs beyond the heads, the tournament & strategy page, and
+components, Game length), the inputs beyond the heads (four families since 2026-08-12,
+when the availability layout joined ADP, the capture programs and the four calibrated
+numbers), the tournament & strategy page, and
 the live draft board), plus **Weekly scores** at position 8, which step 4 of
 `docs/dashboard-revision-plan.md` added the same day — inside a multipage `st.navigation`
 shell. Run it with `make dashboard`.

@@ -862,8 +862,39 @@ def mean_matched_mu(mean_spell: np.ndarray, kappa: float,
                      table[::-1], grid[::-1])
 
 
+def _fit_within_gaps(lengths: list[int], k_max: int, missed: int, overflow: str,
+                     rng: np.random.Generator) -> list[int]:
+    """Reconcile more drawn spells than there are gaps to hold them.
+
+    `k_max = free + 1` is a hard geometric bound: `free` played games leave exactly that
+    many gaps, and two spells in one gap are one longer spell rather than two. Heavily
+    absent rows breach it routinely — at the fringe bucket's typical 67 missed games out of
+    82 the draw wants ~18 spells and the schedule holds 16.
+
+    - `collapse` throws the whole draw away and lays the missed total as **one block**. It
+      is the shipped behaviour and it is why a fringe player's realized spells are longer
+      than the distribution they were drawn from.
+    - `merge` repeatedly fuses the two shortest spells until the draw fits, which preserves
+      the missed total and the long tail of the draw while giving up only the resolution
+      the schedule cannot represent anyway. The result is re-shuffled, because `lengths` is
+      consumed against ascending starts and a sorted list would put every short spell in
+      October and every long one in April.
+    """
+    if overflow == "collapse":
+        return [missed]
+    if overflow != "merge":
+        raise ValueError(f"unknown overflow policy {overflow!r}; expected "
+                         f"'collapse' or 'merge'")
+    heap = sorted(lengths)
+    while len(heap) > k_max:
+        fused = heap.pop(0) + heap.pop(0)
+        heap.insert(int(np.searchsorted(heap, fused)), fused)
+    return [int(v) for v in rng.permutation(heap)]
+
+
 def allocate_spells(gp: np.ndarray, team_games: np.ndarray, mu: float, kappa: float,
-                    seed: int = 0) -> np.ndarray:
+                    seed: int = 0, overflow: str = "collapse",
+                    overflow_out: np.ndarray | None = None) -> np.ndarray:
     """Given a games-played COUNT, lay the missed games out as realistic absence spells.
 
     This is the decoupling, and it removes the trade the other two arms are stuck with.
@@ -884,6 +915,12 @@ def allocate_spells(gp: np.ndarray, team_games: np.ndarray, mu: float, kappa: fl
     missed total exact, which biases the *simulated* spell distribution slightly short — an
     unavoidable consequence of conditioning on a fixed total, and the reason this reports
     its realized spell shape rather than assuming it inherits the head's.
+
+    `overflow` decides what happens when the draw wants more spells than the schedule has
+    gaps — see `_fit_within_gaps`. It defaults to the shipped `collapse` and leaves the rng
+    stream untouched there, so `overflow="collapse"` is this function as it has always been,
+    to the draw. Pass a boolean array as `overflow_out` to record *which* rows hit it; the
+    incidence is strongly role-shaped and is a reported figure rather than an internal.
     """
     rng = np.random.default_rng(seed)
     n = len(gp)
@@ -911,8 +948,10 @@ def allocate_spells(gp: np.ndarray, team_games: np.ndarray, mu: float, kappa: fl
         # without replacement so two spells never merge into one longer one.
         k = len(lengths)
         if k > free + 1:
-            lengths = [missed]
-            k = 1
+            if overflow_out is not None:
+                overflow_out[i] = True
+            lengths = _fit_within_gaps(lengths, free + 1, missed, overflow, rng)
+            k = len(lengths)
         starts = np.sort(rng.choice(free + 1, size=k, replace=False))
         cursor = 0
         pos = 0
@@ -920,6 +959,214 @@ def allocate_spells(gp: np.ndarray, team_games: np.ndarray, mu: float, kappa: fl
             pos = starts[j] + cursor
             played[i, pos:pos + d] = 0
             cursor += d
+    return played
+
+
+# ── The tenure factor: edge blocks, and laying them at the ends ───────────────
+
+#: Missed-share bins the edge fractions are resampled within. **This is the conditioning
+#: variable that matters and it is not role** — measured on the fitting rows, the mean share
+#: of a player-season's missed games that sits in a tenure edge block runs 0.13 / 0.16 / 0.23
+#: / 0.57 across these four bins, while within any one bin the four role buckets span ~0.03.
+#: The role gradient §11b reports on the *pooled* edge share is therefore mostly a
+#: composition effect: fringe players hold more of the high-missed-share seasons. Role is
+#: still a key below, because it moves *which end* the block sits at.
+MISSED_SHARE_EDGES = (0.0, 0.10, 0.25, 0.50, 1.01)
+
+#: Smallest donor pool a (role, missed-share) cell may be drawn from before it falls back to
+#: the missed-share cell pooled over roles, and then to the global pool. The sparsest cell on
+#: the fitting rows holds 46 rows, so this is a guard rather than a live branch — but it has
+#: to exist, because the fallback ordering encodes which key is load-bearing.
+MIN_POOL = 30
+
+#: The panel `status` meaning the player was not on an NBA roster for that game. Carried on
+#: the edge-block rows for the §11b split, not used by the layout — see `edge_blocks`.
+NOT_ROSTERED = "not_rostered"
+
+
+def single_team_panel(panel: pd.DataFrame, rows: pd.DataFrame) -> pd.DataFrame:
+    """Panel rows for the single-team player-seasons `rows` covers, in schedule order."""
+    multi = multi_team_seasons(panel)
+    keep = set(map(tuple, rows[["season", "player_id"]].to_numpy()))
+    mask = [(s, p) in keep and (s, p) not in multi
+            for s, p in zip(panel["season"], panel["player_id"])]
+    return panel[mask].sort_values(["season", "player_id", "team_game_index"])
+
+
+def edge_blocks(panel: pd.DataFrame, rows: pd.DataFrame) -> pd.DataFrame:
+    """Per player-season: the leading and trailing tenure blocks, and the interior residue.
+
+    **The leading run of missed games *is* the pre-tenure block**, by construction rather
+    than by approximation: `in_appearance_window` is the span from first to last appearance,
+    so every game before the first appearance is missed and every game after it is not. The
+    same holds at the other end. So this reads the decomposition `missed_decomposition`
+    counts in aggregate, one row per player-season and split by *which* end, which is the
+    form a layout needs — `missed_decomposition` says how much is edge, this says where.
+
+    `not_rostered` counts come along for the split §11b makes, but the layout does not use
+    them: a block at an end is one contiguous run of zeros whatever put it there, and the
+    two kinds differ in which end and how long rather than in how they lay out.
+    """
+    sub = single_team_panel(panel, rows)
+    keyed = rows.set_index(["season", "player_id"])["role_bin"]
+    out = []
+    for (season, player), cell in sub.groupby(["season", "player_id"], sort=False):
+        played = cell["played"].to_numpy(np.int8)
+        status = cell["status"].to_numpy()
+        n = len(played)
+        gp = int(played.sum())
+        if gp:
+            pre = int(np.argmax(played == 1))
+            post = int(np.argmax(played[::-1] == 1))
+        else:
+            pre, post = n, 0
+        out.append({"season": season, "player_id": player, "team_games": n, "gp": gp,
+                    "missed": n - gp, "pre": pre, "post": post,
+                    "interior": n - gp - pre - post,
+                    "pre_not_rostered": int((status[:pre] == NOT_ROSTERED).sum()),
+                    "post_not_rostered": int((status[n - post:] == NOT_ROSTERED).sum())
+                    if post else 0,
+                    "role_bin": int(keyed.get((season, player), 0))})
+    frame = pd.DataFrame(out)
+    missed = frame["missed"].to_numpy(float)
+    frame["missed_share"] = missed / frame["team_games"].to_numpy(float)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        frame["pre_frac"] = np.where(missed > 0, frame["pre"] / np.maximum(missed, 1), 0.0)
+        frame["post_frac"] = np.where(missed > 0, frame["post"] / np.maximum(missed, 1), 0.0)
+    return frame
+
+
+def missed_share_bin(missed: np.ndarray, team_games: np.ndarray) -> np.ndarray:
+    """1-based `MISSED_SHARE_EDGES` bucket. Fixed edges, so a validation row lands where a
+    fitting row with the same missed share would have — the same argument `role_bins` makes."""
+    share = np.asarray(missed, dtype=float) / np.maximum(np.asarray(team_games, float), 1.0)
+    idx = np.digitize(share, np.asarray(MISSED_SHARE_EDGES[1:-1]), right=False)
+    return idx.astype(np.int64) + 1
+
+
+class EdgeResampler:
+    """Draws `(pre, post)` edge-block lengths for a player-season, given how much he missed.
+
+    **The pools are the fitting rows' own realized `(pre/missed, post/missed)` pairs**, keyed
+    on `(role bucket, missed-share bucket)` and resampled with replacement. Two reasons this
+    is the right instrument rather than `stan_games_played`'s fitted entry and exit heads,
+    which §11d and `docs/potential-to-dos.md` item 6 both name as the obvious candidates:
+
+    - **Those heads do not condition on `gp`, and this ladder holds `gp` fixed.** An entry
+      index drawn from a beta-binomial on `entry_trials` knows nothing about how many games
+      the player actually missed, so it can — and on the tail routinely would — return a
+      pre-tenure block longer than the missed total, which is not a layout at all. The
+      fractions condition on exactly the quantity the comparison fixes.
+    - **The simulator has the same conditional structure.** `sim/season._sim_one` draws `gp`
+      from the availability head and *then* lays it out, so a rule that maps `(gp,
+      team_games, role)` to a layout transfers to the draw path unchanged, where a joint
+      model of count and tenure would not.
+
+    Fitted on the fitting half only, and the keys are fixed constants rather than quantiles
+    of anything, so no validation row informs where any row lands.
+    """
+
+    def __init__(self, cells: pd.DataFrame):
+        rows = cells[cells["missed"] > 0]
+        self.pairs = rows[["pre_frac", "post_frac"]].to_numpy(float)
+        role = rows["role_bin"].to_numpy(np.int64)
+        share = missed_share_bin(rows["missed"].to_numpy(), rows["team_games"].to_numpy())
+        self.pools: dict[tuple[int, int], np.ndarray] = {}
+        for key in set(zip(role, share)):
+            self.pools[key] = np.flatnonzero((role == key[0]) & (share == key[1]))
+        self.share_pools = {s: np.flatnonzero(share == s) for s in set(share)}
+        self.all = np.arange(len(self.pairs))
+
+    def pool_for(self, role: int, share: int) -> np.ndarray:
+        pool = self.pools.get((int(role), int(share)), self.all[:0])
+        if len(pool) >= MIN_POOL:
+            return pool
+        fallback = self.share_pools.get(int(share), self.all[:0])
+        return fallback if len(fallback) >= MIN_POOL else self.all
+
+    def draw(self, gp: np.ndarray, team_games: np.ndarray, roles: np.ndarray,
+             rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+        """`(pre, post)` per row, each a whole number of games with `pre + post <= missed`.
+
+        Rounding is resolved against the *missed* total rather than independently, because
+        the two fractions and the interior are one partition: a pair that rounds up on both
+        ends would hand `layout_tenure` a negative interior residue. The excess is taken off
+        the trailing block first, which is the conservative direction — it is the end whose
+        realized length is longest and therefore the one a one-game rounding moves least.
+        """
+        missed = np.asarray(team_games, np.int64) - np.asarray(gp, np.int64)
+        share = missed_share_bin(missed, team_games)
+        pre = np.zeros(len(gp), dtype=np.int64)
+        post = np.zeros(len(gp), dtype=np.int64)
+        for i in range(len(gp)):
+            if missed[i] <= 0:
+                continue
+            pool = self.pool_for(roles[i], share[i])
+            f_pre, f_post = self.pairs[pool[rng.integers(len(pool))]]
+            p = int(round(f_pre * missed[i]))
+            q = int(round(f_post * missed[i]))
+            excess = p + q - int(missed[i])
+            if excess > 0:
+                q = max(q - excess, 0)
+                p = min(p, int(missed[i]) - q)
+            pre[i], post[i] = p, q
+        return pre, post
+
+
+def layout_tenure(gp: np.ndarray, team_games: np.ndarray, pre: np.ndarray,
+                  post: np.ndarray, mu: float, kappa: float, seed: int = 0,
+                  overflow: str = "collapse",
+                  overflow_out: np.ndarray | None = None) -> np.ndarray:
+    """`allocate_spells`, but with the tenure edge blocks laid at the ends first.
+
+    The shipped layout does two things to an edge block that are wrong for it: it draws its
+    length from a beta-geometric fitted on **interior** spells, whose mean is 3.07 games, and
+    it places it at a uniform random start over the whole schedule. Here the block's length
+    comes from the tenure distribution and its position is an end, and only the interior
+    residue — the games between the first and last appearance — reaches `allocate_spells`.
+
+    **The first and last games of the interior window are forced played when there is a block
+    beside them**, because that is what an appearance window *is*: the pre-tenure block ends
+    at the first appearance by definition. Without it an interior spell could be placed
+    flush against the edge block and merge into one longer run, which would silently make
+    the drawn block length a lower bound rather than the block length.
+
+    **`pre = post = 0` on every row reproduces `allocate_spells` exactly** — the same rng
+    stream on the same arrays, and a splice that is the identity — which is the nesting
+    discipline `n_rho = 1` and `U_n = 0` already carry, and `tests/test_availability_
+    exchangeability.py` pins it.
+    """
+    gp = np.asarray(gp, np.int64)
+    team_games = np.asarray(team_games, np.int64)
+    pre = np.asarray(pre, np.int64)
+    post = np.asarray(post, np.int64)
+    if (pre + post > team_games - gp).any():
+        raise ValueError(
+            "an edge block is longer than the missed total on at least one row; the layout "
+            "would have to move games played to fit it, and the whole comparison rests on "
+            "every arm carrying the identical gp")
+
+    lead = (pre > 0).astype(np.int64)
+    trail = (post > 0).astype(np.int64)
+    reserved = np.minimum(lead + trail, gp)
+    lead_used = np.minimum(lead, reserved)
+    trail_used = np.minimum(trail, reserved - lead_used)
+    inner_games = team_games - pre - post - lead_used - trail_used
+    inner_gp = gp - lead_used - trail_used
+
+    inner = allocate_spells(inner_gp, inner_games, mu, kappa, seed=seed,
+                            overflow=overflow, overflow_out=overflow_out)
+    played = np.zeros((len(gp), int(team_games.max())), dtype=np.int8)
+    for i in range(len(gp)):
+        cursor = int(pre[i])
+        if lead_used[i]:
+            played[i, cursor] = 1
+            cursor += 1
+        width = int(inner_games[i])
+        played[i, cursor:cursor + width] = inner[i, :width]
+        cursor += width
+        if trail_used[i]:
+            played[i, cursor] = 1
     return played
 
 

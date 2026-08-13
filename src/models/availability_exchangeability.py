@@ -80,8 +80,10 @@ import yaml
 
 from src.eda.season_effects import ROLE_EDGES, ROLE_LABELS
 from src.features.availability import absence_spells
-from src.models.games_played import (allocate_spells, fit_beta_geometric,
-                                     multi_team_seasons)
+from src.models.games_played import (MISSED_SHARE_EDGES, EdgeResampler, allocate_spells,
+                                     edge_blocks, fit_beta_geometric, layout_tenure,
+                                     missed_share_bin, single_team_panel,
+                                     spell_lengths_from)
 from src.models.held_out import selection_split
 from src.models.stan_availability import (FIRST_SEASON, availability_design,
                                           restrict_window, role_bins)
@@ -115,7 +117,6 @@ GP_ARMS = ("full_window", "three_state", "duration_covariates",
 
 GP_METRICS = "stan_games_played_metrics.csv"
 
-
 # ── Populations ───────────────────────────────────────────────────────────────
 
 def role_frame(design: pd.DataFrame) -> pd.DataFrame:
@@ -124,15 +125,6 @@ def role_frame(design: pd.DataFrame) -> pd.DataFrame:
     out["role_bin"] = role_bins(out)
     out["role"] = [ROLE_LABELS[b - 1] for b in out["role_bin"]]
     return out
-
-
-def single_team_panel(panel: pd.DataFrame, rows: pd.DataFrame) -> pd.DataFrame:
-    """Panel rows for the single-team player-seasons `rows` covers, in schedule order."""
-    multi = multi_team_seasons(panel)
-    keep = set(map(tuple, rows[["season", "player_id"]].to_numpy()))
-    mask = [(s, p) in keep and (s, p) not in multi
-            for s, p in zip(panel["season"], panel["player_id"])]
-    return panel[mask].sort_values(["season", "player_id", "team_game_index"])
 
 
 # ── Analysis 1: where the non-exchangeability comes from ──────────────────────
@@ -255,6 +247,49 @@ def gp_margin_invariance(predictions_dir: Path) -> pd.DataFrame:
     return pd.DataFrame(out)
 
 
+# ── The tenure factor ─────────────────────────────────────────────────────────
+
+def edge_profile(cells: pd.DataFrame) -> pd.DataFrame:
+    """What the edge share is conditional on, which is the choice `EdgeResampler` encodes.
+
+    Emitted per `(role, missed-share)` cell and per margin, because the two keys are not
+    equally load-bearing and the table is what says so. **The missed share is the axis**: the
+    mean edge fraction roughly quadruples across its four bins while the four roles inside a
+    bin span a few points. What role does carry is the *end* — `pre_share` runs the other way
+    from `post_share` across the role range, which is §11b's two opposing processes (a fringe
+    player signed late, a star whose season ends in March) showing up as position rather than
+    as amount.
+    """
+    rows = cells[cells["missed"] > 0].copy()
+    rows["share_bin"] = missed_share_bin(rows["missed"].to_numpy(),
+                                         rows["team_games"].to_numpy())
+    groups = [("all", "all", rows)]
+    groups += [(ROLE_LABELS[b - 1], "all", rows[rows["role_bin"] == b])
+               for b in range(1, len(ROLE_LABELS) + 1)]
+    labels = [f"{MISSED_SHARE_EDGES[i]:.0%}-{MISSED_SHARE_EDGES[i + 1]:.0%}"
+              for i in range(len(MISSED_SHARE_EDGES) - 1)]
+    groups += [("all", labels[s - 1], rows[rows["share_bin"] == s])
+               for s in range(1, len(labels) + 1)]
+    groups += [(ROLE_LABELS[b - 1], labels[s - 1],
+                rows[(rows["role_bin"] == b) & (rows["share_bin"] == s)])
+               for b in range(1, len(ROLE_LABELS) + 1) for s in range(1, len(labels) + 1)]
+    out = []
+    for role, bucket, group in groups:
+        if group.empty:
+            continue
+        edge_frac = (group["pre_frac"] + group["post_frac"]).to_numpy()
+        out.append({"analysis": "edge_profile", "population": role,
+                    "missed_share_bin": bucket, "player_seasons": len(group),
+                    "mean_edge_frac": float(edge_frac.mean()),
+                    "p_no_edge": float((edge_frac <= 0).mean()),
+                    "p_all_edge": float((edge_frac >= 1 - 1e-9).mean()),
+                    "mean_pre_frac": float(group["pre_frac"].mean()),
+                    "mean_post_frac": float(group["post_frac"].mean()),
+                    "mean_pre_games": float(group["pre"].mean()),
+                    "mean_post_games": float(group["post"].mean())})
+    return pd.DataFrame(out)
+
+
 # ── Analysis 2: the layouts ───────────────────────────────────────────────────
 
 def layout_exchangeable(gp: np.ndarray, team_games: np.ndarray,
@@ -352,23 +387,127 @@ def _longest_run(flags: np.ndarray) -> int:
     return best
 
 
-def layout_ladder(index: dict, roles: np.ndarray, mu: float, kappa: float,
-                  reps: int = LAYOUT_REPS, seed: int = 0) -> pd.DataFrame:
-    """`observed` / `clustered` / `exchangeable` at the scoring-period unit, by role.
+def build_layouts(index: dict, roles: np.ndarray, mu: float, kappa: float,
+                  edges: "EdgeResampler | None" = None, reps: int = LAYOUT_REPS,
+                  seed: int = 0) -> dict[str, np.ndarray]:
+    """Every arm's `(reps x rows x width)` played/missed tensor.
 
-    All three carry the identical `gp` on every row — the observed one by definition, and
-    the other two because both layouts place exactly `gp` played games. That equality is
-    asserted rather than assumed, because it is the whole basis of the comparison: if the
-    layouts moved `gp` at all, every gap below would be confounded with a marginal change.
+    **The drawn arms are a 2x2**, because the round found two mechanisms rather than one and
+    they are not separable by inspection. One axis is the tenure factor — whether the edge
+    blocks are laid at the ends from `EdgeResampler` or scattered as interior spells. The
+    other is `allocate_spells`' overflow policy, which `overflow_incidence` measures firing
+    on 41.28% of fringe rows and 2.32% of star rows and so is a role-shaped effect in its own
+    right. `clustered` is the shipped corner and `tenure_merge` is the far one.
     """
     gp, team_games = index["gp"], index["sizes"]
     layouts = {"observed": observed_layout(index),
                "clustered": np.stack([allocate_spells(gp, team_games, mu, kappa,
                                                       seed=seed + rep)
                                       for rep in range(reps)]),
+               "merge": np.stack([allocate_spells(gp, team_games, mu, kappa,
+                                                  seed=seed + rep, overflow="merge")
+                                  for rep in range(reps)]),
                "exchangeable": np.stack([layout_exchangeable(gp, team_games,
                                                              seed=seed + 5000 + rep)
                                          for rep in range(reps)])}
+    if edges is not None:
+        for arm, overflow in (("tenure", "collapse"), ("tenure_merge", "merge")):
+            drawn = []
+            for rep in range(reps):
+                rng = np.random.default_rng(seed + 9000 + rep)
+                pre, post = edges.draw(gp, team_games, roles, rng)
+                drawn.append(layout_tenure(gp, team_games, pre, post, mu, kappa,
+                                           seed=seed + 9000 + rep, overflow=overflow))
+            layouts[arm] = np.stack(drawn)
+    return layouts
+
+
+def layout_spell_shape(layouts: dict[str, np.ndarray], index: dict,
+                       roles: np.ndarray) -> pd.DataFrame:
+    """The absence-spell lengths each arm actually **realizes**, against the observed ones.
+
+    This is the falsification check `docs/potential-to-dos.md` item 6 asks for, and it is
+    worth its own table because the shipped layout is not guaranteed to realize the
+    distribution it draws from. `allocate_spells` truncates its last spell to make the missed
+    total exact, and collapses to a *single block* whenever more spells were drawn than there
+    are gaps to hold them — so on a heavily-absent row it manufactures long runs by accident.
+    If that accident is what closes the fringe bucket, the defect is in the fitting loop
+    rather than in the missing tenure factor, and the cheaper fix is to stop truncating.
+    """
+    out = []
+    populations = [("all", np.ones(len(roles), dtype=bool))]
+    populations += [(ROLE_LABELS[b - 1], roles == b) for b in range(1, len(ROLE_LABELS) + 1)]
+    for label, select in populations:
+        if not select.any():
+            continue
+        rows = np.flatnonzero(select)
+        for arm, mat in layouts.items():
+            lengths = np.concatenate([
+                spell_lengths_from(mat[rep][rows], index["sizes"][rows])
+                for rep in range(mat.shape[0])]) if len(rows) else np.zeros(0)
+            if not len(lengths):
+                continue
+            out.append({"analysis": "layout_spell_shape", "population": label, "arm": arm,
+                        "spells_per_season": len(lengths) / (len(rows) * mat.shape[0]),
+                        "mean_spell": float(lengths.mean()),
+                        "p_spell_ge10": float((lengths >= 10).mean()),
+                        "p_spell_ge30": float((lengths >= 30).mean()),
+                        "max_spell": int(lengths.max())})
+    return pd.DataFrame(out)
+
+
+def overflow_incidence(index: dict, roles: np.ndarray, mu: float, kappa: float,
+                       edges: "EdgeResampler | None" = None, reps: int = LAYOUT_REPS,
+                       seed: int = 0) -> pd.DataFrame:
+    """How often the spell draw wants more spells than the schedule has gaps, by role.
+
+    This is what makes the overflow policy a *modelling* choice rather than a defensive
+    branch. It is not a rare guard: it fires on the fringe bucket an order of magnitude more
+    often than on stars, so whichever policy is in force is a role-graded effect that nobody
+    chose. The tenure arm's column is the interior residue's rate, which is the same
+    condition after the edge blocks have been taken out of it.
+    """
+    gp, team_games = index["gp"], index["sizes"]
+    arms = {"clustered": None}
+    if edges is not None:
+        arms["tenure"] = edges
+    out = []
+    populations = [("all", np.ones(len(gp), dtype=bool))]
+    populations += [(ROLE_LABELS[b - 1], roles == b) for b in range(1, len(ROLE_LABELS) + 1)]
+    for arm, resampler in arms.items():
+        fired = np.zeros((reps, len(gp)), dtype=bool)
+        for rep in range(reps):
+            flags = np.zeros(len(gp), dtype=bool)
+            if resampler is None:
+                allocate_spells(gp, team_games, mu, kappa, seed=seed + rep,
+                                overflow_out=flags)
+            else:
+                rng = np.random.default_rng(seed + 9000 + rep)
+                pre, post = resampler.draw(gp, team_games, roles, rng)
+                layout_tenure(gp, team_games, pre, post, mu, kappa,
+                              seed=seed + 9000 + rep, overflow_out=flags)
+            fired[rep] = flags
+        for label, select in populations:
+            if not select.any():
+                continue
+            out.append({"analysis": "overflow_incidence", "population": label, "arm": arm,
+                        "player_seasons": int(select.sum()),
+                        "overflow_rate": float(fired[:, select].mean())})
+    return pd.DataFrame(out)
+
+
+def layout_ladder(index: dict, roles: np.ndarray, mu: float, kappa: float,
+                  edges: "EdgeResampler | None" = None, reps: int = LAYOUT_REPS,
+                  seed: int = 0) -> pd.DataFrame:
+    """Every layout arm at the scoring-period unit, by role.
+
+    All of them carry the identical `gp` on every row — the observed one by definition, and
+    the drawn ones because every layout places exactly `gp` played games. That equality is
+    asserted rather than assumed, because it is the whole basis of the comparison: if the
+    layouts moved `gp` at all, every gap below would be confounded with a marginal change.
+    """
+    gp, team_games = index["gp"], index["sizes"]
+    layouts = build_layouts(index, roles, mu, kappa, edges=edges, reps=reps, seed=seed)
     for name, mat in layouts.items():
         realized = mat.sum(axis=2)
         if not np.array_equal(realized, np.broadcast_to(gp, realized.shape)):
@@ -404,8 +543,15 @@ def _attach_gaps(frame: pd.DataFrame) -> pd.DataFrame:
     whose exchangeable error is under `ARRANGEMENT_TOL` of the observed value is flagged
     `arrangement_sensitive = False` and its share left blank. That a metric fails the flag
     is itself the result for that metric, not a hole in the table.
+
+    **A fourth arm adds columns rather than rows.** `clustered` keeps the bare
+    `recovered_share` name it has always had, because §11d's readings are audited under it;
+    any further arm gets `<arm>_recovered_share` beside it on the same row, so the two are
+    read against each other at a glance and no existing claim moves.
     """
     metrics = ["p_dead_period", "p_half_period", "longest_dead_run", "p_dead_run"]
+    extra = [a for a in frame["arm"].unique()
+             if a not in ("observed", "clustered", "exchangeable")]
     out = []
     for label, group in frame.groupby("population", sort=False):
         rows = group.set_index("arm")
@@ -415,14 +561,22 @@ def _attach_gaps(frame: pd.DataFrame) -> pd.DataFrame:
             clus = float(rows.loc["clustered", metric])
             gap = observed - exch
             sensitive = bool(observed and abs(gap) >= ARRANGEMENT_TOL * abs(observed))
-            out.append({"analysis": "period_gap", "population": label, "metric": metric,
-                        "observed": observed, "clustered": clus, "exchangeable": exch,
-                        "exchangeable_error": exch - observed,
-                        "clustered_error": clus - observed,
-                        "exchangeable_ratio": exch / observed if observed else np.nan,
-                        "clustered_ratio": clus / observed if observed else np.nan,
-                        "arrangement_sensitive": sensitive,
-                        "recovered_share": (clus - exch) / gap if sensitive else np.nan})
+            record = {"analysis": "period_gap", "population": label, "metric": metric,
+                      "observed": observed, "clustered": clus, "exchangeable": exch,
+                      "exchangeable_error": exch - observed,
+                      "clustered_error": clus - observed,
+                      "exchangeable_ratio": exch / observed if observed else np.nan,
+                      "clustered_ratio": clus / observed if observed else np.nan,
+                      "arrangement_sensitive": sensitive,
+                      "recovered_share": (clus - exch) / gap if sensitive else np.nan}
+            for arm in extra:
+                value = float(rows.loc[arm, metric])
+                record[arm] = value
+                record[f"{arm}_error"] = value - observed
+                record[f"{arm}_ratio"] = value / observed if observed else np.nan
+                record[f"{arm}_recovered_share"] = ((value - exch) / gap if sensitive
+                                                    else np.nan)
+            out.append(record)
     return pd.concat([frame, pd.DataFrame(out)], ignore_index=True)
 
 
@@ -452,7 +606,10 @@ def run(cfg: dict) -> dict[str, Path]:
     decomposition = missed_decomposition(panel, fit_rows)
     shape = spell_shape_by_role(panel, fit_rows)
     invariance = gp_margin_invariance(out_dir)
-    clustering = pd.concat([decomposition, shape, invariance], ignore_index=True)
+    fit_cells = edge_blocks(panel, fit_rows)
+    edges = EdgeResampler(fit_cells)
+    profile = edge_profile(fit_cells)
+    clustering = pd.concat([decomposition, shape, invariance, profile], ignore_index=True)
     clustering_dest = out_dir / "availability_clustering.csv"
     clustering.to_csv(clustering_dest, index=False)
 
@@ -467,6 +624,15 @@ def run(cfg: dict) -> dict[str, Path]:
                          "not_rostered_share_of_edge"]].round(4).to_string(index=False))
     print(shape[["population", "spells_per_season", "mean_spell", "p_spell_ge10",
                  "bg_mu", "bg_kappa"]].round(4).to_string(index=False))
+    print(f"\n  Edge blocks on the fitting rows: what the edge fraction is conditional on "
+          f"({len(fit_cells):,} player-seasons, {int((fit_cells['missed'] > 0).sum()):,} "
+          f"with a missed game)")
+    print(profile[profile["population"] == "all"][
+        ["missed_share_bin", "player_seasons", "mean_edge_frac", "p_no_edge", "p_all_edge",
+         "mean_pre_frac", "mean_post_frac"]].round(4).to_string(index=False))
+    print(profile[profile["missed_share_bin"] == "all"][
+        ["population", "player_seasons", "mean_edge_frac", "mean_pre_games",
+         "mean_post_games"]].round(4).to_string(index=False))
     if len(invariance):
         print("\n  Every non-exchangeable arm already fitted, at the gp margin:")
         print(invariance[["arm", "val_crps", "crps_vs_floor", "val_pit_ks",
@@ -489,18 +655,33 @@ def run(cfg: dict) -> dict[str, Path]:
           f"player-seasons of {len(val_rows):,}, {LAYOUT_REPS} layouts per arm")
 
     pooled = shape[shape["population"] == "all"].iloc[0]
-    ladder = layout_ladder(index, roles, float(pooled["bg_mu"]),
-                           float(pooled["bg_kappa"]), seed=seed)
+    mu, kappa = float(pooled["bg_mu"]), float(pooled["bg_kappa"])
+    ladder = layout_ladder(index, roles, mu, kappa, edges=edges, seed=seed)
+    layouts = build_layouts(index, roles, mu, kappa, edges=edges, seed=seed)
+    ladder = pd.concat([ladder, layout_spell_shape(layouts, index, roles),
+                        overflow_incidence(index, roles, mu, kappa, edges=edges,
+                                           seed=seed)], ignore_index=True)
     ladder_dest = out_dir / "availability_exchangeability.csv"
     ladder.to_csv(ladder_dest, index=False)
     print(ladder[ladder["analysis"] == "period_layout"][
         ["population", "arm", "p_dead_period", "p_half_period", "longest_dead_run",
          "p_dead_run"]].round(4).to_string(index=False))
-    print("\n  Against `observed` — the exchangeable arm's error, and what the shipped "
+    print("\n  Against `observed` — the exchangeable arm's error, and what each drawn "
           "layout recovers of it:")
     print(ladder[ladder["analysis"] == "period_gap"][
-        ["population", "metric", "observed", "clustered", "exchangeable",
-         "exchangeable_ratio", "recovered_share"]].round(4).to_string(index=False))
+        ["population", "metric", "observed", "exchangeable", "recovered_share",
+         "merge_recovered_share", "tenure_recovered_share",
+         "tenure_merge_recovered_share"]].round(4).to_string(index=False))
+    print("\n  How often the spell draw overflows the schedule's gaps, which is what makes "
+          "the overflow policy a role-graded effect:")
+    print(ladder[ladder["analysis"] == "overflow_incidence"][
+        ["population", "arm", "player_seasons", "overflow_rate"]]
+        .round(4).to_string(index=False))
+    print("\n  The spell lengths each layout REALIZES, against the observed ones — the "
+          "falsification check on `allocate_spells`' truncation:")
+    print(ladder[ladder["analysis"] == "layout_spell_shape"][
+        ["population", "arm", "spells_per_season", "mean_spell", "p_spell_ge10",
+         "p_spell_ge30", "max_spell"]].round(4).to_string(index=False))
     print(f"\nWrote {len(clustering):,} rows → {clustering_dest}")
     print(f"Wrote {len(ladder):,} rows → {ladder_dest}")
 

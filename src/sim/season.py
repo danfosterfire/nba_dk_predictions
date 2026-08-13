@@ -147,11 +147,13 @@ from src.eda.residual_correlation import to_matrix as residual_matrix
 from src.features.targets import BONUS_GAME_OVERDISPERSION, bonus_part
 from src.models.component_rates import (CONVERSION_HEADS, COUNT_HEADS, DERIVED_COUNTS,
                                         build_design as component_build_design)
-from src.models.games_played import allocate_spells
+from src.models.games_played import (EdgeResampler, allocate_spells, edge_blocks,
+                                     layout_tenure)
 from src.models.held_out import TEST_SEASONS, assert_unlocked, selection_split
 from src.models.minutes_unification import rehydrate_composition, shipped_sigma
 from src.models.posteriors import load_all, posteriors_dir, require_window
-from src.models.stan_availability import availability_design
+from src.models.stan_availability import (FIRST_SEASON, availability_design,
+                                          restrict_window, role_bins)
 from src.models.stan_composition import OFFSET_CLIP, composition_frame, simulate_minutes
 from src.models.stan_game_length import (forward_cells, posterior_inputs,
                                          sample_game_length)
@@ -355,6 +357,53 @@ def no_design_availability(features_dir: Path, season: str, design: pd.DataFrame
         raise ValueError("no uncovered player-seasons before "
                          f"{season}; the availability design cannot be that complete")
     return float(rows["gp"].sum() / rows["team_games"].sum())
+
+
+#: The layout arms `sim.availability.layout` may name, as `(tenure factor, overflow policy)`.
+#: `clustered` is the previously shipped corner and is recoverable exactly; `tenure_merge`
+#: ships. `make availability-exchangeability` is the ladder and
+#: `docs/availability-window-plan.md` §13 the readout.
+LAYOUT_ARMS = {"clustered": (False, "collapse"), "merge": (False, "merge"),
+               "tenure": (True, "collapse"), "tenure_merge": (True, "merge")}
+
+
+def layout_arm(cfg: dict) -> tuple[str, bool, str]:
+    """`(name, tenure, overflow)` for the configured availability layout."""
+    name = str(cfg.get("sim", {}).get("availability", {}).get("layout", "tenure_merge"))
+    if name not in LAYOUT_ARMS:
+        raise ValueError(f"unknown sim.availability.layout {name!r}; expected one of "
+                         f"{sorted(LAYOUT_ARMS)}")
+    tenure, overflow = LAYOUT_ARMS[name]
+    return name, tenure, overflow
+
+
+def tenure_edges(features_dir: Path, season: str, design: pd.DataFrame,
+                 allowed: list[str], first_season: str) -> EdgeResampler:
+    """Edge-block fractions for the layout, pooled from seasons strictly before the target.
+
+    The same point-in-time construction `no_design_availability` and
+    `stan_composition.rookie_share_priors` use, and for the same reason: this is an
+    empirical rate handed to the simulator, so it may see only seasons already played and
+    only seasons selection may read. Restricted to the availability head's own fitting
+    window as well, because that is the estimator `make availability-exchangeability`
+    measured and a shipped rule transfers from a ladder only if it is the ladder's rule.
+
+    Multi-team player-seasons drop out inside `edge_blocks`: a traded player's tenure with
+    one team ends without his season ending, so his trailing block is a roster fact rather
+    than an absence, and pooling it would teach the layout that stars vanish in February.
+    """
+    earlier = [s for s in allowed if s < season]
+    rows = design[design["season"].isin(earlier)]
+    rows = restrict_window(rows, first_season)
+    if rows.empty:
+        raise ValueError(f"no seasons before {season} in the availability head's "
+                         f"{first_season}+ window to pool edge blocks from")
+    rows = rows.assign(role_bin=role_bins(rows))
+    panel = pd.read_parquet(
+        features_dir / "availability_panel.parquet",
+        columns=["season", "player_id", "team_id", "game_id", "team_game_index",
+                 "played", "status"])
+    return EdgeResampler(edge_blocks(panel[panel["season"].isin(earlier)], rows))
 
 
 def composition_players(frame: pd.DataFrame, season: str) -> pd.DataFrame:
@@ -723,9 +772,19 @@ def _sim_one(s: int, ctx: dict) -> dict:
                                      float(ctx["avail_mu_low"][draw]),
                                      float(ctx["avail_rho_low"][draw]))
     gp = rng.binomial(ctx["cell_games"], p_available[ctx["cell_player"]])
-    played = allocate_spells(gp, ctx["cell_games"], float(ctx["dur_mu"][draw]),
-                             float(ctx["dur_kappa"][draw]),
-                             seed=int(rng.integers(1 << 31)))
+    # WHERE those games fall is a separate draw from how many, because `gp` is invariant to
+    # the arrangement and the head therefore cannot carry it — `make availability-
+    # exchangeability`. The edge blocks go at the ends first when the shipped `tenure_merge`
+    # arm is configured, and `allocate_spells` gets only the interior remainder.
+    mu_dur, kappa_dur = float(ctx["dur_mu"][draw]), float(ctx["dur_kappa"][draw])
+    layout_seed = int(rng.integers(1 << 31))
+    if ctx["edges"] is None:
+        played = allocate_spells(gp, ctx["cell_games"], mu_dur, kappa_dur,
+                                 seed=layout_seed, overflow=ctx["layout_overflow"])
+    else:
+        pre, post = ctx["edges"].draw(gp, ctx["cell_games"], ctx["cell_role"], rng)
+        played = layout_tenure(gp, ctx["cell_games"], pre, post, mu_dur, kappa_dur,
+                               seed=layout_seed, overflow=ctx["layout_overflow"])
     available = played[ctx["row_cell"], ctx["row_index_in_cell"]] == 1
     available, short = feasibility_repair(available, ctx["row_block"], ctx["n_blocks"])
 
@@ -915,6 +974,11 @@ def build_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
     row_rho_bin = comp_art.recipe.transform(players)["rho_bin"].to_numpy(np.int64)[row_player]
 
     dur_mu, dur_kappa = spell_shape(artifacts["gp_duration"], avail[present])
+    layout_name, layout_tenure_on, layout_overflow = layout_arm(cfg)
+    edges = (tenure_edges(features_dir, season, full_avail, allowed_seasons(design),
+                          cfg.get("stan", {}).get("availability", {})
+                          .get("first_season", FIRST_SEASON))
+             if layout_tenure_on else None)
     rates = component_rates(artifacts, units)
 
     # The population mean per-game count the residual correlation was pooled at, built from
@@ -956,6 +1020,18 @@ def build_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
                              == avail_rho.shape[1]
                              else [f"bucket {j + 1}" for j in range(avail_rho.shape[1])]),
         "dur_mu": dur_mu, "dur_kappa": dur_kappa,
+        # The layout's role key comes from `role_bins` directly rather than from the
+        # dispersion artifact's bucket, even though the two agree on every player of every
+        # simulated season today. They agree only while the head is role-graded: a
+        # shared-`rho` artifact makes `availability_rho_bin` return all zeros, which is
+        # correct for a dispersion gather and would silently key every player in the league
+        # to the fringe bucket here. `role_bins` is the function `EdgeResampler` pooled on,
+        # so it is the one that cannot drift from it — and it sends a player with no prior
+        # minutes to the lowest bucket, whose edge blocks are longest, which is the right
+        # direction for a call-up.
+        "edges": edges, "layout": layout_name, "layout_overflow": layout_overflow,
+        "cell_role": role_bins(avail)[cell_frame["player_id"].map(player_pos).to_numpy(
+            np.int64)],
         "eta_base": eta["base"], "eta_per_overtime": eta["per_overtime"],
         "eta_per_clip": eta["per_clip"], "affine_error": eta["affine_error"],
         "ps_sigma": ps_sigma, "sigma_source": comp_model.sigma_source,
@@ -1334,6 +1410,11 @@ def save_tensor(sim: dict, ctx: dict, dest: Path) -> Path:
         player_season_sigma=np.array(float(ctx["ps_sigma"].mean())),
         sigma_source=np.array(ctx["sigma_source"]),
         composition_variant=np.array(ctx["composition_variant"]),
+        # The availability layout belongs beside the composition variant and the injected
+        # sigma for the same reason those two are here: it changes the tensor materially
+        # while leaving every season marginal identical, so a consumer holding two tensors
+        # drawn under different layouts has no other way to tell them apart.
+        availability_layout=np.array(ctx["layout"]),
         scoring_periods=np.arange(N_SCORING_PERIODS),
         tournament_round=np.r_[np.ones(ROUND_1_WEEKS, dtype=int), [2, 3, 4]],
         prior_minutes=pool["total_minutes_lag1"].to_numpy(np.float32),
@@ -1390,6 +1471,11 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
                   f"{np.percentile(pi, 10):.4f}-{np.percentile(pi, 90):.4f} "
                   f"p10-p90, low component {ctx['avail_mu_low'].mean():.4f} "
                   f"at rho {ctx['avail_rho_low'].mean():.4f}")
+        print(f"    layout: {ctx['layout']} — "
+              + (f"tenure edge blocks pooled from {len(ctx['edges'].pairs):,} prior "
+                 f"player-seasons, " if ctx["edges"] is not None
+                 else "no tenure factor, ")
+              + f"overflow {ctx['layout_overflow']}")
         print(f"  copula: {len(COUNT_HEADS)} count frailties, lognormal sigma "
               f"{ctx['frailty_sigma']:.4f} at overdispersion "
               f"{BONUS_GAME_OVERDISPERSION}; {ctx['copula']['saturated']} of "

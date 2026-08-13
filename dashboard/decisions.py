@@ -7730,6 +7730,111 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("simulator", "calibration"),
     ),
     Decision(
+        id="the-availability-layout-lays-tenure-blocks-at-the-ends",
+        topic="simulations",
+        claim="The simulator's availability layout is **`tenure_merge`**: the pre- and "
+              "post-tenure edge blocks go at the *ends* of the schedule, and "
+              "`allocate_spells` stops collapsing a heavily-absent row to one giant block. "
+              "**Two mechanisms, and neither ships alone.**",
+        because="[[the-spell-layout-pays-most-of-the-exchangeability-cost]] left a residual "
+                "whose sign flipped by role — the fringe bucket's longest dead run "
+                "overshooting at a `recovered_share` of **1.6804** and the star bucket's "
+                "undershooting at **0.6858** — and attributed it to the two kinds of tenure "
+                "edge block having opposite role signatures. That was half of it. **The "
+                "conditioning key is not role**: the edge fraction of a player's missed "
+                "games runs **0.1321 → 0.5679** across missed-share bins while the four "
+                "role buckets inside any one bin span about three points, so the pooled "
+                "role gradient was mostly a composition effect. Role keys *which end* — the "
+                "leading block's share falls **4.2×** from fringe to star (0.2156 → 0.0519) "
+                "and the trailing block's rises. `EdgeResampler` therefore resamples the "
+                "fitting rows' own realized `(pre/missed, post/missed)` pairs on both keys; "
+                "the fitted entry and exit heads cannot do this job because they do not "
+                "condition on `gp` and would return blocks longer than the missed total. "
+                "**The second mechanism was a guard carrying a modelling decision.** When "
+                "the spell draw wants more spells than the schedule has gaps, "
+                "`allocate_spells` threw the draw away and laid the missed total as one "
+                "block — which fires on **41.28%** of fringe rows against **2.32%** of star "
+                "rows, a **17.8×** role gradient nobody chose. Removing it alone takes the "
+                "pooled `longest_dead_run` recovery from 1.1162 to **0.2707** and the "
+                "fringe bucket's to **0.0073**, so the accident was doing most of the "
+                "clumping the beta-geometric was credited with; adding the tenure factor "
+                "alone compounds with it and pushes the fringe bucket to **1.5370** on dead "
+                "periods. Together they close the sign flip: `longest_dead_run` recovery "
+                "spans **[0.852, 1.039]** across role against [0.587, 1.680], and pooled, "
+                "all three arrangement-sensitive metrics land within 4% of 1.0 (**0.9740**, "
+                "**0.9612**, **0.9186**). **The confirmation is a metric it was not selected "
+                "on**: the arm reproduces the realized spell-length distribution — 6.6575 "
+                "spells a season against an observed 6.5433, mean 4.5220 against 4.6009, "
+                "P(spell ≥ 10) 0.0932 against 0.1015 — where the previous layout was 45% "
+                "short on that last column. Nesting is exact: no edge block anywhere plus "
+                "`overflow='collapse'` reproduces the previously shipped simulator bit for "
+                "bit, and every arm preserves `gp` on every row. **Gate A is unmoved** — "
+                "`make simulate-season` was re-run and every games-played row is identical "
+                "to four decimals (CRPS 9.5291 / 9.5517, bias −0.113 / −0.490, pmf total "
+                "variation 0.0654 / 0.0648) — which is the point rather than a "
+                "disappointment: the layout rearranges absences and preserves the count, so "
+                "every season-unit marginal is blind to it, exactly as `gp`'s permutation "
+                "invariance requires. **`make weekly-scores` is the gate that can see it**, "
+                "and it moves the two rows it should: the simulated zero share goes "
+                "**16.9% → 17.95%** on one-week train against an observed 20.7% and "
+                "**18.2% → 19.00%** on validation against 19.9%, while the pooled spread "
+                "ratio widens to **0.923–0.971×** and the KS span narrows to "
+                "**0.0171–0.0600**. It also closed a defect it was not aimed at: that doc's "
+                "**front-loaded early-season bias** — −5.28 in week 1, monotone over the "
+                "first six weeks, with 'the availability chain's early-season behaviour' "
+                "named as the suspect and nothing further — now reads **−1.88** in week 1 "
+                "with every week between −1.19 and −3.03, a 1.84-point range against 4.58. "
+                "A pre-tenure block belongs at the *start* of the schedule and the old "
+                "layout placed it uniformly at random, so a player signed in December was "
+                "simulated as available in October. **The contest layer is not re-run** — "
+                "`make bracket`, `make draft` and `make strategy-sweep` are owed, and §7l "
+                "says to expect a null because the drafting layer ranks.",
+        status="settled",
+        reproduce="make availability-exchangeability → "
+                  "outputs/predictions/availability_exchangeability.csv, "
+                  "outputs/predictions/availability_clustering.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("simulator", "calibration", "architecture"),
+    ),
+    Decision(
+        id="the-layout-block-draws-only-what-ships",
+        topic="problem",
+        claim="Page 7's availability-layout block draws **the arm that ships and the season "
+              "it reproduces, and nothing else** — not the three arms that selected it, and "
+              "not the `recovered_share` that is a ratio against one of them.",
+        because="[[the-availability-layout-lays-tenure-blocks-at-the-ends]] was settled by a "
+                "2×2 whose losing corners are the argument: `merge` alone takes the pooled "
+                "longest-dead-run recovery to 0.2707 and `tenure` alone pushes the fringe "
+                "bucket to 1.5370. That argument is why the shipped arm ships, and it is "
+                "exactly the kind of thing the nine-tab walkthrough was removed for being — "
+                "documentation rendered as an app. The dashboard shows what the pipeline "
+                "*does*; `docs/availability-window-plan.md` §13 and this registry hold why. "
+                "**Two consequences follow and neither is obvious.** The block reads "
+                "*levels* rather than the ladder's own `recovered_share`, because that "
+                "statistic's denominator is the exchangeable arm — quoting it would put a "
+                "rejected arm on screen through the arithmetic while appearing not to. And "
+                "`observed` stays, because it is not an arm: it is the realized "
+                "played/missed vector the layout exists to reproduce, so it takes the "
+                "hollow-ink reference marker the coupling and game-length figures already "
+                "use for a target rather than a rival. The rule is pinned as a **source "
+                "scan** (`test_no_rejected_layout_arm_reaches_the_page_source`) rather than "
+                "as a frame assertion, because the failure mode is a caption that narrates "
+                "the comparison and a typed arm name passes every check on the data. "
+                "`p_half_period` is dropped for a separate reason — it is nearly "
+                "arrangement-invariant, so drawing it would read as a fourth diagnostic the "
+                "layout fails rather than as a fact about that metric.",
+        status="settled",
+        reproduce="make availability-exchangeability → "
+                  "outputs/predictions/availability_exchangeability.csv, "
+                  "outputs/predictions/availability_clustering.csv",
+        source="docs/dashboard-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("dashboard", "charter"),
+    ),
+    Decision(
         id="no-prior-role-bucket-grades-the-flat-axis",
         topic="availability",
         claim="The three-class **imputed role bucket** for players with no prior season is "
