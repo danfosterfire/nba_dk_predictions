@@ -173,6 +173,30 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("constraint",),
     ),
     Decision(
+        id="post-preseason-draft",
+        topic="problem",
+        claim="Draft after the preseason: the information set gains current-season "
+              "preseason statistics, as additional features on the existing heads.",
+        because="Contest entry is open through the season opener, and drafting after "
+                "the preseason primarily removes the risk of a season-altering injury "
+                "between draft night and opening night. The side effect is that "
+                "preseason games become legitimate inputs. They enter difference-coded "
+                "against the prior-season features with a missing indicator — zero "
+                "recovers the shipped head exactly — never replacing prior-season "
+                "stats. A planning probe puts coverage solid from 2005-06 (absent "
+                "before 2003), so validation and test are fully covered. Availability "
+                "and minutes get arms first; component rates are gated on a train-only "
+                "EDA readout; the no-prior population is primary scope. Open because "
+                "nothing is built: Stage P0 of the plan turns the probe into a "
+                "coverage artifact, which is when this entry gains its reproduce link "
+                "and what preseason data is worth starts being measured.",
+        status="open",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("constraint",),
+    ),
+    Decision(
         id="components-not-dk-pts",
         topic="problem",
         claim="Predict the twelve components; never predict dk_pts directly.",

@@ -77,6 +77,9 @@ The docs are:
   - predictions-plan.md: Plan and notes for the models for the various box-score 
   statistics that feed into the *dk_pts* figure. Work completed and mostly 
   archival.
+  - preseason-plan.md: The post-preseason problem-statement change — current-season 
+  preseason games as additional features on the existing heads, the gates, and the 
+  October production runbook. Read before touching preseason fetch, panel, or features.
   - provenance-plan.md: Plan for keeping documentation, dashboard, and 
   context up-to-date with latest findings and ensuring reproducibility of 
   context.
