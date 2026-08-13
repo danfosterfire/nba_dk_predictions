@@ -141,6 +141,15 @@ features:
     n_shuffles: 5
     seed: 42
 
+    # ── src/models/availability_absence.py ──
+    absence:
+      # Which rounds `make availability-absence` runs. §12's `crossed` is the block x
+      # compound 2x2 with its lambda profile; §14's `mixture` crosses the same block against
+      # the head that actually ships. The two write DISJOINT artifacts, so `rounds:
+      # [mixture]` re-runs §14 alone and cannot overwrite §12's five files — which matters
+      # because `make docs-audit` re-derives ~60 quoted figures from them.
+      rounds: [crossed, mixture]
+
 model:
   type: lstm          # lstm | transformer | baseline
   hidden_size: 128

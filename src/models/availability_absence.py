@@ -62,6 +62,26 @@ dispersion held at the shipped arm, exactly as §7 did:
 Five is the whole grid. §7 refused to cross the likelihood axis with the full sweep because
 19 arms was already the multiplicity problem §4b exists to answer.
 
+## The second round — the block against the head that SHIPS (§14)
+
+**§12 crossed the block against `betabinom`, and `betabinom` is not the head.** `mixture` is
+(§7i), so the block's two margins were measured against a model nobody runs. This round is
+`docs/potential-to-dos.md` item 8, and the question is redundancy rather than size:
+
+| arm | what it answers |
+|---|---|
+| `mixture` | the incumbent, and the reference every margin is quoted against |
+| `mixture__absence_mix` | does the block help the MEAN under a two-component head |
+| `mixture__absence_mix_pi` | does knowing WHY he missed say WHO gets a disrupted season |
+| `betabinom`, `betabinom__absence_mix` | the other level of the likelihood axis, so the
+  **interaction** is a paired bootstrap rather than a subtraction across two artifacts |
+
+`mixture` closes the boundary with a covariate-driven weight on a disrupted-season component,
+so it already says *who* is at risk; the block says *why he missed last season*. If those are
+the same information by two routes, the block's −0.0610 CRPS collapses here. The two covariate
+lists are separate arms because they are separate questions — `pi_features` on `FrailtyGLM`
+is what lets them move independently, and §7's note is that `PI_COLS` is deliberately short.
+
 **`lambda` is profiled beside the ladder** (`availability_absence_lambda.csv`), and that is
 not decoration. A free fit that stops at `lambda = 1` is either the MLE or an optimizer that
 could not leave the corner it started in, and the two are indistinguishable in an arm table.
@@ -108,7 +128,7 @@ from src.models.availability import (ABSENCE_MIX_COLS, FEATURE_COLS, MIN_MIX_COV
                                      season_start_dates, _sigmoid)
 from src.features.availability import build_panel, season_availability
 from src.models.availability_window import (BOOTSTRAP_REPS, LIKELIHOOD_LOOKBACK,
-                                            LIKELIHOOD_WINDOW, WINDOWS, FrailtyGLM,
+                                            LIKELIHOOD_WINDOW, PI_COLS, WINDOWS, FrailtyGLM,
                                             BetaBinomFrailty, MixtureFrailty,
                                             MIN_ROLE_ROWS, _ab_row, _bb_dlogpmf_dmu,
                                             _origin_scores, _tail_errors, _tail_parts,
@@ -143,6 +163,64 @@ LADDER_ARMS: tuple[str, ...] = ("betabinom", "betabinom__absence_mix",
 
 #: The reference row every margin is quoted against — the same one §7c uses.
 ABSENCE_REFERENCE = "betabinom"
+
+# ── §14: the same block, crossed against the arm that actually ships ──────────
+#
+# §12 crossed the block against `betabinom` and the head that ships is `mixture`, so the
+# block's two margins were measured against a head nobody runs. This round is the arm
+# `docs/potential-to-dos.md` item 8 names, and the question is redundancy: `mixture` closes
+# the boundary by giving the disrupted season its own component with a covariate-driven
+# weight, so it already says WHO is at risk; the block says WHY he missed last season. Those
+# are plausibly the same information reaching the same place by two routes.
+#
+# **The two covariate blocks are separate arms, and that is the round's substance.** The mean
+# function and the disruption weight are different questions, and §7's note is that `PI_COLS`
+# is deliberately short — nineteen more unpenalized parameters on 4,027 rows would measure
+# the `l2` confound rather than the mechanism — so four more columns on `pi` is a decision to
+# be made against that rather than a free extension.
+
+#: §14's arms. The two `betabinom` rows are carried because the **interaction** needs both
+#: levels of the likelihood axis: the block's effect under `mixture` minus its effect under
+#: `betabinom` is what says whether the two are redundant, and it cannot be read from §12's
+#: artifact because a paired bootstrap needs the four arms' per-row scores together.
+MIXTURE_ARMS: tuple[str, ...] = ("mixture", "mixture__absence_mix",
+                                 "mixture__absence_mix_pi",
+                                 "betabinom", "betabinom__absence_mix")
+
+#: The head that ships, and therefore what §14's margins are quoted against. D1 is a
+#: statement about the arm being replaced, so quoting `betabinom` here would price the
+#: candidates against a head that was retired in §7i.
+MIXTURE_REFERENCE = "mixture"
+
+#: Which §14 rows are context rather than candidates — the incumbent itself and the two
+#: `betabinom` rows §12 already measured and this round only re-fits to pair the bootstrap.
+MIXTURE_CONTEXT: tuple[str, ...] = ("mixture", "betabinom", "betabinom__absence_mix")
+
+#: §14's effects. The second and third are the round's real question and are **not** the same
+#: arm: whether the block helps the mean under a two-component head, and whether knowing WHY
+#: he missed says WHO gets a disrupted season.
+MIXTURE_CONTRASTS: tuple[tuple[str, str, str], ...] = (
+    ("absence_mix on beta | mixture", "mixture__absence_mix", "mixture"),
+    ("absence_mix on beta+pi | mixture", "mixture__absence_mix_pi", "mixture"),
+    ("absence_mix on pi | beta", "mixture__absence_mix_pi", "mixture__absence_mix"),
+    ("absence_mix | betabinom", "betabinom__absence_mix", "betabinom"),
+)
+
+#: The redundancy test, as one number with an interval. A negative value means the block buys
+#: MORE under the mixture than under the single-component head; a positive one the size of
+#: §12's main effect means the mixture already had the block's information and the two are
+#: two routes to the same correction.
+MIXTURE_INTERACTIONS: tuple[tuple[str, str, str, str, str], ...] = (
+    ("interaction", "mixture__absence_mix", "mixture",
+     "betabinom__absence_mix", "betabinom"),
+)
+
+#: Which rounds `run` executes, and the config key that overrides it
+#: (`features.availability.absence.rounds`). The two rounds write **disjoint** artifacts, so
+#: a partial run cannot overwrite the other's rows — which is what makes this safe where
+#: `composition_effects` needed a merge. §12's round costs the compound arms and an eight-row
+#: profile; §14's costs four more mixture fits and its own rolling harness.
+ROUNDS: tuple[str, ...] = ("crossed", "mixture")
 
 #: `mixture`'s validation `boundary_tail_error` (§7c). The bar axis 1 has to clear on its
 #: own for the compound arm to need re-motivating, and the level the round is read against.
@@ -436,6 +514,29 @@ def _d1(boundary_hi: float, crps_lo: float) -> bool:
     return bool(boundary_hi < 0.0 and crps_lo <= 0.0)
 
 
+def _wins_crps_holds_boundary(boundary_lo: float, crps_hi: float) -> bool:
+    """§14's bar — **D1 with its two halves swapped**, and the swap is the point.
+
+    D1 was written for a round whose incumbent had a *bad* boundary, so it asks for a
+    calibration gain and settles for CRPS non-inferiority. `mixture` already spent the
+    boundary gain (0.0201 → 0.0109), so an arm bolted onto it has nothing left to buy there;
+    what it has to buy is the CRPS the shipped head gave up. So this asks for the mirror
+    image: a **CRPS interval clear of zero on the good side**, and a boundary margin whose
+    interval does not establish a loss. `docs/potential-to-dos.md` item 8 states it in exactly
+    those words, and reporting it as a column rather than leaving it to a reader is what stops
+    the round being read against the wrong bar.
+
+    Both predicates are carried on every row `crossed_ladder` emits, in both rounds, because
+    an arm that passes one and fails the other is the interesting case and averaging them away
+    would hide it. `lambda_profile` carries `d1_passes` only: its rows are a grid over a pinned
+    parameter rather than candidates, and §12d reads both halves of that verdict off the
+    intervals directly.
+    """
+    if not np.isfinite(boundary_lo) or not np.isfinite(crps_hi):
+        return False
+    return bool(crps_hi < 0.0 and boundary_lo <= 0.0)
+
+
 def lambda_profile(train: pd.DataFrame, val: pd.DataFrame, max_games: int,
                    arms: tuple[tuple[float, bool], ...] = LAMBDA_ARMS,
                    features: list[str] | None = None, l2: float = 1.0,
@@ -498,7 +599,13 @@ def lambda_profile(train: pd.DataFrame, val: pd.DataFrame, max_games: int,
     # quoted bare beside a CRPS margin quoted bare is exactly the reading that mistake is
     # made from, so D1 gets both halves as intervals.
     reference = table.loc[table["lambda"] == 1.0, "arm"].iloc[0]
-    margins = _bootstrap_arms(tails, tuple(table["arm"]), reference, seed=seed)
+    # The columns are named for `betabinom` rather than for `compound_lambda1`, and that is
+    # the nesting identity rather than a shortcut: at `lambda = 1` this arm IS the incumbent
+    # beta-binomial, asserted to 1e-8 by `assert_nests` on every row of the profile. Naming
+    # them after the pinned arm would make the same margin read as a comparison against a
+    # different model at each grid point.
+    margins = _bootstrap_arms(tails, tuple(table["arm"]), reference, seed=seed,
+                              suffix="betabinom")
     for name in table["arm"]:
         d, lo, hi = paired_bootstrap(scores[name], scores[reference], seed=seed)
         idx = table.index[table["arm"] == name][0]
@@ -513,23 +620,56 @@ def lambda_profile(train: pd.DataFrame, val: pd.DataFrame, max_games: int,
 
 # ── The crossed ladder ────────────────────────────────────────────────────────
 
-def arm_spec(name: str) -> tuple[type, list[str]]:
-    """`(likelihood class, feature list)` for one arm of the 2x2 plus the context row."""
+def arm_spec(name: str) -> tuple[type, list[str], dict]:
+    """`(likelihood class, feature list, constructor kwargs)` for one arm.
+
+    The name is `likelihood[__block]`, and the block token says which covariate lists the
+    absence composition joins:
+
+    - `absence_mix` — the mean function `beta` only, which is §12's arm.
+    - `absence_mix_pi` — `beta` **and** the mixture weight `pi`, which is §14's. It is
+      refused on any other likelihood: `pi_features` reaches `FrailtyGLM`, so `betabinom`
+      would accept it and silently ignore it, producing a row that reads as a third
+      candidate and is a duplicate of the second.
+
+    The kwargs dict is what keeps the two blocks independent while the ladder stays one call
+    site, and it is empty for every arm §12 measured — which is why that round's five rows
+    are reproduced bit for bit rather than merely closely.
+    """
     likelihood, _, block = name.partition("__")
     cls = {"betabinom": BetaBinomFrailty, "compound": CompoundCountingFrailty,
            "mixture": MixtureFrailty}[likelihood]
+    if block not in ("", "absence_mix", "absence_mix_pi"):
+        raise ValueError(f"{name}: unknown covariate block {block!r}")
     features = list(FEATURE_COLS) + (list(ABSENCE_MIX_COLS) if block else [])
-    return cls, features
+    kwargs: dict = {}
+    if block == "absence_mix_pi":
+        if cls is not MixtureFrailty:
+            raise ValueError(f"{name}: only `mixture` has a `pi` for the block to ride on")
+        kwargs["pi_features"] = list(PI_COLS) + list(ABSENCE_MIX_COLS)
+    return cls, features, kwargs
 
 
 def crossed_ladder(train: pd.DataFrame, val: pd.DataFrame, max_games: int,
                    arms: tuple[str, ...] = LADDER_ARMS, l2: float = 1.0,
-                   seed: int = 42) -> tuple[pd.DataFrame, dict, dict]:
+                   seed: int = 42, reference: str = ABSENCE_REFERENCE,
+                   context: tuple[str, ...] = ("mixture",)) -> tuple[pd.DataFrame, dict, dict]:
     """The 2x2, scored on validation. Returns `(table, per-row CRPS, tail parts)`.
 
     The window, the season term and the dispersion are held at the shipped arm, so the only
     things that vary are the likelihood and the feature block — which is what makes the
     interaction below readable as an interaction.
+
+    **`reference` is which arm every margin is quoted against, and it is a parameter because
+    the two rounds on this axis have different incumbents.** §12 crossed the block against
+    `betabinom` and quoted `betabinom`; §14 crosses it against the head that actually ships
+    and has to quote `mixture`, because D1 is a statement about the arm being replaced. The
+    column suffix follows the reference rather than being hard-coded, so a margin column can
+    never name an arm it was not computed against.
+
+    `context` names the arms that are carried for readability but are not candidates —
+    `mixture` in §12, where it never trains on the block, and nothing in §14, where it is
+    the reference.
     """
     cut = restrict_window(train, WINDOWS[LIKELIHOOD_WINDOW])
     y_val, n_val = val["gp"].to_numpy(), val["team_games"].to_numpy()
@@ -538,7 +678,7 @@ def crossed_ladder(train: pd.DataFrame, val: pd.DataFrame, max_games: int,
     tails: dict[str, dict[str, np.ndarray]] = {}
 
     for name in arms:
-        cls, features = arm_spec(name)
+        cls, features, kwargs = arm_spec(name)
         missing = [c for c in features if c not in cut.columns]
         if missing:
             raise ValueError(f"{name} needs {missing}; call `attach_absence_mix` first")
@@ -548,16 +688,18 @@ def crossed_ladder(train: pd.DataFrame, val: pd.DataFrame, max_games: int,
                 f"{name} has NaN in {bad} on the fitting window. The absence-mix shares "
                 f"are masked where `status_coverage` is 0, so a window reaching before "
                 f"2006-07 must be excluded rather than fitted.")
-        model = cls(l2=l2, features=features).fit(cut)
+        model = cls(l2=l2, features=features, **kwargs).fit(cut)
         gap = assert_nests(model, cut)
         row, scores = score_arm(name, model, cut, val, features, max_games, seed)
+        block = name.partition("__")[2]
         row.update({"likelihood": name.partition("__")[0],
-                    "absence_mix": bool(name.partition("__")[2]),
+                    "absence_mix": bool(block),
+                    "absence_mix_on_pi": block == "absence_mix_pi",
                     "n_params": model.n_params, "nesting_loglik_gap": gap,
                     "train_loglik": model.train_loglik,
                     "train_loglik_at_nesting": model.nesting_loglik,
                     "train_loglik_incumbent": model.incumbent_loglik,
-                    "selectable": name != "mixture",
+                    "selectable": name not in context,
                     "n_starts": model.n_starts,
                     "start_loglik_spread": model.start_spread})
         row.update({f"shape_{k}": v for k, v in model.shape_report(val).items()})
@@ -568,31 +710,49 @@ def crossed_ladder(train: pd.DataFrame, val: pd.DataFrame, max_games: int,
               f"PIT {row['val_pit_ks']:.4f}  boundary {row['boundary_tail_error']:.4f}  "
               f"body {row['body_error']:.4f}  shoulder {row['shoulder_error']:.4f}")
 
-    reference = per_row[ABSENCE_REFERENCE]
-    ref_boundary = next(r for r in rows
-                        if r["arm"] == ABSENCE_REFERENCE)["boundary_tail_error"]
+    suffix = _suffix(reference)
+    ref_scores = per_row[reference]
+    ref_boundary = next(r for r in rows if r["arm"] == reference)["boundary_tail_error"]
     for row in rows:
-        d, lo, hi = paired_bootstrap(per_row[row["arm"]], reference, seed=seed)
-        row["crps_vs_betabinom"] = d
-        row["crps_vs_betabinom_lo"] = lo
-        row["crps_vs_betabinom_hi"] = hi
-        row["beats_betabinom"] = bool(hi < 0.0)
+        d, lo, hi = paired_bootstrap(per_row[row["arm"]], ref_scores, seed=seed)
+        row[f"crps_vs_{suffix}"] = d
+        row[f"crps_vs_{suffix}_lo"] = lo
+        row[f"crps_vs_{suffix}_hi"] = hi
+        row[f"beats_{suffix}"] = bool(hi < 0.0)
         # D1, stated as a column rather than left to a reader: tail calibration has to
         # improve AND the CRPS interval has to exclude a material loss. Both halves, or the
         # arm does not ship — which is the rule `docs/availability-window-plan.md` §8 wrote
         # down before the arm it admitted was ported.
         row["improves_boundary"] = bool(row["boundary_tail_error"] < ref_boundary)
         row["beats_mixture_boundary"] = bool(row["boundary_tail_error"] < MIXTURE_BOUNDARY)
-    boundary = _bootstrap_arms(tails, arms, ABSENCE_REFERENCE, seed=seed)
+    boundary = _bootstrap_arms(tails, arms, reference, seed=seed)
     for row in rows:
         row.update(boundary[row["arm"]])
-        row["d1_passes"] = _d1(row.get("boundary_vs_betabinom_hi", np.nan),
-                               row["crps_vs_betabinom_lo"])
+        row["d1_passes"] = _d1(row.get(f"boundary_vs_{suffix}_hi", np.nan),
+                               row[f"crps_vs_{suffix}_lo"])
+        # D1's mirror, on every row of both rounds. Against a reference that has already
+        # spent the boundary gain there is nothing left for a new arm to buy there, so the
+        # bar that matters is a CRPS interval clear of zero with the boundary held — and an
+        # arm that passes one predicate and fails the other is the reading, not an anomaly.
+        row["wins_crps_holds_boundary"] = _wins_crps_holds_boundary(
+            row.get(f"boundary_vs_{suffix}_lo", np.nan), row[f"crps_vs_{suffix}_hi"])
     return pd.DataFrame(rows), per_row, tails
 
 
+def _suffix(reference: str) -> str:
+    """The column suffix a round's margins carry — the reference arm's own name.
+
+    §12 quotes `betabinom` and §14 quotes `mixture`, and both write to the same schema of
+    `<metric>_vs_<suffix>` columns. Derived rather than passed so a margin column cannot end
+    up naming an arm it was not computed against, which is the one bookkeeping error a
+    two-round file makes silently.
+    """
+    return reference.partition("__")[0]
+
+
 def _bootstrap_arms(tails: dict, arms: tuple[str, ...], reference: str,
-                    reps: int = BOOTSTRAP_REPS, seed: int = 42) -> dict[str, dict]:
+                    reps: int = BOOTSTRAP_REPS, seed: int = 42,
+                    suffix: str | None = None) -> dict[str, dict]:
     """Every arm's three regional errors and its margin against the reference, on ONE
     resample of the rows per replicate.
 
@@ -600,7 +760,14 @@ def _bootstrap_arms(tails: dict, arms: tuple[str, ...], reference: str,
     is a non-linear statistic — two absolute values of differences of means — so it has to
     be recomputed on the resample rather than averaged from a per-row score, and if each arm
     drew its own rows the between-player variance would swamp the between-arm one.
+
+    `suffix` overrides the column naming for the one caller whose reference row is not an
+    arm of a ladder: `lambda_profile`'s reference is `compound_lambda1`, which *is* the
+    incumbent's likelihood by the nesting identity, so its columns keep the incumbent's name.
+    Everywhere else the suffix is derived from the reference and must be, so that a margin
+    column cannot name an arm it was not computed against.
     """
+    suffix = suffix or _suffix(reference)
     n_rows = len(tails[reference]["p_full"])
     rng = np.random.default_rng(seed)
     idx = rng.integers(0, n_rows, size=(reps, n_rows))
@@ -619,10 +786,10 @@ def _bootstrap_arms(tails: dict, arms: tuple[str, ...], reference: str,
             if a != reference:
                 d = draws[a][:, j] - draws[reference][:, j]
                 short = metric.replace("_tail_error", "").replace("_error", "")
-                row[f"{short}_vs_betabinom"] = float(d.mean())
-                row[f"{short}_vs_betabinom_lo"] = float(np.percentile(d, 2.5))
-                row[f"{short}_vs_betabinom_hi"] = float(np.percentile(d, 97.5))
-                row[f"beats_betabinom_{short}"] = bool(np.percentile(d, 97.5) < 0.0)
+                row[f"{short}_vs_{suffix}"] = float(d.mean())
+                row[f"{short}_vs_{suffix}_lo"] = float(np.percentile(d, 2.5))
+                row[f"{short}_vs_{suffix}_hi"] = float(np.percentile(d, 97.5))
+                row[f"beats_{suffix}_{short}"] = bool(np.percentile(d, 97.5) < 0.0)
         out[a] = row
     return out
 
@@ -637,9 +804,18 @@ CONTRASTS: tuple[tuple[str, str, str], ...] = (
     ("compound | absence_mix", "compound__absence_mix", "betabinom__absence_mix"),
 )
 
+#: The interaction each round reports, as `(label, arm, base, arm at the other level, base
+#: at the other level)`. The effect is `(arm - base) - (other arm - other base)`, so a
+#: near-zero value means the block buys the same thing whatever likelihood it is bolted to.
+INTERACTIONS: tuple[tuple[str, str, str, str, str], ...] = (
+    ("interaction", "compound__absence_mix", "compound",
+     "betabinom__absence_mix", "betabinom"),
+)
+
 
 def interaction_table(per_row: dict, tails: dict, reps: int = BOOTSTRAP_REPS,
-                      seed: int = 42) -> pd.DataFrame:
+                      seed: int = 42, contrasts: tuple = CONTRASTS,
+                      interactions: tuple = INTERACTIONS) -> pd.DataFrame:
     """The 2x2 with the interaction made explicit, on the selector and on CRPS.
 
     The question this round asks is not "did it get better" — it is **how much each axis
@@ -656,9 +832,16 @@ def interaction_table(per_row: dict, tails: dict, reps: int = BOOTSTRAP_REPS,
     Every effect is resampled on the **same** row indices within a replicate, for the reason
     `_bootstrap_arms` gives, and the four regional errors are recomputed on the resample
     rather than averaged, because they are not means of per-row scores.
+
+    §14 reuses this with its own `contrasts` and `interactions`, where the crossed axis is
+    the *likelihood the block is bolted to* rather than the counting process — same
+    arithmetic, and the interaction answers whether the block's margin survives the
+    two-component head.
     """
-    arms = ("betabinom", "betabinom__absence_mix", "compound", "compound__absence_mix")
-    n_rows = len(tails["betabinom"]["p_full"])
+    arms = tuple(dict.fromkeys(
+        [a for _, arm, base in contrasts for a in (arm, base)]
+        + [a for spec in interactions for a in spec[1:]]))
+    n_rows = len(tails[arms[0]]["p_full"])
     rng = np.random.default_rng(seed)
     idx = rng.integers(0, n_rows, size=(reps, n_rows))
     regional = {a: np.empty((reps, 3)) for a in arms}
@@ -680,14 +863,15 @@ def interaction_table(per_row: dict, tails: dict, reps: int = BOOTSTRAP_REPS,
 
     rows: list[dict] = []
     for metric, column in metrics:
-        specs = list(CONTRASTS) + [("interaction", None, None)]
-        for label, arm, base in specs:
-            if label == "interaction":
-                d = ((draws("compound__absence_mix", column) - draws("compound", column))
-                     - (draws("betabinom__absence_mix", column) - draws("betabinom", column)))
-                value = ((point("compound__absence_mix", column) - point("compound", column))
-                         - (point("betabinom__absence_mix", column)
-                            - point("betabinom", column)))
+        specs = ([(label, arm, base, None, None) for label, arm, base in contrasts]
+                 + list(interactions))
+        for label, arm, base, other_arm, other_base in specs:
+            if other_arm is not None:
+                d = ((draws(arm, column) - draws(base, column))
+                     - (draws(other_arm, column) - draws(other_base, column)))
+                value = ((point(arm, column) - point(base, column))
+                         - (point(other_arm, column) - point(other_base, column)))
+                arm = base = None
             else:
                 d = draws(arm, column) - draws(base, column)
                 value = point(arm, column) - point(base, column)
@@ -710,7 +894,7 @@ def absence_rolling(train: pd.DataFrame, max_games: int,
                     arms: tuple[str, ...] = LADDER_ARMS, l2: float = 1.0,
                     lookback: int = LIKELIHOOD_LOOKBACK,
                     first_origin: int = ABSENCE_FIRST_ORIGIN,
-                    seed: int = 42) -> pd.DataFrame:
+                    seed: int = 42, reference: str = ABSENCE_REFERENCE) -> pd.DataFrame:
     """The 2x2 on §4b's harness — fitting half only, all arms on identical rows.
 
     §10e is the standing rule that a fresh winner is treated as failing until it replicates,
@@ -734,12 +918,12 @@ def absence_rolling(train: pd.DataFrame, max_games: int,
         if score.empty or len(fit_rows) < MIN_ROLE_ROWS * len(ROLE_LABELS):
             continue
         for name in arms:
-            cls, features = arm_spec(name)
+            cls, features, kwargs = arm_spec(name)
             if fit_rows[features].isna().any().any() or score[features].isna().any().any():
                 raise ValueError(
                     f"origin {origin} has NaN absence-mix columns; `first_origin` must be "
                     f"at least {2007 + lookback} at lookback {lookback}")
-            model = cls(l2=l2, features=features).fit(fit_rows)
+            model = cls(l2=l2, features=features, **kwargs).fit(fit_rows)
             assert_nests(model, fit_rows)
             scored = _origin_scores(model, score, max_games)
             scored["origin"] = np.full(len(score), origin)
@@ -750,24 +934,26 @@ def absence_rolling(train: pd.DataFrame, max_games: int,
 
     pooled = {k: {m: np.concatenate(v) for m, v in d.items()} for k, d in per_arm.items()}
     parts = {name: _rolling_parts(d) for name, d in pooled.items()}
-    reference = pooled[ABSENCE_REFERENCE]["crps"]
+    ref_scores = pooled[reference]["crps"]
+    suffix = _suffix(reference)
 
     rows = []
     grid = np.linspace(0, 1, 101)
     for name, d in pooled.items():
         y, n, org = d["y"], d["n"], d["origin"]
-        mean, lo, hi = paired_bootstrap(d["crps"], reference, seed=seed)
+        mean, lo, hi = paired_bootstrap(d["crps"], ref_scores, seed=seed)
         u = d["pit"]
         idx = np.arange(len(y))
         boundary, body, shoulder = _tail_errors(parts[name], idx)
+        block = name.partition("__")[2]
         rows.append({
             "arm": name, "likelihood": name.partition("__")[0],
-            "absence_mix": bool(name.partition("__")[2]),
+            "absence_mix": bool(block), "absence_mix_on_pi": block == "absence_mix_pi",
             "n_origins": int(len(np.unique(org))), "n_scored": int(len(y)),
-            "crps": float(d["crps"].mean()), "crps_vs_betabinom": mean,
-            "crps_vs_betabinom_lo": lo, "crps_vs_betabinom_hi": hi,
+            "crps": float(d["crps"].mean()), f"crps_vs_{suffix}": mean,
+            f"crps_vs_{suffix}_lo": lo, f"crps_vs_{suffix}_hi": hi,
             "origins_won": sum(1 for o in np.unique(org)
-                               if d["crps"][org == o].mean() < reference[org == o].mean()),
+                               if d["crps"][org == o].mean() < ref_scores[org == o].mean()),
             "pit_ks": float(np.max(np.abs(np.searchsorted(np.sort(u), grid) / len(u)
                                           - grid))),
             "err_below_10": float(d["p_below_10"].mean() - (y < 10).mean()),
@@ -775,7 +961,7 @@ def absence_rolling(train: pd.DataFrame, max_games: int,
             "boundary_tail_error": boundary, "body_error": body,
             "shoulder_error": shoulder,
         })
-    margins = _bootstrap_arms(parts, tuple(pooled), ABSENCE_REFERENCE, seed=seed)
+    margins = _bootstrap_arms(parts, tuple(pooled), reference, seed=seed)
     for row in rows:
         row.update(margins[row["arm"]])
     return pd.DataFrame(rows).sort_values("boundary_tail_error").reset_index(drop=True)
@@ -862,6 +1048,10 @@ def run(cfg: dict) -> dict[str, Path]:
     cfg_av = cfg.get("features", {}).get("availability", {})
     seed = int(cfg_av.get("seed", 42))
     l2 = float(cfg_av.get("glm_l2", 1.0))
+    rounds = tuple(cfg_av.get("absence", {}).get("rounds", ROUNDS))
+    unknown = [r for r in rounds if r not in ROUNDS]
+    if unknown:
+        raise ValueError(f"unknown absence round(s) {unknown}; expected {list(ROUNDS)}")
 
     train, val, max_games, frame = load_design(cfg)
     cut = restrict_window(train, WINDOWS[LIKELIHOOD_WINDOW])
@@ -871,47 +1061,91 @@ def run(cfg: dict) -> dict[str, Path]:
     print("  The held-out split is LOCKED and is never materialized here.")
     print(f"  Shipped window ({LIKELIHOOD_WINDOW}): {len(cut):,} fitting rows, "
           f"{masked} dropped by the status-coverage mask.")
+    print(f"  Rounds: {', '.join(rounds)}")
+
+    written: dict[str, Path] = {}
 
     block = block_diagnostics(frame, cut, cfg["data"]["seasons"])
     block_dest = out_dir / "availability_absence_block.csv"
     block.to_csv(block_dest, index=False)
     print(f"  Wrote {len(block):,} block diagnostics → {block_dest}")
+    written["availability_absence_block"] = block_dest
 
-    table, per_row, tails = crossed_ladder(train, val, max_games, l2=l2, seed=seed)
-    dest = out_dir / "availability_absence.csv"
-    table.to_csv(dest, index=False)
-    print(f"\nWrote {len(table):,} arms → {dest}")
+    if "crossed" in rounds:
+        table, per_row, tails = crossed_ladder(train, val, max_games, l2=l2, seed=seed)
+        dest = out_dir / "availability_absence.csv"
+        table.to_csv(dest, index=False)
+        print(f"\nWrote {len(table):,} arms → {dest}")
+        written["availability_absence"] = dest
 
-    print("\nThe 2x2 as effects, with the interaction explicit:")
-    effects = interaction_table(per_row, tails, seed=seed)
-    for _, r in effects[effects["metric"] == "boundary_tail_error"].iterrows():
-        print(f"  boundary  {r['effect']:<24} {r['delta']:+.4f} "
-              f"[{r['delta_lo']:+.4f}, {r['delta_hi']:+.4f}]")
-    eff_dest = out_dir / "availability_absence_interaction.csv"
-    effects.to_csv(eff_dest, index=False)
-    print(f"Wrote {len(effects):,} effect rows → {eff_dest}")
+        print("\nThe 2x2 as effects, with the interaction explicit:")
+        effects = interaction_table(per_row, tails, seed=seed)
+        for _, r in effects[effects["metric"] == "boundary_tail_error"].iterrows():
+            print(f"  boundary  {r['effect']:<24} {r['delta']:+.4f} "
+                  f"[{r['delta_lo']:+.4f}, {r['delta_hi']:+.4f}]")
+        eff_dest = out_dir / "availability_absence_interaction.csv"
+        effects.to_csv(eff_dest, index=False)
+        print(f"Wrote {len(effects):,} effect rows → {eff_dest}")
+        written["availability_absence_interaction"] = eff_dest
 
-    print("\nThe compound's nesting parameter, PROFILED — everything else refitted at each\n"
-          "  pinned lambda, so a fit that stops at the corner can be told from a corner\n"
-          "  that is the MLE. `rho` is carried because §11a predicts it absorbs the trade:")
-    profile = lambda_profile(cut, val, max_games, l2=l2, seed=seed)
-    prof_dest = out_dir / "availability_absence_lambda.csv"
-    profile.to_csv(prof_dest, index=False)
-    print(f"Wrote {len(profile):,} profile rows → {prof_dest}")
+        print("\nThe compound's nesting parameter, PROFILED — everything else refitted at "
+              "each\n  pinned lambda, so a fit that stops at the corner can be told from a "
+              "corner\n  that is the MLE. `rho` is carried because §11a predicts it absorbs "
+              "the trade:")
+        profile = lambda_profile(cut, val, max_games, l2=l2, seed=seed)
+        prof_dest = out_dir / "availability_absence_lambda.csv"
+        profile.to_csv(prof_dest, index=False)
+        print(f"Wrote {len(profile):,} profile rows → {prof_dest}")
+        written["availability_absence_lambda"] = prof_dest
 
-    print(f"\nRolling-origin confirmation (lookback {LIKELIHOOD_LOOKBACK}, origins from "
-          f"{ABSENCE_FIRST_ORIGIN}, fitting half only):")
-    rolling = absence_rolling(train, max_games, l2=l2, seed=seed)
-    roll_dest = out_dir / "availability_absence_rolling.csv"
-    rolling.to_csv(roll_dest, index=False)
-    print(f"\nWrote {len(rolling):,} arms × {int(rolling['n_scored'].max()):,} "
-          f"scored rows → {roll_dest}")
+        print(f"\nRolling-origin confirmation (lookback {LIKELIHOOD_LOOKBACK}, origins from "
+              f"{ABSENCE_FIRST_ORIGIN}, fitting half only):")
+        rolling = absence_rolling(train, max_games, l2=l2, seed=seed)
+        roll_dest = out_dir / "availability_absence_rolling.csv"
+        rolling.to_csv(roll_dest, index=False)
+        print(f"\nWrote {len(rolling):,} arms × {int(rolling['n_scored'].max()):,} "
+              f"scored rows → {roll_dest}")
+        written["availability_absence_rolling"] = roll_dest
 
-    return {"availability_absence": dest,
-            "availability_absence_block": block_dest,
-            "availability_absence_interaction": eff_dest,
-            "availability_absence_lambda": prof_dest,
-            "availability_absence_rolling": roll_dest}
+    if "mixture" in rounds:
+        print(f"\n§14 — the same block crossed against the arm that SHIPS. Margins are "
+              f"quoted\n  against `{MIXTURE_REFERENCE}`, and the block rides on `beta` alone "
+              f"in one arm and on\n  `beta` AND `pi` in the other, because the mean function "
+              f"and the disruption weight\n  are different questions:")
+        m_table, m_per_row, m_tails = crossed_ladder(
+            train, val, max_games, arms=MIXTURE_ARMS, l2=l2, seed=seed,
+            reference=MIXTURE_REFERENCE, context=MIXTURE_CONTEXT)
+        m_dest = out_dir / "availability_absence_mixture.csv"
+        m_table.to_csv(m_dest, index=False)
+        print(f"\nWrote {len(m_table):,} arms → {m_dest}")
+        written["availability_absence_mixture"] = m_dest
+
+        print("\nThe effects, with the redundancy interaction explicit — the block's margin\n"
+              "  under `mixture` minus its margin under `betabinom`:")
+        m_effects = interaction_table(m_per_row, m_tails, seed=seed,
+                                     contrasts=MIXTURE_CONTRASTS,
+                                     interactions=MIXTURE_INTERACTIONS)
+        for metric in ("boundary_tail_error", "val_crps"):
+            for _, r in m_effects[m_effects["metric"] == metric].iterrows():
+                print(f"  {metric:<19} {r['effect']:<34} {r['delta']:+.5f} "
+                      f"[{r['delta_lo']:+.5f}, {r['delta_hi']:+.5f}]")
+        m_eff_dest = out_dir / "availability_absence_mixture_interaction.csv"
+        m_effects.to_csv(m_eff_dest, index=False)
+        print(f"Wrote {len(m_effects):,} effect rows → {m_eff_dest}")
+        written["availability_absence_mixture_interaction"] = m_eff_dest
+
+        print(f"\nRolling-origin confirmation of §14 (lookback {LIKELIHOOD_LOOKBACK}, "
+              f"origins from {ABSENCE_FIRST_ORIGIN}, fitting half only). §10e: a fresh "
+              f"winner\n  fails until it replicates, and §12's CRPS win did not.")
+        m_rolling = absence_rolling(train, max_games, arms=MIXTURE_ARMS, l2=l2, seed=seed,
+                                    reference=MIXTURE_REFERENCE)
+        m_roll_dest = out_dir / "availability_absence_mixture_rolling.csv"
+        m_rolling.to_csv(m_roll_dest, index=False)
+        print(f"\nWrote {len(m_rolling):,} arms × {int(m_rolling['n_scored'].max()):,} "
+              f"scored rows → {m_roll_dest}")
+        written["availability_absence_mixture_rolling"] = m_roll_dest
+
+    return written
 
 
 if __name__ == "__main__":

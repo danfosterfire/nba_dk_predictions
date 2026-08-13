@@ -7989,7 +7989,13 @@ REGISTRY: tuple[Decision, ...] = (
                 "`LAG_COLS` on the `WORKLOAD_COLS` precedent, opted into through "
                 "`attach_absence_mix`, and `docs/potential-to-dos.md` item 8 is the one arm "
                 "that would settle it — the block crossed against `mixture`, which is the "
-                "head that actually ships and which this round did not test it against.",
+                "head that actually ships and which this round did not test it against. "
+                "**That arm was run the same day and is "
+                "[[the-absence-block-is-complementary-to-the-mixture-and-still-unconfirmed]]**: "
+                "the margins survive against the real incumbent at 94% of the size measured "
+                "here, the two attacks turn out to be complementary rather than redundant, and "
+                "the CRPS win fails the rolling harness a second time — so the verdict recorded "
+                "here stands, now against the head it should have been measured against.",
         status="measured",
         reproduce="make availability-absence → "
                   "outputs/predictions/availability_absence.csv, "
@@ -8000,6 +8006,92 @@ REGISTRY: tuple[Decision, ...] = (
         reviewed="2026-08-12",
         date="2026-08-12",
         tags=("head", "features", "calibration"),
+    ),
+    Decision(
+        id="the-absence-block-is-complementary-to-the-mixture-and-still-unconfirmed",
+        topic="availability",
+        claim="**Re-measured against the head that actually ships, the absence-composition "
+              "block does not collapse — it is complementary to the mixture, and on "
+              "validation it is the first arm on this head to improve every regional metric "
+              "at once. It still does not ship, because it fails the rolling harness a second "
+              "time.**",
+        because="[[absence-composition-buys-the-mean-not-the-boundary]] crossed the block "
+                "against `betabinom` and §7i ships `mixture`, so both of its margins were "
+                "measured against a model nobody runs. The prediction was collapse: `mixture` "
+                "closes the boundary with a covariate-driven weight on a disrupted-season "
+                "component, so it already says WHO is at risk, and four columns duplicating "
+                "that would show up as an interval reopening across zero. **The opposite "
+                "happened.** Against `mixture` the block reads CRPS **9.7662** against "
+                "9.8237 — **−0.0575** [−0.1060, −0.0071], **94%** of the −0.0610 it bought off "
+                "`betabinom` — and the CRPS "
+                "**interaction** is nil at **+0.0035** [−0.0079, +0.0149], **16.7×** below the "
+                "main effect. **The interaction is what establishes this, not the margin's "
+                "size**: `mixture` is 0.0112 CRPS *worse* than `betabinom` and is therefore the "
+                "easier of the two CRPS references, so a near-identical margin against it "
+                "proves nothing on its own. The two attacks are *complementary*: `π` carries "
+                "age, absence "
+                "volume and playoff workload, the four shares carry what KIND of absence he "
+                "had, and the second is not recoverable from the first. On validation nothing "
+                "is traded for it — `boundary_tail_error` 0.0109 → **0.0097**, `body_error` "
+                "0.0047 → **0.0021**, `shoulder_error` 0.0235 → **0.0222**, both point masses "
+                "down, PIT KS 0.0631 → **0.0572** — which is the first arm in that document to "
+                "manage it, and it clears the round's bar (D1 with its halves swapped, since "
+                "the mixture already spent the boundary gain). **And it fails the second "
+                "instrument, at the same factor as before.** On 7 rolling origins and 2,871 "
+                "fitting-half rows the margin is **−0.0136** [−0.0407, **+0.0132**] at 4 of 7 "
+                "origins — a **4.2×** shrinkage against §12e's 5.8×. **The shrinkage is a "
+                "population fact, not a power fact**: the rolling interval is **1.8× narrower** "
+                "on 3.3× the rows, so the second reading is the more precise one and the effect "
+                "is what got smaller. The block pays on 2022-23 / 2023-24 and not on origins "
+                "2015–2021, so the instrument that would settle it is more scored SEASONS — and "
+                "2024-25 / 2025-26 are the test split. No further arm on either axis should be "
+                "built until then; the block stays out of `FEATURE_COLS` and `LAG_COLS`.",
+        status="measured",
+        reproduce="make availability-absence → "
+                  "outputs/predictions/availability_absence_mixture.csv, "
+                  "outputs/predictions/availability_absence_mixture_interaction.csv, "
+                  "outputs/predictions/availability_absence_mixture_rolling.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("head", "features", "calibration"),
+    ),
+    Decision(
+        id="the-absence-composition-is-a-mean-fact-not-a-disruption-risk-fact",
+        topic="availability",
+        claim="**Knowing WHY a player missed last season tells the head about next season's "
+              "rate, not about next season's catastrophe.** The absence composition belongs on "
+              "the mean function `β`; on the mixture weight `π` it costs CRPS and makes the "
+              "shoulder established worse. `PI_COLS` stays at eight columns.",
+        because="The two are different questions about the same player and the round was built "
+                "so they could be asked separately: `FrailtyGLM.pi_features` makes `π`'s "
+                "covariate list configurable, with `θ = 0` still nesting the incumbent exactly "
+                "at any width — which is why `π = θ·σ(γ'z)` was parameterized with a bounded `θ` "
+                "rather than as `σ(γ₀ + γ'z)` in the first place, and `assert_nests` reads 0.0 "
+                "on all three arms. Adding the block to `π` **as well as** `β` costs "
+                "**+0.0098** CRPS [−0.0036, +0.0239] against the `β`-only arm, moves the "
+                "boundary and body not at all, and makes `shoulder_error` **+0.00158** "
+                "[+0.00099, +0.00177] worse — an interval clear of zero **in the wrong "
+                "direction**. What it buys is the signature of overfitting stated plainly: "
+                "**5.8** training log-likelihood points for 4 more unpenalized parameters, the "
+                "table's best PIT KS (**0.0561**) and its best `point_mass_error` (0.0053). It "
+                "is not doing nothing — `θ` goes 0.1140 → **0.1316**, `π`'s 90th percentile "
+                "0.1097 → **0.1299**, the low component's mean 0.1098 → **0.1240**, so it "
+                "genuinely re-flags who is at risk. It just predicts worse, and the `β`-only arm "
+                "beats it on CRPS at **both** readings (9.7662 against 9.7759 on validation, "
+                "10.1012 against 10.1062 rolling). **This is the more useful of the two "
+                "falsifiers the to-do named**, and it settles where the block would go if it "
+                "were ever confirmed. §7's argument for keeping `PI_COLS` short — nineteen more "
+                "unpenalized parameters on 4,027 rows would measure the `l2` confound rather "
+                "than the mechanism — survives its first direct test.",
+        status="measured",
+        reproduce="make availability-absence → "
+                  "outputs/predictions/availability_absence_mixture.csv, "
+                  "outputs/predictions/availability_absence_mixture_interaction.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("head", "features", "null"),
     ),
     Decision(
         id="the-compound-counting-process-is-a-null",

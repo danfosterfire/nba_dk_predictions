@@ -10,8 +10,12 @@ that wins here earns a Stan port in `stan_availability.py`, it does not ship fro
 
 > **§9 is the current state of the whole line of work** — what shipped, what is a measured
 > null not to be rebuilt, and what is still open, ranked by stake. Start there. §10 closes
-> its items 3 and 4 (`make availability-regime`), leaving item 5 as the only remaining one
-> that changes the model rather than the fitting rule.
+> its items 3 and 4 (`make availability-regime`) and §11 closes item 5, so every axis §9
+> opened is now measured. **§12 through §14 are the rounds that came after it**, all three
+> from `docs/potential-to-dos.md` rather than from §9: the absence-composition block and the
+> compound counting process (§12), the layout's tenure factor, which is the only one of the
+> three that **ships** (§13), and the block re-crossed against the head that actually
+> ships (§14).
 
 ---
 
@@ -2891,11 +2895,18 @@ the corner rather than a model doing anything. Both readings, both harnesses, th
    a covariate block rather than a likelihood; on the rolling harness it is −0.0105 with an
    interval spanning zero. It does not ship from here, and the reason is §10e rather than a
    judgement.
-4. **What it would take is one more arm, and it is not this round's.** The block was crossed
-   against `betabinom`; the head that ships is `mixture`. Whether either margin survives the
-   two-component head — and whether the composition belongs on `β`, on `π`, or on both — is
-   unmeasured, and it is the only thing between the block and a port. `docs/potential-to-dos.md`
-   item 8.
+4. ~~**What it would take is one more arm, and it is not this round's.**~~ ✅ **Measured
+   2026-08-12 — §14.** The item read: the block was crossed against `betabinom`, the head that
+   ships is `mixture`, and whether either margin survives the two-component head — and whether
+   the composition belongs on `β`, on `π`, or on both — is the only thing between the block and
+   a port.
+
+   **The margins survive and the replication does not.** Against `mixture` the block reads CRPS
+   −0.0575 [−0.1060, −0.0071], **94%** of what it bought here, with a nil interaction — so the
+   two attacks are complementary rather than redundant, which is the opposite of what the entry
+   expected. It belongs on `β` alone; on `π` it costs +0.0098 CRPS. And it fails the rolling
+   harness a second time, at 4.2× shrinkage against this round's 5.8×, so the port is still not
+   earned.
 5. **§4's warning fired for the sixth time, from a new direction.** The arm with the best
    `boundary_tail_error` in this entire document (**0.0087**, past `mixture`'s 0.0109) is a
    compound pinned at the measured spell shape, 314 log-likelihood points worse than the
@@ -3149,3 +3160,275 @@ week 1 down **64%**. The mechanism is the obvious one once the arm exists: **a p
 block belongs at the start of the schedule**, and the previous layout placed it at a uniform
 random start, so a player signed in December was simulated as available in October. The
 suspect that doc named is confirmed, and what is left there is a level rather than a shape.
+
+---
+
+## 14. The block against the head that ships — measured 2026-08-12
+
+`make availability-absence` (round `mixture`) → `availability_absence_mixture.csv`,
+`availability_absence_mixture_interaction.csv`, `availability_absence_mixture_rolling.csv`.
+
+This is `docs/potential-to-dos.md` item 8, opened by §12f result 4. §12 crossed the
+absence-composition block against `betabinom` and the head that ships is `mixture` (§7i), so
+**both of §12's margins were measured against a model nobody runs.** Window, season term and
+dispersion are held at the shipped arm exactly as §7 and §12 held them; the only things that
+vary are which likelihood the block is bolted to and which covariate list it joins.
+
+**The entry predicted the block's margins would collapse under the two-component head, and
+the opposite happened.** The mechanism it named for the collapse was real and it points the
+other way: `mixture` closes the boundary with a covariate-driven weight on a disrupted-season
+component, so it already says *who* is at risk — but the composition of last season's absences
+turns out to be a fact about the **mean function**, not about disruption risk, and those two
+places in the model do not compete for it.
+
+### 14a. The bar is D1's mirror image, and the swap is not cosmetic
+
+D1 asks for a **calibration gain** and settles for CRPS non-inferiority, which is the right
+shape for a round whose incumbent misses both ends of its own distribution. `mixture` already
+spent that gain — 0.0201 → **0.0109** — so an arm bolted onto it has almost nothing left to
+buy there. What it has to buy is the CRPS the shipped head *gave up*: §7c admitted `mixture` on
+a CRPS of **+0.011** against the single-component reference, with an interval spanning zero.
+
+So the round's predicate is D1 with its halves swapped — a **CRPS interval clear of zero on the
+good side**, and a boundary margin whose interval does not establish a loss. It is
+`wins_crps_holds_boundary`, carried as a column on every ladder row of both rounds beside
+`d1_passes`, because an arm that passes one and fails the other is the reading rather than an
+anomaly to be resolved. Item 8 states the bar in exactly those words, and a column is what
+stops the round being read against the wrong one.
+
+### 14b. Two covariate blocks that move independently, and the nesting that survives it
+
+`FrailtyGLM` gained `pi_features`, defaulting to `PI_COLS`. It lives on the base class rather
+than on `MixtureFrailty` because `_pi_design` and the scaler do, and the default is what
+reproduces every arm fitted before today — the two `betabinom` rows below and the `mixture`
+row are all controls on exactly that, and all three reproduce §12 bit for bit.
+
+**`theta = 0` stays the nesting point at any width of `pi`, which is why widening it is legal
+here at all.** `pi = theta * sigmoid(gamma' z)` switches off through `theta` alone (§7b), so
+adding columns to `z` adds parameters the nesting point does not depend on; `assert_nests`
+reads **0.0** on all three mixture arms. Had the weight been `sigmoid(gamma_0 + gamma' z)`,
+each widened arm would have been a different model rather than an extension of the shipped one,
+and its margin would have been measuring the widening.
+
+**The `l2` confound is stated rather than corrected, as §7d does.** The penalty reaches
+`beta[1:]` only, so the block's four columns *are* penalized on `beta` and are **not** on `pi`:
+the `beta+pi` arm carries **15** unpenalized parameters against the shipped arm's 11. §7d swept
+eight penalties from 0 to 256 and moved the reference by 0.00034 CRPS at its best, so the
+confound is bounded — and it can only flatter the arm that loses here, which is the direction
+that does not need correcting.
+
+### 14c. The ladder
+
+Observed on the same 883 validation rows §7c and §12b use: P(<10) **0.0815**, P(full)
+**0.0272**. The selector is `boundary_tail_error`; `body_error` and `shoulder_error` sit beside
+it and are **never** averaged in, per §3.
+
+| arm | params | train ll | CRPS | vs `mixture` [95%] | PIT KS | **boundary err** | body err | shoulder err |
+|---|---|---|---|---|---|---|---|---|
+| `mixture` *(reference — what ships)* | 35 | −16,174.52 | 9.8237 | — | 0.0631 | 0.0109 | 0.0047 | 0.0235 |
+| **`mixture + absence_mix` on `β`** | 39 | **−16,156.04** | **9.7662** | **−0.0575 [−0.1060, −0.0071]** | 0.0572 | **0.0097** | **0.0021** | **0.0222** |
+| `mixture + absence_mix` on `β` and `π` | 43 | **−16,150.24** | 9.7759 | −0.0478 [−0.0937, **+0.0020**] | **0.0561** | 0.0108 | 0.0034 | 0.0238 |
+| `betabinom` *(§12's reference, context)* | 24 | −16,239.16 | 9.8125 | −0.0112 [−0.0511, +0.0280] | 0.0667 | 0.0201 | 0.0107 | 0.0253 |
+| `betabinom + absence_mix` *(§12's arm, context)* | 28 | −16,220.27 | 9.7515 | −0.0722 [−0.1446, +0.0020] | 0.0588 | 0.0184 | 0.0136 | 0.0236 |
+
+The selector's own interval, resampled on the same rows within a replicate because
+`boundary_tail_error` is a non-linear statistic:
+
+| arm | boundary err | vs `mixture` [95%] | CRPS clear of zero | **`wins_crps_holds_boundary`** |
+|---|---|---|---|---|
+| **`mixture + absence_mix` on `β`** | 0.0097 | **−0.00089 [−0.00173, +0.00161]** | ✅ | ✅ |
+| `mixture + absence_mix` on `β`, `π` | 0.0108 | +0.00016 [−0.00256, +0.00317] | ❌ | ❌ |
+| `betabinom` | 0.0201 | **+0.00891 [+0.00420, +0.00994]** | ❌ | ❌ |
+| `betabinom + absence_mix` | 0.0184 | +0.00718 [+0.00369, +0.00837] | ❌ | ❌ |
+
+**Four readings.**
+
+**1. The three control rows reproduce their earlier measurements exactly, and that is what
+makes the rest readable.** `mixture` reads CRPS **9.8237**, boundary 0.01085, body 0.0047 and
+shoulder 0.0235 — §7c and §12b, through a class that now carries a configurable `π` block.
+`betabinom` and `betabinom + absence_mix` reproduce §12b's 9.8125 / 9.7515 and 0.0201 / 0.0184
+likewise. Against `availability_absence.csv` itself the agreement is **bit-identical on all
+nine scored columns for all three arms**, not merely to the quoted precision, which is the
+form the check has to take: the refactor that made `π`'s covariate list configurable touches
+the base class every arm in §7 and §12 was fitted through. `betabinom`'s boundary margin
+against the mixture is **+0.00891**, the exact sign-flip of §12b's −0.00891 for the same pair.
+Both artifacts are claimed separately by `make docs-audit`, so a drift in either fails rather
+than being absorbed by the other.
+
+**2. The block does not collapse — it survives essentially whole, and the interval clears.**
+CRPS **−0.0575 [−0.1060, −0.0071]** against `mixture`, where §12 measured −0.0610 [−0.1148,
+−0.0047] against `betabinom`. Same sign, **94%** of the size, an interval still clear of zero,
+**18.48** training log-likelihood points on top of the mixture's own 64.6, and PIT KS 0.0631 →
+**0.0572**.
+
+**Two things that margin is *not*, and the second is the one worth keeping.** It is not a
+harder comparison: `mixture` is **0.0112** CRPS *worse* than `betabinom`, so on CRPS alone the
+shipped head is the easier of the two references to beat — which is why the near-identical
+margin is evidence about the block rather than about the baseline, and why §14e's interaction is
+the reading that settles it. And the pair does not dominate: `betabinom + absence_mix` is still
+**0.0146** CRPS better than `mixture + absence_mix` while being **0.00866** worse on the
+boundary. That is the same trade §7c admitted the mixture on, unchanged by the block — the
+two-component head buys tail calibration with a little CRPS, and the block improves both arms
+by about the same amount without moving where that trade sits.
+
+**3. And it is the first arm on this head to improve every regional metric at once.** Not only
+CRPS: `boundary_tail_error` 0.0109 → **0.0097**, `body_error` 0.0047 → **0.0021**,
+`shoulder_error` 0.0235 → **0.0222**, `point_mass_error` 0.0068 → **0.0056**. §4's standing
+warning — that the arms with the best boundary coverage were the worst models, fired six times
+in this document — has nothing to catch here, because nothing was traded. The shoulder margin
+even clears zero on its own interval (**−0.00134 [−0.00200, −0.00050]**), which no arm in §7c
+or §12b managed.
+
+**4. The boundary gain is real in sign and small, and its size is diminishing returns rather
+than a failure.** −0.00089 is **8.2%** of the shipped head's remaining boundary error, against
+the **8.6%** the same block bought off `betabinom`'s much larger one — the same *proportion* of
+a defect that has already been halved, so the absolute gain is half the size. Its interval
+spans zero, so the boundary is *held* rather than improved, which is exactly what the round's
+bar asks of it.
+
+### 14d. The block does not belong on `π`, and the shoulder says so with an interval
+
+The two candidate arms are not the same arm, and the incremental effect of the second over the
+first is the round's cleanest null:
+
+| effect of adding the block to `π`, given it is already on `β` | delta [95%] | |
+|---|---|---|
+| CRPS | **+0.0098 [−0.0036, +0.0239]** | a loss point estimate, interval spanning zero |
+| `boundary_tail_error` | +0.00107 [−0.00106, +0.00165] | nil |
+| `body_error` | +0.00124 [−0.00178, +0.00182] | nil |
+| **`shoulder_error`** | **+0.00158 [+0.00099, +0.00177]** | **clears zero in the WRONG direction** |
+
+**It buys training log-likelihood and gives back generalization**, which is the textbook
+signature and is worth stating as such: 4 more unpenalized parameters are worth **5.8**
+training log-likelihood points, the best PIT KS on the table (**0.0561**) and the best
+`point_mass_error` (0.0053) — and the CRPS *rises* by 0.0098 and the shoulder gets established
+worse. Four parameters that fit and do not predict. The arm's own fitted structure shows it moving: `θ` goes 0.1140 → **0.1316**, the 90th
+percentile of `π` goes 0.1097 → **0.1299**, and the low component's mean goes 0.1098 →
+**0.1240**. So the block genuinely changes *who* the head flags as at risk. It just does not
+change it for the better.
+
+**That is item 8's own second falsifier, and it is the more useful outcome.** The entry wrote:
+"It would also be falsified in a more useful way if the block helped `β` and did nothing on `π`
+— that would say the composition is a mean-function fact rather than a disruption-risk fact,
+and would settle where it belongs if it is ever ported." That is what the measurement says.
+**The composition of last season's absences tells the head about next season's rate, not about
+next season's catastrophe** — and §7's reason for keeping `PI_COLS` short stands untouched.
+
+### 14e. The interaction — the two attacks are additive, which is the entry's question answered
+
+The round exists because the block and the mixture were plausibly redundant. They are not:
+
+| metric | block given `mixture` | block given `betabinom` | **interaction** |
+|---|---|---|---|
+| CRPS | −0.0575 [−0.1060, −0.0071] | −0.0610 [−0.1148, −0.0047] | **+0.0035 [−0.0079, +0.0149]** |
+| boundary | −0.00114 [−0.00173, +0.00161] | −0.00177 [−0.00240, −0.00106] | +0.00063 [+0.00008, +0.00333] |
+| body | −0.00261 [−0.00397, +0.00360] | +0.00294 [−0.00325, +0.00419] | −0.00555 [−0.00716, +0.00033] |
+| shoulder | −0.00134 [−0.00200, −0.00050] | −0.00167 [−0.00230, +0.00147] | +0.00033 [−0.00274, +0.00050] |
+
+**On CRPS the interaction is nil** — +0.0035 on an interval spanning zero, **16.7×** smaller
+than the main effect it is an interaction with. The block buys the same accuracy whichever
+likelihood it is bolted to, so
+the mixture's `π` never had the block's information: `trailing_missed_lag1` and `n_spells_lag1`
+say how much he missed and the four shares say what kind of absence it was, and the second is
+not recoverable from the first. **§12's hypothesis that the two were "plausibly redundant and
+plausibly complementary" resolves to complementary.**
+
+**On the boundary the interaction is positive and clears zero**, and that is the diminishing
+return rather than a conflict: the block moves the boundary by −0.00177 off a 0.0201 error and
+by −0.00114 off a 0.0109 one. There is simply less of it left after the mixture has taken its
+half. And **on the body the interaction is the largest of the four** (−0.00555, an interval
+that all but clears zero) — the block *worsened* `betabinom`'s body by +0.00294 and *improves*
+the mixture's by −0.00261, which is the one place the two arms genuinely need each other.
+
+### 14f. The rolling confirmation — and the CRPS win does not survive it, again
+
+§10e is the standing rule: a fresh winner fails until it replicates. The harness is §4b's on
+the **fitting half only**, restricted to origins from 2015 for §12e's reason — the composition
+does not exist before the 2006-07 backfill, so at a lookback of 8 the earliest origin whose
+whole window carries it is 2007 + 8. Seven origins, **2,871** scored player-seasons, all five
+arms on identical rows.
+
+| arm | CRPS | vs `mixture` [95%] | origins won | PIT KS | **boundary err** | vs `mixture` [95%] |
+|---|---|---|---|---|---|---|
+| `mixture` *(reference)* | 10.1148 | — | — | 0.0496 | 0.01842 | — |
+| `mixture + absence_mix` on `β` | **10.1012** | −0.0136 [−0.0407, **+0.0132**] | 4 / 7 | 0.0459 | 0.01824 | −0.000184 [−0.000528, **+0.000168**] |
+| `mixture + absence_mix` on `β`, `π` | 10.1062 | −0.0086 [−0.0386, +0.0217] | 4 / 7 | **0.0453** | **0.01803** | **−0.000385 [−0.000735, −0.000029]** |
+| `betabinom + absence_mix` *(context)* | 10.0995 | −0.0153 [−0.0560, +0.0228] | 4 / 7 | 0.0496 | 0.02587 | +0.00745 [+0.00695, +0.00794] |
+| `betabinom` *(context)* | 10.1100 | −0.0048 [−0.0318, +0.0195] | 4 / 7 | 0.0526 | 0.02628 | +0.00786 [+0.00752, +0.00821] |
+
+**The three control rows are bit-identical to §12e on all eight scored columns**, which is what
+licenses reading the two rounds' rolling numbers against each other at all.
+
+**Four readings, and the first one decides the round.**
+
+**1. The CRPS win does not replicate, and it fails the same way §12's did.**
+−0.0575 [−0.1060, −0.0071] on validation becomes **−0.0136 [−0.0407, +0.0132]** here: same
+sign, **4.2×** smaller, an interval reopened across zero, and 4 origins of 7 — a coin flip.
+§12e's reading was −0.0610 → −0.0105 at 5.8×, so the block has now shrunk on the second
+instrument **twice, against two different likelihoods, by almost exactly the same factor**.
+Under §10e this arm fails until re-confirmed, and it therefore **does not earn a Stan port**.
+That is the round's verdict, and it is the same verdict §12 reached — now reached against the
+head that actually ships, which is the whole reason the round existed.
+
+**2. It is not a power problem, and that distinction is the useful part.** The rolling
+interval is **narrower** than the validation one — a half-width of 0.0269 against 0.0494 on
+3.3× the rows — so the second reading is the *more* precise of the two. What shrank is the
+effect, not the resolution. The block pays on 2022-23 and 2023-24 and does not pay on
+origins 2015–2021, which is a statement about the population rather than about sample size,
+and it means the thing that would settle it is more *seasons* rather than more arms.
+
+**3. What does replicate is the calibration, at every reading.** PIT KS improves 0.0496 →
+**0.0459** here and 0.0631 → 0.0572 on validation; `body_error` improves 0.01517 → 0.01391 and
+`shoulder_error` 0.01095 → 0.01039. Nothing about the block moves the wrong way on either
+harness — which is why it is recorded as real signal that is unconfirmed at the size the
+validation reading claimed, rather than as a null.
+
+**4. The `π` placement verdict replicates, and one sign inside it does not.** The `β`-only arm
+beats the `β + π` arm on CRPS at **both** readings (9.7662 against 9.7759; 10.1012 against
+10.1062), so §14d's conclusion stands on two instruments. But the *boundary* ordering flips:
+on validation the `π` arm gives up the boundary gain (+0.00016) and here it is the only arm
+whose boundary margin clears zero (**−0.000385 [−0.000735, −0.000029]**). §7f is the standing
+note that a sign which does not replicate is not a result; this one does not, in either
+direction, and it is not enough to reopen a placement the CRPS column settles the same way
+twice.
+
+### 14g. What this settles
+
+1. **The block's margins do not collapse under the two-component head — the entry's central
+   prediction was wrong.** CRPS −0.0575 [−0.1060, −0.0071] against `mixture` is **94%** of the
+   −0.0610 it bought off `betabinom`, and the **interaction is what establishes it** rather
+   than the size — +0.0035 on an interval spanning zero, 16.7× below the main effect. That
+   distinction matters because `mixture` is 0.0112 CRPS *worse* than `betabinom` and is
+   therefore the easier of the two CRPS references, so the margins alone could not have said
+   this. The two attacks are **complementary**: the mixture's `π` says *who* is at risk from
+   age, prior absence volume and playoff workload, and the four shares say *what kind* of
+   absence he had, and the second is not recoverable from the first.
+2. **On validation it is the first arm on this head to improve every regional metric at once** —
+   CRPS, boundary, body, shoulder and both point masses, with no trade anywhere. §4's warning
+   has fired six times in this document and has nothing to catch here.
+3. **And it still does not ship, for the reason §12 did not.** The CRPS margin shrinks 4.2× on
+   the rolling harness and its interval reopens across zero, at 4 of 7 origins — the second
+   time the block has failed to replicate, against the second likelihood. §10e is the rule and
+   the rule is what decides it, not the size of the validation reading. **The block remains
+   held out of `FEATURE_COLS` and `LAG_COLS`, opted into through `attach_absence_mix`.**
+4. **The shrinkage is a population fact, not a power fact, and that is what a further round
+   would have to attack.** The rolling interval is 1.8× *narrower* than the validation one on
+   3.3× the rows, so the effect is smaller on the fitting-half origins rather than the
+   measurement being noisier. The instrument that would settle this is more scored seasons —
+   the 2024-25 and 2025-26 rows are the test split and are not available for it — rather than
+   another arm on either axis. **No further arm on this axis should be built** until then;
+   §12f result 2 already said the same of the compound.
+5. **The composition is a mean-function fact rather than a disruption-risk fact, and that is
+   now measured rather than assumed.** Adding the block to `π` costs +0.0098 CRPS on validation
+   and loses to the `β`-only arm on both harnesses, while buying 5.8 training log-likelihood
+   points and the table's best PIT KS. `PI_COLS` stays at eight columns, and §7's argument for
+   keeping it short — that nineteen more unpenalized parameters on 4,027 rows would measure the
+   `l2` confound rather than the mechanism — survives its first direct test.
+6. **The capability is built and is what a port would use.** `FrailtyGLM.pi_features` makes
+   `π`'s covariate list configurable with `theta = 0` still nesting the incumbent exactly, and
+   `StanAvailability` already takes a `pi_features` argument and `posteriors.py` already
+   persists it. So if the block is ever confirmed, the port is `attach_absence_mix` on the
+   availability head's **own** design path — not `build_design`, which six other heads import —
+   plus the four columns on `features` and nothing on `pi_features`.
+7. **The head is unchanged.** `three_point_era` window, no season term, role-graded ρ,
+   two-component mixture — §7i, untouched by §10 through §14.

@@ -755,9 +755,17 @@ class FrailtyGLM(AvailabilityModel):
     dispersion_label = "rho"
 
     def __init__(self, l2: float = 1.0, features: list[str] | None = None,
+                 pi_features: list[str] | None = None,
                  max_rounds: int = 12, tol: float = 1e-6):
         self.l2 = l2
         self.features = list(features or FEATURE_COLS)
+        #: The covariates on the mixture weight, held separately from `features` so the two
+        #: blocks can move independently — the mean function and the disruption-risk
+        #: function are different questions about the same player, and an arm that can only
+        #: widen both at once cannot say which one a new block belongs on. Lives here rather
+        #: than on `MixtureFrailty` because `_pi_design` and the scaler do, and `PI_COLS`
+        #: is the default every arm measured before 2026-08-12 was fitted with.
+        self.pi_features = list(pi_features or PI_COLS)
         self.max_rounds = max_rounds
         self.tol = tol
 
@@ -767,7 +775,7 @@ class FrailtyGLM(AvailabilityModel):
         return np.column_stack([np.ones(len(X)), X])
 
     def _pi_design(self, df: pd.DataFrame) -> np.ndarray:
-        return self.pi_scaler.transform(df[PI_COLS].to_numpy(dtype=float))
+        return self.pi_scaler.transform(df[self.pi_features].to_numpy(dtype=float))
 
     def _buckets(self, df: pd.DataFrame) -> np.ndarray:
         """1-based prior-MPG role bucket, the same cut `RoleGradedBetaBinomial` uses."""
@@ -867,7 +875,7 @@ class FrailtyGLM(AvailabilityModel):
         return np.asarray(base.beta, dtype=float), disp
 
     def fit(self, train: pd.DataFrame) -> "FrailtyGLM":
-        self.pi_scaler = StandardScaler().fit(train[PI_COLS].to_numpy(dtype=float))
+        self.pi_scaler = StandardScaler().fit(train[self.pi_features].to_numpy(dtype=float))
         beta, disp = self._start(train)
         self.incumbent_beta, self.incumbent_disp = beta.copy(), disp.copy()
         X = self._design(train)
@@ -1002,14 +1010,17 @@ class MixtureFrailty(FrailtyGLM):
     name = "mixture"
 
     def _extra0(self) -> np.ndarray:
-        # [theta, mu_low (logit), rho_low (logit), gamma...]
+        # [theta, mu_low (logit), rho_low (logit), gamma...] — one `gamma` per `pi_features`
+        # column, so widening the block widens `extra` and nothing else. `theta = 0` is
+        # still the nesting point at any width, which is what lets §14 add columns to `pi`
+        # without weakening `assert_nests`.
         return np.concatenate([[0.0, float(np.log(0.15 / 0.85)), self._disp_raw([0.3])[0]],
-                               np.zeros(len(PI_COLS))])
+                               np.zeros(len(self.pi_features))])
 
     def _extra_bounds(self):
         return ([(0.0, 1.0),
                  (None, float(np.log(MU_LOW_MAX / (1 - MU_LOW_MAX)))),
-                 (-14.0, 3.0)] + [(-5.0, 5.0)] * len(PI_COLS))
+                 (-14.0, 3.0)] + [(-5.0, 5.0)] * len(self.pi_features))
 
     def _fit_starts(self):
         # The nesting point, plus two live disruption rates. 8% and 25% bracket the
@@ -1068,6 +1079,11 @@ class MixtureFrailty(FrailtyGLM):
                 "pi_sd": float(pi.std()),
                 "pi_p10": float(np.percentile(pi, 10)),
                 "pi_p90": float(np.percentile(pi, 90)),
+                # Which block `pi` was given, carried in the artifact rather than inferred
+                # from the arm's name — §14 crosses a covariate block onto `pi` alone, and
+                # two arms whose only difference is this list are unreadable without it.
+                "n_pi_features": len(self.pi_features),
+                "pi_features": ";".join(self.pi_features),
                 "mu_low": mu_low, "rho_low": rho_low,
                 "mu_low_at_bound": bool(mu_low >= MU_LOW_MAX - 1e-6),
                 "rho": ";".join(f"{r:.4f}" for r in self.dispersion)}

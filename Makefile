@@ -225,6 +225,14 @@ availability-exchangeability:
 # beta-geometric, which gives "zero onsets all year" and "one absorbing event, early"
 # different parameters. `lambda = 1` nests the incumbent exactly, and the round profiles
 # it rather than trusting a free fit that stops at the corner. Point MLE, numpy, minutes.
+#
+# TWO ROUNDS, selected by `features.availability.absence.rounds`. The 2x2 above is
+# `crossed`, and it measured the block against `betabinom` — which is not the head that
+# ships. `mixture` is §14: the same block crossed against the shipped two-component head,
+# with the block on `beta` alone in one arm and on `beta` AND the disruption weight `pi` in
+# the other, because those are different questions. The rounds write DISJOINT artifacts, so
+# `rounds: [mixture]` re-runs §14 without touching the five files `make docs-audit`
+# re-derives §12 from.
 availability-absence:
 	$(PYTHON) -m src.models.availability_absence
 

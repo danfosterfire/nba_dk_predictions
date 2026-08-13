@@ -575,6 +575,12 @@ def test_l2_confound_counts_the_parameters_the_penalty_never_reaches():
     # And the ordering is the one §7d states: mixture carries the most, the control one.
     assert (L2_UNPENALIZED["mixture"] > L2_UNPENALIZED["finite_mix"]
             > L2_UNPENALIZED["beta_rect"] > L2_UNPENALIZED["betabinom"])
+    # And the mixture's count is `theta`, `mu_low`, `rho_low` and one `gamma` per `pi`
+    # column, so it is a fact about `PI_COLS` rather than a literal. The sweep only ever
+    # fits the default block, but a `PI_COLS` that grew without this number following it
+    # would silently misreport the confound the whole of §7d is about.
+    from src.models.availability_window import PI_COLS
+    assert L2_UNPENALIZED["mixture"] == 3 + len(PI_COLS)
 
 
 # ── §12: the absence-composition block and the compound counting process ──────
@@ -763,12 +769,228 @@ def test_crossed_arms_differ_only_in_the_feature_block_or_the_likelihood():
     from src.models.availability import ABSENCE_MIX_COLS, FEATURE_COLS
     from src.models.availability_absence import CompoundCountingFrailty, arm_spec
 
-    plain_cls, plain_features = arm_spec("betabinom")
-    mix_cls, mix_features = arm_spec("betabinom__absence_mix")
-    comp_cls, comp_features = arm_spec("compound")
-    both_cls, both_features = arm_spec("compound__absence_mix")
+    plain_cls, plain_features, plain_kwargs = arm_spec("betabinom")
+    mix_cls, mix_features, mix_kwargs = arm_spec("betabinom__absence_mix")
+    comp_cls, comp_features, _ = arm_spec("compound")
+    both_cls, both_features, _ = arm_spec("compound__absence_mix")
 
     assert plain_cls is mix_cls is BetaBinomFrailty
     assert comp_cls is both_cls is CompoundCountingFrailty
     assert plain_features == comp_features == list(FEATURE_COLS)
     assert mix_features == both_features == list(FEATURE_COLS) + list(ABSENCE_MIX_COLS)
+    # §12's four cells never touch `pi`, so their kwargs stay empty and the arms are the ones
+    # that were measured — the §14 machinery must not reach back into the earlier round.
+    assert plain_kwargs == mix_kwargs == {}
+
+
+# ── §14: the same block, crossed against the arm that ships ───────────────────
+#
+# §12 crossed the block against `betabinom` and the head that ships is `mixture`, so the two
+# covariate lists have to be able to move independently: the mean function `beta` and the
+# disruption weight `pi` are different questions about the same player. What is pinned here
+# is that separation — a widened `pi` must not change the default arm, must still nest the
+# incumbent, and must not leak into the arms that have no `pi` at all.
+
+def test_pi_features_defaults_to_pi_cols_on_every_arm():
+    """The default is the block every arm measured before 2026-08-12 was fitted with.
+
+    `pi_features` lives on `FrailtyGLM` rather than on `MixtureFrailty` because the scaler and
+    `_pi_design` do. That makes it reachable from arms that have no `pi`, so the default has
+    to be the thing that reproduces §7 and §12 — otherwise widening one round's block would
+    silently re-fit the other's.
+    """
+    from src.models.availability_window import PI_COLS
+
+    for arm in (MixtureFrailty(l2=1.0), BetaBinomFrailty(l2=1.0),
+                BetaRectangularFrailty(l2=1.0)):
+        assert arm.pi_features == list(PI_COLS)
+    assert len(MixtureFrailty(l2=1.0)._extra0()) == 3 + len(PI_COLS)
+
+
+def test_a_widened_pi_block_still_nests_the_incumbent():
+    """`theta = 0` has to stay the nesting point at any width of `pi`.
+
+    This is the whole reason `pi` is `theta * sigmoid(gamma' z)` rather than
+    `sigmoid(gamma_0 + gamma' z)`: the weight is switched off by `theta` alone, so adding
+    columns to `z` adds parameters the nesting point does not depend on. If it did depend on
+    them, §14's arms would each be a different model rather than an extension of the shipped
+    one, and their margins would measure the widening rather than the block.
+    """
+    from src.models.availability import ABSENCE_MIX_COLS
+    from src.models.availability_window import PI_COLS
+
+    train = _frailty_frame(300, seed=8)
+    rng = np.random.default_rng(9)
+    for col in ABSENCE_MIX_COLS:
+        train[col] = rng.uniform(0.0, 1.0, len(train))
+
+    wide = MixtureFrailty(l2=1.0, pi_features=list(PI_COLS) + list(ABSENCE_MIX_COLS))
+    fitted = wide.fit(train)
+    assert len(fitted._extra0()) == 3 + len(PI_COLS) + len(ABSENCE_MIX_COLS)
+    assert assert_nests(fitted, train) < 1e-8
+    # And the widening is visible in the artifact rather than inferable from the arm's name,
+    # since two §14 arms differ in nothing else.
+    report = fitted.shape_report(train)
+    assert report["n_pi_features"] == len(PI_COLS) + len(ABSENCE_MIX_COLS)
+
+
+def test_the_mixture_round_puts_the_block_on_beta_alone_or_on_beta_and_pi():
+    """§14's two candidates are different arms, and the block token is what separates them."""
+    from src.models.availability import ABSENCE_MIX_COLS, FEATURE_COLS
+    from src.models.availability_absence import arm_spec
+    from src.models.availability_window import PI_COLS
+
+    beta_cls, beta_features, beta_kwargs = arm_spec("mixture__absence_mix")
+    both_cls, both_features, both_kwargs = arm_spec("mixture__absence_mix_pi")
+
+    assert beta_cls is both_cls is MixtureFrailty
+    # Same mean function in both — the only difference is whether `pi` sees the block too.
+    assert beta_features == both_features == list(FEATURE_COLS) + list(ABSENCE_MIX_COLS)
+    assert beta_kwargs == {}
+    assert both_kwargs == {"pi_features": list(PI_COLS) + list(ABSENCE_MIX_COLS)}
+
+
+def test_the_pi_block_is_refused_on_an_arm_with_no_pi():
+    # A silently-ignored `pi_features` on `betabinom` would produce a row that looks like a
+    # third candidate and is a duplicate of the second.
+    from src.models.availability_absence import arm_spec
+
+    with pytest.raises(ValueError, match="only `mixture` has a `pi`"):
+        arm_spec("betabinom__absence_mix_pi")
+    with pytest.raises(ValueError, match="unknown covariate block"):
+        arm_spec("mixture__absence_mixture")
+
+
+def test_margin_columns_are_named_after_the_arm_they_were_computed_against():
+    """The two rounds have different incumbents, and that has to reach the column names.
+
+    §12 quotes `betabinom` and §14 quotes `mixture`. A hard-coded `_vs_betabinom` suffix on a
+    round referenced to `mixture` would be a margin naming an arm it was never computed
+    against — an error no assertion downstream could see, because the numbers are all valid.
+    """
+    from src.models.availability_absence import _bootstrap_arms
+
+    rng = np.random.default_rng(4)
+    def parts(shift):
+        out = {}
+        for key in ("full", "low_shoulder", "high_shoulder", "10", "41", "60"):
+            p = np.clip(rng.uniform(size=200) * 0.3 + shift, 0.0, 1.0)
+            out[f"p_{key}"] = p
+            out[f"o_{key}"] = (rng.uniform(size=200) < 0.3).astype(float)
+        return out
+
+    tails = {"mixture": parts(0.0), "mixture__absence_mix": parts(0.05)}
+    out = _bootstrap_arms(tails, tuple(tails), "mixture", reps=50, seed=0)
+
+    assert "boundary_vs_mixture" in out["mixture__absence_mix"]
+    assert "boundary_vs_betabinom" not in out["mixture__absence_mix"]
+    # The reference carries its own interval and no margin against itself.
+    assert "boundary_tail_error_lo" in out["mixture"]
+    assert not [k for k in out["mixture"] if "_vs_" in k]
+
+
+def test_the_lambda_profiles_margin_columns_are_named_for_the_incumbent():
+    """The profile's reference row is `compound_lambda1`, and its columns say `betabinom`.
+
+    That is the nesting identity rather than a shortcut — at `lambda = 1` the compound IS the
+    incumbent beta-binomial — and it is load bearing twice: `lambda_profile` reads
+    `boundary_vs_betabinom_hi` back to compute D1, and `make docs-audit` re-derives six §12d
+    figures from those column names. Deriving the suffix from the reference arm's name, which
+    is right for every other caller, would rename them to `boundary_vs_compound_lambda1` and
+    turn a published table into a `KeyError` on the next full run.
+    """
+    from src.models.availability_absence import _bootstrap_arms
+
+    rng = np.random.default_rng(5)
+    tails = {}
+    for name in ("compound_lambda1", "compound_lambda0"):
+        d = {}
+        for key in ("full", "low_shoulder", "high_shoulder", "10", "41", "60"):
+            d[f"p_{key}"] = rng.uniform(0.0, 0.4, 80)
+            d[f"o_{key}"] = (rng.uniform(size=80) < 0.3).astype(float)
+        tails[name] = d
+
+    out = _bootstrap_arms(tails, tuple(tails), "compound_lambda1", reps=30, seed=0,
+                          suffix="betabinom")
+    assert "boundary_vs_betabinom_hi" in out["compound_lambda0"]
+    assert not [k for k in out["compound_lambda0"] if "compound_lambda1" in k]
+    # Without the override the suffix follows the reference, which is what every other
+    # caller needs — the two behaviours are one function and both are pinned.
+    derived = _bootstrap_arms(tails, tuple(tails), "compound_lambda1", reps=30, seed=0)
+    assert "boundary_vs_compound_lambda1_hi" in derived["compound_lambda0"]
+
+
+def test_the_interaction_row_is_a_difference_of_differences_and_names_no_arm():
+    """The generalized effects table has to reproduce what §12's artifact already holds.
+
+    Two things it would break silently. The interaction is
+    `(arm - base) - (other arm - other base)` and a sign error there would read as a plausible
+    small number; and the interaction row carries **no** `arm` or `baseline` — §12's artifact
+    has them empty, because an effect of two effects is not an arm's row, and `make docs-audit`
+    looks the row up by `effect` alone.
+    """
+    from src.models.availability_absence import interaction_table
+
+    rng = np.random.default_rng(3)
+    arms = ("a_block", "a", "b_block", "b")
+    per_row = {name: rng.uniform(8.0, 12.0, 120) for name in arms}
+    tails = {}
+    for name in arms:
+        d = {}
+        for key in ("full", "low_shoulder", "high_shoulder", "10", "41", "60"):
+            d[f"p_{key}"] = rng.uniform(0.0, 0.4, 120)
+            d[f"o_{key}"] = (rng.uniform(size=120) < 0.3).astype(float)
+        tails[name] = d
+
+    out = interaction_table(
+        per_row, tails, reps=40, seed=0,
+        contrasts=(("block | a", "a_block", "a"), ("block | b", "b_block", "b")),
+        interactions=(("interaction", "a_block", "a", "b_block", "b"),))
+
+    crps = out[out["metric"] == "val_crps"].set_index("effect")
+    want = crps.loc["block | a", "delta"] - crps.loc["block | b", "delta"]
+    assert np.isclose(crps.loc["interaction", "delta"], want)
+    assert crps.loc["interaction", "arm"] == ""
+    assert crps.loc["interaction", "baseline"] == ""
+    assert np.isnan(crps.loc["interaction", "arm_value"])
+    # And the main-effect rows still name theirs, or the table is unreadable.
+    assert crps.loc["block | a", "arm"] == "a_block"
+
+
+def test_an_unknown_round_name_raises_before_anything_is_fitted():
+    """The rounds gate exists so §14 can be re-run without touching §12's five artifacts.
+
+    A typo in the config key must fail immediately rather than silently running the default
+    pair — which would spend the compound profile and overwrite the files `make docs-audit`
+    re-derives sixty-odd figures from. Checked before `load_design`, so the error costs
+    nothing.
+    """
+    from src.models.availability_absence import ROUNDS, run
+
+    cfg = {"evaluation": {"predictions_dir": "outputs/predictions"},
+           "features": {"availability": {"absence": {"rounds": ["crossed", "mixtures"]}}}}
+    with pytest.raises(ValueError, match="unknown absence round"):
+        run(cfg)
+    assert ROUNDS == ("crossed", "mixture")
+
+
+def test_the_mixture_rounds_interaction_is_the_blocks_margin_at_both_likelihoods():
+    """The redundancy question is an interaction, and it needs all four arms' rows.
+
+    `[block | mixture] - [block | betabinom]` is what says whether the two-component head
+    already had the block's information. Subtracting §12's published margin from §14's would
+    give the same point estimate and no interval, because the bootstrap has to resample the
+    four arms on ONE set of row indices.
+    """
+    from src.models.availability_absence import (MIXTURE_ARMS, MIXTURE_CONTRASTS,
+                                                 MIXTURE_INTERACTIONS, MIXTURE_REFERENCE)
+
+    label, arm, base, other_arm, other_base = MIXTURE_INTERACTIONS[0]
+    assert (arm, base) == ("mixture__absence_mix", "mixture")
+    assert (other_arm, other_base) == ("betabinom__absence_mix", "betabinom")
+    # Every arm any effect names has to be an arm the ladder actually fits, or the effect is
+    # a KeyError at the end of a twenty-minute run.
+    named = {a for _, x, y in MIXTURE_CONTRASTS for a in (x, y)}
+    named |= {a for spec in MIXTURE_INTERACTIONS for a in spec[1:]}
+    assert named <= set(MIXTURE_ARMS)
+    assert MIXTURE_REFERENCE in MIXTURE_ARMS

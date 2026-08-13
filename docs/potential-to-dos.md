@@ -650,8 +650,49 @@ table suggests.
 
 ---
 
-## 8. Cross the absence-composition block against the arm that actually ships
+## 8. ✅ Cross the absence-composition block against the arm that actually ships — MEASURED 2026-08-12
 
+**`docs/availability-window-plan.md` §14 is the live document**; what follows is the
+motivation that opened the item, kept because the redundancy mechanism it named is what the
+round then tested. **Nothing ships**, and the reason is §10e rather than a judgement. Five
+things it settled, so they are not re-opened here:
+
+- **The entry's central prediction was wrong, and the round is worth more for it.** The block's
+  margins do **not** collapse under the two-component head: CRPS **−0.0575** [−0.1060, −0.0071]
+  against `mixture`, which is **94%** of what it bought off `betabinom`. The **interaction** is
+  what establishes that rather than the margin's size — **+0.0035** [−0.0079, +0.0149], 16.7×
+  below the main effect — since `mixture` is 0.0112 CRPS *worse* than `betabinom` and so the
+  easier of the two references. The two attacks are **complementary**, not two routes to one
+  correction.
+  `π` says *who* is at risk from age, absence volume and playoff workload; the four shares say
+  *what kind* of absence he had; the second is not recoverable from the first. §14c, §14e.
+- **On validation it is the first arm on this head to improve every regional metric at once** —
+  CRPS, boundary (0.0109 → **0.0097**), body (0.0047 → **0.0021**), shoulder and both point
+  masses, with no trade anywhere. It clears the round's bar, which is D1 with its halves
+  swapped: a CRPS interval clear of zero with the boundary *held*, since `mixture` already
+  spent the boundary gain. §14a, §14c.
+- **And it still does not ship, exactly as §12 did not.** The CRPS margin shrinks **4.2×** on
+  the rolling harness to −0.0136 [−0.0407, **+0.0132**] at 4 of 7 origins — the second failure
+  to replicate, against the second likelihood, at almost the same factor as §12e's 5.8×. §14f.
+- **The shrinkage is a population fact rather than a power fact, and that is what would have to
+  be attacked next.** The rolling interval is **1.8× narrower** than the validation one on 3.3×
+  the rows, so the second reading is the more precise of the two and the *effect* is what got
+  smaller. The instrument is more scored seasons — and 2024-25 / 2025-26 are the test split.
+  **No further arm on either axis should be built** until then. §14f, §14g.
+- **The block belongs on `β` and not on `π`, which is this entry's own second falsifier.**
+  Adding it to `π` costs **+0.0098** CRPS, makes the shoulder established worse (**+0.00158**
+  [+0.00099, +0.00177]) and buys 5.8 training log-likelihood points and the best PIT KS on the
+  table — four parameters that fit and do not predict. So the composition is a **mean-function
+  fact, not a disruption-risk fact**, and `PI_COLS` stays at eight columns. §14d.
+
+What remains open is only the port path, and it is conditional: `FrailtyGLM.pi_features`,
+`StanAvailability`'s existing `pi_features` argument and `posteriors.py`'s persistence mean the
+capability is built. If the block is ever confirmed, the port is `attach_absence_mix` on the
+availability head's **own** design path — never `build_design`, which six other heads import.
+
+---
+
+**The motivation, as written when the item opened.**
 **`docs/availability-window-plan.md` §12 measured the block against `betabinom`, and the head
 that ships is `mixture`.** The block is worth **−0.0610** CRPS [−0.1148, −0.0047] and
 **−0.00174** of `boundary_tail_error` [−0.00240, −0.00106] on the single-component reference.

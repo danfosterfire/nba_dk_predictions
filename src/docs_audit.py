@@ -207,6 +207,14 @@ AABS_I = "outputs/predictions/availability_absence_interaction.csv"
 AABS_L = "outputs/predictions/availability_absence_lambda.csv"
 AABS_B = "outputs/predictions/availability_absence_block.csv"
 AABS_R = "outputs/predictions/availability_absence_rolling.csv"
+# §14's round — the same block crossed against `mixture`, the head that ships, rather than
+# against the single-component reference §12 used. Separate files rather than more rows on
+# the two above, because every margin in them is quoted against a DIFFERENT reference arm:
+# folding the rounds together would put `crps_vs_betabinom` and `crps_vs_mixture` in one
+# table and make "the margin" ambiguous on the column name alone.
+AABS_M = "outputs/predictions/availability_absence_mixture.csv"
+AABS_MI = "outputs/predictions/availability_absence_mixture_interaction.csv"
+AABS_MR = "outputs/predictions/availability_absence_mixture_rolling.csv"
 #: §5b's block-window arm, rebuilt inside `make availability-regime` as the
 #: control the whole shrinkage comparison is read against.
 SPLICE = "splice8__intercept_workload"
@@ -6496,6 +6504,254 @@ def _availability_absence() -> list[Claim]:
     return C
 
 
+def _availability_absence_mixture() -> list[Claim]:
+    """`docs/availability-window-plan.md` §14 — the block crossed against the head that ships.
+
+    §12 measured the block against `betabinom` and `mixture` is what ships, so this round
+    re-quotes every margin against the real incumbent. Three groups, and each is here for a
+    different reason.
+
+    **The controls** (§14c reading 1). Three of the five arms are re-fits of arms measured in
+    §7c and §12b, through a class that now carries a configurable `pi` block — so they are the
+    evidence that the refactor did not move any earlier figure. They are claimed *twice over*:
+    once here at §14's rounding and once in `_availability_absence` at §12's, from two
+    different artifacts. A control that stopped reproducing would fail in both places.
+
+    **The margins** (§14c, §14d). Both families with both bounds, because the round's verdict
+    is a pair of interval statements — a CRPS interval clear of zero and a boundary interval
+    that spans it — and an audit protecting only the point estimates would let either half
+    drift into saying the opposite.
+
+    **The effects** (§14d, §14e). The `pi` increment and the interaction, which are the two
+    findings that are *differences* and cannot be columns on any arm's row. The `pi` arm's
+    shoulder effect is claimed with both bounds specifically because it clears zero in the
+    wrong direction, which is the sharpest thing the round says about where the block belongs.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, artifact: str, actual, label: str, **kw) -> None:
+        C.append(_c(quoted, artifact, actual, label, doc=AWIN, **kw))
+
+    def arm(name: str, column: str) -> float:
+        return cell(AABS_M, column, arm=name)
+
+    def eff(metric: str, effect: str, column: str) -> float:
+        return cell(AABS_MI, column, metric=metric, effect=effect)
+
+    # ── §14c: the ladder, every arm and every column the table quotes ──────────
+    ladder = [
+        ("mixture", "35", "−16,174.52", "9.8237", "0.0631", "0.0109", "0.0047", "0.0235"),
+        ("mixture__absence_mix", "39", "−16,156.04", "9.7662", "0.0572",
+         "0.0097", "0.0021", "0.0222"),
+        ("mixture__absence_mix_pi", "43", "−16,150.24", "9.7759", "0.0561",
+         "0.0108", "0.0034", "0.0238"),
+        ("betabinom", "24", "−16,239.16", "9.8125", "0.0667", "0.0201", "0.0107", "0.0253"),
+        ("betabinom__absence_mix", "28", "−16,220.27", "9.7515", "0.0588",
+         "0.0184", "0.0136", "0.0236"),
+    ]
+    for name, params, ll, crps, pit, boundary, body, shoulder in ladder:
+        add(params, AABS_M, lambda n=name: arm(n, "n_params"), f"§14 {name} parameters",
+            tol=0.5)
+        for quoted, column in ((ll, "train_loglik"), (crps, "val_crps"),
+                               (pit, "val_pit_ks"),
+                               (boundary, "boundary_tail_error"), (body, "body_error"),
+                               (shoulder, "shoulder_error")):
+            add(quoted, AABS_M, lambda n=name, c=column: arm(n, c), f"§14 {name} {column}",
+                tol=0.0001 if (name, column) == ("mixture", "boundary_tail_error") else None)
+    # The reference's selector at full precision, which is what reading 1 quotes to say the
+    # control reproduces §7c rather than merely rounding to it. The 4-dp figure in the table
+    # above is §7c's own rounding of this same 0.0108495 and gets one more digit of tolerance
+    # rather than being requoted to a different number for the same arm — the identical
+    # accommodation `_availability_absence` makes for the identical row.
+    add("0.01085", AABS_M, lambda: arm("mixture", "boundary_tail_error"),
+        "§14 mixture boundary error, the control at full precision")
+    # The point masses, separated from the shoulders they are pooled with — the `pi` arm wins
+    # this column and loses CRPS, which is half of why it does not ship.
+    for name, quoted in (("mixture", "0.0068"), ("mixture__absence_mix", "0.0056"),
+                         ("mixture__absence_mix_pi", "0.0053")):
+        add(quoted, AABS_M, lambda n=name: arm(n, "point_mass_error"),
+            f"§14 {name} point mass error")
+
+    margins = [("mixture__absence_mix", "crps_vs_mixture",
+                ("−0.0575", "−0.1060", "−0.0071"), "CRPS"),
+               ("mixture__absence_mix", "boundary_vs_mixture",
+                ("−0.00089", "−0.00173", "+0.00161"), "boundary"),
+               ("mixture__absence_mix_pi", "crps_vs_mixture",
+                ("−0.0478", "−0.0937", "+0.0020"), "CRPS"),
+               ("mixture__absence_mix_pi", "boundary_vs_mixture",
+                ("+0.00016", "−0.00256", "+0.00317"), "boundary"),
+               ("betabinom", "crps_vs_mixture",
+                ("−0.0112", "−0.0511", "+0.0280"), "CRPS"),
+               ("betabinom", "boundary_vs_mixture",
+                ("+0.00891", "+0.00420", "+0.00994"), "boundary"),
+               ("betabinom__absence_mix", "crps_vs_mixture",
+                ("−0.0722", "−0.1446", "+0.0020"), "CRPS"),
+               ("betabinom__absence_mix", "boundary_vs_mixture",
+                ("+0.00718", "+0.00369", "+0.00837"), "boundary")]
+    for name, column, (point, lo, hi), kind in margins:
+        add(point, AABS_M, lambda n=name, c=column: arm(n, c), f"§14 {name} {kind} margin")
+        add(lo, AABS_M, lambda n=name, c=column: arm(n, f"{c}_lo"),
+            f"§14 {name} {kind} margin, lower bound")
+        add(hi, AABS_M, lambda n=name, c=column: arm(n, f"{c}_hi"),
+            f"§14 {name} {kind} margin, upper bound")
+
+    # The three derived readings §14c leads on. Each is a ratio of a pair claimed above, so
+    # what they protect is the *sentence* — "survives essentially whole against a harder
+    # reference", and "the same proportion of a defect already halved".
+    add("94%", AABS_M,
+        lambda: (arm("mixture__absence_mix", "crps_vs_mixture")
+                 / cell(AABS, "crps_vs_betabinom", arm="betabinom__absence_mix")),
+        "§14 block CRPS margin as a share of §12's")
+    add("18.48", AABS_M,
+        lambda: (arm("mixture__absence_mix", "train_loglik")
+                 - arm("mixture", "train_loglik")),
+        "§14 training log-likelihood the block buys on the mixture")
+    add("8.2%", AABS_M,
+        lambda: (-arm("mixture__absence_mix", "boundary_vs_mixture")
+                 / arm("mixture", "boundary_tail_error")),
+        "§14 block's share of the shipped head's boundary error")
+    # The two figures reading 2 uses to say what the margin is NOT. They are the round's
+    # guard against its own headline: `mixture` is the EASIER CRPS reference, so a margin of
+    # the same size against it is not evidence by itself — and the block does not move where
+    # §7c's calibration-for-CRPS trade sits. Both are differences of pairs claimed above, and
+    # neither survives being left in prose, because both are sign statements.
+    add("0.0146", AABS_M,
+        lambda: (arm("mixture__absence_mix", "val_crps")
+                 - arm("betabinom__absence_mix", "val_crps")),
+        "§14 CRPS gap between the two block arms")
+    add("0.00866", AABS_M,
+        lambda: (arm("betabinom__absence_mix", "boundary_tail_error")
+                 - arm("mixture__absence_mix", "boundary_tail_error")),
+        "§14 boundary gap between the two block arms")
+
+    # ── §14d: the `pi` increment, which is the round's null ────────────────────
+    for quoted, metric, column in (
+            ("+0.0098", "val_crps", "delta"), ("−0.0036", "val_crps", "delta_lo"),
+            ("+0.0239", "val_crps", "delta_hi"),
+            ("+0.00107", "boundary_tail_error", "delta"),
+            ("−0.00106", "boundary_tail_error", "delta_lo"),
+            ("+0.00165", "boundary_tail_error", "delta_hi"),
+            ("+0.00124", "body_error", "delta"),
+            ("−0.00178", "body_error", "delta_lo"),
+            ("+0.00182", "body_error", "delta_hi"),
+            ("+0.00158", "shoulder_error", "delta"),
+            ("+0.00099", "shoulder_error", "delta_lo"),
+            ("+0.00177", "shoulder_error", "delta_hi")):
+        add(quoted, AABS_MI,
+            lambda m=metric, c=column: eff(m, "absence_mix on pi | beta", c),
+            f"§14 pi increment, {metric} ({column})")
+    add("5.8", AABS_M,
+        lambda: (arm("mixture__absence_mix_pi", "train_loglik")
+                 - arm("mixture__absence_mix", "train_loglik")),
+        "§14 training log-likelihood the pi block buys")
+    # What the `pi` block moves, which is the evidence it is doing something rather than
+    # nothing — it flags different players and predicts worse.
+    for name, theta, p90, mu_low in (("mixture__absence_mix", "0.1140", "0.1097", "0.1098"),
+                                     ("mixture__absence_mix_pi", "0.1316", "0.1299",
+                                      "0.1240")):
+        for quoted, column in ((theta, "shape_theta"), (p90, "shape_pi_p90"),
+                               (mu_low, "shape_mu_low")):
+            add(quoted, AABS_M, lambda n=name, c=column: arm(n, c), f"§14 {name} {column}")
+
+    # ── §14e: the interaction, and the four main effects it is built from ──────
+    for metric, (block_mix, block_bb, inter) in (
+            ("val_crps", (("−0.0575", "−0.1060", "−0.0071"),
+                          ("−0.0610", "−0.1148", "−0.0047"),
+                          ("+0.0035", "−0.0079", "+0.0149"))),
+            ("boundary_tail_error", (("−0.00114", "−0.00173", "+0.00161"),
+                                     ("−0.00177", "−0.00240", "−0.00106"),
+                                     ("+0.00063", "+0.00008", "+0.00333"))),
+            ("body_error", (("−0.00261", "−0.00397", "+0.00360"),
+                            ("+0.00294", "−0.00325", "+0.00419"),
+                            ("−0.00555", "−0.00716", "+0.00033"))),
+            ("shoulder_error", (("−0.00134", "−0.00200", "−0.00050"),
+                                ("−0.00167", "−0.00230", "+0.00147"),
+                                ("+0.00033", "−0.00274", "+0.00050")))):
+        for effect, (point, lo, hi) in (("absence_mix on beta | mixture", block_mix),
+                                        ("absence_mix | betabinom", block_bb),
+                                        ("interaction", inter)):
+            for quoted, column in ((point, "delta"), (lo, "delta_lo"), (hi, "delta_hi")):
+                add(quoted, AABS_MI, lambda m=metric, e=effect, c=column: eff(m, e, c),
+                    f"§14 {metric} effect, {effect} ({column})")
+    add("16.7×", AABS_MI,
+        lambda: abs(eff("val_crps", "absence_mix on beta | mixture", "delta")
+                    / eff("val_crps", "interaction", "delta")),
+        "§14 CRPS main effect over its interaction")
+
+    # ── §14f: the rolling confirmation, which is where the CRPS win goes ───────
+    #
+    # The losing reading is claimed as carefully as the winning one, for `_availability_
+    # absence`'s reason one round over: this is the row that stops the arm shipping, and a
+    # registry holding only the validation margin would let the doc keep quoting "94% of
+    # §12's margin" long after the harness that failed to reproduce it had drifted.
+    def roll(name: str, column: str) -> float:
+        return cell(AABS_MR, column, arm=name)
+
+    add("2,871", AABS_MR, lambda: roll("mixture", "n_scored"),
+        "§14 rolling scored rows", tol=0.5)
+    rolling = [("mixture", "10.1148", "0.0496", "0.01842", None, None),
+               ("mixture__absence_mix", "10.1012", "0.0459", "0.01824",
+                ("−0.0136", "−0.0407", "+0.0132"),
+                ("−0.000184", "−0.000528", "+0.000168")),
+               ("mixture__absence_mix_pi", "10.1062", "0.0453", "0.01803",
+                ("−0.0086", "−0.0386", "+0.0217"),
+                ("−0.000385", "−0.000735", "−0.000029")),
+               ("betabinom__absence_mix", "10.0995", "0.0496", "0.02587",
+                ("−0.0153", "−0.0560", "+0.0228"),
+                ("+0.00745", "+0.00695", "+0.00794")),
+               ("betabinom", "10.1100", "0.0526", "0.02628",
+                ("−0.0048", "−0.0318", "+0.0195"),
+                ("+0.00786", "+0.00752", "+0.00821"))]
+    for name, crps, pit, boundary, crps_ci, boundary_ci in rolling:
+        add(crps, AABS_MR, lambda n=name: roll(n, "crps"), f"§14 rolling {name} CRPS")
+        add(pit, AABS_MR, lambda n=name: roll(n, "pit_ks"), f"§14 rolling {name} PIT KS")
+        add(boundary, AABS_MR, lambda n=name: roll(n, "boundary_tail_error"),
+            f"§14 rolling {name} boundary error")
+        for interval, column, kind in ((crps_ci, "crps_vs_mixture", "CRPS"),
+                                       (boundary_ci, "boundary_vs_mixture", "boundary")):
+            if interval is None:
+                continue
+            point, lo, hi = interval
+            add(point, AABS_MR, lambda n=name, c=column: roll(n, c),
+                f"§14 rolling {name} {kind} margin")
+            add(lo, AABS_MR, lambda n=name, c=column: roll(n, f"{c}_lo"),
+                f"§14 rolling {name} {kind} margin, lower bound")
+            add(hi, AABS_MR, lambda n=name, c=column: roll(n, f"{c}_hi"),
+                f"§14 rolling {name} {kind} margin, upper bound")
+    # The body and shoulder columns §14f reading 3 quotes, on the two arms it compares — the
+    # calibration is the half that DOES replicate, so it is the half most worth pinning.
+    for name, body, shoulder in (("mixture", "0.01517", "0.01095"),
+                                 ("mixture__absence_mix", "0.01391", "0.01039")):
+        add(body, AABS_MR, lambda n=name: roll(n, "body_error"),
+            f"§14 rolling {name} body error")
+        add(shoulder, AABS_MR, lambda n=name: roll(n, "shoulder_error"),
+            f"§14 rolling {name} shoulder error")
+    add("10.1012", AABS_MR, lambda: roll("mixture__absence_mix", "crps"),
+        "§14 rolling block CRPS, quoted twice in the section")
+    # The two ratios §14f leads on. The second is the round's most load-bearing derived
+    # figure: it is what distinguishes "the effect is smaller on those rows" from "the
+    # harness could not see it", and the whole of result 4 rests on it.
+    add("4.2×", AABS_MR,
+        lambda: (arm("mixture__absence_mix", "crps_vs_mixture")
+                 / roll("mixture__absence_mix", "crps_vs_mixture")),
+        "§14 block CRPS margin, validation over rolling")
+    add("1.8×", AABS_MR,
+        lambda: ((arm("mixture__absence_mix", "crps_vs_mixture_hi")
+                  - arm("mixture__absence_mix", "crps_vs_mixture_lo"))
+                 / (roll("mixture__absence_mix", "crps_vs_mixture_hi")
+                    - roll("mixture__absence_mix", "crps_vs_mixture_lo"))),
+        "§14 validation interval width over rolling interval width")
+    add("0.0269", AABS_MR,
+        lambda: (roll("mixture__absence_mix", "crps_vs_mixture_hi")
+                 - roll("mixture__absence_mix", "crps_vs_mixture_lo")) / 2.0,
+        "§14 rolling CRPS interval half-width")
+    add("0.0494", AABS_M,
+        lambda: (arm("mixture__absence_mix", "crps_vs_mixture_hi")
+                 - arm("mixture__absence_mix", "crps_vs_mixture_lo")) / 2.0,
+        "§14 validation CRPS interval half-width")
+    return C
+
+
 def _availability_no_design_level() -> list[Claim]:
     """`docs/availability-window-plan.md` §8b — the no-design availability LEVEL.
 
@@ -6646,7 +6902,8 @@ def _build() -> tuple[Claim, ...]:
                  + _games_played_in_notes() + _train_validate_test() + _weekly()
                  + _minutes_window() + _availability_window()
                  + _availability_regime() + _availability_exchangeability()
-                 + _availability_absence() + _availability_no_design_level())
+                 + _availability_absence() + _availability_absence_mixture()
+                 + _availability_no_design_level())
 
 
 CLAIMS: tuple[Claim, ...] = _build()
