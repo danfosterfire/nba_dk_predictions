@@ -461,6 +461,10 @@ overall calibration, slightly too sharp through the middle.
 2. **The shipped column is the season-centred delta**, `pre_d_logit_share` with each
    season's own mean removed, plus P1's four age-split missing indicators. Five columns.
 3. **The composition is priced**, per P3's own conditional — at the pilot window first.
+   ✅ **Done 2026-08-14, session 4b**, and it passes: a preseason-blended `w_share` moves the
+   head's own no-fit floor by **−0.19972 [−0.21661, −0.18225]** CRPS minutes per player-game
+   on the draft pool, with no fit at all. The route that pays is the **offset** and not the
+   ordering P3 named beside it.
 4. **The volume shrink is a null.** `k = 20` is retained because it is the inner split's
    optimum, but it is worth 0.05 CRPS and nothing should be built on it.
 5. ~~**Nothing ships into the chain from here.**~~ ✅ **Superseded the same day.** This is a
@@ -1045,6 +1049,131 @@ than as *order* can be a measured null there. §8b's own simulator readout is th
 moved season-total MAE by 3.18 dk_pts and the per-team no-design minutes share by 17.2% — and
 running it costs the chain, which is P5 work.
 
+## Session 4b — the composition, and the head where the preseason cannot be a feature
+
+`make composition-preseason` (`src/models/composition_preseason.py`) →
+`composition_preseason.csv`. Opened by P3's gate and specified at the **pilot window**
+(2018-19 on, P3 decision 3). numpy only, **48 seconds, no CmdStan and no fit of the head** —
+which is the design rather than a shortcut.
+
+### The composition is the one head the house pattern cannot reach
+
+Every other block in this round is difference-coded columns on `beta`. On this head the thing
+worth testing is not a feature at all. `w_share` — a player's prior-season minutes share, or
+his draft bucket's expanding mean if he has none — enters the model **twice**:
+
+1. as the **offset**, through `sequential_columns` → `logit_prior`, the carry-forward `beta`
+   only corrects; and
+2. as the **allocation order**, through `order_frame`, which is the order the multinomial is
+   decomposed into sequential binomials in.
+
+No coefficient path reaches either. So the arm is `w' = ω·pre + (1 − ω)·w_share` with
+`ω = m/(m + k)` over preseason minutes, where `k → ∞` is the incumbent exactly and a player
+with no preseason row has `ω = 0` by his own volume rather than by a special case.
+
+### Why it is scored on the floor, and why that is the right first gate
+
+`FloorComposition`'s mean function is **the offset alone** — its only fitted quantity is a
+shared dispersion. So the whole change is visible in the head's own no-fit floor with no
+sampler involved, and the floor is what every fitted variant in `stan_composition`'s ladder is
+scored against. That makes this the composition's version of P1: a screen that can reject an
+arm before any of the head's 9.92 h (full window) or ~1 h (pilot) is spent.
+
+The control is that the incumbent arm reproduces the shipped floor. `carry_forward` reads
+**4.6776** in `stan_composition`'s own ladder and **4.64939** here — the gap is the pilot
+window and 120 predictive draws against 200, and both are named rather than absorbed.
+
+### The gate passes decisively at the head's own selection unit
+
+`k = 80` is chosen on an **inner carve of the fitting half** (2020-21 and 2021-22 scored
+against everything before them), interior at 4.44562 against 4.49481 at k = 40 and 4.46834 at
+k = 160. Validation's own optimum is **k = 160** — one grid step away, the same "two grids on
+disjoint rows agree to a step" evidence `sim.minutes.player_season_sigma` rests on.
+
+| at the selected `k = 80`, against the incumbent | draftable | pooled |
+|---|---|---|
+| **per player-game CRPS** | **−0.19972 [−0.21661, −0.18225]** | **−0.17130 [−0.18740, −0.15473]** |
+| per player-season CRPS | −5.86215 [−15.16667, **+3.23419**] | −3.56609 [−11.41454, **+4.31123**] |
+
+**Decisive at the unit `stan_composition` selects on, a tie at the season unit** — which is
+this head's standing lesson (`make minutes-unification`) arriving from a third direction. A
+better offset fixes the per-game *mean*; it does nothing for the season-level *spread*, which
+is a missing parameter rather than a bad input, and the injected `σ` is what addresses that.
+
+The level is the striking part. The floor goes CRPS **4.63787 → 4.43815** and R²
+**0.4375 → 0.4797** on the draftable rows, with **nothing fitted**. For scale: the *fitted*
+shipped composition reads **4.4945** on validation and the pilot-window fitted arm
+(`potential-to-dos.md` item 1) reads **4.4561**. ⚠️ **Those are cross-artifact comparisons
+with two known differences** — 120 predictive draws against 200, and the floor's shared `ρ`
+against the head's role-graded one — so the honest statement is *suggestive* and not a
+measured margin: a preseason-blended offset with no fit lands in the same neighbourhood as
+the fitted head. Settling it is the Stan arm, which is what this gate licenses.
+
+### The attribution: it is the offset, and the ordering is worth 4%
+
+P3 named both routes — *"preseason minutes share updating the **ordering** and prior-share
+feature"* — and only one of them pays. Run at the selected `k` with each route enabled alone,
+on the draftable rows:
+
+| route | per player-game CRPS vs incumbent | share of the blended arm |
+|---|---|---|
+| `both` *(the arm)* | −0.19972 [−0.21661, −0.18225] | — |
+| **`offset_only`** | **−0.20591 [−0.22336, −0.18797]** | **103%** |
+| `order_only` | −0.00749 [−0.01352, −0.00156] | **3.75%** |
+
+The offset carries the whole margin — slightly more than the whole of it, so the two routes
+are very mildly antagonistic — and reordering the allocation is clear of zero and worth
+almost nothing. At the season unit `order_only` is a flat null (−0.35050 [−0.84174, +0.14873]).
+
+**That is a useful negative for what gets built next.** The ordering is the expensive half to
+change: it permutes the sequential decomposition and therefore the whole likelihood's block
+structure, while the offset is one column. The cheap half is the half that works.
+
+### Why the compression does not bite here, and this is the mechanism
+
+P3's central finding on the marginal minutes head was that raw preseason minutes are
+**compressed** — a starter plays 15–20 preseason minutes against 32–36 in the regular season —
+and that the compression is a season-varying nuisance level the head had no year term to
+absorb. Centring was needed there. **Nothing is centred here, and the raw blend wins by a
+margin an order of magnitude larger than any centring bought.**
+
+The reason is structural rather than lucky: `logit_prior` is built from the ratio
+`w_k / tail_k`, a player's share against the *remaining* players' shares in the same
+team-game. A common multiplicative compression of every `w_share` in a team cancels in that
+ratio exactly. So this head is invariant to precisely the nuisance that forced P3's centring —
+which is the composition-specific behaviour P3 predicted a win from, arriving through a
+different mechanism than the one it named.
+
+### What session 4b decides
+
+1. **The gate passes at the pilot window and the composition earns a Stan arm.** The margin
+   is at the unit the head selects on, on the draft pool, with the incumbent nested exactly
+   and the inner carve one grid step from validation's own optimum.
+2. **The shipped column is the blended `w_share` on the OFFSET.** The ordering route is worth
+   3.75% and is the expensive half; it is recorded as a near-null rather than adopted.
+3. **`k = 80`, from the fitting half.** Validation prefers 160 and reading that would be
+   selecting on the split the arm is scored against.
+4. **The season unit is a tie and that is expected.** A better offset cannot manufacture
+   season-level heterogeneity; `sim.minutes.player_season_sigma` is the parameter for that,
+   and it is unaffected by anything here.
+5. **The compression that forced P3's centring does not apply to this head**, because the
+   offset is a within-team ratio. Recorded so that a future round does not reach for centring
+   here by analogy.
+
+### What session 4b does not settle
+
+**The fit itself.** The floor is a screen, not a substitute: `beta` can correct an offset the
+floor cannot, so the increment could shrink under a fitted head — the mirror of P3's finding
+that its own increment *grew* when integrated over `beta`. That fit is a pilot-window
+`stan-composition` run and is the natural next step.
+
+**Whether it survives the full window.** Everything here is at 2018-19 onward. The pilot is
+what P3 specified and what `potential-to-dos.md` item 1 measured as ~6× cheaper, but the
+shipped head fits from 1996-97 and the preseason panel starts at 2004-05, so a full-window
+version needs the coverage cut P3's head needed.
+
+**What it is worth in the contest**, which is P5 and costs the chain.
+
 ## Why preseason data should help — and where it plausibly won't
 
 - **Availability.** Participation is a direct health reading taken days before the season:
@@ -1240,7 +1369,7 @@ decision registry entries, and register this doc's built artifacts in `make docs
 | 5b (2026-08-13) ⚙️ | `crps_vs_primary` on the availability rolling harness; **both heads ported to Stan** on an owner decision against P2's failing gate | P2, P3 |
 | 6 (2026-08-13) 📝 | model cards, the documentation pass, and the two production docs P5 owed | — |
 | 7 (2026-08-14) ⚙️ | no-prior ladder + rookie rate prior — **(a) fails, (b) clears on 5 of 8 rate targets**, and neither ships | P4 |
-| 4b | the composition's preseason arm at the pilot window — opened by P3's gate | P3 |
+| 4b (2026-08-14) ✅ | the composition's preseason arm at the pilot window — **passes at the head's own unit**, and it is the OFFSET rather than the ordering | P3 |
 | 6b | the five surviving rate heads' arms — a session P1 *added* | P1→P2 |
 | 8 | simulator gates, strategy sweep — the σ re-read and the other windows landed early, 2026-08-14 | P5 |
 

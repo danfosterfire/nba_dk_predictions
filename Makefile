@@ -21,7 +21,7 @@ PIP    := .venv/bin/pip
         stan-components stan-composition \
         stan-substitution season-terms games-played stan-games-played \
         stan-game-length posteriors model-cards minutes-unification minutes-window \
-        minutes-preseason composition-effects \
+        minutes-preseason composition-effects composition-preseason \
         scoring-periods draft-pool simulate-season weekly-scores bracket draft-sim \
         draft-sim-need draft-room draft-room-prep strategy-sweep strategy-sweep-need \
         pick-log-stake mixture-value final-evaluation
@@ -501,6 +501,19 @@ minutes-preseason:
 # `make docs-audit` re-derives eleven quoted figures from it.
 composition-effects:
 	$(PYTHON) -m src.models.composition_effects
+
+# Session 4b of docs/preseason-plan.md, gate 1. The composition is the one head where the
+# preseason CANNOT enter as a feature column: `w_share` is the offset (`logit_prior`) AND
+# the allocation ORDER (`order_frame`), so a coefficient path cannot reach it. This blends a
+# preseason minutes share into `w_share` and scores it through the head's OWN no-fit floor,
+# whose mean function is the offset alone — so the whole question is answered with no
+# CmdStan and no fit of the head, and a losing arm never costs the sampler an hour.
+#
+# `k -> inf` is the incumbent EXACTLY and `k` is selected on an inner carve of the fitting
+# half. Both units, because `make minutes-unification` is the standing demonstration that
+# this head's verdict belongs to a unit. Needs `make preseason`. ~6 min.
+composition-preseason:
+	$(PYTHON) -m src.models.composition_preseason
 
 # One row per (season, game_id): its scoring period and its DK tournament round. A
 # best-ball lineup is scored weekly, so every weekly max, round total and advancement

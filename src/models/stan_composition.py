@@ -436,9 +436,16 @@ def rookie_share_priors(lagged: pd.DataFrame, seasons: list[str]) -> pd.DataFram
 def order_frame(frame: pd.DataFrame) -> pd.DataFrame:
     """Fixed within-team-season order: veterans by prior share descending, then
     no-prior players by draft slot, tie-broken by `player_id`. Computable preseason —
-    every key is S-1 information — and each game's played subset inherits it."""
+    every key is S-1 information — and each game's played subset inherits it.
+
+    Sorts on `order_share` when the frame carries one and on `w_share` otherwise. The two
+    are the same column for every caller but `composition_preseason`, which needs them
+    separate to say whether a better prior share helps through the **offset** or through the
+    **order** — `w_share` reaches the model both ways, and a single number that moved both
+    could not tell them apart.
+    """
     out = frame.copy()
-    out["_w_neg"] = -out["w_share"]
+    out["_w_neg"] = -(out["order_share"] if "order_share" in out else out["w_share"])
     out["_draft"] = out["draft_number"].fillna(99)
     out = out.sort_values(["season", "game_id", "team_id", "no_prior", "_w_neg",
                            "_draft", "player_id"]).reset_index(drop=True)
@@ -533,13 +540,20 @@ def sequential_columns(frame: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def composition_frame(cfg: dict) -> pd.DataFrame:
+def composition_frame(cfg: dict, share_hook=None) -> pd.DataFrame:
     """One ordered row per played player-game, over every season.
 
     Built over the full history even when only a pilot window is fitted — the lags and
     the expanding rookie prior need the earlier seasons. Ordering is fixed within a
     team-season (prior share descending, no-prior players last by draft slot), so each
     game's played subset inherits it, and it is computable preseason.
+
+    `share_hook`, if given, is called with the per-(player, season) frame **after**
+    `w_share` is built and must return it with `w_share` replaced. It exists for
+    `composition_preseason`, which asks whether a preseason reading improves that column —
+    the one input that reaches BOTH the offset (`logit_prior`) and the allocation ORDER, so
+    it cannot be tested as a feature. `None` is today's behaviour exactly and every other
+    caller passes nothing.
     """
     features_dir = Path(cfg["data"]["features_dir"])
     seasons = cfg["data"]["seasons"]
@@ -561,11 +575,17 @@ def composition_frame(cfg: dict) -> pd.DataFrame:
                          .fillna(lagged["rookie_share_prior"])
                          .fillna(FALLBACK_ROOKIE_SHARE)
                          .clip(*SHARE_CLIP))
+    carried = ["player_id", "season", "w_share", "no_prior", "share_stale", "draft_number"]
+    if share_hook is not None:
+        lagged = share_hook(lagged)
+        if lagged["w_share"].isna().any():
+            raise ValueError("`share_hook` returned a NaN `w_share`")
+        lagged["w_share"] = lagged["w_share"].clip(*SHARE_CLIP)
+        if "order_share" in lagged:
+            lagged["order_share"] = lagged["order_share"].clip(*SHARE_CLIP)
+            carried.append("order_share")
 
-    frame = played.merge(
-        lagged[["player_id", "season", "w_share", "no_prior", "share_stale",
-                "draft_number"]],
-        on=["player_id", "season"], how="left")
+    frame = played.merge(lagged[carried], on=["player_id", "season"], how="left")
     if frame["w_share"].isna().any():
         raise ValueError("played rows with no composition weight — share_lags no "
                          "longer covers the panel")

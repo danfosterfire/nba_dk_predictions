@@ -313,6 +313,20 @@ make availability-no-prior
                        #   readings — the fourth instrument to show the population
                        #   restriction is load-bearing.
 
+make composition-preseason
+                       # Session 4b of preseason-plan, gate 1 →
+                       #   outputs/predictions/composition_preseason.csv. The composition is
+                       #   the ONE head the house pattern cannot reach: `w_share` is the
+                       #   offset (`logit_prior`) AND the allocation order (`order_frame`),
+                       #   so no coefficient path touches it. Blends a preseason minutes
+                       #   share into `w_share` and scores it through the head's OWN no-fit
+                       #   floor, whose mean function IS the offset — 48 s, no CmdStan, no
+                       #   fit of the head. PASSES at the head's own selection unit
+                       #   (-0.19972 [-0.21661, -0.18225] CRPS minutes per player-game) and
+                       #   TIES at the season unit, which is this head's standing lesson.
+                       #   The attribution says it is the OFFSET: `order_only` is worth
+                       #   3.75% of the margin, which reverses half of what P3 predicted.
+
 make rookie-priors     # P4(b): does a no-prior player's own preseason beat his draft
                        #   bucket? → outputs/predictions/rookie_priors.csv. The incumbent
                        #   is stan_composition.rookie_share_priors, the bio_draft_number

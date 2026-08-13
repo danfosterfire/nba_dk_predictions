@@ -8550,6 +8550,50 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("head", "simulator", "simulations"),
     ),
     Decision(
+        id="the-compositions-preseason-enters-the-prior-share-not-a-feature",
+        topic="minutes",
+        claim="**On the composition the preseason cannot be a feature column, and entering "
+              "it through `w_share` instead moves the head's own no-fit floor by -0.19972 "
+              "[-0.21661, -0.18225] CRPS minutes per player-game with NOTHING fitted.** The "
+              "route that pays is the **offset**; re-ordering the allocation is worth "
+              "**3.75%** of it. `docs/preseason-plan.md` session 4b passes and the head earns "
+              "a Stan arm.",
+        because="`w_share` is a player's prior-season minutes share and it is not a feature: "
+                "`sequential_columns` turns it into `logit_prior`, the offset `beta` only "
+                "corrects, and `order_frame` sorts each team-season by it, which is the "
+                "order the multinomial is decomposed into sequential binomials in. No "
+                "coefficient path reaches either, so the house pattern this whole round uses "
+                "— difference-coded columns with a zero coefficient nesting the incumbent — "
+                "is unavailable on exactly one head. **The gate is cheap because "
+                "`FloorComposition`'s mean function IS the offset**, so the whole change is "
+                "visible with no sampler: 48 seconds against the head's 9.92 h. The "
+                "incumbent arm reproduces the shipped floor (4.6776 in `stan_composition`'s "
+                "ladder, **4.64939** here — pilot window and 120 predictive draws against "
+                "200, both named). `k = 80` comes off an inner carve of the FITTING half and "
+                "validation's own optimum is 160, one grid step away. **The attribution is "
+                "the round's main instrument and it inverts half of P3's prediction**: P3 "
+                "named 'the ordering and prior-share feature' and `offset_only` carries "
+                "**103%** of the margin while `order_only` reads -0.00749 [-0.01352, "
+                "-0.00156]. That is a useful negative, because the ordering is the expensive "
+                "half to change — it permutes the likelihood's whole block structure — and "
+                "the cheap half is the one that works. **And the compression that forced "
+                "P3's centring does not bite here**, structurally rather than luckily: "
+                "`logit_prior` is built from `w_k / tail_k`, a within-team ratio, so a common "
+                "multiplicative compression of every share in a team cancels exactly. "
+                "Recorded so a later round does not reach for centring here by analogy. The "
+                "season unit is a tie (-5.86215 [-15.16667, +3.23419]) and has to be — a "
+                "better offset cannot manufacture season-level heterogeneity, which is what "
+                "[[injected-sigma-estimated-on-train-is-0.45]] exists for.",
+        status="measured",
+        unblocks="a pilot-window `stan-composition` fit of the blended-offset arm",
+        reproduce="make composition-preseason → "
+                  "outputs/predictions/composition_preseason.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-14",
+        date="2026-08-14",
+        tags=("head", "next"),
+    ),
+    Decision(
         id="the-preseason-key-does-not-improve-the-no-design-availability-level",
         topic="availability",
         claim="**A preseason minutes-share key on top of `tenure_draft` is a TIE on the "

@@ -214,6 +214,11 @@ ANOP_L = "outputs/predictions/availability_no_design_level.csv"
 # either would be ambiguous between a pass and a tie rather than merely wrong.
 ANOP_P = "outputs/predictions/availability_no_prior_preseason.csv"
 ROOKIE_P = "outputs/predictions/rookie_priors.csv"
+# Session 4b — the preseason inside the composition's PRIOR SHARE. Three lookup keys:
+# `k` (the blend constant), `route` (offset / order / both, which is the round's
+# attribution) and `unit`, because this head's verdict has belonged to a unit since
+# `make minutes-unification` and the two disagree here too.
+COMP_PRE = "outputs/predictions/composition_preseason.csv"
 AABS = "outputs/predictions/availability_absence.csv"
 AABS_I = "outputs/predictions/availability_absence_interaction.csv"
 AABS_L = "outputs/predictions/availability_absence_lambda.csv"
@@ -7959,6 +7964,103 @@ def _preseason_no_prior() -> list[Claim]:
     return C
 
 
+def _composition_preseason() -> list[Claim]:
+    """`docs/preseason-plan.md` session 4b — the composition's prior share.
+
+    Three families. **The arms**, at the selected `k` and at the incumbent, because "the
+    floor moves from 4.63787 to 4.43815 with nothing fitted" is the sentence and it goes
+    stale from either end. **The margins**, on both units and both populations, since the
+    round's headline is that they disagree. **The attribution**, which is the finding that
+    reverses half of P3's prediction and is the only reason the ordering route is not the
+    recommendation.
+
+    The control — that the incumbent arm reproduces `stan_composition`'s own `carry_forward`
+    row — is deliberately NOT claimed as an equality: the two differ by the window and the
+    draw budget, and an audit that asserted they matched would be asserting something the
+    round says is false. Both figures are claimed separately instead.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, actual, label: str, **kw) -> None:
+        C.append(_c(quoted, COMP_PRE, actual, label, doc=PRESEASON, **kw))
+
+    def arm(k: float, unit: str, population: str, column: str) -> float:
+        return cell(COMP_PRE, column, analysis="floor_arm", k=k, route="both", unit=unit,
+                    population=population)
+
+    def margin(k: float, route: str, unit: str, population: str, column: str) -> float:
+        return cell(COMP_PRE, column, analysis="floor_margin", k=k, route=route, unit=unit,
+                    population=population)
+
+    SELECTED, INCUMBENT = 80.0, 1e9
+
+    # The floor's level, before and after, at the head's own selection unit.
+    for k, crps, r2 in ((INCUMBENT, "4.63787", "0.4375"), (SELECTED, "4.43815", "0.4797")):
+        add(crps, lambda k=k: arm(k, "player_game", "draftable", "crps"),
+            f"4b floor CRPS at k={k:g}, draftable")
+        add(r2, lambda k=k: arm(k, "player_game", "draftable", "r2"),
+            f"4b floor R2 at k={k:g}, draftable")
+    add("4.64939", lambda: arm(INCUMBENT, "player_game", "pooled", "crps"),
+        "4b incumbent floor CRPS, pooled — the control against the shipped ladder's 4.6776")
+
+    # The margins the gate turns on: decisive per game, a tie per season.
+    for unit, population, (point, lo, hi) in (
+            ("player_game", "draftable", ("−0.19972", "−0.21661", "−0.18225")),
+            ("player_game", "pooled", ("−0.17130", "−0.18740", "−0.15473")),
+            ("player_season", "draftable", ("−5.86215", "−15.16667", "+3.23419")),
+            ("player_season", "pooled", ("−3.56609", "−11.41454", "+4.31123"))):
+        for quoted, column in ((point, "crps_vs_incumbent"), (lo, "crps_vs_incumbent_lo"),
+                               (hi, "crps_vs_incumbent_hi")):
+            add(quoted,
+                lambda u=unit, p=population, c=column: margin(SELECTED, "both", u, p, c),
+                f"4b selected arm {unit} {population} {column}")
+
+    # The attribution — the round's main instrument.
+    for route, (point, lo, hi) in (
+            ("offset_only", ("−0.20591", "−0.22336", "−0.18797")),
+            ("order_only", ("−0.00749", "−0.01352", "−0.00156"))):
+        for quoted, column in ((point, "crps_vs_incumbent"), (lo, "crps_vs_incumbent_lo"),
+                               (hi, "crps_vs_incumbent_hi")):
+            add(quoted, lambda r=route, c=column: margin(SELECTED, r, "player_game",
+                                                          "draftable", c),
+                f"4b {route} {column}")
+    add("−0.35050", lambda: margin(SELECTED, "order_only", "player_season", "draftable",
+                                   "crps_vs_incumbent"),
+        "4b order_only at the season unit — a flat null")
+    add("−0.84174", lambda: margin(SELECTED, "order_only", "player_season", "draftable",
+                                   "crps_vs_incumbent_lo"),
+        "4b order_only season lower bound")
+    add("+0.14873", lambda: margin(SELECTED, "order_only", "player_season", "draftable",
+                                   "crps_vs_incumbent_hi"),
+        "4b order_only season upper bound")
+
+    # The attribution as a SHARE, which is the sentence a reader takes away and is a ratio
+    # nothing else derives — exactly the figure that survives its own numerator moving.
+    # No `* 100` — `_c` reads a trailing `%` as the scale, and doubling it is how P4's
+    # census figures first came back as 336.826.
+    def share_of_margin(route: str) -> float:
+        return (margin(SELECTED, route, "player_game", "draftable", "crps_vs_incumbent")
+                / margin(SELECTED, "both", "player_game", "draftable", "crps_vs_incumbent"))
+
+    add("103%", lambda: share_of_margin("offset_only"),
+        "4b share of the margin the offset route carries", tol=0.5)
+    add("3.75%", lambda: share_of_margin("order_only"),
+        "4b share of the margin the ordering route carries", tol=0.05)
+
+    # The inner grid: the selected `k` is read off the artifact rather than typed, so a
+    # re-run that moves the optimum fails the build instead of leaving a stale label.
+    def best_k() -> float:
+        frame = table(COMP_PRE)
+        part = frame[frame["analysis"] == "inner_grid"]
+        return float(part.loc[part["inner_crps"].idxmin(), "k"])
+
+    add("80", best_k, "4b blend constant selected on the fitting half", tol=0.5)
+    for k, quoted in ((40.0, "4.49481"), (80.0, "4.44562"), (160.0, "4.46834")):
+        add(quoted, lambda k=k: cell(COMP_PRE, "inner_crps", analysis="inner_grid", k=k),
+            f"4b inner grid CRPS at k={k:g}")
+    return C
+
+
 def _build() -> tuple[Claim, ...]:
     """Every claim, in doc order. One builder per doc — the registry is long enough that
     a single function made it hard to see which doc a section belonged to.
@@ -7973,7 +8075,7 @@ def _build() -> tuple[Claim, ...]:
                  + _availability_regime() + _availability_exchangeability()
                  + _availability_absence() + _availability_absence_mixture()
                  + _availability_no_design_level() + _preseason()
-                 + _preseason_no_prior())
+                 + _preseason_no_prior() + _composition_preseason())
 
 
 CLAIMS: tuple[Claim, ...] = _build()
