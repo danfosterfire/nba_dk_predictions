@@ -697,6 +697,13 @@ eda:
     # null → pick the k with the best silhouette from the sweep
     k: null
 
+  preseason_value:
+    # Permutations of the preseason block within season, for the ΔR² noise floor. A small
+    # ΔR² is unreadable without one — this is what a block of that shape earns by chance.
+    # The whole gate runs in seconds, so this is set for a stable sd rather than for cost.
+    n_shuffles: 20
+    seed: 42
+
   persistence:
     # Lag-k persistence, for the staleness decay team_context currently flat-rates
     # at 0.96/season.

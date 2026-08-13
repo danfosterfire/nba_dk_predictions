@@ -188,8 +188,8 @@ REGISTRY: tuple[Decision, ...] = (
                 "season-start roster. Availability and minutes get arms first; "
                 "component rates are gated on a train-only EDA readout; the no-prior "
                 "population is primary scope. Still open because no head reads the "
-                "block yet: P0 built the data, P1 decides whether any of it carries "
-                "signal, and only then does a coefficient exist to price.",
+                "block yet: P0 built the data, P1 measured that it carries signal, and "
+                "only when a head fits it does a coefficient exist to price.",
         status="open",
         reproduce="make preseason → data/features/preseason.parquet, "
                   "outputs/eda/preseason_coverage.csv",
@@ -197,6 +197,79 @@ REGISTRY: tuple[Decision, ...] = (
         reviewed="2026-08-12",
         date="2026-08-12",
         tags=("constraint",),
+    ),
+    Decision(
+        id="preseason-value-gate",
+        topic="eda",
+        claim="The preseason block carries signal on train, and the gate reordered the "
+              "plan: minutes first (+0.0492 R²), availability second (+0.0198), and "
+              "five of seven count rate heads earn an arm rather than none.",
+        because="P1 measured three things on training seasons only, out of sample on the "
+                "last two of them. (a) Redundancy against the prior-season equivalent "
+                "runs 0.855 for the three-point share down to 0.128 for preseason "
+                "participation, so participation is close to a different variable. "
+                "(b) The block's increment inverts the plan's a-priori ordering: on the "
+                "season-start-roster population it is worth +0.0492 R² on minutes per "
+                "game against +0.0198 on games played, carried almost entirely by "
+                "`pre_d_mpg` (+0.0519 alone, partial r 0.334). (c) The rates bar was "
+                "stated first — the +0.0013 to +0.0334 margin by which a shipped count "
+                "head beats its no-fit floor — and `ast` (+0.0122), `fga` (+0.0051), "
+                "`stl` (+0.0021), `tov` (+0.0017) and `reb` (+0.0016) clear it on the "
+                "head's own metric, while `blk` and `fta` are actively hurt. An "
+                "attribution split shows every count-head gain is that head's own "
+                "preseason rate rather than the `has_preseason` indicator — which is "
+                "what catches `fg3m|fg3a`, whose whole +0.0149 is the indicator and "
+                "whose own delta is −0.0024.",
+        status="measured",
+        reproduce="make preseason-value → outputs/eda/preseason_value.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("preseason", "eda"),
+    ),
+    Decision(
+        id="preseason-draftable-population",
+        topic="eda",
+        claim="Every preseason figure is quoted on the season-start-roster population; "
+              "pooled over everyone who appeared, a contract fact reads as a health one.",
+        because="The block's first reading was +0.1171 R² on gp_share and six-sevenths "
+                "of it was population. The availability design holds every player who "
+                "appeared in season S, including mid-season signings, who have no "
+                "preseason row and a small gp_share because they arrived in January. "
+                "Nothing leaks — at the draft we do know a player is on no roster — but "
+                "the head is only ever applied to the draft pool, so the restricted "
+                "number is the one that describes what the block buys. The census "
+                "separates them cleanly: on a season-start roster 3.8% have no preseason "
+                "row and it costs −0.122 of realized gp_share, while off it 51.3% have "
+                "none and it predicts nothing (+0.024). The same restriction *raises* "
+                "the minutes reading, because those rows were diluting it.",
+        status="settled",
+        reproduce="make preseason-value → outputs/eda/preseason_value.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("preseason", "eda"),
+    ),
+    Decision(
+        id="preseason-indicator-splits-on-age",
+        topic="eda",
+        claim="`has_preseason` is one indicator over two populations and must be split "
+              "by age — a rested 25-year-old and a shut-down 33-year-old are not the "
+              "same absence.",
+        because="On the draftable frame the outcome gap for a missing preseason row is "
+                "not flat in age: −0.247 of gp_share and −4.93 minutes per game at 32+, "
+                "against −0.088 and −3.49 at 28-31 and −0.091 and −0.34 at 24-27. A "
+                "24-to-27 player who sat the preseason loses essentially no minutes; a "
+                "32-plus player who sat it loses a quarter of the season. Role is the "
+                "axis that does NOT work — the gap runs −0.037 to −0.149 across prior-MPG "
+                "buckets with no monotone pattern — so the interaction is with age and "
+                "not with the role grading the dispersion already uses.",
+        status="measured",
+        reproduce="make preseason-value → outputs/eda/preseason_value.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("preseason", "eda"),
     ),
     Decision(
         id="preseason-coverage",

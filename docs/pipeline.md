@@ -32,6 +32,12 @@ make preseason        # → preseason.parquet + outputs/eda/preseason_coverage.c
                       #    a target row. Its logs are backfillable, so this stays OUT of
                       #    `make daily-capture`; one fetch after the final preseason game
                       #    is enough. See docs/preseason-plan.md
+make preseason-value  # → outputs/eda/preseason_value.csv   (needs `make preseason`)
+                      #    the P1 gate: redundancy, incremental signal against each head's
+                      #    OWN metric, and the missingness census. TRAIN SEASONS ONLY — it
+                      #    never materializes validation, because a screen that spends the
+                      #    selection split leaves the arm it is screening nothing to select
+                      #    on. Every figure is quoted on the season-start-roster population
 make serial-correlation   # → outputs/eda/serial_correlation.csv
                       #    lag-k autocorrelation + block variance inflation per component
 make variance-budget  # → outputs/eda/variance_budget.csv

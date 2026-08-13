@@ -134,6 +134,7 @@ PRESEASON = "docs/preseason-plan.md"        # current-season preseason games as 
 
 PRE_COVERAGE = "outputs/eda/preseason_coverage.csv"
 PRE_PANEL = "data/features/preseason.parquet"
+PRE_VALUE = "outputs/eda/preseason_value.csv"
 
 WEEK_INDEX = "outputs/predictions/weekly_score_index.csv"
 WEEK_PERIOD = "outputs/predictions/weekly_score_period.csv"
@@ -6968,7 +6969,153 @@ def _preseason() -> list[Claim]:
     add("3", lambda: _pre("team_games_median", "2004-05"),
         "2004-05 median team preseason games")
 
+    return C + _preseason_value()
+
+
+def _pv(family: str, key: str, target: str, metric: str, column: str = "value") -> float:
+    """One reading off `preseason_value.csv`, the P1 gate's artifact."""
+    return _one(table(PRE_VALUE), column, family=family, key=key, target=target,
+                metric=metric)
+
+
+def _preseason_value() -> list[Claim]:
+    """`docs/preseason-plan.md` P1 — the EDA gate.
+
+    Claimed densely because P1's output is a *decision*, and every clause of it names a
+    number: which heads earn an arm, on which population, and against a bar quoted from a
+    different artifact. A gate whose figures drift is a gate that has silently re-decided.
+
+    The population pair is the load-bearing claim in the section — the same block reads
+    +0.1171 pooled and +0.0198 on the season-start roster — so both sides are registered.
+    Dropping either would leave the doc able to quote the flattering one alone.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, actual, label: str, **kw) -> None:
+        C.append(_c(quoted, PRE_VALUE, actual, label, doc=PRESEASON, **kw))
+
+    # Scope, and the split that makes every ΔR² below out of sample.
+    add("22", lambda: float(len(covered_preseason_seasons())),
+        "seasons with an intact preseason tail")
+
+    # (a) redundancy — the two ends of the range, and the row the ordering rests on.
+    for key, quoted in [("pre_fg3a_share", "0.855"), ("pre_per36_ast", "0.725"),
+                        ("pre_per36_reb", "0.735"), ("pre_per36_blk", "0.656"),
+                        ("pre_per36_fga", "0.650"), ("pre_per36_fta", "0.538"),
+                        ("pre_per36_tov", "0.432"), ("pre_per36_stl", "0.378")]:
+        add(quoted, lambda k=key: _pv("rates", k, f"{k.replace('pre_per36_', '')}_p36_lag1"
+                                      " [log]" if k.startswith("pre_per36_")
+                                      else "fg3a_pct_lag1 [logit]", "pearson_r"),
+            f"{key} redundancy")
+    add("1.44", lambda: _pv("rates", "pre_fg3a_share", "fg3a_pct_lag1 [logit]", "sd_delta"),
+        "pre_fg3a_share delta sd — why a high r is not redundancy")
+    for key, prior, quoted in [("mpg_pre", "minutes_per_game_lag1 [log]", "0.518"),
+                               ("min_share_pre", "min_share_lag1 [logit]", "0.358"),
+                               ("min_rank_pre", "min_rank_lag1 [raw]", "0.372"),
+                               ("min_share_pre_late", "min_share_lag1 [logit]", "0.234"),
+                               ("gp_share_pre", "gp_share_lag1 [raw]", "0.128")]:
+        add(quoted, lambda k=key, p=prior: _pv("availability", k, p, "pearson_r"),
+            f"{key} redundancy")
+
+    # (b) the increment. Both populations, because the gap between them IS the finding.
+    for family, target, base, delta, z in [
+            ("availability_draftable", "minutes_per_game", "0.6643", "+0.0492", "45.9"),
+            ("availability_draftable", "gp_share", "0.1115", "+0.0198", "4.2"),
+            ("availability", "minutes_per_game", "0.6492", "+0.0213", "21.6"),
+            ("availability", "gp_share", "0.2632", "+0.1171", "46.2")]:
+        scope = "draftable" if family.endswith("draftable") else "all rows"
+        add(base, lambda f=family, t=target: _pv(f, "block", t, "r2_base_ridge"),
+            f"{target} base R², {scope}")
+        add(delta, lambda f=family, t=target: _pv(f, "block", t, "delta_r2"),
+            f"{target} block ΔR², {scope}")
+        add(z, lambda f=family, t=target: _pv(f, "block", t, "z_vs_null"),
+            f"{target} z against the shuffled null, {scope}")
+
+    add("+0.0519", lambda: _pv("availability_draftable", "pre_d_mpg", "minutes_per_game",
+                               "delta_r2_alone"), "pre_d_mpg alone on MPG")
+    add("0.334", lambda: _pv("availability_draftable", "pre_d_mpg", "minutes_per_game",
+                             "partial_r"), "pre_d_mpg partial r on MPG")
+    add("+0.0504", lambda: _pv("availability_draftable", "pre_log_min", "gp_share",
+                               "delta_r2_alone"),
+        "pre_log_min alone on gp_share — more than the whole block")
+    add("−0.085", lambda: _pv("availability_draftable", "pre_missed_tail_share",
+                              "gp_share", "partial_r"), "missed-tail partial r")
+
+    # The rates table, every row, because five of seven clearing the bar is the decision.
+    for head, base, delta, own, shared, z in [
+            ("ast", "0.8985", "+0.0122", "+0.0123", "−0.0001", "20.3"),
+            ("fga", "0.9559", "+0.0051", "+0.0054", "−0.0002", "29.8"),
+            ("stl", "0.8386", "+0.0021", "+0.0023", "−0.0001", "5.0"),
+            ("tov", "0.9073", "+0.0017", "+0.0019", "−0.0002", "6.4"),
+            ("reb", "0.9487", "+0.0016", "+0.0036", "−0.0010", "4.5"),
+            ("fta", "0.9025", "−0.0016", "−0.0023", "+0.0002", "−2.3"),
+            ("blk", "0.7892", "−0.0085", "−0.0065", "−0.0022", "−3.2")]:
+        t = f"{head} season total"
+        add(base, lambda h=head, t=t: _pv("rates_count", h, t, "r2_base_total"),
+            f"{head} base R²")
+        add(delta, lambda h=head, t=t: _pv("rates_count", h, t, "delta_r2"),
+            f"{head} block ΔR²")
+        add(own, lambda h=head, t=t: _pv("rates_count", h, t, "delta_r2_delta_only"),
+            f"{head} ΔR² from its own preseason rate")
+        add(shared, lambda h=head, t=t: _pv("rates_count", h, t, "delta_r2_shared_only"),
+            f"{head} ΔR² from the shared reliability pair")
+        add(z, lambda h=head, t=t: _pv("rates_count", h, t, "z_vs_null"),
+            f"{head} z against the shuffled null")
+
+    # The conversion rows the prose names, including the one the attribution caught.
+    for head, metric, quoted, label in [
+            ("ftm|fta", "delta_r2", "+0.0176", "ftm|fta block ΔR²"),
+            ("ftm|fta", "z_vs_null", "18.8", "ftm|fta z against the null"),
+            ("fg3a|fga", "delta_r2", "+0.0047", "fg3a|fga block ΔR²"),
+            ("fg2m|fg2a", "delta_r2", "−0.0085", "fg2m|fg2a block ΔR²"),
+            ("fg3m|fg3a", "delta_r2", "+0.0149", "fg3m|fg3a block ΔR²"),
+            ("fg3m|fg3a", "delta_r2_delta_only", "−0.0024",
+             "fg3m|fg3a ΔR² from its own delta — the gain is has_preseason, not 3P%")]:
+        made, att = head.split("|")
+        add(quoted, lambda h=head, m=metric, t=f"{made}/{att} realized pct":
+            _pv("rates_conversion", h, t, m), label)
+
+    # (c) the census. The on/off pair, then the age cells the split is decided on.
+    for key, share, gap in [("on", "3.8%", "−0.122"), ("off", "51.3%", "+0.024")]:
+        add(share, lambda k=key: _pv("availability", k, "season_start_roster",
+                                     "share_missing"),
+            f"share missing, {key} a season-start roster")
+        add(gap, lambda k=key: _pv("availability", k, "season_start_roster",
+                                   "gap_gp_share"),
+            f"gp_share gap, {key} a season-start roster")
+    add("6,278", lambda: _pv("availability", "on", "season_start_roster", "share_missing",
+                             column="n"), "draftable census rows")
+    add("716", lambda: _pv("availability", "off", "season_start_roster", "share_missing",
+                           column="n"), "off-roster census rows")
+    for age, share, gp_gap, mpg_gap in [("<24", "3.0%", "−0.116", "−3.03"),
+                                        ("24-27", "3.5%", "−0.091", "−0.34"),
+                                        ("28-31", "4.5%", "−0.088", "−3.49"),
+                                        ("32+", "4.7%", "−0.247", "−4.93")]:
+        add(share, lambda a=age: _pv("availability_draftable", a, "age", "share_missing"),
+            f"share missing, age {age}")
+        add(gp_gap, lambda a=age: _pv("availability_draftable", a, "age", "gap_gp_share"),
+            f"gp_share gap, age {age}")
+        add(mpg_gap, lambda a=age: _pv("availability_draftable", a, "age",
+                                       "gap_minutes_per_game"),
+            f"MPG gap, age {age}")
+
+    # P4's population, sized.
+    add("3,385", lambda: _pv("no_prior", "panel_rows", "reach", "rows_without_design_row"),
+        "in-scope panel rows with no usable prior season")
+    add("11,399", lambda: _pv("no_prior", "panel_rows", "reach", "panel_rows"),
+        "in-scope panel rows")
+    add("29.7%", lambda: _pv("no_prior", "panel_rows", "reach",
+                             "share_without_design_row"), "P4's share of the panel")
     return C
+
+
+def covered_preseason_seasons() -> list[str]:
+    """The scope P1 runs on, re-derived from the coverage artifact rather than restated."""
+    frame = table(PRE_COVERAGE)
+    if frame is None:
+        return []
+    have = frame[(frame["rows_kept"] > 0) & (frame["coverage_class"] == "covered")]
+    return sorted(have["season"].astype(str))
 
 
 def _build() -> tuple[Claim, ...]:

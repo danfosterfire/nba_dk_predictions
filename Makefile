@@ -12,7 +12,8 @@ PIP    := .venv/bin/pip
         capture-calendar \
         report-calibration \
         season-total adp adp-draftkings adp-fantasypros adp-panel adp-profile \
-        adp-status game-length preseason serial-correlation component-rates \
+        adp-status game-length preseason preseason-value serial-correlation \
+        component-rates \
         variance-budget residual-correlation season-effects \
         stan stan-availability stan-availability-mixture stan-minutes \
         stan-components stan-composition \
@@ -127,6 +128,13 @@ game-length:
 # deliberately stays out of `make daily-capture`.
 preseason:
 	$(PYTHON) -m src.features.preseason
+
+# P1, the gate that decides which heads get a preseason arm — redundancy, incremental
+# signal against each head's own metric, and the missingness census. TRAIN SEASONS ONLY:
+# it never materializes validation, because a screen that spends the selection split
+# leaves P2 nothing to select on. Needs `make preseason` first.
+preseason-value:
+	$(PYTHON) -m src.eda.preseason_value
 
 context-value:
 	$(PYTHON) -m src.eda.context_value
