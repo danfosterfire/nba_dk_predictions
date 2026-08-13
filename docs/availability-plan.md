@@ -782,50 +782,89 @@ the tail has failed at the thing that matters.
 > which makes the posterior *mode* exactly the penalized MLE the existing head finds — so
 > agreement is a check with a defined answer.
 >
-> ⚙️ **Since 2026-08-11 the head fits a 2012-13 window with a role-graded ρ, and since
-> 2026-08-12 a two-component mixture** (`stan.availability` in `configs/default.yaml`,
-> `docs/availability-window-plan.md` §4 and §7), so the table below is that head. **Every
-> point MLE is fitted on the same 4,027 windowed rows** — a port check against a reference
-> fitted on a different population is not a port check — and all five arms score the whole
-> 883-row validation set.
+> ⚙️ **Since 2026-08-11 the head fits a 2012-13 window with a role-graded ρ, since
+> 2026-08-12 a two-component mixture, and since 2026-08-13 a ten-column preseason block**
+> (`stan.availability` in `configs/default.yaml`, `docs/availability-window-plan.md` §4 and
+> §7, `docs/preseason-plan.md` P2), so the table below is that head. **Every point MLE is
+> fitted on the same 4,027 windowed rows** — a port check against a reference fitted on a
+> different population is not a port check — and all five arms score the whole 883-row
+> validation set.
 >
 > | | MLE | MLE, role ρ | MLE, mixture | Stan plug-in | Stan posterior |
 > |---|---|---|---|---|---|
-> | CRPS (games) | **9.8444** | **9.8247** | **9.8237** | 9.8195 | 9.8239 |
-> | MAE (games) | 14.4211 | 14.4211 | 14.3785 | 14.3610 | 14.3770 |
-> | R² on `gp_share` | 0.3889 | 0.3889 | 0.3844 | 0.3851 | 0.3847 |
-> | PIT KS | 0.0632 | **0.0588** | 0.0631 | 0.0643 | 0.0643 |
-> | ρ | 0.2627 | 0.2627 | 0.2245 | 0.2261 | 0.2261 |
+> | CRPS (games) | **9.8444** | **9.8247** | **9.1390** | 9.1329 | 9.1289 |
+> | MAE (games) | 14.4211 | 14.4211 | 13.6432 | 13.6217 | 13.6155 |
+> | R² on `gp_share` | 0.3889 | 0.3889 | 0.4696 | 0.4704 | 0.4709 |
+> | PIT KS | 0.0632 | 0.0588 | 0.0324 | **0.0326** | **0.0344** |
+> | ρ | 0.2627 | 0.2627 | 0.2034 | 0.2048 | 0.2048 |
 >
-> **The three point-MLE columns reproduce `make availability-window`'s ladder to four
-> decimals** — 9.8444 for `three_point_era__none__shared`, 9.8247 for
-> `three_point_era__none__role` and 9.8237 for `mixture` — which is a third-party check that
-> the head fits the arm the ladder selected rather than something nearby. The ρ column is
-> the row-weighted scalar of the **main** component; the vector is in the next block.
+> ⚠️ **Only the last three columns carry the preseason block, and that is what makes this
+> table readable rather than a mess.** The two single-component MLEs are the pre-mixture
+> arms and are unchanged to the digit — 9.8444 and 9.8247, reproducing `make
+> availability-window`'s `three_point_era__none__shared` and `three_point_era__none__role`
+> exactly, which is still the third-party check that the head fits the arm the ladder
+> selected. The `mixture` column no longer reproduces that ladder's **9.8237**, and it should
+> not: the ladder's `mixture` arm has no preseason columns, so the two are different models
+> on the same rows. What it reproduces instead is `availability_preseason.csv`'s
+> `mixture__p1_block` at **9.138962** — the arm the P2 round actually selected, fitted by a
+> different module on the same rows. **The port check's reference moved with the head, not
+> against it**, and the third-party check moved with it.
 >
-> ⚠️ **PIT KS is the one metric the shipped head loses on, and that is the selection rule
-> working rather than failing.** 0.0643 against the role-graded arm's 0.0588. D1 selects
-> this head on **regional** tail calibration with a CRPS non-inferiority guard, not on a
-> global PIT statistic — and on the regions it names the mixture wins decisively
-> (boundary 0.0120 against 0.0201, shoulder 0.0243 against 0.0253, §7h). A single KS
-> distance integrates the whole curve and is dominated by the middle deciles, which is
-> exactly the part of the distribution nobody drafts on.
+> ⚠️ **The pre-preseason columns, kept beside the ones they became** (2026-08-12 →
+> 2026-08-13): mixture MLE CRPS **9.8237**, MAE **14.3785**, R² **0.3844**, PIT KS
+> **0.0631**, ρ **0.2245**; Stan plug-in **9.8195** / **14.3610** / **0.3851** / **0.0643** /
+> **0.2261**; Stan posterior **9.8239** / **14.3770** / **0.3847** / 0.0643 / 0.2261. So the
+> block is worth **−0.695** CRPS games and **+0.086** R² on the *pooled* 883 rows — and
+> `docs/preseason-plan.md` P2 is the reason that figure must not be quoted as the head's
+> improvement: on the season-start-roster population the head is actually applied to, it is
+> between a third and a sixth of that, and validation cannot resolve it there at all.
+>
+> The ρ row is the row-weighted scalar of the **main** component; the vector is in the next
+> block.
+>
+> ⚙️ **PIT KS used to be the one metric the shipped head lost on, and the preseason block
+> reversed that** — decisively, on the metric it was not selected for. It read 0.0643 against
+> the role-graded arm's 0.0588 before the block and reads **0.0344** after, which is the best
+> global calibration any arm of this head has posted. The paragraph this replaces argued that
+> losing PIT KS was the selection rule working rather than failing, because D1 selects on
+> **regional** tail calibration with a CRPS non-inferiority guard and a single KS distance is
+> dominated by the middle deciles nobody drafts on. **That argument was right and is now
+> unnecessary**, which is worth more than either half alone: the mixture bought the tails at
+> the middle's expense (boundary 0.0120 against 0.0201, shoulder 0.0243 against 0.0253, §7h),
+> and the preseason block bought the middle back. Two arms, two regions, and the head is now
+> ahead on both.
 >
 > **The port check's reference is `mixture_mle`, because that is the arm this head is a port
-> of.** Max gap **0.74165**, largest gap **0.597 posterior sd** (`rho_low`), and the MLE
-> sits inside the 95% credible interval for **35/35** terms — 24 coefficient and dispersion
-> terms plus the mixture's 11. R̂ **1.0073**, min ESS 1,399, **0 divergences**, 366 s over 4
-> chains. Both `evaluate` and `crps` are imported from the MLE module rather than
+> of.** Max gap **2.62549**, largest gap **1.588 posterior sd** (`gamma[age]`), and the MLE
+> sits inside the 95% credible interval for **45/45** terms — 34 coefficient and dispersion
+> terms plus the mixture's 11. R̂ **1.00254**, min ESS **1,502.6**, **0 divergences**, 521 s
+> over 4 chains. Both `evaluate` and `crps` are imported from the MLE module rather than
 > reimplemented, so a metric difference could not have been a metric-implementation
-> difference.
+> difference. ⚠️ Before the preseason block the same check read max gap **0.74165** at
+> **0.597** posterior sd (`rho_low`) over **35/35** terms, R̂ **1.0073**, min ESS 1,399,
+> 366 s. **The term count is the block**: ten preseason columns on `β`, and every one of
+> them lands inside its interval.
 >
-> ⚠️ **Referenced against the single-component MLE the same posterior reads 19/24 with
+> **Where the gap lives is worth reading rather than the level.** The widest terms are all
+> `γ` — the mixture weight's coefficients, which are unpenalized and weakly identified — and
+> the largest is `age_sq`, whose MLE (−3.425) and posterior mean (−0.799) sit 2.63 apart on a
+> parameter with a posterior sd of 1.692. That is a wide, flat ridge rather than a port
+> defect. **The block's own ten terms are the tightest in the table**: every one of them sits
+> within **0.08** posterior sd of its MLE, against 0.81 and 0.86 for `mu_low` and `rho_low`.
+> A block that both fits and ports this cleanly is a block whose columns are well identified
+> on this population, which is the opposite of what a ridge-overfitting story would predict —
+> and is consistent with the fitting half preferring it over the narrower arm.
+>
+> ⚠️ **Referenced against the single-component MLE the same posterior read 19/24 with
 > `rho[30+ mpg]` at z = −6.34, and that number measures the likelihood rather than the
-> port.** The mixture moves the main component's dispersion down (0.2261 against 0.2627)
+> port.** The mixture moves the main component's dispersion down (0.2048 against 0.2627)
 > because the disrupted seasons that used to inflate it now go to the low component, so
 > comparing the two is comparing two models. `fit_and_score` therefore references
 > `mixture_mle` when the head carries a mixture — the same argument this module already
-> makes for fitting both on the same windowed rows, one axis over.
+> makes for fitting both on the same windowed rows, one axis over. **The 19/24 reading is a
+> 2026-08-12 measurement and has not been recomputed since the block shipped**, because a
+> reference with 24 terms cannot score a posterior with 40; what it was built to show —
+> that the reference choice is load-bearing — is unaffected.
 >
 > ⚠️ **Superseded, not wrong** — the single-component, role-graded head this replaced read
 > CRPS 9.8136 / **9.8155**, R² 0.3894 / 0.3893, PIT KS 0.0679 / 0.0690, ρ 0.2595, gap
@@ -839,29 +878,49 @@ the tail has failed at the thing that matters.
 >
 > | bucket | fit rows | point MLE | posterior mean | posterior sd | z |
 > |---|---|---|---|---|---|
-> | `<12 mpg` | 608 | 0.3095 | **0.3124** | 0.0129 | +0.230 |
-> | `12-24` | 1,664 | 0.2369 | 0.2394 | 0.0089 | +0.288 |
-> | `24-30` | 868 | 0.2080 | 0.2086 | 0.0104 | +0.057 |
-> | `30+ mpg` | 887 | 0.1593 | **0.1589** | 0.0087 | −0.046 |
+> | `<12 mpg` | 608 | 0.2552 | **0.2595** | 0.0116 | +0.371 |
+> | `12-24` | 1,664 | 0.2157 | 0.2176 | 0.0068 | +0.281 |
+> | `24-30` | 868 | 0.2001 | 0.2006 | 0.0092 | +0.054 |
+> | `30+ mpg` | 887 | 0.1480 | **0.1477** | 0.0080 | −0.040 |
 >
-> A **1.97×** spread in the posterior against 1.94× at the point MLE, in the direction the
+> A **1.76×** spread in the posterior against 1.72× at the point MLE, in the direction the
 > ladder measured: fringe players are more variable than stars. **The mixture widened that
-> spread from 1.54× to 1.97×, and the mechanism is visible in which end moved**: the fringe
-> bucket barely changes (0.3176 → 0.3124) while the star bucket falls by a fifth
-> (0.2064 → 0.1589). A star's disrupted season used to be absorbed as dispersion in a
-> single component; now it is the low component, and what remains is a genuinely tighter
-> healthy-season rate. That is the substantive claim of the arm, arriving in a parameter
-> rather than in a metric.
+> spread from 1.54× to 1.97×, and the preseason block gave part of it back — to 1.76×, from
+> the fringe end.** The two moves are different mechanisms and the buckets say which is
+> which. The mixture took a fifth off the *star* bucket (0.2064 → 0.1589) by relocating a
+> star's disrupted season into the low component. The preseason block takes **17%** off the
+> *fringe* bucket (0.3124 → 0.2595) and **7%** off the star one (0.1589 → 0.1477), because
+> a fringe player's season length is exactly what a preseason participation reading resolves
+> — who was on the floor in October, and who was not. Dispersion the head used to carry as
+> unexplained spread is now a covariate. That is the substantive claim of both arms, arriving
+> in a parameter rather than in a metric.
 >
-> ⚠️ **The single-component figures for that table** were `<12 mpg` 0.3147 / **0.3176**
-> (sd 0.0115), `12-24` 0.2688 / 0.2698 (0.0065), `24-30` 0.2573 / 0.2532 (0.0091), `30+ mpg`
-> 0.2142 / **0.2064** (0.0082) — a 1.54× posterior spread against 1.47× at the point MLE.
+> ⚠️ **The pre-block mixture figures for that table** were `<12 mpg` 0.3095 / **0.3124**
+> (sd 0.0129), `12-24` 0.2369 / 0.2394 (0.0089), `24-30` 0.2080 / 0.2086 (0.0104), `30+ mpg`
+> 0.1593 / **0.1589** (0.0087) — a **1.97×** posterior spread against 1.94× at the point MLE.
+> ⚠️ **The single-component figures** were `<12 mpg` 0.3147 / **0.3176** (sd 0.0115),
+> `12-24` 0.2688 / 0.2698 (0.0065), `24-30` 0.2573 / 0.2532 (0.0091), `30+ mpg` 0.2142 /
+> **0.2064** (0.0082) — a 1.54× posterior spread against 1.47× at the point MLE.
 >
-> **The mixture block, point MLE against the posterior** — `θ` 0.1116 → **0.1078**
-> (sd 0.0236), `μ_low` 0.1000 → **0.1133** (0.0240), `ρ_low` 0.0441 → **0.0578** (0.0230),
-> plus eight `γ` coefficients. On the scored rows `π` has mean **4.82%**, running from
-> **1.23%** at the 10th percentile of players to **10.58%** at the 90th — an **8.60×**
+> **The mixture block, point MLE against the posterior** — `θ` 0.0575 → **0.0564**
+> (sd 0.0155), `μ_low` 0.0914 → **0.1158** (0.0300), `ρ_low` 0.0398 → **0.0664** (0.0310),
+> plus eight `γ` coefficients. At the point MLE, on the same 883 scored rows
+> (`availability_preseason.csv`, arm `mixture__p1_block`), `π` has mean **2.56%**, running
+> from **0.31%** at the 10th percentile of players to **5.73%** at the 90th — an **18.65×**
 > spread, which is the arm's distinguishing claim: it can say *who* is at risk.
+>
+> ⚠️ **The preseason block halves `π` and more than doubles its spread, and both halves of
+> that are the point.** Before it, `θ` was **0.1116** → 0.1078, `μ_low` **0.1000** → 0.1133,
+> `ρ_low` **0.0441** → 0.0578, and `π` ran mean **4.82%** over **1.23%** to **10.58%**, an
+> **8.60×** spread. Knowing who was on the floor in October moves a large part of "this
+> season might fall apart" out of a *mixture weight* and into the mean function, so fewer
+> players carry a disruption weight at all — and the ones who still do are separated far more
+> sharply from the ones who do not. A head that says "6% of the league is at risk, and I can
+> rank them 8.6× apart" and one that says "2.6%, ranked 18.7× apart" are making different
+> claims, and the second is the more useful one to draft against. (Those pre-block figures are
+> the Stan posterior's `π`; the post-block ones are the point MLE's, since `pi_profile` is
+> printed rather than persisted and only the MLE's lands in an artifact. The two agreed to
+> ~0.06 pp on the pre-block head.)
 >
 > ⚠️ **Measured on the held-out seasons until 2026-08-05**, where it read CRPS 10.7952 /
 > **10.7947** / 10.7953, R² 0.2831 / 0.2832 / 0.2832, PIT KS 0.0963 / 0.0952 / 0.0963, ρ
@@ -882,10 +941,10 @@ the tail has failed at the thing that matters.
 > ⚠️ **This plan oversold it, and the correction is measurable.** The independent term grows
 > as sqrt(N) and the shared-β term as N, so their ratio scales as sqrt(N) and the *size of
 > the portfolio* decides whether it matters at all. Measured on the 883-player **validation**
-> board with random subsets: **+0.4%** spread inflation on a 12-player roster, +0.5% at 15,
-> +0.8% at 30, +2.9% at 150, **+14.8%** across the whole board. So "how wrong could my whole
+> board with random subsets: **+0.6%** spread inflation on a 12-player roster, +0.6% at 15,
+> +0.9% at 30, +3.0% at 150, **+14.8%** across the whole board. So "how wrong could my whole
 > board be at once" is a real question for **board-wide exposure across many lineups**, and
-> very nearly a non-question for one drafted team. The **332.588**-game full-board figure
+> very nearly a non-question for one drafted team. The **305.723**-game full-board figure
 > must not be quoted as if it applied to a 15-man roster.
 >
 > **The 2012-13 window roughly doubled that term, which is the one place the window is not
@@ -896,9 +955,19 @@ the tail has failed at the thing that matters.
 > `π(1−π)(m_low − m_main)²`, which is the extra spread the arm was adopted for reaching the
 > joint. It moves in the right direction for honesty — the uncertainty was always there and
 > the longer window was understating it — and it barely touches a roster-sized portfolio
-> (+0.2% → +0.5% at 15). But it is a real cost of the trade, and any consumer reading the
+> (+0.2% → +0.6% at 15). But it is a real cost of the trade, and any consumer reading the
 > board figure as "how much could the whole league move at once" is now reading a number
 > half again as large.
+>
+> ⚙️ **The preseason block is the first change to give part of that back**, and it is the
+> only place in this section where the two arms point opposite ways. Full-board shared-β sd
+> falls **332.588 → 305.723** while board inflation holds at 14.8% — the block explains
+> variance the coefficients were carrying, so the posterior on β narrows even though the
+> fitting rows did not change. On a roster-sized portfolio it goes the *other* way, +0.5% →
+> **+0.6%** at 15 players, because the independent term shrank faster than the shared one
+> (70.28 → 70.61 against 7.50 → 7.76 — the shared term actually rose). Neither move is large
+> enough to matter to a drafted team; both are recorded because this is the number the README
+> is most often tempted to quote out of its basis.
 >
 > The board belongs on validation for a reason beyond the lock: it is a **simulator input**,
 > and calibrating one on the seasons the simulator is later backtested against is the leakage
@@ -1060,20 +1129,52 @@ season rehabbing — which is exactly the population the preseason snapshot iden
 > argument as code. **Successes out of actual game length, never 48**: `y` = season minutes,
 > `n` = summed game length over the games he played, so it is the conditional
 > `min | available` and composes with the availability head rather than double-counting
-> absences. 9,804 player-seasons, 8,306 fit / 742 validation, **0 rows clamped by rounding**.
+> absences. 9,804 player-seasons, **6,152** fit / 742 validation, **0 rows clamped by
+> rounding**.
+>
+> ⚙️ **Since 2026-08-13 every arm carries the preseason block and fits from 2004-05**
+> (`stan.minutes.preseason` in `configs/default.yaml`, `docs/preseason-plan.md` P3), so the
+> table below is that head. The block is five columns — the season-centred preseason minutes
+> delta plus four age-split missing indicators — and the fitting window is cut because the
+> preseason panel begins at 2004-05 and this head used to fit from 1997-98, which is why the
+> fit count falls from 8,306 rows to 6,152.
 >
 > | variant | val CRPS | val R² | val MAE | val bias | selected |
 > |---|---|---|---|---|---|
-> | `carry_forward` (no-fit floor) | 161.45 | 0.8536 | 213.13 | **+23.91** | |
-> | linear | 144.71 | 0.8826 | 199.54 | −3.26 | |
-> | `logit(own)` | 145.45 | 0.8819 | 200.90 | −2.97 | |
-> | `logit(own)` + quadratic | 144.54 | 0.8827 | 200.84 | −13.82 | |
-> | **`logit(own)` + spline** | **143.93** | **0.8835** | 199.60 | −14.00 | **✓** |
+> | `carry_forward` (no-fit floor) | 160.71 | 0.8536 | 213.13 | **+23.91** | |
+> | linear | 137.74 | 0.8936 | 191.21 | −4.70 | |
+> | `logit(own)` | 138.53 | 0.8929 | 192.67 | −3.21 | |
+> | `logit(own)` + quadratic | 137.82 | 0.8936 | 191.89 | −12.19 | |
+> | **`logit(own)` + spline** | **136.96** | **0.8944** | 190.69 | −12.24 | **✓** |
+> | `logit(own)` + spline, block removed *(control)* | 142.87 | 0.8841 | 198.71 | −17.09 | |
 >
 > Selected on validation, and there is no test column at all — `src/models/held_out.py` now
 > raises on the held-out frame and `src/final_evaluation.py` reads it once, at the end. The
-> selected variant clears the no-fit floor by **+0.0299 R² and −17.5 minutes of CRPS**. Max
-> R̂ **1.0054**, **0 divergences** over 4 fits, 1,503 s total.
+> selected variant clears the no-fit floor by **+0.0408 R² and −23.75 minutes of CRPS**. Max
+> R̂ **1.00695**, **0 divergences** over 5 fits, 1,434 s total.
+>
+> **The control row is what isolates the block from the window**, and it is a fitted arm
+> rather than an arithmetic one: the shipped variant on the same 6,152 covered rows with the
+> five preseason columns removed. **−5.911 CRPS minutes** integrated over `beta`
+> (136.958 against 142.869), against **−4.789** at the point MLE — so the increment survives
+> the posterior and is slightly larger under it. That closes the question P3's point-MLE
+> ladder explicitly left open.
+>
+> ⚠️ **The floor moved and the fitted arms are not why.** `carry_forward`'s point prediction
+> is prior minutes share × realized game length and is unchanged to the digit — R² 0.8536,
+> MAE 213.13, bias +23.91 all reproduce — but its **dispersion is fitted**, on the training
+> rows, and those are now the covered window. So its CRPS reads 160.71 against **161.45**
+> before the cut. A no-fit floor is no-fit in its mean and not in its spread, which is easy
+> to forget when quoting it as an arithmetic constant.
+>
+> ⚠️ **The pre-block head, kept beside the one it became** (2026-07-29 → 2026-08-13, full
+> 1997-98 window, no preseason columns): floor **161.45** / 0.8536 / 213.13 / +23.91, linear
+> **144.71** / **0.8826** / **199.54** / **−3.26**, `logit(own)` **145.45** / **0.8819** /
+> **200.90** / **−2.97**, quadratic **144.54** / **0.8827** / **200.84** / **−13.82**, spline
+> **143.93** / **0.8835** / **199.60** / **−14.00** — clearing the floor by **+0.0299** R²
+> and **−17.5** minutes, max R̂ **1.0054**, 0 divergences over 4 fits, 1,503 s. Read against
+> the control row rather than against the table: 143.93 and 142.869 are different rows as
+> well as different models, since the window moved at the same time.
 >
 > ⚠️ **This table was a TEST evaluation until 2026-08-06** and read, as
 > `val CRPS / test CRPS / test R²`: floor 161.45 / **168.24** / **0.8166**, linear
@@ -1085,30 +1186,45 @@ season rehabbing — which is exactly the population the preseason snapshot iden
 > (spline). **Two things retired at once and only one of them is the split**: the `test_*`
 > columns, because `sweep` no longer writes them, and the *old* `val_crps` values, because
 > selection was raised from 500/500 to full-length chains in the same change. Only the
-> floor's **161.45** is arithmetic all the way down and reproduces to the digit.
+> floor's **161.45** survived that change to the digit — and it did *not* survive the
+> 2026-08-13 window cut, for the reason above: its mean is arithmetic and its dispersion is
+> not.
 >
 > **The probe was right about where to spend flexibility, and the reason is now sharper.**
 > Curvature on prior minutes pays — and the selected variant survived both the change of
 > scored rows and the doubling of chain length, which few selections in this project have.
 > The *scale* change that is decisive for the component count heads is a **dead wash** here,
-> and slightly worse on both metrics (val R² 0.8819 against linear's 0.8826, val CRPS 145.45
-> against 144.71). So "put the predictor on the link's scale" does not generalize from the
-> counts to this head, and the two answers should not be pooled into one rule.
+> and slightly worse on both metrics (val R² 0.8929 against linear's 0.8936, val CRPS 138.53
+> against 137.74). So "put the predictor on the link's scale" does not generalize from the
+> counts to this head, and the two answers should not be pooled into one rule. ⚠️ The
+> pre-block reading of that wash was 0.8819 against 0.8826 and 145.45 against 144.71 — the
+> same sign and very nearly the same size, which is the check that the preseason block did
+> not change what this paragraph is about.
 >
 > **Two dispersions, and the simulator needs the one this fit does not estimate.**
-> Season-level ρ = **0.05025**; game-level ρ measured against each player-season's own mean
+> Season-level ρ = **0.041894**; game-level ρ measured against each player-season's own mean
 > over 713,947 player-games = **0.0776**, i.e. **4.65× binomial** at a 48-minute game. A
 > season total cannot separate a per-game random effect from a per-season one. Drawing
 > per-game minutes from the season-level ρ would make every simulated game far too close to
 > the player's average — and the 2.43× block-variance inflation this repo already measured
 > for minutes is a further, sequential effect on top.
 >
+> ⚠️ **The season-level ρ moved with the block, and it is a simulator input.** It read
+> **0.05025** before 2026-08-13 and reads 0.041894 now — about 9% narrower, which is the
+> block explaining variance the dispersion used to carry. That is a *consequence* rather
+> than a metric: `sim.minutes.player_season_sigma = 0.450` was calibrated against the
+> pre-block head's spread, and this head ships **for** its season-level spread, so the
+> composition-vs-marginal stake in `minutes-window-plan.md` §4 needs re-reading before the
+> chain is trusted. Not done; it is P5 work.
+>
 > ⚠️ **The recorded open defect — "a −33 to −41 minute bias against the floor's −5.7" — is
 > withdrawn.** That was the held-out column. On validation the **floor** is the biased arm at
-> **+23.91** minutes while the fitted arms run **−3.26** to **−14.00**, so "the floor is
+> **+23.91** minutes while the fitted arms run **−3.21** to **−12.24**, so "the floor is
 > unbiased because it does not shrink" is false on the split that selects. **What reproduces
-> is the gap**: the fitted arms sit **−27.2** (linear) to **−37.9** (spline) below the floor
-> on validation, against −27.1 to −35.3 on the retired column. The defect is therefore
+> is the gap**: the fitted arms sit **−28.6** (linear) to **−36.15** (spline) below the floor
+> on validation, against −27.1 to −35.3 on the retired column and −27.2 to −37.9 before the
+> preseason block. Three readings of it now, on three different fitting frames, and the
+> spread across them is smaller than the gap itself. The defect is therefore
 > *relative* — shrinkage moves every arm about the same distance down from the
 > carry-forward, and where that lands depends on which seasons are scored. It still compounds
 > through the eleven component heads that take these minutes as exposure and is still worth

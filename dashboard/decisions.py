@@ -7851,30 +7851,34 @@ REGISTRY: tuple[Decision, ...] = (
     Decision(
         id="preseason-availability-arm-fails-its-crps-bar",
         topic="availability",
-        claim="**The preseason block does not earn a Stan port on the availability head.** "
-              "On the draftable population its validation CRPS margin is a tie — "
-              "−0.102 [−0.322, +0.121] — which is the half of the bar this round declared. "
-              "What it buys instead is calibration: `boundary_tail_error` 0.01998 → "
-              "0.01140, −0.00684 [−0.01036, −0.00021].",
+        claim="**The preseason block does not earn a Stan port on the availability head — "
+              "and the conjunction fails on the half that cannot resolve it.** Validation "
+              "reads −0.102 [−0.322, +0.121] on the draftable population; the "
+              "rolling-origin harness reads **−0.254 [−0.344, −0.162] at 10 of 10 "
+              "origins** with the boundary held, which is both halves of the bar.",
         because="P2's bar was written into `docs/preseason-plan.md` before any arm ran and "
-                "is §14's `wins_crps_holds_boundary` — a CRPS interval clear of zero with "
-                "the boundary held — because `mixture` already spent the boundary gain and "
-                "what an arm bolted onto it has to buy is the CRPS that head gave up. The "
-                "block delivers the mirror image, so it clears §8's **D1** and not the bar "
-                "the round stated. Both predicates ride as columns on every ladder row for "
-                "exactly this reason; moving to the bar an arm happens to clear is the "
-                "failure `README.md` records for the games-played Gate D. **The preseason "
-                "is a calibration input on this head and an accuracy one on minutes** — "
-                "P3 bought −4.789 CRPS minutes and paid in PIT KS "
-                "([[preseason-minutes-arm-clears-both-halves]]); here all seven arms that "
-                "carry a preseason column improve the boundary, six of them clear zero on "
-                "it, and not one CRPS interval does. Two sub-results: adding participation "
-                "to the "
-                "disruption weight `π` makes the boundary worse with an interval "
-                "([[preseason-block-does-not-belong-on-pi]]), and P1's 'use a smaller "
-                "block' is a **tie** at this head's unit (P1's whole block reads −0.0445 "
-                "[−0.128, +0.039] against the single column), as it was on the minutes "
-                "head — so the small block is parsimony, not a measured margin.",
+                "is §14's `wins_crps_holds_boundary` **and** the rolling harness agreeing, "
+                "because twice on this head a block won validation and shrank 4-6x rolling. "
+                "It anticipated the opposite failure and has no clause for this one. **The "
+                "two readings do not disagree — validation's interval contains the rolling "
+                "point estimate comfortably.** The rolling reading is 2.5x larger and 2.4x "
+                "more precise (half-width 0.0912 against 0.2219) on 4.6x the rows, which is "
+                "the exact inverse of §14f, where the rolling interval was NARROWER and the "
+                "effect shrank — that round's own diagnostic, run here, says this is "
+                "resolution and not effect size. The gate is nonetheless recorded as FAILED, "
+                "because a bar re-read after seeing which side an arm landed on is not a "
+                "bar; widening it is registered as an open decision rather than taken. Two "
+                "sub-results are unambiguous: participation on the disruption weight `π` "
+                "makes the boundary worse with an interval "
+                "([[preseason-block-does-not-belong-on-pi]]), and **the preseason is a "
+                "calibration input on this head where it was an accuracy one on minutes** — "
+                "all seven arms carrying a preseason column improve `boundary_tail_error` "
+                "at both readings, against P3's −4.789 CRPS minutes bought at a cost in PIT "
+                "KS ([[preseason-minutes-arm-clears-both-halves]]). P1's 'use a smaller "
+                "block' is **unresolved**: a tie on validation (−0.0445 [−0.128, +0.039]) "
+                "and the best rolling arm is P1's full block, which this round cannot "
+                "settle because its rolling table pairs against the reference and not "
+                "against the primary.",
         status="measured",
         reproduce="make availability-preseason → "
                   "outputs/predictions/availability_preseason.csv, "
@@ -7888,9 +7892,10 @@ REGISTRY: tuple[Decision, ...] = (
         id="preseason-availability-gain-is-six-times-the-population",
         topic="availability",
         claim="**The same preseason block passes the gate pooled and fails it on the draft "
-              "pool**: CRPS −0.636 [−0.900, −0.390] over every player who appeared, "
-              "−0.102 [−0.322, +0.121] over the season-start roster. A **6.2×** gap, "
-              "against the **5.9×** P1 measured on a ridge ΔR².",
+              "pool**: validation CRPS −0.636 [−0.900, −0.390] over every player who "
+              "appeared, −0.102 [−0.322, +0.121] over the season-start roster. A **6.2×** "
+              "gap, against the **5.9×** P1 measured on a ridge ΔR² and **2.8×** on the "
+              "rolling harness.",
         because="[[preseason-draftable-population]] was decided on an EDA screen and this "
                 "is the confirmation at a head's own unit, at the size of a shipping "
                 "decision: read pooled, the block is the largest CRPS margin any covariate "
@@ -7902,10 +7907,11 @@ REGISTRY: tuple[Decision, ...] = (
                 "'He has no preseason row' predicts a short season among everyone who "
                 "appeared in season S, because most such players signed in January; among "
                 "players who were on a roster in October it predicts nothing. The block is "
-                "**267 training log-likelihood points for five columns**, 14× the absence "
-                "block's 18.48, and most of what it fits is a fact about who is in the "
-                "frame. Two instruments — a ridge ΔR² and a paired CRPS bootstrap — "
-                "agreeing to a tenth on the factor.",
+                "**267 training log-likelihood points for five columns**, 14.5× the "
+                "absence block's 18.48, and half of what it fits is a fact about who is in "
+                "the frame. Three instruments — a ridge ΔR², a paired CRPS bootstrap on "
+                "validation and the same bootstrap on 10 rolling origins — agreeing that "
+                "most of a pooled preseason reading is population.",
         status="settled",
         reproduce="make availability-preseason → "
                   "outputs/predictions/availability_preseason.csv",
@@ -7921,7 +7927,9 @@ REGISTRY: tuple[Decision, ...] = (
               "and it makes the boundary worse with an interval: +0.00214 "
               "[+0.00025, +0.00267] given the block is already on `β`. `PI_COLS` stays at "
               "eight columns.",
-        because="§14d found the absence composition helping `β` and costing CRPS on `π`, "
+        because="The rolling harness agrees from the other side: the seven `π` columns are "
+                "worth **+0.0025 CRPS** on 3,575 fitting-half rows, which is nothing. "
+                "§14d found the absence composition helping `β` and costing CRPS on `π`, "
                 "and left open whether a block with a real claim on disruption risk would "
                 "behave differently. The preseason has the strongest claim a covariate "
                 "could have — 'who missed the tail of the preseason, days before the "
@@ -7946,6 +7954,89 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("preseason", "specification"),
     ),
     Decision(
+        id="preseason-availability-block-is-p1s-full-block",
+        topic="availability",
+        claim="**The availability head ships P1's full ten-column preseason block** — the "
+              "arm the fitting half selected, not the five-column arm declared before the "
+              "run. Rolling CRPS −0.0977 [−0.1569, −0.0408] and boundary −0.0014 "
+              "[−0.0019, −0.0010] against the declared primary, 8 of 10 origins.",
+        because="P3's promotion rule: an arm preferred after seeing validation is a "
+                "validation-driven swap; preferred on the ROLLING harness it is a decision "
+                "the selection split never paid for. Both margins clear zero on the fitting "
+                "half, so the wider block is carried. **This reverses P1 decision 4**, "
+                "which said this head's block should be smaller than P1's seven columns "
+                "because a ridge overfit them ([[preseason-value-gate]]) — at the head's "
+                "own unit the wider block is measurably better, and the instrument that "
+                "settled it (`crps_vs_primary` on the rolling table) did not exist in P2's "
+                "first run. **The block is adopted against a gate that failed as written**, "
+                "per [[the-two-reading-bar-has-no-clause-for-a-rolling-only-win]]. Ported "
+                "to Stan the same day: 0 divergences, max R-hat **1.00254**, and the point "
+                "MLE inside the 95% credible interval for **45 of 45** terms — with the "
+                "block's own ten columns the TIGHTEST in the table, every one within 0.08 "
+                "posterior sd of its MLE. On the pooled 883 validation rows the ported head "
+                "reads CRPS 9.1289 against the pre-block 9.8239 and PIT KS **0.0344** "
+                "against 0.0643, which reverses the one metric this head used to lose on; "
+                "both are POOLED figures and [[preseason-draftable-population]] governs how "
+                "they may be read. ⚠️ It was ported twice: the 14:19 fit carried the "
+                "WITHDRAWN five-column centred arm because `PRESEASON_COLS` was switched at "
+                "14:25, and the figures from that run (max R-hat 1.0042, 40 of 40 terms) "
+                "were written into this entry and into `docs/preseason-plan.md` before the "
+                "arithmetic caught them on 2026-08-14. An artifact carries no record of "
+                "which version of the code wrote it, which is why the term count is quoted "
+                "here at all.",
+        status="settled",
+        reproduce="make availability-preseason → "
+                  "outputs/predictions/availability_preseason_rolling.csv, "
+                  "outputs/predictions/availability_preseason.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-13",
+        date="2026-08-13",
+        tags=("preseason", "specification"),
+    ),
+    Decision(
+        id="preseason-availability-arm-survives-a-truncated-draft",
+        topic="availability",
+        claim="A centred-volume arm was adopted so the head would survive drafting before "
+              "the preseason ends, and **withdrawn the same day**: the premise was that DK "
+              "contests might fill early, and the owner's own 2025-26 experience — drafting "
+              "after the preseason ended and securing entries — contradicts it.",
+        because="The arm was `pre_log_min` with each season's own mean removed, chosen "
+                "because `season_centered` subtracts a constant computed from whatever has "
+                "been played, so a truncated capture cancels. Measured 7 days early on six "
+                "non-test seasons: the UNCENTRED column shifts **−0.362**, which is 59% of "
+                "its own within-season sd (0.616) and wider than the entire historical "
+                "spread of season means (sd 0.310) — a covariate shift, not a loss of "
+                "information. Centring removes it exactly. **It was withdrawn because it "
+                "costs a measured amount and buys robustness against a risk that did not "
+                "materialize**: against the declared primary on the rolling harness it is a "
+                "tie on CRPS (−0.0445 [−0.0919, **+0.0008**], 7 of 10 origins) and **worse "
+                "on the boundary with an interval clear of zero** (+0.0016 [+0.0012, "
+                "+0.0020]) — giving up the half of the bar the block actually cleared. "
+                "**The measurement is kept because the risk is real if the premise turns**: "
+                "the shipped block "
+                "([[preseason-availability-block-is-p1s-full-block]]) contains "
+                "`pre_missed_tail_share` and `pre_played_final_game`, which do not exist "
+                "until the preseason is over, so a complete preseason is now a production "
+                "PRECONDITION and the runbook's Oct 17-20 window is load-bearing rather "
+                "than advisory. Centring would also not have fixed the second problem: 7 "
+                "days out 3.4% of players have no panel row against a ~4.2% base, so the "
+                "age-split indicators fire on ~2x as many players with ~44% of them "
+                "'has not played yet' rather than 'did not play'.",
+        status="withdrawn",
+        replaced_by="P1's full ten-column block, which the fitting half selected and which "
+                    "requires a complete preseason — "
+                    "[[preseason-availability-block-is-p1s-full-block]]",
+        caught_by="The owner's 2025-26 draft experience: entries were secured after the "
+                  "preseason ended, so the early-fill risk the arm was chosen against is "
+                  "not the operating case.",
+        reproduce="make availability-preseason → "
+                  "outputs/predictions/availability_preseason_rolling.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-13",
+        date="2026-08-13",
+        tags=("preseason", "specification"),
+    ),
+    Decision(
         id="preseason-columns-carry-a-season-level-nuisance",
         topic="eda",
         claim="A preseason column's **season mean moves by half its cross-player spread**, "
@@ -7964,7 +8055,8 @@ REGISTRY: tuple[Decision, ...] = (
                 "middle of the distribution — `body_error` 0.0386 → 0.0514 — while "
                 "centring takes it to **0.0165**, a margin of −0.0350 [−0.0359, −0.0114] "
                 "against the uncentred arm, and gives the ladder its best CRPS and its "
-                "best PIT KS (0.0481 against the shipped head's 0.0928). Centring is "
+                "best PIT KS at both readings — 0.0481 and 0.0287 against the shipped "
+                "head's 0.0927 and 0.0503. Centring is "
                 "point-in-time: a season's own preseason mean is on disk before its "
                 "opener, and the mean is taken over present rows only so the missing-row "
                 "zeros cannot shrink it. **Any later preseason arm should carry the "
@@ -7979,11 +8071,44 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("preseason", "specification"),
     ),
     Decision(
+        id="the-two-reading-bar-has-no-clause-for-a-rolling-only-win",
+        topic="availability",
+        claim="**The conjunctive bar — validation AND the rolling harness — was written "
+              "against one failure mode and has now met the other.** P2's arm cannot be "
+              "resolved on validation (−0.102 [−0.322, +0.121]) and passes the rolling "
+              "harness at 10 of 10 origins (−0.254 [−0.344, −0.162]). Whether the bar "
+              "should admit that is **open**, and P2 did not take it.",
+        because="The bar exists because twice on this head a block won validation and "
+                "shrank 4-6x rolling (§12e, §14f), so its stated rationale is 'validation "
+                "alone ships nothing'. It is symmetric in form and asymmetric in what it "
+                "protects against: nothing in it contemplates an arm that replicates on "
+                "every fitting-half origin and is merely unresolvable on 772 validation "
+                "rows. **The two readings do not conflict** — validation's interval "
+                "contains the rolling point estimate — and §14f's own diagnostic separates "
+                "the cases: there the rolling interval was NARROWER and the effect shrank, "
+                "here it is 2.4x narrower on 4.6x the rows and the effect GREW. Both "
+                "preseason rounds now read larger on the fitting half "
+                "([[preseason-minutes-arm-clears-both-halves]] at 0.60x, P2 at 0.40x), so "
+                "this is a pattern rather than one arm. **It is registered rather than "
+                "resolved because a bar re-read after seeing which side an arm landed on is "
+                "not a bar** — the failure `README.md` records for the games-played Gate D. "
+                "What would settle it without widening anything is more scored validation "
+                "seasons, and those are the test split.",
+        status="settled",
+        reproduce="make availability-preseason → "
+                  "outputs/predictions/availability_preseason.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-13",
+        date="2026-08-13",
+        tags=("preseason", "methodology"),
+    ),
+    Decision(
         id="availability-boundary-defect-is-larger-on-the-draft-pool",
         topic="availability",
         claim="**The shipped head's boundary error is 1.84× larger on the population it is "
               "applied to** — 0.01085 pooled against **0.01998** on the season-start "
-              "roster — and the low-tail error changes *sign* between the two.",
+              "roster on validation — and the low-tail error changes *sign* between the "
+              "two, at both readings.",
         because="Every round on this axis (§7, §12, §14) scored all 883 validation rows, "
                 "and P2 is the first to split them. Pooled, the head under-predicts the "
                 "dead season: P(GP < 10) 0.0683 predicted against 0.0815 observed. On the "
@@ -7993,9 +8118,13 @@ REGISTRY: tuple[Decision, ...] = (
                 "which is the cumulative-threshold cancellation "
                 "[[availability-head-selected-on-calibration-with-a-crps-guard]] guards "
                 "against, one level up — across populations rather than across bands. PIT "
-                "KS is 0.0631 pooled and 0.0928 draftable, and realized 50% coverage 0.598 "
+                "KS is 0.0631 pooled and 0.0927 draftable, and realized 50% coverage 0.598 "
                 "against 0.639 on a nominal 0.5, so the predictive is much too wide there. "
-                "**What is NOT measured is whether the single-component head is also worse "
+                "**The sign flip replicates on the rolling harness** (−0.0123 pooled "
+                "against +0.0179 draftable) and the 1.84× LEVEL does not — it is 1.14× "
+                "there, because the pooled upper-boundary error is much larger on the "
+                "fitting half. The robust claim is the sign, not the ratio. **What is NOT "
+                "measured is whether the single-component head is also worse "
                 "on the draft pool**, which is what would say whether §7's 0.0201 → 0.0109 "
                 "selection survives the restriction; this round fits no such arm. Two "
                 "fits, ~2 minutes, and the machinery exists — `potential-to-dos.md` item 9.",

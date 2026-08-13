@@ -34,16 +34,31 @@ each week and four elimination rounds ending 4/4.
 
 ### The prediction-time constraint
 
-This is the defining constraint of the project. Before the season starts we know the
-**schedule**, the **season-start rosters** (definitively which team each player is on), and
-every team's and player's **previous-season** statistics. We do *not* know within-season
-trades, current-season minutes, injuries, or form.
+This is the defining constraint of the project. **The draft happens after the preseason and
+before the opener**, so at prediction time we know the **schedule**, the **season-start
+rosters** (definitively which team each player is on), every team's and player's
+**previous-season** statistics, and the **current season's preseason box scores**. We do
+*not* know within-season trades, regular-season minutes, injuries, or form.
 
 The information set is therefore a cross-season join: **current-season roster membership ×
-prior-season statistics**. Two consequences shape everything downstream. Minutes weights in
-any roster aggregate must come from season S−1, since season-S minutes are unknown. And
-every feature except the schedule-derived ones is constant within a player-season — the only
-per-game variation available is opponent, home/away and rest.
+prior-season statistics × current-season preseason statistics**. Two consequences shape
+everything downstream. Minutes weights in any roster aggregate must come from season S−1,
+since season-S regular-season minutes are unknown. And every feature except the
+schedule-derived ones is constant within a player-season — the only per-game variation
+available is opponent, home/away and rest.
+
+**The preseason term was added 2026-08-13 and it is a change of problem statement, not a
+feature.** Contest entry is open from the offseason through the opener, and drafting late
+mainly reduces the risk of a season-altering injury landing between draft night and opening
+night — so the offseason information set is no longer the one to build for. Preseason data
+enters as **additional columns on existing heads**, difference-coded against the
+prior-season features so that a coefficient of zero recovers the pre-2026-08-13 head
+exactly; two heads carry a block today, and `stan.availability.preseason: false` /
+`stan.minutes.preseason: false` are exact rollbacks. One operational consequence is
+load-bearing: two of the availability block's columns are read over the preseason's **tail**,
+so **a complete preseason is now a production precondition** and the October runbook's
+Oct 17–20 draft window is not advisory. See
+[docs/preseason-plan.md](docs/preseason-plan.md).
 
 ### Where the variance actually is
 
@@ -272,6 +287,20 @@ beta-binomial GLM over games played out of team games. Games played is the large
 the season total and the least persistent quantity in the project, so the head shrinks hard
 toward a league/age baseline and emits a distribution.
 
+**Since 2026-08-13 it also carries a ten-column preseason block, adopted against a gate it
+did not clear.** P2's bar was a conjunction — a validation CRPS interval clear of zero with
+the boundary held, **and** the rolling-origin harness agreeing — written because twice before
+on this head a block won validation and shrank 4–6× rolling. It failed in the direction the
+bar did not anticipate: validation could not resolve the arm (**−0.102 [−0.322, +0.121]** on
+the draftable population) while the rolling harness passed both halves at **10 of 10**
+origins (**−0.254 [−0.344, −0.162]**), on 4.6× the rows with 2.4× the precision, and
+validation's interval contains the rolling estimate. The gate is recorded as failed, because
+a bar re-read after seeing which side an arm landed on is not a bar; the ship is an owner
+decision taken with that in view. What the block buys on this head is **calibration** rather
+than accuracy — all seven arms carrying a preseason column improve `boundary_tail_error` at
+both readings — and the arm that shipped is the wider one the *fitting half* preferred,
+which reverses P1's "use a smaller block". `docs/preseason-plan.md` P2.
+
 **It is a two-component mixture, and that head is selected on tail calibration rather than
 on CRPS** — the only head in the project that is. A disrupted season is a *different event*,
 not an extreme draw of a per-game rate, so it gets its own component with its own mean and
@@ -310,6 +339,25 @@ of the clumping — and together they land the recovery within 4% of 1.0 pooled 
 marginal `min | available`, fitted season-collapsed as successes out of real game length,
 selecting `logit(own) + spline`. What it supplies the simulator is the season-level
 **spread** — the one thing the composition head below is structurally unable to produce.
+
+**Since 2026-08-13 it carries a five-column preseason block and fits from 2004-05, and this
+is the head where the preseason is worth the most.** The columns are the *season-centred*
+preseason minutes delta plus four age-split missing indicators; the window is cut because the
+preseason panel begins at 2004-05 and this head used to fit from 1997-98, so 8,306 fitting
+rows become 6,152. Unlike availability it cleared both halves of its bar outright —
+validation CRPS **−4.789 [−8.08, −1.59]** minutes and the rolling harness **−7.940
+[−9.41, −6.44]** at 12 of 13 origins, the first block in the project whose *rolling* reading
+is the larger one. Integrated over `beta` the block is worth **−5.911** CRPS minutes against
+a control fitted on the same rows with the columns removed (136.958 against 142.869), so the
+increment survives the posterior and grows slightly under it. Centred rather than raw because
+preseason minutes are compressed by an amount that varies with the calendar and this head has
+no year term to absorb it; centring also takes the season-total bias from −36.68 to **−10.95**,
+better than the pre-block head's own −19.24. `docs/preseason-plan.md` P3.
+
+⚠️ **The block narrowed this head's season-level ρ from 0.05025 to 0.041894**, ~9%, and this
+head ships *for* its season-level spread. Every `make minutes-unification` figure below —
+and `sim.minutes.player_season_sigma = 0.450`, which was calibrated against the wider one —
+predates it and has not been re-read. That is P5 work and it is not done.
 
 **Minutes as a team-game composition**
 ([stan_composition.py](src/models/stan_composition.py)) is the second minutes head, and it
@@ -590,7 +638,7 @@ base MAE across heads, and at most 4.97%. A trend moves bias in both directions 
 count heads rather than removing it, so its apparent win on the season total is
 cross-component cancellation. The minutes head is the single exception and adopts a year
 effect. What a year effect *is* worth is joint spread: **+10.4%** on a 15-man roster's
-season-total sd, against +0.5% from shared coefficient uncertainty.
+season-total sd, against +0.6% from shared coefficient uncertainty.
 
 **The drafting edge is large in the simulated world and the realized readout cannot confirm
 it — which is the result, not a caveat.** `make strategy-sweep`. Against a symmetric-field
@@ -621,14 +669,14 @@ and the execution axis".
 **The sampler behaved.** 37 component fits with 0 divergences and every fit clearing every
 convergence bar, 54 season-term fits with 0
 divergences and 0 treedepth saturation, and the availability port reproduces the point MLE
-of its own likelihood with the MLE inside the 95% credible interval for 35 of 35 terms —
-where the *reference* is load-bearing: scored against the single-component MLE the shipped
-mixture reads 19 of 24, which measures the likelihood change rather than the port. Cost is
+of its own likelihood with the MLE inside the 95% credible interval for 45 of 45 terms —
+where the *reference* is load-bearing: scored against the single-component MLE the 2026-08-12
+mixture read 19 of 24, which measures the likelihood change rather than the port. Cost is
 concentrated
 entirely in the spline variants. Dropping the test side halved the component fit count from
 74 and cut sampler time from 305.0 to **137.4** minutes *while* raising every selection fit
 to full-length chains — which incidentally fixed the one fit that used to miss its R̂ bar.
-1,703 tests pass (`.venv/bin/python -m pytest tests/`).
+1,766 tests pass (`.venv/bin/python -m pytest tests/`).
 
 ---
 

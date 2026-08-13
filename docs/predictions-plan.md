@@ -336,10 +336,12 @@ So the honest framing: **per-game buys calibration of the season-total distribut
 accuracy of its mean.** For a threshold-and-order-statistic product that is the thing that
 pays — the double-double bonus is a per-game threshold and minutes drive it — but the case
 must be made on those terms, not as "a better minutes model". The season head already scores
-R² 0.8835 against a no-fit floor of 0.8536, so the headroom being competed for is small.
+R² 0.8944 against a no-fit floor of 0.8536, so the headroom being competed for is small.
+(⚠️ It read **0.8835** before the preseason block shipped on 2026-08-13; the floor is
+unchanged, so the headroom got *smaller*.)
 
 **Costs, with real numbers.** 731,863 played regular-season player-games against the season
-head's 8,306 rows — **88× the data**. The season spline fit took 955 s (linear: 175 s) —
+head's 6,152 rows — **119× the data**. The season spline fit took 509 s (linear: 134 s) —
 measured while another head sampled alongside it, so an upper bound — and so a
 plain per-game beta-binomial GLM with no latent state is order **6–16 h**: tolerable, and it
 delivers per-game covariates and heterogeneous dispersion. Adding a **latent AR state per
@@ -619,7 +621,7 @@ happens to be, but it describes the seasons scored, not the component.
 > **Why this outranks the shared-β correlation the Stan work was built for.** A league shift
 > is **perfectly correlated across every player**, so it does not diversify away: a −7% error
 > on free throws is −7% on a whole roster's free-throw points. The shared-β parameter
-> uncertainty measured in `stan_availability.board_correlation` is worth **+0.5%** on a
+> uncertainty measured in `stan_availability.board_correlation` is worth **+0.6%** on a
 > 15-man roster. Season effects are the larger non-diversifiable risk by an order of
 > magnitude, and they are currently modelled as exactly zero.
 >
@@ -636,7 +638,8 @@ happens to be, but it describes the seasons scored, not the component.
 > figures, and note the shared-β side (+0.2% / +6.4%) is itself measured on a different
 > board again, so the ratio is indicative rather than exact. It moved again on 2026-08-11,
 > when the availability head took a 2012-13 window and its board figures roughly doubled to
-> +0.5% / +12.3%; the conclusion is unchanged, since a year effect is still worth ~20× the
+> +0.5% / +12.3%, and again on 2026-08-13 with the preseason block, to **+0.6%** / **+14.8%**;
+> the conclusion is unchanged, since a year effect is still worth ~20× the
 > shared-β term on a roster, but do not read the ratio to a significant figure.
 
 **One piece is genuinely knowable at prediction time and should not be lumped in with the
@@ -1083,24 +1086,27 @@ player-seasons, scored on validation (2022-23/23-24). Three results bind on ever
 > `.gitignore` already covers, so no binary is committed and no generated `.hpp` lands in
 > the source tree.
 >
-> **Availability** ports the validated point MLE and reproduces it: validation CRPS 9.8195
-> against 9.8237, ρ 0.2261 against 0.2245, and the MLE inside the 95% credible interval for
-> **35/35** terms. The prior is set to `normal(0, 1/sqrt(2·l2))` precisely so the
-> posterior *mode* is the penalized MLE, making that a defined check. R̂ 1.0073, 0
-> divergences, 366 s. (Before the mixture shipped on 2026-08-12 this read 9.8136 against
-> 9.8444, ρ 0.2595 against 0.2627, 24/24 terms, R̂ 1.0050, 94 s — against the
-> single-component MLE, which is the arm that head was a port of.) What the posterior adds
-> is `Var_θ(Σ_i E[Y_i|θ])` — exactly 0 for any
+> **Availability** ports the validated point MLE and reproduces it: validation CRPS 9.1329
+> against 9.1390, ρ 0.2048 against 0.2034, and the MLE inside the 95% credible interval for
+> **45/45** terms. The prior is set to `normal(0, 1/sqrt(2·l2))` precisely so the
+> posterior *mode* is the penalized MLE, making that a defined check. R̂ 1.00254, 0
+> divergences, 521 s. (Before the preseason block shipped on 2026-08-13 this read 9.8195
+> against 9.8237, ρ 0.2261 against 0.2245, **35/35** terms, R̂ 1.0073, 366 s; before the
+> mixture shipped on 2026-08-12, 9.8136 against 9.8444, ρ 0.2595 against 0.2627, 24/24 terms,
+> R̂ 1.0050, 94 s — each against the arm the head of that day was a port of.) What the
+> posterior adds is `Var_θ(Σ_i E[Y_i|θ])` — exactly 0 for any
 > point estimate — but **its size depends on the portfolio**, and this plan's framing
 > oversold it. The independent term grows as sqrt(N) and the shared-β term as N, so measured
-> on the validation board the spread inflation is **+0.5% on a 15-player roster** and **+14.8%
+> on the validation board the spread inflation is **+0.6% on a 15-player roster** and **+14.8%
 > across all 883**. Real for board-wide exposure across many lineups; near-irrelevant for one
 > drafted team. This matters for the "joint / correlation modeling across teammates" section
 > below: shared *parameter* uncertainty is not the correlation source a single roster needs —
 > shared **team state** and the shared `min` draw still are.
 >
-> ⚙️ **Both figures are the 2026-08-11 head**, which fits a 2012-13 window with a role-graded
-> ρ (`docs/availability-window-plan.md` §4). The full-window, shared-ρ head it replaced read
+> ⚙️ **Both figures are the 2026-08-13 head**, which fits a 2012-13 window with a role-graded
+> ρ, a two-component mixture and a ten-column preseason block
+> (`docs/availability-window-plan.md` §4 and §7, `docs/preseason-plan.md` P2). The
+> full-window, shared-ρ head two revisions back read
 > CRPS 10.0063 against 10.0057, ρ 0.2808 against 0.2806, 21/21 terms, R̂ 1.0019, 196 s, and
 > +0.2% / **+6.7%** board inflation. The board term roughly doubled because 4,027 fitting
 > rows leave a wider posterior on β than 9,478 do — the one place the window costs something.
@@ -1112,9 +1118,15 @@ player-seasons, scored on validation (2022-23/23-24). Three results bind on ever
 >
 > **Minutes** is new and is the first head to use the real trials denominator — successes
 > out of actual game length, never 48. See `docs/availability-plan.md` for the sweep; it
-> clears its no-fit floor by +0.030 R² and −17.5 minutes of CRPS, and it reports the
+> clears its no-fit floor by +0.0408 R² and −23.75 minutes of CRPS, and it reports the
 > **game-level** dispersion (4.65× binomial) separately from the season-level ρ the collapse
 > estimates, because the simulator needs the former and the fit only sees the latter.
+>
+> ⚙️ **Since 2026-08-13 the head carries a five-column preseason block and fits from
+> 2004-05** (`docs/preseason-plan.md` P3), which is where those two figures come from; before
+> it they read **+0.030** R² and **−17.5** minutes over the floor. The block itself is worth
+> **−5.911** CRPS minutes against a control fitted on the same 6,152 rows with the columns
+> removed, so most of the difference is the block and the rest is the window.
 >
 > ⚠️ **The minutes sweep was a held-out measurement until 2026-08-06** and read a gain of
 > **+0.041** R² and **−21.4** minutes over the floor, on a test R² of **0.8572** against the
@@ -1299,7 +1311,7 @@ before shipping; given this repo's record on ceilings, a settled null is the lik
   small-scale timing check~~ — ✅ **answered by building it.** Season-collapsed, the whole
   surface is cheap: the availability head is 254 s and the eight count heads are ~1–3 min each
   on 4 chains. The cost wall is **not** the hierarchy, it is abandoning the collapse — see the
-  per-game minutes subsection, where the same head goes from 8,306 rows to 731,863.
+  per-game minutes subsection, where the same head goes from 6,152 rows to 731,863.
 - ~~**Whether minutes should be fitted per-game at all is open and deliberately deferred**~~
   — **partly answered 2026-07-31.** Of the three options costed under "Fitting strategy",
   the **team-game composition model is built and wins** (`make stan-composition`,

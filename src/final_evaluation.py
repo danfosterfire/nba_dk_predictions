@@ -158,7 +158,7 @@ def _availability(cfg: dict, out_dir: Path) -> pd.DataFrame:
     """
     from src.models.availability import FEATURE_COLS
     from src.models.stan_availability import (FIRST_SEASON, ROLE_RHO,
-                                              availability_design, fit_and_score)
+                                              head_design, head_features, fit_and_score)
 
     cfg_av = cfg.get("features", {}).get("availability", {})
     cfg_stan = cfg.get("stan", {})
@@ -171,16 +171,21 @@ def _availability(cfg: dict, out_dir: Path) -> pd.DataFrame:
     first_season = cfg_head.get("first_season", FIRST_SEASON)
     role_rho = bool(cfg_head.get("role_rho", ROLE_RHO))
 
-    design = availability_design(cfg)
+    # `head_design`: the final reading has to score the head that SHIPS, preseason block
+    # included, or it measures a model nobody runs.
+    design = head_design(cfg)
+    features = head_features()
     full_train, test = final_split(design, int(cfg_av.get("test_seasons", 2)))
     max_games = int(design["team_games"].max())
 
     print(f"  refitting on {len(full_train):,} train+validation rows, scoring "
           f"{len(test):,} test rows "
-          f"({', '.join(sorted(test['season'].unique()))}), {len(FEATURE_COLS)} features")
+          f"({', '.join(sorted(test['season'].unique()))}), {len(features)} features "
+          f"({len(features) - len(FEATURE_COLS)} of them the shipped preseason block)")
 
     scored = fit_and_score(full_train, test, max_games, cfg_stan, l2, seed,
-                           first_season=first_season, role_rho=role_rho)
+                           first_season=first_season, role_rho=role_rho,
+                           features=features)
     wide = (scored["metrics"][scored["metrics"]["group"] == "all"]
             .pivot_table(index="model", columns="metric", values="value"))
     rows = [{"head": "availability", "arm": name,

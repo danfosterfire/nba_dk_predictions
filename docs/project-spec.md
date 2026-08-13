@@ -24,13 +24,31 @@ each week and four elimination rounds ending 4/4.
 
 ### The prediction-time constraint
 
-Before the season starts we know: (1) the season schedule, (2) **season-start rosters** —
-definitively which team each player is on, plus team identity — and (3) *previous-season*
-stats for every team and player. We do **not** know within-season roster changes
-(mid-season trades), current-season minutes, injuries, or form.
+**The draft happens after the preseason and before the opener.** At prediction time we know:
+(1) the season schedule, (2) **season-start rosters** — definitively which team each player
+is on, plus team identity — (3) *previous-season* stats for every team and player, and (4)
+the **current season's preseason box scores**. We do **not** know within-season roster
+changes (mid-season trades), current-season *regular-season* minutes, injuries, or form.
 
 The information set is therefore a **cross-season join: current-season roster membership ×
-prior-season statistics.**
+prior-season statistics × current-season preseason statistics.**
+
+**Item (4) was added 2026-08-13** and is a change of problem statement rather than a new
+feature — `docs/preseason-plan.md` is the whole of it. Preseason quantities enter as
+**additional columns on existing heads**, difference-coded against the prior-season
+equivalent on each head's own link scale, so that a coefficient of zero recovers the
+pre-2026-08-13 head exactly; the availability and minutes heads carry a block today and
+`stan.availability.preseason: false` / `stan.minutes.preseason: false` are exact rollbacks.
+Three rules ride with it:
+
+- **A preseason quantity is a forecast covariate, never a substitute observation.** Nothing
+  from the preseason enters any head's likelihood as a target row — different coaching
+  objectives, different effort, exhibition opponents.
+- **Every preseason figure is quoted on the season-start-roster population.** Pooled over
+  everyone who appeared in season S, a missing preseason row mostly means a January signing,
+  and the same block reads 6.2× larger there than on the draft pool it is applied to.
+- **A complete preseason is a production precondition.** Two shipped availability columns are
+  read over the preseason's *tail*, so the runbook's Oct 17–20 draft window is load-bearing.
 
 Consequences:
 - Team composition aggregates the **season-S roster** described by **season S-1 stats** —

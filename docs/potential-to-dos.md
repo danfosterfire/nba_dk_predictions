@@ -773,9 +773,17 @@ transfer to the draft pool, the head that ships was chosen on a frame it is neve
 | `mixture` | pooled (n = 883) | draftable (n = 772) |
 |---|---|---|
 | `boundary_tail_error` | 0.01085 | **0.01998** (1.84×) |
+| the same, on P2's 10-origin rolling harness | 0.01615 | 0.01846 (**1.14×**) |
 | P(GP < 10) predicted / observed | 0.0683 / 0.0815 — **under** by 0.0132 | 0.0582 / 0.0259 — **over** by 0.0323 |
+| the same error, rolling | **under** by 0.0123 | **over** by 0.0179 |
 | PIT KS | 0.0631 | 0.0928 |
 | realized 50% coverage (nominal 0.5) | 0.598 | 0.639 |
+
+**The sign flip is the robust half and the 1.84× is not.** The low-tail error reverses
+direction between the populations at *both* readings; the boundary *level* ratio is 1.84× on
+validation and 1.14× on the fitting half, because the pooled upper-boundary error is much
+larger there. So the thing to chase is the sign, and any round that quotes 1.84× as a
+constant is quoting a validation reading.
 
 **The low-tail error changes sign between the two.** Pooled, the head under-predicts the dead
 season; on the draft pool it over-predicts it by 2.25×, assigning 5.8% of draftable players a
@@ -820,3 +828,56 @@ validation rows are draftable, so a statistic that moves 1.84× between them is 
 the 12.6% that are not, and a *difference* of two arms can be stable where each arm's level is
 not. That would still be worth having on the record — it is the difference between "the
 selection is fine" and "nobody checked".
+
+
+---
+
+## 10. ✅ Give the availability rolling harness a paired interval against the *primary* arm — BUILT AND MEASURED 2026-08-13
+
+**`availability_preseason.rolling_confirmation` paired every arm against the reference and
+never against the declared primary, so P2 could not say whether the arm that led its rolling
+table was distinguishable from the one it declared.** `minutes_preseason.rolling_confirmation`
+had that column (`crps_vs_primary`, plus `origins_won_vs_primary`) and P3 used it to promote
+the centred delta on a fitting-half decision rather than a validation-driven swap. This was a
+gap in an instrument, not an open question about the world, and it was cheap.
+
+**It was added and the harness re-run the same day, and it settled the decision it was asked
+to settle — in the direction the entry called a reversal.** `crps_vs_primary`,
+`crps_vs_primary_lo/hi`, `origins_won_vs_primary` and the same four for the boundary now ride
+on every row of `availability_preseason_rolling.csv` and on the validation ladder.
+
+### What it found, on the 10-origin harness and the draftable population
+
+| arm, against the declared primary `volume` | CRPS [95%] | origins | `boundary_tail_error` [95%] |
+|---|---|---|---|
+| **`p1_block`** | **−0.0977 [−0.1569, −0.0408]** | **8 / 10** | **−0.0014 [−0.0019, −0.0010]** |
+| `volume_centered` | −0.0445 [−0.0919, **+0.0008**] | 7 / 10 | **+0.0016 [+0.0012, +0.0020]** |
+| `participation` | −0.0093 [−0.0509, **+0.0358**] | 6 / 10 | −0.0007 [−0.0010, −0.0003] |
+| `volume_pi` | +0.0025 [−0.0313, +0.0349] | 6 / 10 | −0.0011 [−0.0014, −0.0008] |
+
+**P1 decision 4 is reversed, and the availability head ships P1's full ten-column block.**
+Both of `p1_block`'s margins clear zero on the fitting half, which is P3's promotion rule —
+an arm preferred after seeing validation is a validation-driven swap; preferred on the
+rolling harness it is a decision the selection split never paid for. The entry said an
+interval clear of zero "reverses P1 decision 4 on this head"; it is clear of zero.
+
+**The same column also closed the round's other promotion question, negatively.**
+`volume_centered` leads the validation ladder on CRPS and PIT KS, and against the primary on
+the fitting half it is a **tie on CRPS** and **worse on the boundary with an interval clear
+of zero** — giving up the half of the bar the block actually cleared. It was adopted for a
+different reason (robustness to drafting before the preseason ends) and withdrawn the same
+day when the premise was contradicted; see `dashboard/decisions.py`,
+`preseason-availability-arm-survives-a-truncated-draft`.
+
+### What it cost
+
+One extra `paired_bootstrap` call per row over arrays the function already had in memory,
+plus the re-run (~70 minutes of point-MLE mixture fits). The instrument is now symmetric with
+the minutes harness, which is what a later preseason round on any head will want.
+
+### What it did not settle
+
+Nothing about the world was ever at stake here — but note what the reversal did *not* do to
+the gate. `p1_block` beating `volume` on the fitting half says which arm to carry; it says
+nothing about whether either clears P2's conjunction, which still fails on validation. See
+item 9, which is the open question on this head.

@@ -162,6 +162,7 @@ STAN_MIN_G = "outputs/predictions/stan_minutes_diagnostics.csv"
 STAN_AV_M = "outputs/predictions/stan_availability_metrics.csv"
 STAN_AV_D = "outputs/predictions/stan_availability_diagnostics.csv"
 STAN_AV_B = "outputs/predictions/stan_availability_board.csv"
+STAN_AV_C = "outputs/predictions/stan_availability_coefficients.csv"
 SEASON_TOTAL = "outputs/predictions/season_total_metrics.csv"
 SEASON_TOTAL_GATE_E = "outputs/predictions/season_total_gate_e.csv"
 REPORT_CAL = "outputs/eda/report_calibration.csv"
@@ -1084,11 +1085,13 @@ def _availability() -> list[Claim]:
     # (2026-08-06). `bias` is claimed per arm rather than left in prose because the *level*
     # of the bias moved with the split while the fitted-minus-floor **gap** reproduced, and
     # a prose range cannot express that distinction — see `_MINUTES_PRE_LOCK`.
-    variants = [("carry_forward", "161.45", "0.8536", "213.13", "+23.91"),
-                ("linear", "144.71", "0.8826", "199.54", "−3.26"),
-                ("logit_own", "145.45", "0.8819", "200.90", "−2.97"),
-                ("logit_own_quadratic", "144.54", "0.8827", "200.84", "−13.82"),
-                ("logit_own_spline", "143.93", "0.8835", "199.60", "−14.00")]
+    variants = [("carry_forward", "160.71", "0.8536", "213.13", "+23.91"),
+                ("linear", "137.74", "0.8936", "191.21", "−4.70"),
+                ("logit_own", "138.53", "0.8929", "192.67", "−3.21"),
+                ("logit_own_quadratic", "137.82", "0.8936", "191.89", "−12.19"),
+                ("logit_own_spline", "136.96", "0.8944", "190.69", "−12.24"),
+                ("logit_own_spline__no_preseason", "142.87", "0.8841", "198.71",
+                 "−17.09")]
     for name, crps, r2, mae, bias in variants:
         add(_c(crps, STAN_MIN_M,
                lambda n=name: cell(STAN_MIN_M, "val_crps", variant=n),
@@ -1102,19 +1105,35 @@ def _availability() -> list[Claim]:
         add(_c(bias, STAN_MIN_M,
                lambda n=name: cell(STAN_MIN_M, "val_bias", variant=n),
                f"minutes {name} val bias"))
-    add(_c("+0.0299", STAN_MIN_M,
+    add(_c("+0.0408", STAN_MIN_M,
            lambda: (cell(STAN_MIN_M, "val_r2", variant="logit_own_spline")
                     - cell(STAN_MIN_M, "val_r2", variant="carry_forward")),
            "minutes R2 gain over floor"))
-    add(_c("−17.5", STAN_MIN_M,
+    add(_c("−23.75", STAN_MIN_M,
            lambda: (cell(STAN_MIN_M, "val_crps", variant="logit_own_spline")
                     - cell(STAN_MIN_M, "val_crps", variant="carry_forward")),
            "minutes CRPS gain over floor"))
-    add(_c("1,503", STAN_MIN_G, lambda: total(STAN_MIN_G, "wall_clock_s"),
+    # The block priced against its own control — the shipped variant on the SAME covered
+    # rows with the five preseason columns removed. Derived rather than quoted flat, because
+    # the whole point of the control row is that it isolates the block from the window cut
+    # that arrived with it, and a flat figure could drift away from either.
+    add(_c("−5.911", STAN_MIN_M,
+           lambda: (cell(STAN_MIN_M, "val_crps", variant="logit_own_spline")
+                    - cell(STAN_MIN_M, "val_crps",
+                           variant="logit_own_spline__no_preseason")),
+           "what the preseason block is worth, integrated over beta"))
+    add(_c("136.958", STAN_MIN_M,
+           lambda: cell(STAN_MIN_M, "val_crps", variant="logit_own_spline"),
+           "shipped arm CRPS, six decimals"))
+    add(_c("142.869", STAN_MIN_M,
+           lambda: cell(STAN_MIN_M, "val_crps",
+                        variant="logit_own_spline__no_preseason"),
+           "control arm CRPS, six decimals"))
+    add(_c("1,434", STAN_MIN_G, lambda: total(STAN_MIN_G, "wall_clock_s"),
            "minutes head wall clock"))
-    add(_c("1.0054", STAN_MIN_G, lambda: max_of(STAN_MIN_G, "max_rhat"),
+    add(_c("1.00695", STAN_MIN_G, lambda: max_of(STAN_MIN_G, "max_rhat"),
            "minutes head max R-hat"))
-    add(_c("0.05025", STAN_MIN_D,
+    add(_c("0.041894", STAN_MIN_D,
            lambda: cell(STAN_MIN_D, "rho", metric="season_level_rho"),
            "season-level rho"))
     add(_c("0.0776", STAN_MIN_D,
@@ -1127,6 +1146,8 @@ def _availability() -> list[Claim]:
            lambda: cell(STAN_MIN_D, "n_player_games", metric="game_level_rho"),
            "game-level population"))
     C += _minutes_pre_lock_claims(AVAIL)
+    C += _minutes_pre_block_claims(AVAIL, keep=tuple(
+        q for q, _ in _MINUTES_PRE_BLOCK if q != "+0.030"))
 
     # ── the Stan availability port ────────────────────────────────────────────
     # Five arms since 2026-08-12, not four: the head fits a 2012-13 window with a
@@ -1135,30 +1156,45 @@ def _availability() -> list[Claim]:
     # `availability_window.csv`'s selected arms, which is a third-party check on the port.
     ports = [("beta_binomial", "9.8444", "0.3889", "0.0632", "0.2627"),
              ("beta_binomial_role_rho", "9.8247", "0.3889", "0.0588", "0.2627"),
-             ("mixture_mle", "9.8237", "0.3844", "0.0631", "0.2245"),
-             ("stan_plug_in", "9.8195", "0.3851", "0.0643", "0.2261"),
-             ("stan_posterior", "9.8239", "0.3847", "0.0643", "0.2261")]
+             ("mixture_mle", "9.1390", "0.4696", "0.0324", "0.2034"),
+             ("stan_plug_in", "9.1329", "0.4704", "0.0326", "0.2048"),
+             ("stan_posterior", "9.1289", "0.4709", "0.0344", "0.2048")]
     for model, crps, r2, ks, rho in ports:
         for quoted, name in [(crps, "crps_games"), (r2, "r2_gp_share"),
                              (ks, "pit_ks_distance"), (rho, "dispersion_rho")]:
             add(_c(quoted, STAN_AV_M,
                    lambda m=model, n=name: metric(STAN_AV_M, m, n),
                    f"stan {model} {name}"))
-    add(_c("14.3770", STAN_AV_M,
+    add(_c("13.6155", STAN_AV_M,
            lambda: metric(STAN_AV_M, "stan_posterior", "mae_games"), "stan posterior MAE"))
-    add(_c("14.3610", STAN_AV_M,
+    add(_c("13.6217", STAN_AV_M,
            lambda: metric(STAN_AV_M, "stan_plug_in", "mae_games"), "stan plug-in MAE"))
-    add(_c("14.3785", STAN_AV_M,
+    add(_c("13.6432", STAN_AV_M,
            lambda: metric(STAN_AV_M, "mixture_mle", "mae_games"), "mixture MLE MAE"))
     add(_c("14.4211", STAN_AV_M,
            lambda: metric(STAN_AV_M, "beta_binomial", "mae_games"), "MLE MAE"))
-    add(_c("1.0073", STAN_AV_D, lambda: cell(STAN_AV_D, "max_rhat"), "stan R-hat"))
-    add(_c("1,399", STAN_AV_D, lambda: cell(STAN_AV_D, "min_ess_bulk"), "stan min ESS"))
-    add(_c("366", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
+    # The block priced on the POOLED validation rows, derived rather than quoted flat — and
+    # deliberately not the headline. `docs/preseason-plan.md` P2 measures the same block at a
+    # third to a sixth of this on the season-start-roster population the head is applied to,
+    # which is the only population a figure from this head may be read on.
+    add(_c("−0.695", STAN_AV_M,
+           lambda: (metric(STAN_AV_M, "stan_posterior", "crps_games") - 9.8239),
+           "what the preseason block is worth pooled, against the pre-block posterior"))
+    add(_c("+0.086", STAN_AV_M,
+           lambda: (metric(STAN_AV_M, "stan_posterior", "r2_gp_share") - 0.3847),
+           "the same in R2"))
+    add(_c("9.138962", STAN_AV_M,
+           lambda: metric(STAN_AV_M, "mixture_mle", "crps_games"),
+           "mixture MLE CRPS, six decimals — reproduces availability_preseason.csv"))
+    add(_c("1.00254", STAN_AV_D, lambda: cell(STAN_AV_D, "max_rhat"), "stan R-hat"))
+    add(_c("1,502.6", STAN_AV_D, lambda: cell(STAN_AV_D, "min_ess_bulk"),
+           "stan min ESS"))
+    add(_c("521", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
            "stan wall clock"))
-    add(_c("332.588", STAN_AV_B,
+    add(_c("305.723", STAN_AV_B,
            lambda: cell(STAN_AV_B, "shared_beta_sd", n_players=883),
            "shared-beta sd, full board"))
+    C += _availability_pre_block_claims(AVAIL, drop=_AVAIL_PRE_BLOCK_BOARD_TABLE)
     # The single-component role-graded head this replaced on 2026-08-12. Presence only.
     for quoted, label in [("9.8136", "plug-in CRPS"), ("9.8155", "posterior CRPS"),
                           ("0.3894", "plug-in R2"), ("0.3893", "posterior R2"),
@@ -1438,6 +1474,142 @@ def _minutes_pre_lock_claims(doc: str, keep: tuple[str, ...] | None = None
                f"pre-lock held-out minutes head: {label}", doc=doc, historical=True)
             for quoted, label in _MINUTES_PRE_LOCK
             if keep is None or quoted in keep]
+
+
+# The minutes head as it stood between 2026-08-06 and 2026-08-13 — validation-scored, full
+# 1997-98 fitting window, no preseason block. `docs/preseason-plan.md` P3 put a five-column
+# block on every arm and cut the fitting rows to 2004-05 in the same change, so this whole
+# column retires together and the doc keeps it beside the one it became. Two of these are
+# worth naming: the FLOOR's CRPS moved (161.45 → 160.71) although its mean did not, because
+# a carry-forward's dispersion is fitted on the training rows and those changed; and the
+# `bias below the floor` pair is a difference of two cells rather than a level, which is the
+# form that reproduced across both moves.
+_MINUTES_PRE_BLOCK = (
+    ("161.45", "floor val CRPS, full window"),
+    ("144.71", "linear val CRPS"),
+    ("145.45", "logit_own val CRPS"),
+    ("144.54", "quadratic val CRPS"),
+    ("143.93", "spline val CRPS"),
+    ("0.8826", "linear val R2"),
+    ("0.8819", "logit_own val R2"),
+    ("0.8827", "quadratic val R2"),
+    ("0.8835", "spline val R2"),
+    ("199.54", "linear val MAE"),
+    ("200.90", "logit_own val MAE"),
+    ("200.84", "quadratic val MAE"),
+    ("199.60", "spline val MAE"),
+    ("−3.26", "linear val bias"),
+    ("−2.97", "logit_own val bias"),
+    ("−13.82", "quadratic val bias"),
+    ("−14.00", "spline val bias"),
+    ("+0.0299", "R2 gain over floor"),
+    ("+0.030", "R2 gain over floor, rounded"),
+    ("−17.5", "CRPS gain over floor"),
+    ("1.0054", "max R-hat over 4 fits"),
+    ("1,503", "wall clock over 4 fits"),
+    ("0.05025", "season-level rho"),
+    ("−27.2", "linear bias below the floor"),
+    ("−37.9", "spline bias below the floor"),
+)
+
+
+def _minutes_pre_block_claims(doc: str, keep: tuple[str, ...] | None = None
+                              ) -> list[Claim]:
+    """The pre-preseason minutes column, on the same terms as `_minutes_pre_lock_claims`."""
+    return [_c(quoted, STAN_MIN_M, lambda: float("nan"),
+               f"pre-preseason-block minutes head: {label}", doc=doc, historical=True)
+            for quoted, label in _MINUTES_PRE_BLOCK
+            if keep is None or quoted in keep]
+
+
+# The availability head as it stood between 2026-08-12 and 2026-08-13 — 2012-13 window,
+# role-graded rho, two-component mixture, NO preseason block. `docs/preseason-plan.md` P2 put
+# ten columns on `beta`, which moved every metric, the whole dispersion vector, the mixture
+# block and the board. Three docs keep it beside the head it became, which is why this is a
+# shared set: one of them going stale while the others stay current is the failure this
+# module has already caught twice.
+#
+# ⚠️ The artifacts written at 14:19 on 2026-08-13 were the WITHDRAWN `volume_centered` arm —
+# five columns, 40 fitted terms — and were superseded by the shipped ten-column fit at 14:34.
+# Nothing from that intermediate run is registered here or quoted anywhere; it was never a
+# head, only a run.
+_AVAIL_PRE_BLOCK = (
+    ("9.8237", "mixture MLE CRPS"),
+    ("9.8195", "plug-in CRPS"),
+    ("9.8239", "posterior CRPS"),
+    ("0.3844", "mixture MLE R2"),
+    ("0.3851", "plug-in R2"),
+    ("0.3847", "posterior R2"),
+    ("0.0631", "mixture MLE PIT KS"),
+    ("0.0643", "stan PIT KS"),
+    ("0.2245", "mixture MLE rho"),
+    ("0.2261", "stan rho"),
+    ("14.3785", "mixture MLE MAE"),
+    ("14.3610", "plug-in MAE"),
+    ("14.3770", "posterior MAE"),
+    ("0.74165", "coefficient gap"),
+    ("0.597", "largest gap in sds"),
+    ("1.0073", "R-hat"),
+    ("1,399", "min ESS"),
+    ("366", "wall clock"),
+    ("0.3095", "MLE rho, <12 mpg"),
+    ("0.3124", "rho, <12 mpg"),
+    ("0.2369", "MLE rho, 12-24"),
+    ("0.2394", "rho, 12-24"),
+    ("0.2080", "MLE rho, 24-30"),
+    ("0.2086", "rho, 24-30"),
+    ("0.1593", "MLE rho, 30+ mpg"),
+    ("0.1589", "rho, 30+ mpg"),
+    ("1.97×", "rho spread"),
+    ("1.94×", "MLE rho spread"),
+    ("0.1116", "theta"),
+    ("0.1078", "posterior theta"),
+    ("0.1000", "mu_low"),
+    ("0.1133", "posterior mu_low"),
+    ("0.0441", "rho_low"),
+    ("0.0578", "posterior rho_low"),
+    ("4.82%", "mean pi"),
+    ("1.23%", "pi p10"),
+    ("10.58%", "pi p90"),
+    ("8.60×", "pi spread"),
+    ("332.588", "board shared-beta sd, 883"),
+    ("589.169", "board independent sd, 883"),
+    ("69.060", "board independent sd, 12"),
+    ("6.499", "board shared-beta sd, 12"),
+    ("76.810", "board independent sd, 15"),
+    ("7.669", "board shared-beta sd, 15"),
+    ("108.652", "board independent sd, 30"),
+    ("13.370", "board shared-beta sd, 30"),
+    ("242.604", "board independent sd, 150"),
+    ("58.432", "board shared-beta sd, 150"),
+)
+
+# The board rows, which only `docs/model-development-notes.md` tabulates in full.
+_AVAIL_PRE_BLOCK_BOARD_TABLE = ("589.169", "69.060", "6.499", "76.810", "7.669",
+                                "108.652", "13.370", "242.604", "58.432")
+
+
+def _av_coef_max(column: str) -> float:
+    """The largest ABSOLUTE MLE-to-posterior gap in the availability port check.
+
+    Derived rather than quoted flat because which term is widest is the readable half of the
+    port check and it moves — it was `rho_low` before the mixture, `rho_low` after it, and
+    `gamma[age]` once the preseason block sharpened `beta` and left `gamma`'s already weak
+    identification on its own. A flat figure would survive that change and mean nothing.
+    """
+    frame = table(STAN_AV_C)
+    if frame is None:
+        raise KeyError(STAN_AV_C)
+    return float(frame[column].abs().max())
+
+
+def _availability_pre_block_claims(doc: str, keep: tuple[str, ...] | None = None,
+                                   drop: tuple[str, ...] = ()) -> list[Claim]:
+    """The pre-preseason availability head, presence-checked from whichever doc quotes it."""
+    return [_c(quoted, STAN_AV_M, lambda: float("nan"),
+               f"pre-preseason-block availability head: {label}", doc=doc, historical=True)
+            for quoted, label in _AVAIL_PRE_BLOCK
+            if quoted not in drop and (keep is None or quoted in keep)]
 
 
 def _regime_claims(doc: str) -> list[Claim]:
@@ -2093,7 +2265,7 @@ def _predictions() -> list[Claim]:
     add("4.65", STAN_MIN_D,
         lambda: cell(STAN_MIN_D, "implied_overdispersion", metric="game_level_rho"),
         "game-level overdispersion")
-    add("0.8835", STAN_MIN_M,
+    add("0.8944", STAN_MIN_M,
         lambda: cell(STAN_MIN_M, "val_r2", variant="logit_own_spline"),
         "minutes head val R2")
     add("0.8536", STAN_MIN_M,
@@ -2101,7 +2273,7 @@ def _predictions() -> list[Claim]:
         "minutes no-fit floor")
     # The per-game costing extrapolates these two, so they have to be the fits the artifact
     # actually holds. Since the lock there is only a `/val` fit per variant.
-    for variant, quoted in [("logit_own_spline", "955"), ("linear", "175")]:
+    for variant, quoted in [("logit_own_spline", "509"), ("linear", "134")]:
         add(quoted, STAN_MIN_G,
             lambda v=variant: cell(STAN_MIN_G, "wall_clock_s", label=f"{v}/val"),
             f"minutes {variant} wall clock")
@@ -2110,6 +2282,14 @@ def _predictions() -> list[Claim]:
     C += _minutes_pre_lock_claims(PRED, keep=("0.8572", "0.8166", "899", "189", "−21.4"))
     add("+0.041", STAN_MIN_M, lambda: float("nan"),
         "pre-lock held-out minutes head: R2 gain over floor, rounded", historical=True)
+    C += _minutes_pre_block_claims(PRED, keep=("0.8835", "+0.030", "−17.5"))
+    # The block priced against its own control, quoted here because this doc's per-game
+    # costing paragraph is the one that reads the head's fitting rows.
+    add("−5.911", STAN_MIN_M,
+        lambda: (cell(STAN_MIN_M, "val_crps", variant="logit_own_spline")
+                 - cell(STAN_MIN_M, "val_crps",
+                        variant="logit_own_spline__no_preseason")),
+        "what the preseason block is worth, integrated over beta")
 
     # ── the composition alternative, summarised back into this doc ────────────
     # Validation figures since the 2026-08-08 refit; the retired test column lives in
@@ -2246,23 +2426,25 @@ def _predictions() -> list[Claim]:
             f"poisson {head} NLL gain")
 
     # ── the built Stan block (negative binomial) ──────────────────────────────
-    add("9.8195", STAN_AV_M, lambda: metric(STAN_AV_M, "stan_plug_in", "crps_games"),
+    add("9.1329", STAN_AV_M, lambda: metric(STAN_AV_M, "stan_plug_in", "crps_games"),
         "stan availability CRPS")
-    add("9.8237", STAN_AV_M,
+    add("9.1390", STAN_AV_M,
         lambda: metric(STAN_AV_M, "mixture_mle", "crps_games"), "mixture MLE CRPS")
-    add("0.2261", STAN_AV_M,
+    add("0.2048", STAN_AV_M,
         lambda: metric(STAN_AV_M, "stan_plug_in", "dispersion_rho"), "stan rho")
-    add("0.2245", STAN_AV_M,
+    add("0.2034", STAN_AV_M,
         lambda: metric(STAN_AV_M, "mixture_mle", "dispersion_rho"), "mixture MLE rho")
-    add("1.0073", STAN_AV_D, lambda: cell(STAN_AV_D, "max_rhat"), "stan R-hat")
-    add("366", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
+    add("1.00254", STAN_AV_D, lambda: cell(STAN_AV_D, "max_rhat"), "stan R-hat")
+    add("521", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
         "stan wall clock")
-    add("0.5%", STAN_AV_B,
+    add("0.6%", STAN_AV_B,
         lambda: cell(STAN_AV_B, "inflation", n_players=15) - 1.0,
         "board inflation, 15 players")
     add("14.8%", STAN_AV_B,
         lambda: cell(STAN_AV_B, "inflation", n_players=883) - 1.0,
         "board inflation, all 883")
+    C += _availability_pre_block_claims(
+        PRED, keep=("9.8195", "9.8237", "0.2245", "0.2261", "1.0073", "366"))
     # The single-component role-graded head this replaced on 2026-08-12.
     for quoted in ("9.8136", "9.8444", "0.2595", "0.2627", "1.0050", "94", "12.3%"):
         add(quoted, STAN_AV_M, lambda: float("nan"),
@@ -2275,11 +2457,11 @@ def _predictions() -> list[Claim]:
     for quoted in ("10.0063", "10.0057", "0.2808", "0.2806", "1.0019", "196", "6.7%"):
         add(quoted, STAN_AV_M, lambda: float("nan"),
             f"pre-window full-sample availability head: {quoted}", historical=True)
-    add("−17.5", STAN_MIN_M,
+    add("−23.75", STAN_MIN_M,
         lambda: (cell(STAN_MIN_M, "val_crps", variant="logit_own_spline")
                  - cell(STAN_MIN_M, "val_crps", variant="carry_forward")),
         "minutes CRPS gain over floor")
-    add("+0.030", STAN_MIN_M,
+    add("+0.0408", STAN_MIN_M,
         lambda: (cell(STAN_MIN_M, "val_r2", variant="logit_own_spline")
                  - cell(STAN_MIN_M, "val_r2", variant="carry_forward")),
         "minutes R2 gain over floor")
@@ -3468,21 +3650,31 @@ def _established_facts() -> list[Claim]:
 
     # the availability port and the board decomposition
     for model, crps, rho in [("beta_binomial", "9.8444", "0.2627"),
-                             ("mixture_mle", "9.8237", "0.2245"),
-                             ("stan_plug_in", "9.8195", "0.2261"),
-                             ("stan_posterior", "9.8239", "0.2261")]:
+                             ("mixture_mle", "9.1390", "0.2034"),
+                             ("stan_plug_in", "9.1329", "0.2048"),
+                             ("stan_posterior", "9.1289", "0.2048")]:
         add(crps, STAN_AV_M, lambda m=model: metric(STAN_AV_M, m, "crps_games"),
             f"stan {model} CRPS")
         add(rho, STAN_AV_M,
             lambda m=model: metric(STAN_AV_M, m, "dispersion_rho"),
             f"stan {model} rho")
-    add("1.0073", STAN_AV_D, lambda: cell(STAN_AV_D, "max_rhat"), "stan R-hat")
-    add("1,399", STAN_AV_D, lambda: cell(STAN_AV_D, "min_ess_bulk"), "stan min ESS")
-    add("366", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
+    add("2.62549", STAN_AV_M, lambda: _av_coef_max("difference"),
+        "largest MLE-to-posterior coefficient gap")
+    add("1.588", STAN_AV_M, lambda: _av_coef_max("z_from_mle"),
+        "largest gap in posterior sds")
+    add("1.00254", STAN_AV_D, lambda: cell(STAN_AV_D, "max_rhat"), "stan R-hat")
+    add("1,502.6", STAN_AV_D, lambda: cell(STAN_AV_D, "min_ess_bulk"), "stan min ESS")
+    add("521", STAN_AV_D, lambda: cell(STAN_AV_D, "wall_clock_s"),
         "stan wall clock")
-    board_rows = [(12, "69.060", "6.499", "0.4%"), (15, "76.810", "7.669", "0.5%"),
-                  (30, "108.652", "13.370", "0.8%"), (150, "242.604", "58.432", "2.9%"),
-                  (883, "589.169", "332.588", "14.8%")]
+    # This doc keeps the port-check line and the whole board table, not the dispersion
+    # vector or the mixture block — those live in `docs/availability-plan.md`.
+    C += _availability_pre_block_claims(
+        NOTES, keep=("9.8237", "9.8195", "9.8239", "0.2245", "0.2261", "0.74165",
+                     "0.597", "1.0073", "1,399", "366") + _AVAIL_PRE_BLOCK_BOARD_TABLE
+                    + ("332.588",))
+    board_rows = [(12, "63.440", "6.748", "0.6%"), (15, "70.610", "7.755", "0.6%"),
+                  (30, "99.980", "13.163", "0.9%"), (150, "223.312", "54.726", "3.0%"),
+                  (883, "542.187", "305.723", "14.8%")]
     for n, indep, shared, infl in board_rows:
         add(indep, STAN_AV_B,
             lambda k=n: cell(STAN_AV_B, "independent_sd", n_players=k),
@@ -3514,11 +3706,12 @@ def _established_facts() -> list[Claim]:
             f"pre-mixture single-component availability head: {quoted}", historical=True)
 
     # the minutes head — validation only since the 2026-08-06 re-run under the lock
-    minutes = [("carry_forward", "161.45", "0.8536", "213.13", "+23.91"),
-               ("linear", "144.71", "0.8826", "199.54", "−3.26"),
-               ("logit_own", "145.45", "0.8819", "200.90", "−2.97"),
-               ("logit_own_quadratic", "144.54", "0.8827", "200.84", "−13.82"),
-               ("logit_own_spline", "143.93", "0.8835", "199.60", "−14.00")]
+    minutes = [("carry_forward", "160.71", "0.8536", "213.13", "+23.91"),
+               ("linear", "137.74", "0.8936", "191.21", "−4.70"),
+               ("logit_own", "138.53", "0.8929", "192.67", "−3.21"),
+               ("logit_own_quadratic", "137.82", "0.8936", "191.89", "−12.19"),
+               ("logit_own_spline", "136.96", "0.8944", "190.69", "−12.24"),
+               ("logit_own_spline__no_preseason", "142.87", "0.8841", "198.71", "−17.09")]
     for name, crps, r2, mae, bias in minutes:
         add(crps, STAN_MIN_M, lambda n=name: cell(STAN_MIN_M, "val_crps", variant=n),
             f"minutes {name} val CRPS")
@@ -3531,12 +3724,23 @@ def _established_facts() -> list[Claim]:
     # The fitted-minus-floor bias gap, which is what reproduced across the split move while
     # the level did not. Derived from two cells rather than quoted flat, so it cannot drift
     # away from the rows it is a difference of.
-    for name, quoted in [("linear", "−27.2"), ("logit_own_spline", "−37.9")]:
+    for name, quoted in [("linear", "−28.6"), ("logit_own_spline", "−36.15")]:
         add(quoted, STAN_MIN_M,
             lambda n=name: (cell(STAN_MIN_M, "val_bias", variant=n)
                             - cell(STAN_MIN_M, "val_bias", variant="carry_forward")),
             f"minutes {name} bias below the floor")
-    add("0.05025", STAN_MIN_D,
+    add("−5.911", STAN_MIN_M,
+        lambda: (cell(STAN_MIN_M, "val_crps", variant="logit_own_spline")
+                 - cell(STAN_MIN_M, "val_crps",
+                        variant="logit_own_spline__no_preseason")),
+        "what the preseason block is worth, integrated over beta")
+    add("136.958", STAN_MIN_M,
+        lambda: cell(STAN_MIN_M, "val_crps", variant="logit_own_spline"),
+        "shipped arm CRPS, six decimals")
+    add("142.869", STAN_MIN_M,
+        lambda: cell(STAN_MIN_M, "val_crps", variant="logit_own_spline__no_preseason"),
+        "control arm CRPS, six decimals")
+    add("0.041894", STAN_MIN_D,
         lambda: cell(STAN_MIN_D, "rho", metric="season_level_rho"),
         "season-level rho")
     add("0.0776", STAN_MIN_D,
@@ -3547,25 +3751,27 @@ def _established_facts() -> list[Claim]:
     add("713,947", STAN_MIN_D,
         lambda: cell(STAN_MIN_D, "n_player_games", metric="game_level_rho"),
         "game-level population")
-    add("1,503", STAN_MIN_G, lambda: total(STAN_MIN_G, "wall_clock_s"),
+    add("1,434", STAN_MIN_G, lambda: total(STAN_MIN_G, "wall_clock_s"),
         "minutes head wall clock")
-    add("1.0054", STAN_MIN_G, lambda: max_of(STAN_MIN_G, "max_rhat"),
+    add("1.00695", STAN_MIN_G, lambda: max_of(STAN_MIN_G, "max_rhat"),
         "minutes head max R-hat")
-    add("+0.0299", STAN_MIN_M,
+    add("+0.0408", STAN_MIN_M,
         lambda: (cell(STAN_MIN_M, "val_r2", variant="logit_own_spline")
                  - cell(STAN_MIN_M, "val_r2", variant="carry_forward")),
         "minutes R2 gain over floor")
-    add("−17.5", STAN_MIN_M,
+    add("−23.75", STAN_MIN_M,
         lambda: (cell(STAN_MIN_M, "val_crps", variant="logit_own_spline")
                  - cell(STAN_MIN_M, "val_crps", variant="carry_forward")),
         "minutes CRPS gain over floor")
-    add("955", STAN_MIN_G,
+    add("509", STAN_MIN_G,
         lambda: cell(STAN_MIN_G, "wall_clock_s", label="logit_own_spline/val"),
         "spline wall clock")
-    add("175", STAN_MIN_G,
+    add("134", STAN_MIN_G,
         lambda: cell(STAN_MIN_G, "wall_clock_s", label="linear/val"),
         "linear wall clock")
     C += _minutes_pre_lock_claims(NOTES)
+    C += _minutes_pre_block_claims(NOTES, keep=tuple(
+        q for q, _ in _MINUTES_PRE_BLOCK if q != "+0.030"))
 
     # the composition, at full window (Gate E, 2026-08-04). `independent_comparator` never
     # trains on the composition window and scores identical rows, so it is invariant and is
@@ -4469,7 +4675,7 @@ def _readme() -> list[Claim]:
     add("10.4%", TERM_SPREAD,
         lambda: term_spread(15, "year") - 1.0,
         "year-effect roster spread at 15 players")
-    add("0.5%", STAN_AV_B,
+    add("0.6%", STAN_AV_B,
         lambda: cell(STAN_AV_B, "inflation", n_players=15) - 1.0,
         "shared-beta roster spread at 15 players")
 
@@ -7300,17 +7506,13 @@ def _preseason_availability() -> list[Claim]:
     for pop, quoted in (("all", "−0.284"), ("draftable", "+0.001")):
         add(quoted, lambda p=pop: _pa("mixture__missing_only", "crps_vs_mixture", p),
             f"the age-split indicator alone, {pop}")
-    add("−0.497", lambda: _pa("mixture__missing_only", "crps_vs_mixture_lo", "all"),
-        "indicator alone, pooled lo")
-    add("−0.072", lambda: _pa("mixture__missing_only", "crps_vs_mixture_hi", "all"),
-        "indicator alone, pooled hi")
     add("−0.152", lambda: _pa("mixture__missing_only", "crps_vs_mixture_lo"),
         "indicator alone, draftable lo")
     add("+0.174", lambda: _pa("mixture__missing_only", "crps_vs_mixture_hi"),
         "indicator alone, draftable hi")
     add("45", lambda: 100.0 * _pa("mixture__missing_only", "crps_vs_mixture", "all")
         / _pa("mixture__volume", "crps_vs_mixture", "all"),
-        "share of the pooled margin the indicator alone carries")
+        "share of the pooled margin the indicator alone carries, validation")
     add("267", lambda: _pa("mixture", "train_loglik") * -1
         + _pa("mixture__volume", "train_loglik"), "training log-likelihood the block buys")
     # Both cross-round ratios are re-derived from §14's artifact rather than restated, so a
@@ -7334,11 +7536,19 @@ def _preseason_availability() -> list[Claim]:
     add("1.84", lambda: _pa("mixture", "boundary_tail_error")
         / _pa("mixture", "boundary_tail_error", "all"),
         "how much larger the defect is on the draft pool")
-    for pop, pred, obs in (("all", "0.0683", "0.0815"), ("draftable", "0.0582", "0.0259")):
-        add(pred, lambda p=pop: _pa("mixture", "pred_below_10", p),
-            f"predicted P(GP < 10), {pop}")
-        add(obs, lambda p=pop: _pa("mixture", "obs_below_10", p),
-            f"observed P(GP < 10), {pop}")
+    # The sign flip, which is the robust half of the population finding — claimed at BOTH
+    # readings, since "it replicates" is the claim and one stale side would break it.
+    for pop, quoted in (("all", "−0.0132"), ("draftable", "+0.0323")):
+        add(quoted, lambda p=pop: _pa("mixture", "err_below_10", p),
+            f"the shipped head's error in P(GP < 10), validation {pop}")
+    for pop, quoted in (("all", "−0.0123"), ("draftable", "+0.0179")):
+        add(quoted, lambda p=pop: _par("mixture", "err_below_10", p),
+            f"the shipped head's error in P(GP < 10), rolling {pop}",
+            artifact=PRE_AV_ROLL)
+    add("0.0582", lambda: _pa("mixture", "pred_below_10"),
+        "predicted P(GP < 10), draftable")
+    add("0.0259", lambda: _pa("mixture", "obs_below_10"),
+        "observed P(GP < 10), draftable")
     add("2.25", lambda: _pa("mixture", "pred_below_10") / _pa("mixture", "obs_below_10"),
         "how much the shipped head over-predicts the dead season on the draft pool")
     add("0.0387", lambda: _pa("mixture", "pred_full_schedule"),
@@ -7426,8 +7636,126 @@ def _preseason_availability() -> list[Claim]:
             artifact=PRE_AV_BLOCK)
     add("772", lambda: _pab("n_rows", "validation draftable"), "draftable validation rows",
         artifact=PRE_AV_BLOCK)
-    add("883", lambda: _pab("n_rows", "validation"), "validation rows",
-        artifact=PRE_AV_BLOCK)
+
+    # ── the rolling half, which is the reading that passes ───────────────────
+    #
+    # Claimed as densely as the validation half, and for a sharper reason than usual: the
+    # round's whole finding is that the two readings differ in RESOLUTION rather than in
+    # sign, and that is a claim about a pair of numbers. A doc that kept one side fresh
+    # would read as either "the block works" or "the block is nothing", and the point is
+    # that neither is what the evidence says.
+    add("−0.2537", lambda: _par("mixture__volume", "crps_vs_mixture"),
+        "primary arm, rolling CRPS against the shipped head", artifact=PRE_AV_ROLL)
+    add("−0.3444", lambda: _par("mixture__volume", "crps_vs_mixture_lo"),
+        "primary, rolling lo", artifact=PRE_AV_ROLL)
+    add("−0.1620", lambda: _par("mixture__volume", "crps_vs_mixture_hi"),
+        "primary, rolling hi", artifact=PRE_AV_ROLL)
+    add("10", lambda: _par("mixture__volume", "origins_won"),
+        "origins the primary arm wins", artifact=PRE_AV_ROLL)
+    add("3,575", lambda: _par("mixture", "n_scored"),
+        "draftable rolling player-seasons", artifact=PRE_AV_ROLL)
+    add("−0.00289", lambda: _par("mixture__volume", "boundary_vs_mixture"),
+        "primary arm's rolling boundary margin", artifact=PRE_AV_ROLL)
+    add("−0.00350", lambda: _par("mixture__volume", "boundary_vs_mixture_lo"),
+        "rolling boundary lo", artifact=PRE_AV_ROLL)
+    add("−0.00224", lambda: _par("mixture__volume", "boundary_vs_mixture_hi"),
+        "rolling boundary hi", artifact=PRE_AV_ROLL)
+    add("0.402", lambda: _pa("gate__mixture__volume", "shrinkage_vs_validation"),
+        "validation as a fraction of the rolling reading")
+
+    # The resolution diagnostic itself — the two half-widths and the row ratio. These are
+    # what separate this round from §12e and §14f, so they are derived from the artifacts
+    # rather than restated.
+    add("0.0912", lambda: (_par("mixture__volume", "crps_vs_mixture_hi")
+                           - _par("mixture__volume", "crps_vs_mixture_lo")) / 2,
+        "rolling interval half-width", artifact=PRE_AV_ROLL)
+    add("0.2219", lambda: (_pa("mixture__volume", "crps_vs_mixture_hi")
+                           - _pa("mixture__volume", "crps_vs_mixture_lo")) / 2,
+        "validation interval half-width")
+    add("4.6", lambda: _par("mixture", "n_scored") / _pab("n_rows",
+                                                          "validation draftable"),
+        "rolling rows over validation rows", artifact=PRE_AV_ROLL)
+
+    # The pooled rolling reading, and the population ratio at that reading.
+    add("−0.721", lambda: _par("mixture__volume", "crps_vs_mixture", "all"),
+        "primary arm, pooled rolling CRPS", artifact=PRE_AV_ROLL)
+    add("−0.830", lambda: _par("mixture__volume", "crps_vs_mixture_lo", "all"),
+        "pooled rolling lo", artifact=PRE_AV_ROLL)
+    add("−0.616", lambda: _par("mixture__volume", "crps_vs_mixture_hi", "all"),
+        "pooled rolling hi", artifact=PRE_AV_ROLL)
+    add("2.8", lambda: _par("mixture__volume", "crps_vs_mixture", "all")
+        / _par("mixture__volume", "crps_vs_mixture"),
+        "pooled / draftable ratio, rolling", artifact=PRE_AV_ROLL)
+    add("−0.367", lambda: _par("mixture__missing_only", "crps_vs_mixture", "all"),
+        "the indicator alone, pooled rolling", artifact=PRE_AV_ROLL)
+    add("51", lambda: 100.0 * _par("mixture__missing_only", "crps_vs_mixture", "all")
+        / _par("mixture__volume", "crps_vs_mixture", "all"),
+        "share of the pooled rolling margin the indicator carries", artifact=PRE_AV_ROLL)
+
+    # The rolling ladder, arm by arm — the ties are the attribution and are claimed as such.
+    for arm, crps, margin in [("mixture", "9.1806", None),
+                              ("mixture__p1_block", "8.8291", "−0.3514"),
+                              ("mixture__volume_centered", "8.8823", "−0.2982"),
+                              ("mixture__participation", "8.9176", "−0.2630"),
+                              ("mixture__volume", "8.9268", None),
+                              ("mixture__volume_pi", "8.9293", "−0.2512"),
+                              ("mixture__missing_only", "9.1405", "−0.0401"),
+                              ("mixture__pi", "9.1444", "−0.0362")]:
+        add(crps, lambda a=arm: _par(a, "crps"), f"{arm} rolling CRPS",
+            artifact=PRE_AV_ROLL)
+        if margin is not None:
+            add(margin, lambda a=arm: _par(a, "crps_vs_mixture"),
+                f"{arm} rolling margin", artifact=PRE_AV_ROLL)
+    for arm, quoted in (("mixture", "0.01846"), ("mixture__volume", "0.01556"),
+                        ("mixture__p1_block", "0.01416")):
+        add(quoted, lambda a=arm: _par(a, "boundary_tail_error"),
+            f"{arm} rolling boundary error", artifact=PRE_AV_ROLL)
+    for arm, quoted in (("mixture", "0.0503"), ("mixture__volume_centered", "0.0287")):
+        add(quoted, lambda a=arm: _par(a, "pit_ks"), f"{arm} rolling PIT KS",
+            artifact=PRE_AV_ROLL)
+    add("1.14", lambda: _par("mixture", "boundary_tail_error")
+        / _par("mixture", "boundary_tail_error", "all"),
+        "how much larger the defect is on the draft pool, rolling", artifact=PRE_AV_ROLL)
+    add("+0.0025", lambda: _par("mixture__volume_pi", "crps_vs_mixture")
+        - _par("mixture__volume", "crps_vs_mixture"),
+        "what the seven pi columns are worth on the rolling harness",
+        artifact=PRE_AV_ROLL)
+
+    # ── the vs-PRIMARY column, added 2026-08-13 — the one that settled which arm ships ──
+    #
+    # `potential-to-dos.md` item 10. Claimed arm by arm rather than only for the winner,
+    # because the round's conclusion is that TWO arms move and the rest are ties, and a tie
+    # is only readable as a tie if its interval is on the page. `volume_centered`'s boundary
+    # row is the load-bearing one: it is the arm that was adopted and withdrawn in a day, and
+    # this is the number that says withdrawing it cost nothing.
+    for arm, crps, lo, hi, won in [
+            ("mixture__p1_block", "−0.0977", "−0.1569", "−0.0408", "8"),
+            ("mixture__volume_centered", "−0.0445", "−0.0919", "+0.0008", "7"),
+            ("mixture__participation", "−0.0093", "−0.0509", "+0.0358", "6"),
+            ("mixture__volume_pi", "+0.0025", "−0.0313", "+0.0349", "6"),
+            ("mixture__missing_only", "+0.2136", "+0.1458", "+0.2769", "0"),
+            ("mixture__pi", "+0.2175", "+0.1429", "+0.2980", "0")]:
+        add(crps, lambda a=arm: _par(a, "crps_vs_primary"),
+            f"{arm} rolling CRPS against the primary", artifact=PRE_AV_ROLL)
+        add(lo, lambda a=arm: _par(a, "crps_vs_primary_lo"),
+            f"{arm} vs primary, lo", artifact=PRE_AV_ROLL)
+        add(hi, lambda a=arm: _par(a, "crps_vs_primary_hi"),
+            f"{arm} vs primary, hi", artifact=PRE_AV_ROLL)
+        add(won, lambda a=arm: _par(a, "origins_won_vs_primary"),
+            f"{arm} origins won against the primary", artifact=PRE_AV_ROLL)
+    for arm, margin, lo, hi in [
+            ("mixture__p1_block", "−0.0014", "−0.0019", "−0.0010"),
+            ("mixture__volume_centered", "+0.0016", "+0.0012", "+0.0020"),
+            ("mixture__participation", "−0.0007", "−0.0010", "−0.0003"),
+            ("mixture__volume_pi", "−0.0011", "−0.0014", "−0.0008"),
+            ("mixture__missing_only", "+0.0013", "+0.0008", "+0.0019"),
+            ("mixture__pi", "−0.0006", "−0.0014", "+0.0002")]:
+        add(margin, lambda a=arm: _par(a, "boundary_vs_primary"),
+            f"{arm} rolling boundary against the primary", artifact=PRE_AV_ROLL)
+        add(lo, lambda a=arm: _par(a, "boundary_vs_primary_lo"),
+            f"{arm} boundary vs primary, lo", artifact=PRE_AV_ROLL)
+        add(hi, lambda a=arm: _par(a, "boundary_vs_primary_hi"),
+            f"{arm} boundary vs primary, hi", artifact=PRE_AV_ROLL)
     return C
 
 

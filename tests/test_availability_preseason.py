@@ -238,17 +238,64 @@ def test_centring_never_pools_across_seasons():
 
 def _gate_frames(val_pass: bool, roll_pass: bool, population: str = "draftable",
                  origins_won: int = 8) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Minimal ladder and rolling tables carrying only what `gate` reads."""
+    """Minimal ladder and rolling tables carrying only what `gate` reads.
+
+    The primary arm's own margins against itself are degenerate zeros, which is exactly
+    what the real artifact carries and what stops `gate` reading the primary as its own
+    challenger.
+    """
     def row(passes: bool, **extra) -> dict:
         return {"arm": AP.PRIMARY_ARM, "population": population,
                 "crps_vs_mixture": -0.05, "crps_vs_mixture_lo": -0.10,
                 "crps_vs_mixture_hi": -0.01 if passes else 0.02,
                 "boundary_vs_mixture": -0.001, "boundary_vs_mixture_lo": -0.002,
                 "boundary_vs_mixture_hi": 0.001,
+                "crps_vs_primary": 0.0, "crps_vs_primary_lo": 0.0,
+                "crps_vs_primary_hi": 0.0, "origins_won_vs_primary": 0,
                 "wins_crps_holds_boundary": passes, **extra}
     validation = pd.DataFrame([row(val_pass)])
     rolling = pd.DataFrame([row(roll_pass, origins_won=origins_won, n_origins=10)])
     return validation, rolling
+
+
+def _challenger_row(name: str, hi: float, origins_won_vs_primary: int,
+                    population: str = "draftable") -> dict:
+    """A rolling row for an arm that may or may not beat the declared primary."""
+    return {"arm": name, "population": population,
+            "crps_vs_mixture": -0.30, "crps_vs_mixture_lo": -0.40,
+            "crps_vs_mixture_hi": -0.20,
+            "boundary_vs_mixture": -0.003, "boundary_vs_mixture_lo": -0.004,
+            "boundary_vs_mixture_hi": -0.002,
+            "crps_vs_primary": -0.10, "crps_vs_primary_lo": -0.20,
+            "crps_vs_primary_hi": hi,
+            "origins_won_vs_primary": origins_won_vs_primary,
+            "n_origins": 10, "origins_won": 9,
+            "wins_crps_holds_boundary": True}
+
+
+def test_a_challenger_counts_only_when_it_beats_the_primary_on_the_fitting_half():
+    """P3's promotion rule, as code.
+
+    An arm preferred after seeing validation is a validation-driven swap; preferred on the
+    rolling harness — every row of which is a fitting-half row — it is a decision the
+    selection split never paid for. Both halves are required: an interval clear of zero
+    AND a majority of origins, because a pooled interval and a win count answer different
+    questions and §14f's 4-of-7 is the coin flip that motivates the second.
+    """
+    validation, rolling = _gate_frames(True, True)
+    beats = pd.concat([rolling, pd.DataFrame([_challenger_row("wider_block", -0.02, 8)])],
+                      ignore_index=True)
+    assert AP.gate(validation, beats)["challenger"] == "wider_block"
+
+    spans_zero = pd.concat(
+        [rolling, pd.DataFrame([_challenger_row("wider_block", +0.05, 8)])],
+        ignore_index=True)
+    assert AP.gate(validation, spans_zero)["challenger"] == ""
+
+    minority = pd.concat(
+        [rolling, pd.DataFrame([_challenger_row("wider_block", -0.02, 4)])],
+        ignore_index=True)
+    assert AP.gate(validation, minority)["challenger"] == ""
 
 
 def test_the_gate_needs_both_halves():

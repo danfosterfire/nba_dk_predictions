@@ -236,17 +236,22 @@ make availability-preseason
                        #   _block}.csv. Eight arms, point MLE, ~1 h, no CmdStan. The block
                        #   goes to two places, `beta` and the disruption weight `pi`,
                        #   because availability-window-plan §14d established those are
-                       #   different questions. THE GATE FAILS on the half it declared:
-                       #   validation CRPS -0.102 [-0.322, +0.121] on the draftable
-                       #   population is a tie, so nothing is ported. What it buys is
-                       #   CALIBRATION — boundary error 0.01998 -> 0.01140 with an interval
-                       #   clear of zero, which is the OTHER bar (§8's D1) and not this
-                       #   round's. TWO THINGS TO KNOW. The pooled reading passes the gate
-                       #   (-0.636 [-0.900, -0.390]) and 6.2x of it is mid-season signings,
-                       #   which is P1's population finding at this head's own unit. And the
-                       #   SHIPPED head's own boundary error is 1.84x larger on the draft
-                       #   pool than on the frame §7 selected it on, with the low-tail error
-                       #   changing sign — potential-to-dos item 9.
+                       #   different questions. THE GATE FAILS, and it fails on the
+                       #   reading that cannot resolve it: validation CRPS -0.102
+                       #   [-0.322, +0.121] on the draftable population spans zero while the
+                       #   rolling harness reads -0.254 [-0.344, -0.162] at 10 OF 10 origins
+                       #   with the boundary held. The bar is a conjunction and it fails, so
+                       #   nothing is ported — but it was written against the opposite
+                       #   failure (§12e, §14f) and has no clause for this one. §14f's own
+                       #   diagnostic says why: the rolling interval is 2.4x NARROWER on
+                       #   4.6x the rows, so what validation lacks is resolution rather than
+                       #   the effect being smaller. TWO THINGS TO KNOW. The pooled reading
+                       #   passes at both readings and 6.2x of it (2.8x rolling) is
+                       #   mid-season signings, which is P1's population finding at this
+                       #   head's own unit. And the SHIPPED head's low-tail error changes
+                       #   SIGN between the two populations at both readings — under-
+                       #   predicting P(GP<10) pooled, over-predicting it on the draft pool
+                       #   — potential-to-dos item 9.
 
 make availability-regime # the last two open axes on the availability head's fitting rule
                        #   → outputs/predictions/availability_{regime,shrinkage,

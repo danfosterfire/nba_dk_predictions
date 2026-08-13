@@ -209,6 +209,55 @@ PI_FEATURES = ["age", "age_sq", "gp_share_lag1", "trailing_missed_lag1",
                "n_spells_lag1", "longest_spell_lag1",
                "playoff_games_lag1", "career_minutes_lag1"]
 
+# ── The preseason block, adopted 2026-08-13 ──────────────────────────────────────────
+#
+# `docs/preseason-plan.md` P2. Current-season preseason games are a legitimate input now
+# that the draft happens after the preseason, and they enter this head as **ten columns on
+# `beta`** — P1's full block: preseason minutes volume, three participation levels, two
+# difference-coded deltas, and the missing-preseason indicator split on P1's own age cells.
+# Zero across the block recovers the head that shipped before today exactly, which is what
+# makes `preseason: false` a real rollback and not a different model.
+#
+# **This is the arm the FITTING HALF selected, and shipping it reverses P1 decision 4** —
+# which said the availability block should be *smaller* than P1's seven columns because a
+# ridge overfit them. At this head's own unit the wider block is better: on the rolling
+# harness it beats the arm declared before the run by −0.0977 CRPS [−0.1569, −0.0408] and
+# −0.0014 of `boundary_tail_error` [−0.0019, −0.0010], both clear of zero, at 8 of 10
+# origins. The promotion rests on the fitting half rather than on validation, which is what
+# keeps it off the selection split.
+#
+# **The whole block is adopted against a gate that FAILED as written**, and that is on the
+# record rather than smoothed over. P2's bar was a conjunction — a validation CRPS interval
+# clear of zero with the boundary held, AND the rolling harness agreeing — and validation
+# could not resolve the arm while the rolling harness passed both halves. The two readings do
+# not conflict: validation's interval contains the rolling estimate and is 2.4x wider on 4.6x
+# fewer rows. The bar was written against the opposite failure and had no clause for this
+# one. The call was taken explicitly by the project owner on 2026-08-13.
+#
+# ⚠️ **A complete preseason is now a production PRECONDITION.** `pre_missed_tail_share` and
+# `pre_played_final_game` are read over the preseason's tail and do not exist until it is
+# over. A centred-volume arm that survives a truncated capture was adopted and withdrawn the
+# same day: the premise behind it — DK contests filling before the final preseason game — was
+# contradicted by the owner's experience drafting after the 2025-26 preseason ended. The
+# runbook's Oct 17-20 window is load-bearing rather than advisory, and if that ever turns,
+# this block is the thing that has to change.
+#
+# ⚠️ Nothing here may be pushed into `availability_design`. Six other modules import that
+# builder — the minutes, composition and games-played heads, the exchangeability and
+# no-prior ladders, and the season-term ablation — and a column that is structurally zero
+# before 2004-05 must not enter any of them by accident. `head_design` below is this head's
+# own path, and the `attach_absence_mix` precedent is the same shape.
+#
+# Held here rather than imported from `availability_preseason`, which reaches
+# `availability_window` -> `season_terms` -> this module: a top-level import is a cycle, the
+# identical reason `PI_FEATURES` is duplicated above. A test pins the two lists equal.
+PRESEASON = True
+
+PRESEASON_COLS = ["pre_log_min", "pre_gp_share", "pre_missed_tail_share",
+                  "pre_played_final_game", "pre_d_mpg", "pre_d_min_share_late",
+                  "pre_missing__<24", "pre_missing__24-27", "pre_missing__28-31",
+                  "pre_missing__32+"]
+
 # Where the chains start on `theta`, one per chain. The point MLE of this likelihood needed
 # **multi-start** — begun at its own nesting point a three-class mixture sat on the bound
 # and reproduced the incumbent to four decimals — so four chains launched from the same
@@ -282,6 +331,68 @@ def availability_design(cfg: dict) -> pd.DataFrame:
 
     design = build_design(frame, seasons, raw_dir, season_start_dates(panel))
     return assert_binomial_support(design)
+
+
+def head_features(preseason: bool | None = None) -> list[str]:
+    """The availability head's feature list — `FEATURE_COLS`, plus the preseason block.
+
+    One expression of it, because five consumers need the same answer: this module's port
+    check, `posteriors.availability_artifact`, `model_cards`, `final_evaluation` and
+    `src/sim/season.py`. A second copy is a place where the persisted recipe and the frame
+    rebuilt against it can disagree, and `model_cards.verify` would be the thing that
+    finally noticed.
+    """
+    on = PRESEASON if preseason is None else bool(preseason)
+    return list(FEATURE_COLS) + (list(PRESEASON_COLS) if on else [])
+
+
+def head_design(cfg: dict, preseason: bool | None = None) -> pd.DataFrame:
+    """`availability_design` plus the preseason block — **this head's path and no other's**.
+
+    Separate from `availability_design` deliberately and permanently. That builder is how
+    six other modules reach their rows, and the preseason columns are structurally zero
+    before 2004-05; putting them there would re-scope the minutes head, the composition
+    head, the games-played spell process, the exchangeability and no-prior ladders and the
+    season-term ablation, none of which asked for them and none of which would raise. The
+    `attach_absence_mix` precedent, applied to a block that actually ships.
+
+    The block is built by `availability_preseason.attach_preseason`, which is the function
+    the P2 ladder itself used — not a reimplementation of it, so the coefficients this head
+    fits are coefficients on the columns that were measured.
+
+    Both guards are assertions rather than fills. A missing column means the panel is stale
+    (`make preseason`), and a NaN means a row reached the head with an undefined block,
+    which under a beta-binomial likelihood is a silent non-fit rather than an error.
+    """
+    design = availability_design(cfg)
+    if not (PRESEASON if preseason is None else bool(preseason)):
+        return design
+
+    # Function-level for the cycle `PRESEASON_COLS` documents, and because a consumer that
+    # only wants the shared builder should not pay for the import.
+    from src.features.availability import load_artifacts
+    from src.models.availability_preseason import attach_preseason
+
+    features_dir = Path(cfg["data"]["features_dir"])
+    panel_path = features_dir / "preseason.parquet"
+    if not panel_path.exists():
+        raise FileNotFoundError(
+            f"{panel_path} is missing and the availability head ships a preseason block — "
+            f"run `make preseason`, or set `stan.availability.preseason: false` to fit the "
+            f"pre-2026-08-13 head exactly.")
+    av_panel, _ = load_artifacts(features_dir)
+    out = attach_preseason(design, pd.read_parquet(panel_path), av_panel,
+                           cfg["data"]["seasons"])
+
+    missing = [c for c in PRESEASON_COLS if c not in out.columns]
+    if missing:
+        raise ValueError(f"`attach_preseason` did not produce {missing}; the panel or the "
+                         f"shipped block list has moved")
+    if out[PRESEASON_COLS].isna().any().any():
+        bad = [c for c in PRESEASON_COLS if out[c].isna().any()]
+        raise ValueError(f"NaN in the shipped preseason block: {bad}. Zero means 'no new "
+                         f"information' and is a *value*; NaN is a build failure.")
+    return out
 
 
 def restrict_window(frame: pd.DataFrame, first_season: str | None) -> pd.DataFrame:
@@ -1108,7 +1219,8 @@ def ladder_row(path: Path, arm: str) -> pd.Series | None:
 def fit_and_score(train: pd.DataFrame, frame: pd.DataFrame, max_games: int,
                   cfg_stan: dict, l2: float, seed: int,
                   first_season: str | None = FIRST_SEASON,
-                  role_rho: bool = ROLE_RHO, mixture: bool = MIXTURE) -> dict:
+                  role_rho: bool = ROLE_RHO, mixture: bool = MIXTURE,
+                  features: list[str] | None = None) -> dict:
     """Fit the point MLEs and the Stan head on `train`, score all four on `frame`.
 
     Split-agnostic on purpose. `run` hands it `(train, validation)`; when the workflow is
@@ -1146,11 +1258,17 @@ def fit_and_score(train: pd.DataFrame, frame: pd.DataFrame, max_games: int,
         gamma_scale=float(cfg_stan.get("availability", {})
                           .get("pi_gamma_scale", GAMMA_SCALE)),
         mu_low_max=float(cfg_stan.get("availability", {})
-                         .get("mu_low_max", MU_LOW_MAX)))
+                         .get("mu_low_max", MU_LOW_MAX)),
+        features=list(features) if features else None)
     fit_rows = stan.fitting_rows(train)
 
     print(f"\nFitting the point MLEs on the same {len(fit_rows):,} windowed rows "
           f"(the reference this ports)...")
+    # NOTE both single-component references keep `FEATURE_COLS`. They are context rows;
+    # the arm this head is a port OF is `mixture_mle`, which takes `stan.features` below and
+    # therefore carries the same preseason block the posterior does. A port check whose
+    # reference had a different design matrix would read a feature change as a port
+    # discrepancy — the argument this module already makes about the fitting window.
     mle = BetaBinomialGLM(l2).fit(fit_rows)
     print(f"  shared rho: converged={mle.converged}, rho={mle.rho:.4f}")
     role_mle = None
@@ -1242,8 +1360,10 @@ def run(cfg: dict) -> dict[str, Path]:
     first_season = cfg_head.get("first_season", FIRST_SEASON)
     role_rho = bool(cfg_head.get("role_rho", ROLE_RHO))
     mixture = bool(cfg_head.get("mixture", MIXTURE))
+    preseason = bool(cfg_head.get("preseason", PRESEASON))
+    features = head_features(preseason)
 
-    design = availability_design(cfg)
+    design = head_design(cfg, preseason)
     train, val = selection_split(design, test_seasons)
     max_games = int(design["team_games"].max())
 
@@ -1253,20 +1373,23 @@ def run(cfg: dict) -> dict[str, Path]:
           f"`make final-evaluation`, through this module's own `fit_and_score`.")
     print(f"  {len(train):,} fit / {len(val):,} score "
           f"({', '.join(sorted(val['season'].unique()))} as validation)")
-    print(f"  {len(FEATURE_COLS)} features, n = max(team_games, gp) — the 13 traded "
+    print(f"  {len(features)} features, n = max(team_games, gp) — the 13 traded "
           f"player-seasons with gp > team_games would otherwise make the summed\n"
           f"  log-likelihood non-finite at every rho, which under HMC poisons the "
           f"trajectory rather than just stopping an optimizer.")
     print(f"  Shipped configuration: fitting window {first_season or 'full'}+, "
           f"dispersion {'graded by prior-MPG role' if role_rho else 'shared'}, "
-          f"likelihood {'2-component mixture' if mixture else 'beta-binomial'} "
-          f"— docs/availability-window-plan.md §4 and §7.\n"
+          f"likelihood {'2-component mixture' if mixture else 'beta-binomial'}, "
+          f"preseason block {'ON' if preseason else 'off'} "
+          f"— docs/availability-window-plan.md §4 and §7, docs/preseason-plan.md P2.\n"
           f"  The window cuts the FITTING rows only; `availability_design` is untouched, "
-          f"because six other\n  modules import it and would be silently re-scoped.")
+          f"because six other\n  modules import it and would be silently re-scoped — and "
+          f"the preseason block reaches this head\n  through `head_design`, which is this "
+          f"head's own path for exactly the same reason.")
 
     scored = fit_and_score(train, val, max_games, cfg_stan, l2, seed,
                            first_season=first_season, role_rho=role_rho,
-                           mixture=mixture)
+                           mixture=mixture, features=features)
     mle, stan, plug_in = scored["mle"], scored["stan"], scored["plug_in"]
 
     metrics = scored["metrics"]
@@ -1398,6 +1521,13 @@ def run_mixture_check(cfg: dict) -> dict[str, Path]:
     seed = int(cfg_stan.get("seed", cfg_av.get("seed", 42)))
     l2 = float(cfg_av.get("glm_l2", 1.0))
 
+    # `availability_design`, NOT `head_design`, and deliberately: this check scores the Stan
+    # mixture against a RECORDED point-MLE ladder row (`availability_likelihood.csv`'s
+    # `mixture`), which was fitted without the preseason block. Carrying the block here
+    # would compare two different design matrices and read a feature change as a port
+    # discrepancy — the same argument this module makes about the fitting window. The
+    # preseason block's own port evidence is `run`'s table, where the reference is a mixture
+    # MLE on the identical columns.
     design = availability_design(cfg)
     train, val = selection_split(design, int(cfg_av.get("test_seasons", 2)))
     max_games = int(design["team_games"].max())

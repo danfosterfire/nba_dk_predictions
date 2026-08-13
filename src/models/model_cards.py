@@ -627,10 +627,15 @@ def availability_frames(cfg: dict, artifacts: dict) -> dict[str, HeadFrames]:
     art = artifacts.get("availability")
     if art is None:
         return {}
-    from src.models.stan_availability import availability_design, restrict_window
+    # `head_design` rather than the shared builder: the card's population anchor compares a
+    # rebuilt frame against the persisted recipe's own feature list, and that list carries
+    # the preseason block this head ships (docs/preseason-plan.md P2). Rebuilding from
+    # `availability_design` would fail `verify` on five missing columns rather than on
+    # anything being wrong.
+    from src.models.stan_availability import head_design, restrict_window
 
     test_seasons = _test_seasons(cfg)
-    train, val = _split_pair(availability_design(cfg), test_seasons)
+    train, val = _split_pair(head_design(cfg), test_seasons)
     train = restrict_window(train, str(art.extras.get("fit_first_season") or "") or None)
     return {"availability": _frames("availability", train, val, train, val,
                                     art.recipe.features)}
@@ -685,12 +690,18 @@ def minutes_frames(cfg: dict, artifacts: dict) -> dict[str, HeadFrames]:
     art = artifacts.get("minutes")
     if art is None:
         return {}
-    from src.models.stan_minutes import SPLINE_KNOTS, build_design, variants
+    # `head_design` plus the covered-window cut, so the rebuilt frame is the one the
+    # persisted recipe describes — the minutes head ships a preseason block and fits from
+    # 2004-05 (docs/preseason-plan.md P3).
+    from src.models.stan_minutes import (SPLINE_KNOTS, covered_fitting_rows, head_design,
+                                         head_features, variants)
 
     test_seasons = _test_seasons(cfg)
     n_knots = int(cfg.get("stan", {}).get("minutes", {}).get("spline_knots", SPLINE_KNOTS))
-    train, val = _split_pair(build_design(cfg), test_seasons)
-    tr, va, features = variants(train, val, n_knots)[art.recipe.variant]
+    train, val = _split_pair(head_design(cfg), test_seasons)
+    train = covered_fitting_rows(train, cfg)
+    tr, va, base_features = variants(train, val, n_knots)[art.recipe.variant]
+    features = head_features(base_features)
     return {"minutes": _frames("minutes", train, val, tr, va, art.recipe.features,
                                ladder_features=features)}
 

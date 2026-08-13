@@ -155,7 +155,7 @@ from src.models.games_played import (EdgeResampler, allocate_spells, edge_blocks
 from src.models.held_out import TEST_SEASONS, assert_unlocked, selection_split
 from src.models.minutes_unification import rehydrate_composition, shipped_sigma
 from src.models.posteriors import load_all, posteriors_dir, require_window
-from src.models.stan_availability import (FIRST_SEASON, availability_design,
+from src.models.stan_availability import (FIRST_SEASON, head_design,
                                           restrict_window, role_bins)
 from src.models.stan_composition import (OFFSET_CLIP, composition_frame, draft_numbers,
                                          simulate_minutes)
@@ -977,7 +977,12 @@ def build_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
                         + np.maximum(row_slot, 0), 0)
 
     # ── the heads ────────────────────────────────────────────────────────────
-    full_avail = availability_design(cfg)
+    # `head_design`, not `availability_design`: the availability head ships a preseason
+    # block (docs/preseason-plan.md P2) and the persisted recipe names those columns, so a
+    # frame built from the shared builder would satisfy every other head here and be five
+    # columns short for this one. The flag lives with the head; `preseason: false` in config
+    # gives back the pre-2026-08-13 frame exactly.
+    full_avail = head_design(cfg)
     avail = full_avail[full_avail["season"] == season].drop_duplicates(
         subset=["player_id"]).set_index("player_id").reindex(player_ids).reset_index()
     present = avail["team_games"].notna().to_numpy()

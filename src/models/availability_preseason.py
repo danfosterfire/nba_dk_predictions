@@ -190,6 +190,29 @@ REFERENCE_ARM = "mixture"
 #: other row is a sensitivity or an attribution on it.
 PRIMARY_ARM = "mixture__volume"
 
+#: What actually ships, and it is **not** the arm declared before the run: the fitting half
+#: selected P1's full block and that is what ships.
+#:
+#: On the rolling harness `p1_block` beats `PRIMARY_ARM` on CRPS at −0.0977
+#: [−0.1569, −0.0408] and on `boundary_tail_error` at −0.0014 [−0.0019, −0.0010] — both
+#: intervals clear of zero, 8 of 10 origins — under P3's promotion rule: an arm preferred
+#: after seeing validation is a validation-driven swap, preferred on the fitting half it is a
+#: decision the selection split never paid for. It **reverses P1 decision 4**, which said
+#: this head's block should be smaller than P1's seven columns because a ridge overfit them.
+#: At this head's own unit the wider block is measurably better.
+#:
+#: ⚠️ **This makes a COMPLETE preseason a production precondition, not a preference.**
+#: `pre_missed_tail_share` and `pre_played_final_game` are read over the preseason's tail and
+#: are undefined until it is over. A centred-volume arm that survives a truncated capture was
+#: adopted and then **withdrawn on 2026-08-13**: the operational premise behind it — that DK
+#: contests might fill before the final preseason game — was contradicted by the owner's own
+#: experience drafting after the 2025-26 preseason ended and securing entries. So the head
+#: takes the better model and the runbook's Oct 17-20 window becomes load-bearing rather than
+#: advisory. What that costs if the premise ever turns: measured 7 days early, 3.4% of
+#: players have no panel row against a ~4.2% base, and two of these ten columns do not exist
+#: at all.
+SHIPPED_ARM = "mixture__p1_block"
+
 #: The population every verdict is read on — P1 decision 5. `all` is written beside it and
 #: is a population statement rather than a model one.
 DECISION_POPULATION = "draftable"
@@ -314,12 +337,27 @@ def score_population(fitted: dict[str, MixtureFrailty], train: pd.DataFrame,
     ref_scores = per_row[reference]
     boundary = _bootstrap_arms(tails, tuple(fitted), reference, reps=BOOTSTRAP_REPS,
                                seed=seed)
+    # And a second set of margins against the DECLARED PRIMARY, so "arm X beats the arm we
+    # said we would ship" is an interval rather than two point estimates read side by side.
+    # `minutes_preseason` carries this and P3 used it to promote an attribution arm on a
+    # fitting-half decision; without it a ladder can only say that two arms both beat the
+    # reference, which is not the same question.
+    vs_primary = _bootstrap_arms(tails, tuple(fitted), PRIMARY_ARM, reps=BOOTSTRAP_REPS,
+                                 seed=seed, suffix="primary")
     for row in rows:
         delta, lo, hi = paired_bootstrap(per_row[row["arm"]], ref_scores, seed=seed)
         row[f"crps_vs_{suffix}"] = delta
         row[f"crps_vs_{suffix}_lo"] = lo
         row[f"crps_vs_{suffix}_hi"] = hi
         row[f"beats_{suffix}"] = bool(hi < 0.0)
+        against = paired_bootstrap(per_row[row["arm"]], per_row[PRIMARY_ARM], seed=seed)
+        row["crps_vs_primary"] = against[0]
+        row["crps_vs_primary_lo"] = against[1]
+        row["crps_vs_primary_hi"] = against[2]
+        row["beats_primary"] = bool(row["arm"] != PRIMARY_ARM and against[2] < 0.0)
+        row.update({k: v for k, v in vs_primary[row["arm"]].items()
+                    if k.endswith(("_vs_primary", "_vs_primary_lo", "_vs_primary_hi"))
+                    or k.startswith("beats_primary_")})
         row["beats_mixture_boundary"] = bool(row["boundary_tail_error"] < MIXTURE_BOUNDARY)
         row.update(boundary[row["arm"]])
         # Both predicates on every row, per §14a. D1 asks for a calibration gain and settles
@@ -387,8 +425,11 @@ def rolling_confirmation(train: pd.DataFrame, max_games: int, first_origin: int,
         cut = {name: {m: v[keep] for m, v in d.items()} for name, d in pooled.items()}
         parts = {name: _rolling_parts(d) for name, d in cut.items()}
         ref_scores = cut[reference]["crps"]
+        primary_scores = cut[PRIMARY_ARM]["crps"]
         margins = _bootstrap_arms(parts, tuple(cut), reference, reps=BOOTSTRAP_REPS,
                                   seed=seed)
+        vs_primary = _bootstrap_arms(parts, tuple(cut), PRIMARY_ARM, reps=BOOTSTRAP_REPS,
+                                     seed=seed, suffix="primary")
         grid = np.linspace(0, 1, 101)
         for name, d in cut.items():
             y, n, org, u = d["y"], d["n"], d["origin"], d["pit"]
@@ -413,6 +454,20 @@ def rolling_confirmation(train: pd.DataFrame, max_games: int, first_origin: int,
                 "shoulder_error": shoulder,
             }
             row.update(margins[name])
+            # Against the declared primary, on the fitting half — the only reading that can
+            # promote an arm over it without spending the selection split on a choice made
+            # after seeing it. P3's rule, and the column P2's first run did not have.
+            against = paired_bootstrap(d["crps"], primary_scores, seed=seed)
+            row["crps_vs_primary"] = against[0]
+            row["crps_vs_primary_lo"] = against[1]
+            row["crps_vs_primary_hi"] = against[2]
+            row["origins_won_vs_primary"] = sum(
+                1 for o in np.unique(org)
+                if d["crps"][org == o].mean() < primary_scores[org == o].mean())
+            row["beats_primary"] = bool(name != PRIMARY_ARM and against[2] < 0.0)
+            row.update({k: v for k, v in vs_primary[name].items()
+                        if k.endswith(("_vs_primary", "_vs_primary_lo", "_vs_primary_hi"))
+                        or k.startswith("beats_primary_")})
             row["d1_passes"] = _d1(row.get(f"boundary_vs_{suffix}_hi", np.nan),
                                    row[f"crps_vs_{suffix}_lo"])
             row["wins_crps_holds_boundary"] = _wins_crps_holds_boundary(
@@ -444,12 +499,15 @@ def gate(validation: pd.DataFrame, rolling: pd.DataFrame, arm: str = PRIMARY_ARM
     roll_pass = bool(roll["wins_crps_holds_boundary"]
                      and roll["origins_won"] * 2 > roll["n_origins"])
 
+    # A challenger is an arm that beats the declared primary **on the fitting half**, with
+    # an interval and a majority of origins. P3's rule: an arm preferred after seeing
+    # validation is a validation-driven swap; preferred on the rolling harness it is a
+    # fitting-half decision and may be carried forward.
     roll_pop = rolling[rolling["population"] == population]
-    beaten = roll_pop[(roll_pop[f"crps_vs_{suffix}"]
-                       < roll_pop.loc[roll_pop["arm"] == arm,
-                                      f"crps_vs_{suffix}"].iloc[0])
-                      & (roll_pop["arm"] != arm) & (roll_pop["arm"] != reference)]
-    best = str(beaten.sort_values(f"crps_vs_{suffix}").iloc[0]["arm"]) if len(beaten) else ""
+    beaten = roll_pop[(roll_pop["arm"] != arm) & (roll_pop["arm"] != reference)
+                      & (roll_pop["crps_vs_primary_hi"] < 0.0)
+                      & (roll_pop["origins_won_vs_primary"] * 2 > roll_pop["n_origins"])]
+    best = str(beaten.sort_values("crps_vs_primary").iloc[0]["arm"]) if len(beaten) else ""
 
     return {
         "arm": arm, "population": population, "reference": reference,
@@ -473,7 +531,12 @@ def gate(validation: pd.DataFrame, rolling: pd.DataFrame, arm: str = PRIMARY_ARM
         "shrinkage_vs_validation": (float(val[f"crps_vs_{suffix}"]
                                           / roll[f"crps_vs_{suffix}"])
                                     if roll[f"crps_vs_{suffix}"] else np.nan),
-        "best_rolling_arm": best,
+        "challenger": best,
+        "challenger_rolling_delta": (float(beaten.iloc[0]["crps_vs_primary"])
+                                     if best else np.nan),
+        "challenger_rolling_hi": (float(beaten.iloc[0]["crps_vs_primary_hi"])
+                                  if best else np.nan),
+        "challenger_confirmed_on_fitting_half": bool(best),
         "passes": bool(val_pass and roll_pass),
         "earns_stan_port": bool(val_pass and roll_pass),
     }

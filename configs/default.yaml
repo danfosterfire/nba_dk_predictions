@@ -238,6 +238,34 @@ stan:
     # single-component head. `make stan-availability-mixture` remains the port check and
     # needs none of that.
     mixture: true
+    # ── The preseason block, adopted 2026-08-13 (docs/preseason-plan.md P2) ──
+    # P1's full TEN columns on `beta` — see `stan_availability.PRESEASON_COLS`: preseason
+    # minutes volume, three participation levels, two difference-coded deltas, and the
+    # missing-preseason indicator split on the age cells P1's census decided. Zero across
+    # the block recovers the head that shipped before this date exactly, so `false` is a
+    # real rollback rather than a different model.
+    #
+    # ⚠️ It is the arm the FITTING HALF selected, not the five-column arm declared before
+    # the run: on the rolling harness it beats that primary at CRPS -0.0977
+    # [-0.1569, -0.0408] and boundary -0.0014 [-0.0019, -0.0010], 8 of 10 origins, which
+    # REVERSES P1 decision 4. Two of its columns are read over the preseason's TAIL, so a
+    # complete preseason is a production precondition and the runbook's Oct 17-20 window is
+    # load-bearing.
+    #
+    # Adopted against a gate that FAILED as written, deliberately and on the record. P2's
+    # bar was a conjunction — a validation CRPS interval clear of zero with the boundary
+    # held, AND the rolling harness agreeing — and validation could not resolve the arm
+    # (-0.102 [-0.322, +0.121] on the draftable population) while the rolling harness
+    # passed both halves at 10 of 10 origins (-0.254 [-0.344, -0.162]). The readings do
+    # not conflict: validation's interval contains the rolling estimate and is 2.4x wider
+    # on 4.6x fewer rows. The bar was written against the opposite failure and had no
+    # clause for this one.
+    #
+    # ⚠️ Reaches the head through `stan_availability.head_design` and NEVER through
+    # `availability_design`, which the minutes, composition, games-played,
+    # exchangeability, no-prior and season-term consumers all import. A column that is
+    # structurally zero before 2004-05 must not enter any of them by accident.
+    preseason: true
     # Normal scale on pi's coefficients. Weakly informative on standardized columns —
     # the point MLE leaves them unpenalized inside a +/-5 box, which has no Bayesian
     # analogue, so this is the one number in the port that is a choice rather than the
@@ -249,6 +277,26 @@ stan:
     mu_low_max: 0.5
 
   minutes:
+    # ── The preseason block, adopted 2026-08-13 (docs/preseason-plan.md P3) ──
+    # Five columns appended to every variant: the SEASON-CENTRED preseason minutes delta
+    # plus the missing-preseason indicator split on P1's age cells. This head's gate
+    # cleared BOTH halves outright — validation CRPS -4.789 [-8.08, -1.59] minutes and the
+    # rolling harness -7.940 [-9.41, -6.44] at 12 of 13 origins, the first block in the
+    # project whose rolling reading is the LARGER one. Centred rather than raw because
+    # preseason minutes are compressed by an amount that varies with the calendar and this
+    # head has no year term to absorb it; centring wins on both readings and takes the
+    # season-total bias from -36.68 to -10.95, better than the incumbent's own -19.24.
+    #
+    # ⚠️ Turning this on also cuts the FITTING rows to 2004-05 onward, because the panel
+    # begins there and this head fits from 1997-98 — otherwise the missing indicator is an
+    # era dummy on 25.9% of them. That cut is worth 1.19 CRPS minutes on its own, priced
+    # separately by P3 so it cannot be credited to the block. `false` restores the
+    # pre-2026-08-13 head — full window, no block — exactly.
+    #
+    # ⚠️ Reaches the head through `stan_minutes.head_design` and NEVER through
+    # `build_design`, which stan_composition, minutes_window, minutes_unification and
+    # minutes_preseason all import.
+    preseason: true
     # Prior-season total minutes required before a row is fitted. Matches the component
     # heads' qualification threshold, where reliability is already ~0.75.
     min_prior_minutes: 200

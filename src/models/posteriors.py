@@ -842,9 +842,10 @@ def availability_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorA
     would let the round-trip pass while checking a quantity the shipped head never publishes.
     """
     from src.models.availability import FEATURE_COLS
-    from src.models.stan_availability import (FIRST_SEASON, MIXTURE, ROLE_BIN_COL,
-                                              ROLE_COL, StanAvailability,
-                                              availability_design, role_edges)
+    from src.models.stan_availability import (FIRST_SEASON, MIXTURE, PRESEASON,
+                                              PRESEASON_COLS, ROLE_BIN_COL, ROLE_COL,
+                                              StanAvailability, head_design, head_features,
+                                              role_edges)
     from src.models.stan_utils import GAMMA_SCALE, MU_LOW_MAX
 
     cfg_stan = cfg.get("stan", {})
@@ -854,8 +855,15 @@ def availability_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorA
     l2 = float(cfg.get("features", {}).get("availability", {}).get("glm_l2", 1.0))
 
     mixture = bool(cfg_head.get("mixture", MIXTURE))
+    # The preseason block reaches the head through `head_design`, which is the availability
+    # head's own path — `availability_design` stays the shared builder six other heads use.
+    # The persisted `features` and `builder` both have to name the wider one, or a consumer
+    # rebuilding a 2026-27 frame would satisfy the recipe it was given and still be missing
+    # five columns the coefficients expect.
+    preseason = bool(cfg_head.get("preseason", PRESEASON))
+    features = head_features(preseason)
 
-    design = availability_design(cfg)
+    design = head_design(cfg, preseason)
     offered, val = windowed(design, window, test_seasons)
     probe = probe_rows(val)
 
@@ -869,7 +877,8 @@ def availability_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorA
         role_rho=bool(cfg_head.get("role_rho", True)),
         mixture=mixture,
         gamma_scale=float(cfg_head.get("pi_gamma_scale", GAMMA_SCALE)),
-        mu_low_max=float(cfg_head.get("mu_low_max", MU_LOW_MAX))).fit(offered)
+        mu_low_max=float(cfg_head.get("mu_low_max", MU_LOW_MAX)),
+        features=features).fit(offered)
     seconds = time.perf_counter() - started
 
     # The rows the head fitted, taken from the head's own `fitting_rows` rather than
@@ -883,9 +892,9 @@ def availability_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorA
         head="availability", head_label="availability", family="betabinomial",
         response="mixture_mean_mu" if model.mixture else "mean_mu",
         variant="mixture" if model.mixture else "base",
-        features=list(FEATURE_COLS), model=model,
+        features=list(features), model=model,
         fit_frame=fit_frame, probe_transformed=probe, probe_raw=probe, steps=steps,
-        builder="src.models.stan_availability.availability_design",
+        builder="src.models.stan_availability.head_design",
         pi_features=list(model.pi_features) if model.mixture else [],
         pi_scaler=getattr(model, "pi_scaler", None) if model.mixture else None,
         extras={"successes": "gp", "trials": "team_games", "dispersion": "rho_draws",
@@ -909,6 +918,11 @@ def availability_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorA
                 # `provenance["first_season"]` either — that one is a *readout* of the
                 # frame's own span, where this is the knob that produced it.
                 "fit_first_season": str(model.first_season or ""),
+                # The preseason axis, recorded the way every other shipped switch on this
+                # head is: a consumer branches on the flag rather than inferring it from
+                # the feature list, and `false` names the pre-2026-08-13 head exactly.
+                "preseason": bool(preseason),
+                "preseason_columns": list(PRESEASON_COLS) if preseason else [],
                 "n_rows_before_truncation": int(len(offered))},
         window=window, cfg_stan=cfg_stan, draws_kept=draws_kept, seconds=seconds)
 
@@ -916,8 +930,9 @@ def availability_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorA
 def minutes_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorArtifact:
     """`min | available`, season-collapsed as successes out of real game length."""
     from src.models.availability import FEATURE_COLS
-    from src.models.stan_minutes import (OWN, SPLINE_KNOTS, StanMinutes, build_design,
-                                         variants)
+    from src.models.stan_minutes import (OWN, PRESEASON, PRESEASON_COLS, SPLINE_KNOTS,
+                                         StanMinutes, covered_fitting_rows, head_design,
+                                         head_features, variants)
 
     cfg_stan = cfg.get("stan", {})
     test_seasons = int(cfg.get("features", {}).get("availability", {})
@@ -925,12 +940,19 @@ def minutes_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorArtifa
     n_knots = int(cfg_stan.get("minutes", {}).get("spline_knots", SPLINE_KNOTS))
     variant = selected_variant(cfg, "stan_minutes_metrics.csv", "logit_own_spline")
 
-    design = build_design(cfg)
+    # `head_design` and the covered-window cut, both for the reason the availability head
+    # takes `head_design`: the block ships on THIS head and `build_design` is how five other
+    # modules reach their rows. The cut is on the fitting frame only and is required by the
+    # block — this head fits from 1997-98 and the panel begins at 2004-05.
+    preseason = bool(cfg_stan.get("minutes", {}).get("preseason", PRESEASON))
+    design = head_design(cfg, preseason)
     fit_frame, val = windowed(design, window, test_seasons)
+    fit_frame = covered_fitting_rows(fit_frame, cfg, preseason)
     probe_raw = probe_rows(val)
 
-    tr, probe, features = variants(fit_frame, probe_raw, n_knots)[variant]
-    steps = _minutes_steps(tr, variant, features, OWN, n_knots)
+    tr, probe, base_features = variants(fit_frame, probe_raw, n_knots)[variant]
+    features = head_features(base_features, preseason)
+    steps = _minutes_steps(tr, variant, base_features, OWN, n_knots)
 
     started = time.perf_counter()
     model = StanMinutes(features, name=f"posteriors/minutes/{variant}",
@@ -944,9 +966,15 @@ def minutes_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorArtifa
         head="minutes", head_label="min|available", family="betabinomial",
         response="mean_mu_x_trials", variant=variant, features=features, model=model,
         fit_frame=fit_frame, probe_transformed=probe, probe_raw=probe_raw, steps=steps,
-        builder="src.models.stan_minutes.build_design",
+        builder="src.models.stan_minutes.head_design",
         extras={"successes": "successes", "trials": "trials",
-                "dispersion": "rho_draws", "base_features": list(FEATURE_COLS)},
+                "dispersion": "rho_draws", "base_features": list(FEATURE_COLS),
+                # The preseason axis, recorded the way the availability head records it: a
+                # consumer branches on the flag rather than inferring it from the columns.
+                "preseason": bool(preseason),
+                "preseason_columns": list(PRESEASON_COLS) if preseason else [],
+                "fit_first_season": (str(min(fit_frame["season"])) if len(fit_frame)
+                                     else "")},
         window=window, cfg_stan=cfg_stan, draws_kept=draws_kept, seconds=seconds)
 
 

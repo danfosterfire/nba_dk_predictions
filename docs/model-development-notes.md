@@ -499,26 +499,35 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     hopeful comparison.** An L2 penalty of `l2` on standardized coefficients *is* a
     `normal(0, 1/sqrt(2·l2))` prior, so the posterior **mode** is exactly the penalized
     optimum `BetaBinomialGLM` finds — `stan_utils.prior_sd_for_l2` is that identity. Measured
-    on the 4,027 **windowed** fitting rows / 883 **validation**: CRPS **9.8195** (Stan
-    plug-in) / **9.8239** (posterior) against the mixture MLE's **9.8237** and the
-    single-component MLE's **9.8444**, ρ **0.2261** vs **0.2245** and **0.2627**, max
-    coefficient gap **0.74165**, largest gap **0.597 posterior sd**, and the MLE inside the
-    95% credible interval for **35/35** terms. R̂ **1.0073**, min ESS 1,399,
-    **0 divergences**, 366 s wall clock over 4 chains.
-    - **⚙️ The head took a 2012-13 fitting window and a role-graded ρ on 2026-08-11, and the
-      low-availability mixture on 2026-08-12** (`docs/availability-window-plan.md` §4 and
-      §7). Every point MLE is refitted on the same windowed rows, or the port check would be
-      comparing two populations rather than two fits. The single-component role-graded block
+    on the 4,027 **windowed** fitting rows / 883 **validation**: CRPS **9.1329** (Stan
+    plug-in) / **9.1289** (posterior) against the mixture MLE's **9.1390** and the
+    single-component MLE's **9.8444**, ρ **0.2048** vs **0.2034** and **0.2627**, max
+    coefficient gap **2.62549**, largest gap **1.588 posterior sd**, and the MLE inside the
+    95% credible interval for **45/45** terms. R̂ **1.00254**, min ESS **1,502.6**,
+    **0 divergences**, 521 s wall clock over 4 chains.
+    - **⚙️ The head took a 2012-13 fitting window and a role-graded ρ on 2026-08-11, the
+      low-availability mixture on 2026-08-12, and a ten-column preseason block on
+      2026-08-13** (`docs/availability-window-plan.md` §4 and §7, `docs/preseason-plan.md`
+      P2). Every point MLE is refitted on the same windowed rows, or the port check would be
+      comparing two populations rather than two fits. The pre-block mixture read CRPS 9.8195 /
+      9.8239 against 9.8237, ρ 0.2261 vs 0.2245, gap 0.74165 at 0.597 sd, 35/35 terms,
+      R̂ 1.0073, min ESS 1,399, 366 s; the single-component role-graded block before it
       read CRPS 9.8136 / 9.8155 against 9.8444, ρ 0.2595 vs 0.2627, gap 0.09352 at 1.658 sd,
-      24/24 terms, R̂ 1.0050, min ESS 2,382, 94 s; the full-window shared-ρ block before it
-      read CRPS 10.0063 / 10.0071 against 10.0057, ρ 0.2808 vs 0.2806, gap 0.00335 at
+      24/24 terms, R̂ 1.0050, min ESS 2,382, 94 s; the full-window shared-ρ block before
+      *that* read CRPS 10.0063 / 10.0071 against 10.0057, ρ 0.2808 vs 0.2806, gap 0.00335 at
       0.085 sd, 21/21 terms, R̂ 1.0019, min ESS 2,314, 196 s.
+      **Three revisions, three widening coefficient gaps, and the gap is not the story** —
+      it lives entirely in `γ`, the mixture weight's unpenalized and weakly identified
+      coefficients, whose posterior sds run 0.50 to 1.69. The preseason block's own ten terms
+      port within **0.08** posterior sd apiece, tighter than anything else in the table.
       **The reference has to be the arm the head is a port OF, and that is now load-bearing
-      rather than pedantic**: referenced against the *single-component* MLE the shipped
-      mixture posterior reads 19/24 with `rho[30+ mpg]` at z = **−6.34**, which measures the
+      rather than pedantic**: referenced against the *single-component* MLE the 2026-08-12
+      mixture posterior read 19/24 with `rho[30+ mpg]` at z = **−6.34**, which measures the
       likelihood change — the mixture takes the disrupted seasons out of the main component,
-      so its ρ falls from 0.2627 to 0.2261 — and says nothing about the port. Against
-      `mixture_mle` every dispersion term agrees to z ≤ 0.29. The exact claim is pinned where
+      so its ρ falls from 0.2627 to 0.2261 — and says nothing about the port. (That reading
+      has not been recomputed since the block shipped, and cannot be: a 24-term reference
+      cannot score a 45-term posterior. What it was built to show is unaffected.) Against
+      `mixture_mle` every dispersion term agrees to z ≤ 0.38. The exact claim is pinned where
       it can be exact: `n_rho = 1` reproduces the shared-ρ target bit for bit on Stan's own
       `log_prob`, and `θ = 0` reproduces the single-component target bit for bit.
     - **⚠️ This block was measured on the held-out seasons until 2026-08-05 and read
@@ -540,14 +549,14 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
 
     | players | independent sd | shared-β sd | inflation |
     |---|---|---|---|
-    | 12 | 69.060 | 6.499 | **+0.4%** |
-    | 15 | 76.810 | 7.669 | +0.5% |
-    | 30 | 108.652 | 13.370 | +0.8% |
-    | 150 | 242.604 | 58.432 | +2.9% |
-    | **883 (whole board)** | 589.169 | 332.588 | **+14.8%** |
+    | 12 | 63.440 | 6.748 | **+0.6%** |
+    | 15 | 70.610 | 7.755 | +0.6% |
+    | 30 | 99.980 | 13.163 | +0.9% |
+    | 150 | 223.312 | 54.726 | +3.0% |
+    | **883 (whole board)** | 542.187 | 305.723 | **+14.8%** |
 
     So it is real for **board-wide exposure across many lineups** and near-irrelevant for a
-    single 15-man team. Quoting the **332.588**-game figure as if it applied to one roster is
+    single 15-man team. Quoting the **305.723**-game figure as if it applied to one roster is
     the over-claim to avoid — it was made and corrected in the session that built this.
     - **⚙️ The 2012-13 window roughly doubled the shared-β term, and it is the one place the
       window is not free.** The full-window head read 69.9 / 4.2 / +0.2% at 12 players and
@@ -564,6 +573,16 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
       term `π(1−π)(m_low − m_main)²` in `predictive_moments` — the extra spread the arm was
       adopted for, reaching the joint rather than only the marginal. Two different sources,
       the same direction, and the same warning attached.
+    - **⚙️ The preseason block is the first change to push back, and it splits by portfolio
+      size.** The pre-block mixture read 69.060 / 6.499 / +0.4% at 12 players and 589.169 /
+      **332.588** / **+14.8%** across the board (76.810 / 7.669 at 15, 108.652 / 13.370 at
+      30, 242.604 / 58.432 / +2.9% at 150). The block cuts the full-board shared-β term to
+      **305.723** — it explains variance the coefficients were carrying, so the posterior on
+      β narrows on unchanged fitting rows — while the *inflation* at 14.8% is unmoved,
+      because the independent term fell by almost the same fraction. On a roster it goes the
+      other way: at 15 players the shared term **rose** (7.669 → 7.755) against an
+      independent term that fell (76.810 → 70.610), so the inflation reads +0.6% rather than
+      +0.5%. The level and the ratio move independently, which is why both columns are kept.
     - **The board is a SIMULATOR INPUT, so validation is where it belongs**, not merely
       where the lock put it. "How much does my whole board move together" is a number the
       simulator is *given*; calibrating it on the seasons the simulator is later backtested
@@ -592,7 +611,7 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     does not exist here, since Stan differentiates exactly.
   - **B-spline bases are badly conditioned for HMC.** The spline variants sample at treedepth
     8 (255 leapfrog steps per iteration) with a step size of 0.011, against treedepth 3–4 for
-    the linear ones — **955 s against 175 s** for the same data on the minutes head. (Both figures were re-measured on 2026-08-08 while the composition head was sampling on the same machine, so they are an UPPER bound on the uncontended cost — the earlier idle-machine pair was 721 s against 171 s. The ratio is the claim; the levels move with whatever else is running.) Valid,
+    the linear ones — **509 s against 134 s** for the same data on the minutes head. (Both figures were re-measured on 2026-08-13 with the preseason block on and the fitting window cut to 2004-05, so they are 6,152 rows rather than 8,306; the pre-block pair on a contended machine was **955** s against **175** s, and the earlier idle-machine one 721 s against 171 s. The ratio is the claim — 3.8× here, 5.5× there — and the levels move with the row count and with whatever else is running.) Valid,
     just expensive; an orthogonalized (QR-whitened) basis is the fix if spline variants ever
     become the shipped spec. (The recorded **899** s / **189** s pair is the same contrast
     on the retired test refits, which ran at double the iterations.)
@@ -600,22 +619,45 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
   real trials denominator.** `min` is successes out of **actual game length**, never 48:
   `data/features/game_length.parquet` supplies it, 5.93% of games go to overtime, and the
   prior attempt's `normal(μ,σ) T[0,48]` needed a `min == 48 → 47.9` fudge *and* discarded
-  every overtime game. Season-collapsed on 9,804 player-seasons (8,306 fit / 742 validation
-  on 2022-23 and 2023-24), `y` = season minutes, `n` = summed game length **over the games he
-  played** — so it is the conditional `min | available` and composes with the availability
-  head rather than double-counting absences. **0 rows clamped by rounding**, realized share
-  max 0.9096.
+  every overtime game. Season-collapsed on 9,804 player-seasons (**6,152** fit / 742
+  validation on 2022-23 and 2023-24), `y` = season minutes, `n` = summed game length **over
+  the games he played** — so it is the conditional `min | available` and composes with the
+  availability head rather than double-counting absences. **0 rows clamped by rounding**,
+  realized share max 0.9096.
+
+  ⚙️ **Since 2026-08-13 every arm carries a five-column preseason block and fits from
+  2004-05** (`docs/preseason-plan.md` P3) — the season-centred preseason minutes delta plus
+  four age-split missing indicators. The window is cut because the preseason panel begins at
+  2004-05 and this head used to fit from 1997-98, which is where 8,306 fitting rows became
+  6,152.
 
   | variant | val CRPS | val R² | val MAE | val bias | selected |
   |---|---|---|---|---|---|
-  | `carry_forward` (no-fit floor) | 161.45 | 0.8536 | 213.13 | **+23.91** | |
-  | linear | 144.71 | 0.8826 | 199.54 | −3.26 | |
-  | `logit(own)` | 145.45 | 0.8819 | 200.90 | −2.97 | |
-  | `logit(own)` + quadratic | 144.54 | 0.8827 | 200.84 | −13.82 | |
-  | **`logit(own)` + spline** | **143.93** | **0.8835** | 199.60 | −14.00 | **✓** |
+  | `carry_forward` (no-fit floor) | 160.71 | 0.8536 | 213.13 | **+23.91** | |
+  | linear | 137.74 | 0.8936 | 191.21 | −4.70 | |
+  | `logit(own)` | 138.53 | 0.8929 | 192.67 | −3.21 | |
+  | `logit(own)` + quadratic | 137.82 | 0.8936 | 191.89 | −12.19 | |
+  | **`logit(own)` + spline** | **136.96** | **0.8944** | 190.69 | −12.24 | **✓** |
+  | `logit(own)` + spline, block removed *(control)* | 142.87 | 0.8841 | 198.71 | −17.09 | |
 
-  Clears the floor by **+0.0299 R² and −17.5 minutes of CRPS**. Max R̂ **1.0054**,
-  **0 divergences** over 4 fits, 1,503 s total.
+  Clears the floor by **+0.0408 R² and −23.75 minutes of CRPS**. Max R̂ **1.00695**,
+  **0 divergences** over 5 fits, 1,434 s total.
+  - **The control row is the only thing in this table that prices the block**, because the
+    window moved at the same time: the shipped variant on the same 6,152 covered rows with
+    the five columns removed. **−5.911 CRPS minutes** integrated over `beta` (136.958 against
+    142.869), against **−4.789** at P3's point MLE. The increment survives the posterior and
+    is slightly larger under it — which is the question P3 explicitly could not answer.
+  - ⚠️ **The floor moved and the fitted arms are not why.** `carry_forward`'s mean is prior
+    minutes share × realized game length and reproduces to the digit (R² 0.8536, MAE 213.13,
+    bias +23.91), but its **dispersion is fitted on the training rows**, and those are now
+    the covered window. 161.45 → 160.71 is that and nothing else. A no-fit floor is no-fit
+    in its mean, not in its spread.
+  - ⚠️ **The pre-block head, kept beside the one it became** (full 1997-98 window, no
+    preseason columns): floor **161.45** / 0.8536 / 213.13 / +23.91, linear **144.71** /
+    **0.8826** / **199.54** / **−3.26**, `logit(own)` **145.45** / **0.8819** / **200.90** /
+    **−2.97**, quadratic **144.54** / **0.8827** / **200.84** / **−13.82**, spline
+    **143.93** / **0.8835** / **199.60** / **−14.00** — clearing the floor by **+0.0299** R²
+    and **−17.5** minutes, max R̂ **1.0054**, 0 divergences over 4 fits, 1,503 s.
   - ⚠️ **This table was a TEST evaluation until 2026-08-06** and read, as
     `val CRPS / test CRPS / test R²`: floor 161.45 / **168.24** / **0.8166**, linear
     **144.62** / **147.18** / **0.8565**, `logit(own)` **145.44** / **147.35** / 0.8565,
@@ -626,21 +668,25 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     them is the split.** The `test_*` columns went because `sweep` no longer writes them;
     the *old* `val_crps` values went because selection was raised from 500/500 to
     full-length chains in the same change, so even the surviving column is a different
-    measurement. Only the floor's **161.45** is arithmetic all the way down and reproduces
-    to the digit.
-  - **The selected variant reproduced, which is what makes this head's selection readable
-    at all.** `logit_own_spline` is still chosen, and it now wins by 0.61 CRPS over the
-    quadratic against 0.69 before — a margin that survived both a change of scored rows and
-    a doubling of chain length. Contrast the season-term ablation, where **9 of 13 heads
+    measurement. Only the floor's **161.45** survived that change to the digit — and it did
+    not survive the 2026-08-13 window cut, for the reason two bullets up.
+  - **The selected variant reproduced twice, which is what makes this head's selection
+    readable at all.** `logit_own_spline` is still chosen — through the split change, through
+    the doubling of chain length, and through the preseason block and its window cut, where
+    it now wins by 0.86 CRPS over the quadratic against 0.61 and 0.69 before. Contrast the
+    season-term ablation, where **9 of 13 heads
     flipped their selected arm** on margins under 1%: an ablation whose winner moves under a
     change that should not touch it is measuring noise, and this one does not move.
   - **The specification answer is the OPPOSITE of the count heads', and that is the finding.**
     There, scale is everything and curvature is nearly nothing. Here the logit scale is a
-    **dead wash** and slightly *worse* on both metrics (val R² 0.8819 against linear's
-    0.8826, val CRPS 145.45 against 144.71), while curvature is what pays. Do not generalize
-    "put it on the link's scale" from the counts to the minutes head.
+    **dead wash** and slightly *worse* on both metrics (val R² 0.8929 against linear's
+    0.8936, val CRPS 138.53 against 137.74), while curvature is what pays. Do not generalize
+    "put it on the link's scale" from the counts to the minutes head. ⚠️ The pre-block
+    reading of that wash was 0.8819 against 0.8826 and 145.45 against 144.71 — same sign,
+    very nearly the same size, which is the check that the preseason block did not change
+    what this bullet is about.
   - **The season-level ρ is NOT the number the simulator needs, and they differ by more than
-    the fit does.** Fitted season-level ρ = **0.05025**; game-level ρ measured separately
+    the fit does.** Fitted season-level ρ = **0.041894**; game-level ρ measured separately
     against each player-season's own mean over 713,947 player-games = **0.0776**, i.e.
     **4.65× binomial** at a 48-minute game. A season total cannot separate a per-game random
     effect from a per-season one — iid game noise is diluted by ~1/G while a shared season
@@ -653,14 +699,21 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
       variance inflation** from `make serial-correlation` for the serial dependence *between*
       games. Using only (2) gives independent draws with the right marginal and too little
       variance in any aggregate; using only (3) gets the clustering right and each game wrong.
+    - ⚠️ **(1) moved with the preseason block and (2) and (3) did not.** The season-level ρ
+      read **0.05025** before 2026-08-13 — about 9% wider than it now is, because the block
+      explains variance the dispersion used to carry. `sim.minutes.player_season_sigma =
+      0.450` was calibrated against the wider one and is therefore stale; re-reading the
+      composition-vs-marginal stake is P5 work and is not done.
   - **⚠️ "The fitted heads carry a −33 to −41 minute bias against the floor's −5.7" is
     WITHDRAWN — that was the held-out column, and on validation the FLOOR is the biased
-    one.** The floor over-predicts by **+23.91** minutes while the fitted arms run **−3.26**
-    (linear) to **−14.00** (spline). So the recorded explanation — "the floor is unbiased
-    because it does not shrink" — is false on the split that selects.
-    - **What reproduces is the GAP, not the level.** The fitted arms sit **−27.2** (linear)
-      to **−37.9** (spline) minutes *below* the floor on validation, against −27.1 to −35.3
-      on the retired held-out column. Shrinkage moves every arm roughly the same distance
+    one.** The floor over-predicts by **+23.91** minutes while the fitted arms run **−3.21**
+    (`logit(own)`) to **−12.24** (spline). So the recorded explanation — "the floor is
+    unbiased because it does not shrink" — is false on the split that selects.
+    - **What reproduces is the GAP, not the level.** The fitted arms sit **−28.6** (linear)
+      to **−36.15** (spline) minutes *below* the floor on validation, against −27.1 to −35.3
+      on the retired held-out column and −27.2 to −37.9 before the preseason block — three
+      readings on three fitting frames, spread over less than the gap itself.
+      Shrinkage moves every arm roughly the same distance
       down from the carry-forward; where that lands in absolute terms is a property of the
       seasons being scored. So the calibration defect is **relative**, it still compounds
       through the eleven component heads that take these minutes as exposure, and it is

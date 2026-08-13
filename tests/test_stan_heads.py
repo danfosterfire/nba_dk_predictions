@@ -855,6 +855,80 @@ def test_pis_covariate_block_is_the_one_the_ladder_selected_on():
     assert PI_FEATURES == PI_COLS
 
 
+def test_the_preseason_block_is_the_arm_the_ladder_selected_on():
+    """The same discipline for the preseason block, and for the same cycle reason.
+
+    `PRESEASON_COLS` is a shipped choice that lands in the persisted recipe, held in
+    `stan_availability` because importing `availability_preseason` at module scope would
+    reach `availability_window` -> `season_terms` -> this module. Two copies of a column
+    list is how a head comes to ship a different model from the one that was measured, so
+    the equality against the P2 ladder's own declared primary is asserted.
+    """
+    from src.models.availability_preseason import ARMS, PRIMARY_ARM, SHIPPED_ARM
+    from src.models.stan_availability import PRESEASON_COLS
+
+    # The SHIPPED arm, which is not the declared primary: `p1_block` was promoted on the
+    # rolling harness (CRPS -0.0977 [-0.1569, -0.0408], boundary -0.0014, 8 of 10 origins),
+    # which is a fitting-half decision rather than a validation-driven swap.
+    assert SHIPPED_ARM != PRIMARY_ARM
+    beta_block, pi_block_cols = ARMS[SHIPPED_ARM]
+    assert PRESEASON_COLS == list(beta_block)
+    # P2 measured the block on `pi` as a loss with an interval (§14d's verdict, reached by
+    # the block with the better prior), so the shipped arm puts nothing there.
+    assert pi_block_cols == []
+
+
+def test_the_minutes_preseason_block_is_the_arm_p3_selected():
+    """P3 decision 2: the shipped column is the SEASON-CENTRED delta plus the age split.
+
+    Pinned against `minutes_preseason`'s own constants rather than retyped, because the
+    centred column is the one an attribution arm won on the fitting half and the raw one is
+    the arm that was declared — shipping the wrong one of those two is a silent reversal of
+    the finding, not a typo.
+    """
+    from src.eda.preseason_value import MISSING_AGE_COLS
+    from src.models.minutes_preseason import CENTERED_DELTA, OWN_DELTA
+    from src.models.stan_minutes import PRESEASON_COLS
+
+    assert PRESEASON_COLS == [CENTERED_DELTA] + list(MISSING_AGE_COLS)
+    assert OWN_DELTA not in PRESEASON_COLS          # the uncentred arm does NOT ship
+    # P3 decision 4: the empirical-Bayes volume shrink is a null worth 0.05 CRPS, so no
+    # shrunk column reaches the head.
+    assert not any(c.endswith("_shrunk") for c in PRESEASON_COLS)
+
+
+def test_the_minutes_shared_builder_never_carries_the_preseason_block():
+    """`build_design` is how `stan_composition`, `minutes_window`, `minutes_unification`
+    and `minutes_preseason` reach their rows. The block is a suffix on the head's own
+    path, so a variant's column order is unchanged when the flag flips."""
+    from src.models.stan_minutes import PRESEASON_COLS, head_features
+
+    base = ["a", "b", "c"]
+    assert head_features(base, False) == base
+    assert head_features(base, True) == base + list(PRESEASON_COLS)
+    assert head_features(base, True)[:len(base)] == base
+
+
+def test_the_shared_design_builder_never_carries_the_preseason_block():
+    """The guard the whole opt-in design rests on, as a property of the column lists.
+
+    `availability_design` is how the minutes, composition, games-played, exchangeability,
+    no-prior and season-term consumers reach their rows. A preseason column there is
+    structurally zero before 2004-05 and would re-scope every one of them silently — the
+    `attach_absence_mix` precedent, and the reason `head_design` exists as a separate path.
+    """
+    from src.models.availability import FEATURE_COLS
+    from src.models.stan_availability import (PRESEASON_COLS, head_features)
+
+    for column in PRESEASON_COLS:
+        assert column not in FEATURE_COLS
+    assert head_features(False) == list(FEATURE_COLS)
+    assert head_features(True) == list(FEATURE_COLS) + list(PRESEASON_COLS)
+    # And the block is a suffix, so a persisted recipe's column order is stable when the
+    # flag flips — a consumer that indexes coefficients positionally keeps working.
+    assert head_features(True)[:len(FEATURE_COLS)] == list(FEATURE_COLS)
+
+
 def _mixture_head(n_draws=1, theta=0.0, mu_low=0.10, rho_low=0.05):
     """A fitted-shaped mixture head, assembled by hand — no sampler, no design build."""
     from src.models.stan_availability import PI_FEATURES, StanAvailability
