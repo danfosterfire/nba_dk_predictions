@@ -7777,4 +7777,98 @@ REGISTRY: tuple[Decision, ...] = (
         date="2026-08-11",
         tags=("head", "simulator"),
     ),
+    Decision(
+        id="absence-composition-buys-the-mean-not-the-boundary",
+        topic="availability",
+        claim="**Telling the head *why* he missed last season's games is real signal and is "
+              "not the boundary fix.** Four share columns are the second-largest CRPS margin "
+              "ever measured on this head — and they close **8.6%** of its boundary error "
+              "where the shipped mixture closes **44.3%**. The CRPS half does not replicate.",
+        because="[[exchangeable-trials-are-invisible-at-the-season-count]] measured that a "
+                "missed game is four processes with opposite role signatures — interior "
+                "scratch, interior injury, a still-rostered edge block, and roster churn — "
+                "and `FEATURE_COLS` carries how MUCH he missed and nothing about WHY. The "
+                "block is last season's composition as **shares** of missed games, never "
+                "counts: the counts sum to `missed_games`, which is `team_games - gp`, which "
+                "is `gp_share_lag1` on a different scale. On validation it reads CRPS "
+                "**9.7515** against the jointly-fitted reference's 9.8125 — **−0.0610** "
+                "[−0.1148, −0.0047], larger than `beta_rect`'s −0.056 and the only such "
+                "margin on this head that is a covariate block rather than a likelihood — "
+                "with PIT KS 0.0667 → **0.0588** and **18.9** training log-likelihood points "
+                "for four columns. **What it does not do is the thing it was built for**: "
+                "`boundary_tail_error` **0.0184** against 0.0201, a margin of −0.00174 "
+                "[−0.00240, −0.00106] that is **91%** of the defect left standing, while "
+                "`body_error` moves the wrong way (0.0107 → 0.0136) on an interval spanning "
+                "zero. **And the CRPS win fails its second reading.** On the rolling-origin "
+                "harness — 7 origins, 2,871 fitting-half rows, origins starting at 2015 "
+                "because the composition does not exist before the 2006-07 backfill — the "
+                "margin is **−0.0105** [−0.0395, +0.0183], the same sign at **5.8×** less "
+                "and an interval reopened across zero, winning 4 of 7 origins. The boundary "
+                "margin replicates in sign at **4.2×** less (−0.000414 [−0.000767, "
+                "−0.000036]) and is **19×** smaller than what `mixture` buys on those same "
+                "rows. So nothing ships: the block is held out of `FEATURE_COLS` and "
+                "`LAG_COLS` on the `WORKLOAD_COLS` precedent, opted into through "
+                "`attach_absence_mix`, and `docs/potential-to-dos.md` item 8 is the one arm "
+                "that would settle it — the block crossed against `mixture`, which is the "
+                "head that actually ships and which this round did not test it against.",
+        status="measured",
+        reproduce="make availability-absence → "
+                  "outputs/predictions/availability_absence.csv, "
+                  "outputs/predictions/availability_absence_interaction.csv, "
+                  "outputs/predictions/availability_absence_block.csv, "
+                  "outputs/predictions/availability_absence_rolling.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("head", "features", "calibration"),
+    ),
+    Decision(
+        id="the-compound-counting-process-is-a-null",
+        topic="availability",
+        claim="**Giving onsets and durations separate parameters inside a `gp` likelihood "
+              "buys exactly nothing.** The compound counting process's MLE *is* the "
+              "incumbent, and its profile shows why: `rho` gives back precisely the variance "
+              "the spells put in.",
+        because="The arm is `missed = sum of K spells` truncated at `n`, with "
+                "`K ~ BetaBinom(n, h, rho_h)` carrying the covariates and "
+                "`L ~ lambda*delta_1 + (1-lambda)*BetaGeom(mu_d, kappa_d)` the duration — "
+                "built so `P(gp = n)` (\"zero onsets all year\") and `P(gp < 10)` (\"one "
+                "absorbing event, early\") stop sharing one mixing distribution. `lambda = 1` "
+                "nests the incumbent **exactly**, by the beta-binomial's `y -> n-y` symmetry "
+                "with `h = 1 - mu`, and `assert_nests` holds it to 1e-8 like every other arm "
+                "on this axis. Fitted freely from three starts it returns to `lambda = 1` "
+                "from all three, landing **0.003** log-likelihood from the reference with a "
+                "boundary margin of −0.0000036 [−0.0000110, +0.0000036] and, on 7 rolling "
+                "origins, **+0.0000001** [−0.0000010, +0.0000013]. **A fit that stops on a "
+                "bound is either the MLE or a stuck optimizer**, so `lambda` was profiled "
+                "with `beta` and the four dispersions refitted at each pinned value: the "
+                "profile is **monotone toward the corner** — −0.03, −0.09, −0.14, then "
+                "**−49.20**, −95.66, −112.77 — so it is the MLE. **And `rho` is where the "
+                "mechanism is visible.** Between 0.9 and 0.5 the arm evades the constraint by "
+                "sending `mu_d`, which IS `P(T = 1)`, to **0.9997**, making the free branch "
+                "degenerate at one game; only below 0.25 does the mean spell rise above one, "
+                "and that is exactly where `rho` starts collapsing — 0.2586 → **0.1772** "
+                "free, and → **0.0393** when the duration is pinned at "
+                "[[exchangeable-trials-are-invisible-at-the-season-count]]'s measured "
+                "0.4871 / 3.8703. That entry derived `C + rho*(n - C)` and predicted this "
+                "**before the arm existed**; the arm that parameterizes clustering most "
+                "directly inside a `gp` likelihood gives back exactly the variance it adds. "
+                "**No further arm on this axis should be built.** One footnote worth its "
+                "own line: the pinned-duration row posts `boundary_tail_error` **0.0087**, "
+                "the best in the document and past `mixture`'s 0.0109, while being 314 "
+                "log-likelihood points worse, tripling `body_error` to 0.0325 and flipping "
+                "the low-tail error's sign to +0.0118 — an overshoot reading as an "
+                "improvement because the selector is an absolute value. It fails both halves "
+                "of D1 on its own intervals (CRPS +0.0892 [+0.0028, +0.1817]; boundary "
+                "−0.0108 [−0.0232, +0.0057]) and is the sixth firing of the standing warning "
+                "that the arms with the best boundary coverage are the worst models.",
+        status="null",
+        reproduce="make availability-absence → "
+                  "outputs/predictions/availability_absence_lambda.csv, "
+                  "outputs/predictions/availability_absence.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("head", "null", "architecture"),
+    ),
 )

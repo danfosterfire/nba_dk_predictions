@@ -8,7 +8,7 @@ PIP    := .venv/bin/pip
         availability availability-profile injury-reports injuries daily-capture \
         boxscore-status availability-model availability-window \
         availability-weighting availability-regime availability-exchangeability \
-        availability-no-prior capture-status \
+        availability-no-prior availability-absence capture-status \
         capture-calendar \
         report-calibration \
         season-total adp adp-draftkings adp-fantasypros adp-panel adp-profile \
@@ -216,6 +216,17 @@ availability-regime:
 # asserts). numpy only, no CmdStan, seconds.
 availability-exchangeability:
 	$(PYTHON) -m src.models.availability_exchangeability
+
+# Two independent attacks on the boundary defect, crossed as ONE 2x2 so their impacts can
+# be told apart. (1) The COVARIATE block: §11b measured that a missed game is four
+# processes with opposite role signatures and the head sees none of it, so this adds last
+# season's absence COMPOSITION as shares. (2) The LIKELIHOOD: a compound counting process,
+# `missed = sum of K spells` with K beta-binomial and the spell length its own
+# beta-geometric, which gives "zero onsets all year" and "one absorbing event, early"
+# different parameters. `lambda = 1` nests the incumbent exactly, and the round profiles
+# it rather than trusting a free fit that stops at the corner. Point MLE, numpy, minutes.
+availability-absence:
+	$(PYTHON) -m src.models.availability_absence
 
 # What the players the head has NO ROW FOR actually realize — rookies and returning
 # veterans, who reach the simulator through `sim/season.no_design_availability` rather than

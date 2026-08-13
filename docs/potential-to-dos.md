@@ -553,3 +553,69 @@ largest and best-estimated of the five — but the *veteran* gap length needs th
 player signed after the draft board is built has no row anywhere. If the graded rate can only
 be applied to a minority of the population, the pooled scalar is doing more work than the
 table suggests.
+
+---
+
+## 8. Cross the absence-composition block against the arm that actually ships
+
+**`docs/availability-window-plan.md` §12 measured the block against `betabinom`, and the head
+that ships is `mixture`.** The block is worth **−0.0610** CRPS [−0.1148, −0.0047] and
+**−0.00174** of `boundary_tail_error` [−0.00240, −0.00106] on the single-component reference.
+Whether either survives on the two-component head is unmeasured, and it is the one thing
+between the block and a port.
+
+### Why this is worth measuring
+
+The two are plausibly redundant and plausibly complementary, and the mechanism says which
+half is which.
+
+`mixture` closes the boundary by giving the disrupted season its own component with a weight
+`π` that carries covariates — age, prior absence, playoff workload — so it already says *who*
+is at risk. The absence-composition block says *why he missed last year*, which is a
+different question about the same players and is not in `PI_COLS`. If the block's signal is
+mostly "this player's absences were injuries rather than scratches, so he is fragile", the
+mixture's `π` may already have it through `trailing_missed_lag1` and `n_spells_lag1`; if it
+is mostly "a fifth of his missed games were games he was not rostered for", nothing in the
+mixture can see it, and §11b says that fifth is real and fringe-driven.
+
+The CRPS half is the less redundant one. The block improves the *mean* function
+(train log-likelihood +18.9, validation R² +0.006, PIT KS 0.0667 → 0.0588) and `mixture` is a
+tie on CRPS by construction — it was selected on calibration with a CRPS guard. So an arm
+carrying both would be the first on this head to hold `mixture`'s boundary **and** a real
+CRPS gain, if the two do not cancel.
+
+### What to compare, and how
+
+Three arms, on the same 883 validation rows, with window, season term and dispersion held at
+the shipped arm as every round on this axis has done:
+
+| arm | what it answers |
+|---|---|
+| `mixture` | the incumbent, already on the table at CRPS 9.8237 / boundary 0.0109 |
+| `mixture + absence_mix` on `β` only | does the block help the mean under a two-component head |
+| `mixture + absence_mix` on `β` **and** `PI_COLS` | does knowing *why* he missed say *who* gets a disrupted season |
+
+The second and third are the real question and they are not the same arm. `π`'s covariate
+list is deliberately short — §7's note is that nineteen more unpenalized parameters on 4,027
+rows would be measuring the `l2` confound rather than the mechanism — so adding four columns
+to `PI_COLS` is a decision to be made against that, not a free extension.
+
+`availability_absence.arm_spec` already builds the feature list; the missing piece is a
+`pi_features` argument on `MixtureFrailty` so the two covariate blocks can move
+independently. Everything else — the ladder, the interaction bootstrap, the rolling harness —
+runs unchanged.
+
+### What would settle it
+
+D1 on the third arm against `mixture`: `boundary_tail_error` no worse, and a CRPS interval
+clear of zero on the good side. That would be the first arm on this head to buy both, and it
+would make the block a port rather than a measurement.
+
+### What would falsify it
+
+The block's margins collapsing under the mixture, which is the likelier outcome and is why
+this is an entry rather than a plan. `mixture` already spends eleven unpenalized parameters;
+four more that duplicate `π`'s information would show up as a CRPS margin whose interval
+reopens across zero. It would also be falsified in a more useful way if the block helped `β`
+and did nothing on `π` — that would say the composition is a mean-function fact rather than a
+disruption-risk fact, and would settle where it belongs if it is ever ported.

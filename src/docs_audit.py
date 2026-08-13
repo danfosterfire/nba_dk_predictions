@@ -192,6 +192,16 @@ ASHRINK = "outputs/predictions/availability_shrinkage.csv"
 ARCONF = "outputs/predictions/availability_regime_confirmation.csv"
 ACLUST = "outputs/predictions/availability_clustering.csv"
 AEXCH = "outputs/predictions/availability_exchangeability.csv"
+# §12's crossed round — `make availability-absence`. Four artifacts, and the split is by
+# what each one protects: the 2x2's arm rows, the same 2x2 read as effects with the
+# interaction as its own row, the compound's `lambda` profile, and the block's own
+# composition. The interaction file is separate rather than folded into the arm table
+# because an effect is a difference between two rows and cannot be a column on either.
+AABS = "outputs/predictions/availability_absence.csv"
+AABS_I = "outputs/predictions/availability_absence_interaction.csv"
+AABS_L = "outputs/predictions/availability_absence_lambda.csv"
+AABS_B = "outputs/predictions/availability_absence_block.csv"
+AABS_R = "outputs/predictions/availability_absence_rolling.csv"
 #: §5b's block-window arm, rebuilt inside `make availability-regime` as the
 #: control the whole shrinkage comparison is read against.
 SPLICE = "splice8__intercept_workload"
@@ -6109,6 +6119,246 @@ def _availability_exchangeability() -> list[Claim]:
     return C
 
 
+
+def _availability_absence() -> list[Claim]:
+    """`docs/availability-window-plan.md` §12 — the absence block crossed with the compound.
+
+    The round is mostly a **null**, and a null needs its losing rows protected more than a
+    win does: the whole point of recording it is that nobody rebuilds the arm, and an audit
+    that only guarded the surviving figure would let the reason rot away from under it.
+
+    Four groups.
+
+    **The block** (§12a). What the four named kinds actually cover, and the mask that
+    removes nothing at the shipped window — asserted in the run rather than assumed, so it
+    is claimed rather than printed.
+
+    **The 2x2** (§12b). Every arm's CRPS, selector and body error, including `mixture`,
+    which is carried as a context row precisely because it never trains on the block and
+    reproduces §7c — a control that would stop meaning anything if it were left unclaimed.
+    Both margin families, because the verdict is "real on CRPS, small on the boundary" and
+    an audit protecting one half would let the other drift.
+
+    **The profile** (§12c/§12d). `lambda`'s grid with `rho` beside it, because §11a's
+    identification argument is the finding and `rho` is where it is visible. The
+    pinned-duration row is claimed on *every* column: it holds the best `boundary_tail_error`
+    in the document while being 314 log-likelihood points worse, and that pair is the sixth
+    firing of §4's warning.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, artifact: str, actual, label: str, **kw) -> None:
+        C.append(_c(quoted, artifact, actual, label, doc=AWIN, **kw))
+
+    def arm(name: str, column: str) -> float:
+        return cell(AABS, column, arm=name)
+
+    def eff(metric: str, effect: str, column: str) -> float:
+        return cell(AABS_I, column, metric=metric, effect=effect)
+
+    def prof(name: str, column: str) -> float:
+        return cell(AABS_L, column, arm=name)
+
+    def blk(statistic: str) -> float:
+        return cell(AABS_B, "value", statistic=statistic)
+
+    # ── §12a: what the block is made of ───────────────────────────────────────
+    add("99.24%", AABS_B, lambda: blk("kinds_share_of_missed"),
+        "share of missed games in the four named kinds")
+    add("4,027", AABS_B, lambda: blk("n_fitting_rows"),
+        "fitting rows at the shipped window", tol=0.5)
+    add("0.00%", AABS_B, lambda: blk("share_fitting_rows_masked"),
+        "share of fitting rows removed by the status-coverage mask")
+
+    # ── §12b: the 2x2, every arm including the two that are the reference twice ──
+    ladder = [
+        ("betabinom", "24", "−16,239.16", "9.8125", "0.0667", "0.0201", "0.0107", "0.0253"),
+        ("betabinom__absence_mix", "28", "−16,220.27", "9.7515", "0.0588",
+         "0.0184", "0.0136", "0.0236"),
+        ("compound", "27", None, "9.8122", None, None, None, None),
+        ("compound__absence_mix", "31", "−16,220.26", "9.7513", None, None, None, None),
+        ("mixture", "35", "−16,174.52", "9.8237", "0.0631", None, "0.0047", "0.0235"),
+    ]
+    for name, params, ll, crps, pit, boundary, body, shoulder in ladder:
+        add(params, AABS, lambda n=name: arm(n, "n_params"), f"{name} parameters", tol=0.5)
+        add(crps, AABS, lambda n=name: arm(n, "val_crps"), f"{name} validation CRPS")
+        for quoted, column in ((ll, "train_loglik"), (pit, "val_pit_ks"),
+                               (boundary, "boundary_tail_error"), (body, "body_error"),
+                               (shoulder, "shoulder_error")):
+            if quoted is not None:
+                add(quoted, AABS, lambda n=name, c=column: arm(n, c), f"{name} {column}")
+    # `mixture`'s selector is quoted at §7c's rounding of the same 0.010850, which is what
+    # makes the control readable beside that table; the tolerance is widened by one digit
+    # rather than the figure being requoted to a different number for the same arm.
+    add("0.0109", AABS, lambda: arm("mixture", "boundary_tail_error"),
+        "mixture boundary error, the context row", tol=0.0001)
+
+    # A margin and its two bounds are three claims, on this file's standing convention: the
+    # interval is what makes the margin a finding rather than a prompt, so it cannot be
+    # protected as a decoration on the point estimate.
+    margins = [("betabinom__absence_mix", "crps_vs_betabinom",
+                ("−0.0610", "−0.1148", "−0.0047"), "CRPS"),
+               ("betabinom__absence_mix", "boundary_vs_betabinom",
+                ("−0.00174", "−0.00240", "−0.00106"), "boundary"),
+               ("compound", "crps_vs_betabinom",
+                ("−0.00035", "−0.00109", "+0.00037"), "CRPS"),
+               ("compound", "boundary_vs_betabinom",
+                ("−0.0000036", "−0.0000110", "+0.0000036"), "boundary"),
+               ("compound__absence_mix", "crps_vs_betabinom",
+                ("−0.0613", "−0.1149", "−0.0050"), "CRPS"),
+               ("compound__absence_mix", "boundary_vs_betabinom",
+                ("−0.00173", "−0.00239", "−0.00105"), "boundary"),
+               ("mixture", "crps_vs_betabinom",
+                ("+0.0112", "−0.0280", "+0.0511"), "CRPS"),
+               ("mixture", "boundary_vs_betabinom",
+                ("−0.00891", "−0.00994", "−0.00420"), "boundary")]
+    for name, column, (point, lo, hi), kind in margins:
+        add(point, AABS, lambda n=name, c=column: arm(n, c), f"{name} {kind} margin")
+        add(lo, AABS, lambda n=name, c=column: arm(n, f"{c}_lo"),
+            f"{name} {kind} margin, lower bound")
+        add(hi, AABS, lambda n=name, c=column: arm(n, f"{c}_hi"),
+            f"{name} {kind} margin, upper bound")
+
+    # The effects table, and the interaction it exists for. The interaction gets both bounds
+    # because "clears zero and is two orders of magnitude below the main effect it is an
+    # interaction with" is the whole reading, and half of it is the interval.
+    for quoted, metric, effect, column in (
+            ("−0.00177", "boundary_tail_error", "absence_mix | betabinom", "delta"),
+            ("+0.00294", "body_error", "absence_mix | betabinom", "delta"),
+            ("−0.00167", "shoulder_error", "absence_mix | betabinom", "delta"),
+            ("+0.0000150", "boundary_tail_error", "interaction", "delta"),
+            ("+0.0000092", "boundary_tail_error", "interaction", "delta_lo"),
+            ("+0.0000200", "boundary_tail_error", "interaction", "delta_hi")):
+        add(quoted, AABS_I, lambda m=metric, e=effect, c=column: eff(m, e, c),
+            f"{metric} effect, {effect} ({column})")
+
+    # The two shares §12b leads on, each a ratio of a pair already claimed above. They are
+    # the sentence "real but small": the block closes a twentieth of what the shipped
+    # mixture closes, and quoting either number without the other would be the finding.
+    add("8.6%", AABS,
+        lambda: (arm("betabinom__absence_mix", "boundary_vs_betabinom")
+                 / -arm("betabinom", "boundary_tail_error")),
+        "block's share of the reference boundary error")
+    add("44.3%", AABS,
+        lambda: (arm("mixture", "boundary_vs_betabinom")
+                 / -arm("betabinom", "boundary_tail_error")),
+        "mixture's share of the reference boundary error")
+    # The multi-start spread, which is the reason the profile exists: §7b reads this column
+    # the other way round on `mixture` and `finite_mix`, and 95 on an arm sitting on its own
+    # bound is what makes "MLE" and "stuck optimizer" indistinguishable from the fit alone.
+    add("95.18", AABS, lambda: arm("compound", "start_loglik_spread"),
+        "compound's multi-start log-likelihood spread")
+    add("0.003", AABS,
+        lambda: abs(arm("compound", "train_loglik") - arm("betabinom", "train_loglik")),
+        "compound's train log-likelihood against the reference", tol=0.0005)
+    add("91%", AABS,
+        lambda: (arm("betabinom__absence_mix", "boundary_tail_error")
+                 / arm("betabinom", "boundary_tail_error")),
+        "boundary error remaining after the block")
+    add("18.9", AABS,
+        lambda: (arm("betabinom__absence_mix", "train_loglik")
+                 - arm("betabinom", "train_loglik")),
+        "training log-likelihood the block buys")
+
+    # ── §12c/§12d: the profile, and the row that is the trap ──────────────────
+    profile = [("compound_lambda1", "1.000", "0.2586", "9.8125", "0.0201", "0.0107"),
+               ("compound_lambda0.25", "1.042", "0.2320", "9.9366", "0.0274", "0.0282"),
+               ("compound_lambda0.1", "1.170", "0.1922", "9.9198", "0.0229", "0.0297"),
+               ("compound_lambda0", "1.238", "0.1772", "9.9144", "0.0214", "0.0302")]
+    for name, spell, rho, crps, boundary, body in profile:
+        for quoted, column in ((spell, "mean_spell"), (rho, "rho_weighted"),
+                               (crps, "val_crps"), (boundary, "boundary_tail_error"),
+                               (body, "body_error")):
+            add(quoted, AABS_L, lambda n=name, c=column: prof(n, c),
+                f"profile {name} {column}")
+    add("−16,553.57", AABS_L,
+        lambda: prof("compound_lambda0_pinned", "train_loglik"),
+        "pinned-duration train log-likelihood")
+    for quoted, column in (("3.129", "mean_spell"), ("0.0393", "rho_weighted"),
+                           ("9.9018", "val_crps"), ("0.0846", "val_pit_ks"),
+                           ("0.0087", "boundary_tail_error"),
+                           ("0.0325", "body_error"), ("0.0478", "shoulder_error"),
+                           ("0.0378", "point_mass_error"),
+                           ("+0.0118", "err_below_10")):
+        add(quoted, AABS_L,
+            lambda c=column: prof("compound_lambda0_pinned", c),
+            f"pinned-duration {column}")
+    # ── §12e: the rolling confirmation, which is where the CRPS win goes ──────
+    #
+    # Both readings of the block are claimed, and the reversal is the reason. A registry
+    # holding only the validation margin would let the doc keep saying "the second-largest
+    # margin ever measured on this head" long after the harness that failed to reproduce it
+    # had drifted.
+    def roll(name: str, column: str) -> float:
+        return cell(AABS_R, column, arm=name)
+
+    add("2,871", AABS_R, lambda: roll("betabinom", "n_scored"),
+        "rolling-harness scored rows", tol=0.5)
+    rolling = [("betabinom", "10.1100", "0.0263", None, None, None),
+               ("betabinom__absence_mix", "10.0995", "0.0259",
+                ("−0.0105", "−0.0395", "+0.0183"),
+                ("−0.000414", "−0.000767", "−0.000036"), "4 / 7"),
+               ("compound", "10.1101", "0.0263",
+                ("+0.000143", "+0.000023", "+0.000267"),
+                ("+0.0000001", "−0.0000010", "+0.0000013"), None),
+               ("compound__absence_mix", "10.0996", "0.0259",
+                ("−0.0103", "−0.0394", "+0.0184"),
+                ("−0.000404", "−0.000757", "−0.000027"), None),
+               ("mixture", "10.1148", "0.0184",
+                ("+0.0048", "−0.0195", "+0.0318"),
+                ("−0.00786", "−0.00821", "−0.00752"), None)]
+    for name, crps, boundary, crps_ci, boundary_ci, _won in rolling:
+        add(crps, AABS_R, lambda n=name: roll(n, "crps"), f"rolling {name} CRPS")
+        add(boundary, AABS_R, lambda n=name: roll(n, "boundary_tail_error"),
+            f"rolling {name} boundary error")
+        for interval, column, kind in ((crps_ci, "crps_vs_betabinom", "CRPS"),
+                                       (boundary_ci, "boundary_vs_betabinom", "boundary")):
+            if interval is None:
+                continue
+            point, lo, hi = interval
+            add(point, AABS_R, lambda n=name, c=column: roll(n, c),
+                f"rolling {name} {kind} margin")
+            add(lo, AABS_R, lambda n=name, c=column: roll(n, f"{c}_lo"),
+                f"rolling {name} {kind} margin, lower bound")
+            add(hi, AABS_R, lambda n=name, c=column: roll(n, f"{c}_hi"),
+                f"rolling {name} {kind} margin, upper bound")
+    add("+0.00101", AABS_R,
+        lambda: roll("betabinom__absence_mix", "shoulder_vs_betabinom"),
+        "rolling block shoulder margin, the sign that flips")
+    # The two multiples §12e leads on, each a ratio of a pair already claimed above.
+    add("5.8×", AABS,
+        lambda: (arm("betabinom__absence_mix", "crps_vs_betabinom")
+                 / roll("betabinom__absence_mix", "crps_vs_betabinom")),
+        "block CRPS margin, validation over rolling")
+    add("19×", AABS_R,
+        lambda: (roll("mixture", "boundary_vs_betabinom")
+                 / roll("betabinom__absence_mix", "boundary_vs_betabinom")),
+        "mixture over block, boundary margin on the rolling rows", tol=0.5)
+    add("4.2×", AABS,
+        lambda: (arm("betabinom__absence_mix", "boundary_vs_betabinom")
+                 / roll("betabinom__absence_mix", "boundary_vs_betabinom")),
+        "block boundary margin, validation over rolling")
+
+    add("15.2%", AABS_L,
+        lambda: prof("compound_lambda0_pinned", "rho_vs_nesting"),
+        "pinned-duration rho against the nesting row")
+    # Both halves of the D1 verdict, as intervals. The point estimates alone would read as
+    # "better boundary, worse CRPS" — the intervals are what turn that into a failure on
+    # both counts, and they are the reason the row is recorded rather than pursued.
+    for quoted, column in (("+0.0892", "crps_vs_nesting"),
+                           ("+0.0028", "crps_vs_nesting_lo"),
+                           ("+0.1817", "crps_vs_nesting_hi"),
+                           ("−0.0108", "boundary_vs_betabinom"),
+                           ("−0.0232", "boundary_vs_betabinom_lo"),
+                           ("+0.0057", "boundary_vs_betabinom_hi")):
+        add(quoted, AABS_L, lambda c=column: prof("compound_lambda0_pinned", c),
+            f"pinned-duration {column}")
+    add("31.5%", AABS_L,
+        lambda: 1.0 - prof("compound_lambda0", "rho_vs_nesting"),
+        "rho collapse from the corner to lambda = 0")
+    return C
+
+
 def _build() -> tuple[Claim, ...]:
     """Every claim, in doc order. One builder per doc — the registry is long enough that
     a single function made it hard to see which doc a section belonged to.
@@ -6120,7 +6370,8 @@ def _build() -> tuple[Claim, ...]:
                  + _established_facts() + _readme() + _shot_basis() + _games_played()
                  + _games_played_in_notes() + _train_validate_test() + _weekly()
                  + _minutes_window() + _availability_window()
-                 + _availability_regime() + _availability_exchangeability())
+                 + _availability_regime() + _availability_exchangeability()
+                 + _availability_absence())
 
 
 CLAIMS: tuple[Claim, ...] = _build()

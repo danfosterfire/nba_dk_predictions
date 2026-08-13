@@ -2401,3 +2401,332 @@ about the head's **denominator** rather than about the layout at all.
    somewhere else.
 6. **The head is unchanged.** `three_point_era` window, no season term, role-graded ρ,
    two-component mixture — §7i, untouched by §10 and untouched by this.
+
+---
+
+## 12. Two attacks on the boundary, crossed — measured 2026-08-12
+
+`make availability-absence` → `availability_absence.csv`,
+`availability_absence_interaction.csv`, `availability_absence_lambda.csv`,
+`availability_absence_block.csv`, `availability_absence_rolling.csv`.
+
+§7 settled that the low tail is a **missing component** rather than a wrong frailty shape,
+and shipped `mixture` on that reading. Two explanations it did not test remained, and they
+are different in kind, so this round runs them as **one 2×2** rather than as two rounds —
+otherwise the expensive one is never priced against the cheap one.
+
+**Axis 1, the covariate block.** §11b measured that a missed game is four processes with
+opposite role signatures, and the head sees none of them: `FEATURE_COLS` carries how *much*
+he missed and nothing about *why*. If the boundary defect is partly a missing-covariate
+problem, it has been wearing a functional-form costume for four rounds.
+
+**Axis 2, a compound counting process.** The head is a scalar latent rate pushed through a
+binomial count, so the whole shape of the `gp` distribution has to be manufactured by one
+number's mixing distribution. `P(gp = n)` is "zero onsets all year" and `P(gp < 10)` is "one
+absorbing event, early", and this arm gives them different parameters:
+
+    missed = sum_{j=1..K} L_j, truncated at n     gp = n - missed
+    K ~ BetaBinom(n, h_i, rho_h)                  onsets; the covariates ride on h
+    L ~ lambda*delta_1 + (1 - lambda)*BetaGeom(mu_d, kappa_d)
+
+At `lambda = 1` every spell is one game, `missed ~ BetaBinom(n, h, rho_h)`, and with
+`h = 1 − μ` that **is** the incumbent by the beta-binomial's `y → n − y` symmetry. So
+`lambda` is a *bounded* parameter rather than a logit, `assert_nests` holds it to the same
+1e-8 as every other arm on this axis, and the duration block is seeded from the interior
+beta-geometric §11b already fitted (`μ_d` 0.4871, `κ_d` 3.8703, mean spell 3.0660).
+
+Window, season term and dispersion are held at the shipped arm exactly as §7 did, and five
+arms is the whole grid.
+
+### 12a. The block, and the one thing that had to be asserted rather than assumed
+
+`availability.ABSENCE_MIX_COLS` is last season's absence composition as **shares of missed
+games** — scratch, inactive, injury, not-rostered. Shares and not counts, because the counts
+sum to `missed_games`, which is `team_games − gp`, which is `gp_share_lag1` on a different
+scale; a count block would be near-collinear with the strongest column already in the head
+and would measure nothing new. The four kinds cover **99.24%** of missed games on the
+covered rows, and a season with no absences gets 0.0 in every share — the only value that
+does not assert a composition the player did not have.
+
+**`status_coverage` is exactly 0.0 before 2006-07, where the missing-by-reason columns are
+structurally ZERO rather than NaN.** Taking shares there would tell the head there were no
+healthy scratches in 1997-98, which is a fact about the backfill wearing the shape of a fact
+about the players — and nothing downstream would catch it, because 0.0 is a valid share. So
+the rows are masked in `absence_mix_shares` before any lagging. At the shipped window the
+mask removes **0.00%** of the **4,027** fitting rows, which is asserted in the run rather
+than assumed: coverage begins at 2006-07 and the window's lag-1 reaches only to 2011-12.
+
+**The block is held out of `FEATURE_COLS` and out of `LAG_COLS`**, on the `WORKLOAD_COLS`
+precedent. `build_design` is imported by `stan_minutes`, `stan_composition`,
+`stan_games_played`, `model_cards`, `sim/season`, `season_terms` and `final_evaluation`;
+a column that does not exist before 2006-07 must not be able to enter any of them by
+accident. A caller opts in through `attach_absence_mix` and widens its own feature list,
+which is what keeps this an ablation rather than a change of head.
+
+### 12b. The 2×2, and the interaction is the point
+
+Observed on the same 883 validation rows §7c uses: P(<10) **0.0815**, P(full) **0.0272**.
+The selector is `boundary_tail_error`; `body_error` and `shoulder_error` sit beside it and
+are **never** averaged in, per §3.
+
+| arm | params | train ll | CRPS | vs `betabinom` [95%] | PIT KS | **boundary err** | body err | shoulder err |
+|---|---|---|---|---|---|---|---|---|
+| `betabinom` *(reference)* | 24 | −16,239.16 | 9.8125 | — | 0.0667 | 0.0201 | 0.0107 | 0.0253 |
+| **`betabinom + absence_mix`** | 28 | **−16,220.27** | **9.7515** | **−0.0610 [−0.1148, −0.0047]** | **0.0588** | **0.0184** | 0.0136 | 0.0236 |
+| `compound` | 27 | −16,239.16 | 9.8122 | −0.00035 [−0.00109, +0.00037] | 0.0667 | 0.0201 | 0.0107 | 0.0253 |
+| `compound + absence_mix` | 31 | −16,220.26 | 9.7513 | −0.0613 [−0.1149, −0.0050] | 0.0588 | 0.0184 | 0.0136 | 0.0236 |
+| `mixture` *(what ships, context)* | 35 | −16,174.52 | 9.8237 | +0.0112 [−0.0280, +0.0511] | 0.0631 | **0.0109** | **0.0047** | 0.0235 |
+
+**The `mixture` row is the control and it reproduces §7c to four decimals** — CRPS 9.8237,
+boundary 0.0109, body 0.0047, all unchanged. It never sees the block, so any drift there
+would have meant the harness moved rather than the arms.
+
+The selector gets its own interval, resampled on the same rows within a replicate because
+`boundary_tail_error` is a non-linear statistic and cannot be averaged from a per-row score:
+
+| arm | boundary err | vs `betabinom` [95%] | clears |
+|---|---|---|---|
+| **`betabinom + absence_mix`** | 0.0184 | **−0.00174 [−0.00240, −0.00106]** | ✅ |
+| `compound` | 0.0201 | −0.0000036 [−0.0000110, +0.0000036] | ❌ |
+| `compound + absence_mix` | 0.0184 | −0.00173 [−0.00239, −0.00105] | ✅ |
+| `mixture` | 0.0109 | −0.00891 [−0.00994, −0.00420] | ✅ |
+
+And the 2×2 read as effects, which is what the round was crossed for
+(`availability_absence_interaction.csv`):
+
+| metric | absence_mix given `betabinom` | absence_mix given `compound` | compound given plain | compound given absence_mix | **interaction** |
+|---|---|---|---|---|---|
+| boundary | −0.00177 [−0.00240, −0.00106] | −0.00176 [−0.00238, −0.00105] | −0.0000037 | +0.0000113 | **+0.0000150 [+0.0000092, +0.0000200]** |
+| body | +0.00294 [−0.00325, +0.00419] | +0.00289 [−0.00321, +0.00415] | +0.0000070 | −0.0000411 | −0.0000481 [−0.0000607, +0.0000501] |
+| shoulder | −0.00167 [−0.00230, +0.00147] | −0.00165 [−0.00229, +0.00144] | −0.0000028 | +0.0000171 | +0.0000200 [−0.0000192, +0.0000263] |
+| CRPS | −0.0610 [−0.1148, −0.0047] | −0.0609 [−0.1147, −0.0044] | −0.000348 | −0.000264 | +0.0000836 [−0.000432, +0.000591] |
+
+**Three readings, and the third is the one that matters.**
+
+**1. The block is real, and what it buys is the mean.** Its CRPS margin of **−0.0610** is
+larger than `beta_rect`'s −0.056 and second only to `finite_mix` K=4's −0.074 among every
+arm ever measured on this head, and it is the **only** one of them that is a covariate
+block rather than a likelihood. Four columns are worth **18.9** training log-likelihood
+points and +0.006 of validation R². PIT KS improves from 0.0667 to **0.0588**. That is a
+genuinely better mean function, and §11b is why: the composition of last season's absences
+says something about next season's availability that the volume does not.
+
+**2. And it does not fix the boundary.** −0.00174 is **8.6%** of the reference's boundary
+error, against `mixture`'s **44.3%**. Both ends move the right way and neither moves far:
+P(GP < 10) goes −0.0253 → −0.0246 and P(full) +0.0150 → +0.0121. Meanwhile `body_error`
+goes the *wrong* way, 0.0107 → 0.0136, on an interval that spans zero — so the block does
+not repeat §4's failure mode, but it does not escape the pattern either: a better mean
+function buys a little of both ends and moves the middle around.
+
+**So the boundary defect was not a missing-covariate problem wearing a functional-form
+costume.** That was the hypothesis worth the hour, and it is now answered: the head can be
+told *why* he missed last season's games and it still misses both ends of its own
+distribution by **91%** of what it missed them by before.
+
+**3. The interaction is nil, because one axis contributed nothing.** +0.0000150 on the
+boundary is an interval that clears zero and is **118× smaller** than the main effect it is
+an interaction with — the arithmetic residue of an arm that reproduces its own nesting
+point, not a finding. Every other metric's interaction interval spans zero. The two axes
+are additive because only one of them is an axis.
+
+### 12c. The compound is a null, and its own profile says why
+
+**The free fit's MLE is `lambda = 1`, which is the incumbent.** Started from three points —
+the nesting corner and two live spell mixtures at 0.5 and 0.1 — the corner is the best of the
+three, and its fitted log-likelihood lands **0.003** from the reference's own. Its predictive
+is the reference's predictive to five decimal places; its CRPS margin is −0.00035 [−0.00109,
++0.00037] and its boundary margin is −0.0000036 [−0.0000110, +0.0000036]. Three extra
+parameters bought nothing at all.
+
+**But the three starts do *not* agree, and that is why the corner cannot be believed on its
+own.** `start_loglik_spread` reads **95.18** — the two live starts converge to points up to
+95 log-likelihood points worse. §7b introduced that column to read the other way, where
+`mixture` and `beta_rect` spread by 0.007 and 0.002 and are demonstrably not multimodal
+while `finite_mix` spreads by 21.9 and is. A spread of 95 on an arm that lands on its own
+bound is precisely the configuration in which "this is the MLE" and "this optimizer got
+stuck" are indistinguishable.
+
+**So the boundary fit has to be settled by something other than the fit.** `lambda` is
+profiled: pinned across a grid with `beta` and the four dispersions refitted around it
+(`availability_absence_lambda.csv`). The profile is what turns the boundary fit into a
+finding.
+
+| `lambda` | duration | train ll | ll vs best | mean spell | `μ_d` | **ρ** (pop-weighted) | CRPS | boundary err | body err |
+|---|---|---|---|---|---|---|---|---|---|
+| **1.00** | free | **−16,239.16** | **0.00** | 1.000 | *(unidentified)* | 0.2586 | 9.8125 | 0.0201 | 0.0107 |
+| 0.90 | free | −16,239.19 | −0.03 | 1.000 | 0.9997 | 0.2586 | 9.8127 | 0.0201 | 0.0107 |
+| 0.75 | free | −16,239.25 | −0.09 | 1.000 | 0.9997 | 0.2587 | 9.8127 | 0.0201 | 0.0107 |
+| 0.50 | free | −16,239.30 | −0.14 | 1.000 | 0.9997 | 0.2585 | 9.8122 | 0.0201 | 0.0107 |
+| 0.25 | free | −16,288.36 | **−49.20** | 1.042 | 0.9465 | 0.2320 | 9.9366 | 0.0274 | 0.0282 |
+| 0.10 | free | −16,334.82 | −95.66 | 1.170 | 0.8411 | 0.1922 | 9.9198 | 0.0229 | 0.0297 |
+| 0.00 | free | −16,351.93 | −112.77 | 1.238 | 0.8082 | 0.1772 | 9.9144 | 0.0214 | 0.0302 |
+| 0.00 | **pinned at §11b's measured shape** | −16,553.57 | **−314.41** | **3.129** | 0.4871 | **0.0393** | 9.9018 | **0.0087** | **0.0325** |
+
+**Three things fall out, and the second is the one worth keeping.**
+
+**1. The profile is monotone toward the nesting point.** There is no interior optimum, so
+`lambda = 1` is the MLE rather than a stopping artifact, and the ladder's null is the
+model's rather than the optimizer's.
+
+**2. `ρ` absorbs the trade, which is §11a's identification argument arriving as a number.**
+§11a established that clustering `C` and frailty `ρ` enter a `gp` likelihood only through
+`C + ρ(n − C)`, so they are **not separately identified** and a fit will simply route
+clustering into `ρ`. That is exactly what the profile shows: the rows where the spells
+genuinely lengthen are the rows where `ρ` falls, from **0.2586** at the corner to **0.1772**
+at `lambda = 0` — a **31.5%** collapse — while the log-likelihood pays 112.76 points for the
+privilege. Longer spells put variance in; `ρ` takes the same variance straight back out; the
+fit ends up worse than where it started. §11a predicted this **prospectively**, before the
+arm existed, and it is a sharper confirmation than the five already-fitted games-played arms
+that agreed with it retrospectively.
+
+**3. `lambda` alone does not parameterize spell length, and the arm says so by evading.**
+Between 0.5 and 0.9 the fit sends `μ_d` — which *is* `P(T = 1)` — to **0.9997**, making the
+free branch degenerate at one game and reproducing the corner from inside the constraint.
+The likelihood barely moves (−0.03 to −0.14) because nothing actually changed. Only at
+`lambda ≤ 0.25`, where the point mass is too small to hide behind, does the mean spell rise
+above one, and that is precisely where the likelihood falls off a cliff. **The `gp`
+likelihood wants single-game spells**: given a completely free duration block at
+`lambda = 0` it fits a mean spell of **1.237** games against the **3.0660** §11b measured on
+this same population. Pinning the duration at what was actually measured — the last row of
+the artifact, `lambda = 0` with `μ_d` and `κ_d` held at 0.4871 / 3.8703 — is the arm that is
+not allowed to evade, and it is the worst row on the table.
+
+### 12d. The last row is the trap §4 warned about, and it is the sixth firing
+
+**The arm that is not allowed to evade posts the best `boundary_tail_error` ever measured
+on this head, and it is by a distance the worst model on the table.** Pinned at
+`lambda = 0` with `μ_d` and `κ_d` held at §11b's measured 0.4871 / 3.8703, the compound
+finally produces real spells — mean length **3.129** against the 3.0660 it was pinned to —
+and its boundary error falls to **0.0087**, past `mixture`'s 0.0109 and less than half the
+reference's 0.0201.
+
+Everything else about it is a wreck:
+
+| | reference | pinned-duration compound |
+|---|---|---|
+| train log-likelihood | −16,239.16 | **−16,553.57** (−314.41) |
+| CRPS | 9.8125 | **9.9018** |
+| PIT KS | 0.0667 | 0.0846 |
+| **boundary err** | 0.0201 | **0.0087** |
+| body err | 0.0107 | **0.0325** |
+| shoulder err | 0.0253 | **0.0478** |
+| point-mass err | 0.0109 | **0.0378** |
+| ρ (pop-weighted) | 0.2586 | **0.0393** |
+| err P(GP < 10) | −0.0253 | **+0.0118** |
+
+**The boundary "win" is a sign flip, not a correction.** The reference under-predicts
+P(GP < 10) by 0.0253; this arm *over*-predicts it by 0.0118. It has not learned where the
+low tail is — it has overshot it, and `boundary_tail_error` is an absolute value, so
+overshooting by half as much as you used to undershoot reads as an improvement. Every
+regional metric that can see the rest of the distribution says what actually happened: the
+body error triples, the shoulder nearly doubles, the point masses more than triple, and
+`ρ` collapses to **15.2%** of its nesting value because the imposed spell length has taken
+over the whole variance budget.
+
+**§4's warning has now fired six times, and this is the cleanest instance of it.** "The
+arms with the best boundary coverage were the worst models" was found on the season trend,
+replicated on `logitnormal`, on `beta_rect`'s shoulder, on the shrinkage family and on the
+regime arms; here it arrives with a *−314 log-likelihood* arm holding the best selector
+value in the document.
+
+**Under D1 it fails both halves, and the intervals are what say so.** Its CRPS margin is
+**+0.0892 [+0.0028, +0.1817]** against the nesting row — an interval entirely on the wrong
+side of zero, so the loss is *established* rather than excluded, which is precisely the guard
+D1's second half is. And the selector gain it is supposed to be paying for does not survive
+its own interval either: **−0.0108 [−0.0232, +0.0057]** spans zero. A single sign-flipped
+tail moves the point estimate a long way and the bootstrap a little, which is what a
+non-linear statistic on 883 rows does when one of its two terms crosses.
+
+*(Two rows of the profile carry `d1_passes = True` — `lambda` 0.75 and 0.50 — on boundary
+margins of −0.000032 and −0.000011. Those are the incumbent to five decimal places on every
+column, and the rule has no materiality floor on its calibration half. They are an artifact
+of applying a shipping predicate to a profile grid, not two arms worth looking at.)*
+
+**And the boundary never improves at any `lambda` the model is allowed to choose.** 0.0201
+at the corner, 0.0274 at 0.25, 0.0214 at 0.0 — every setting the likelihood would pick makes
+the selector *worse*. The only setting that improves it is the one imposed from outside, and
+that one is not a model of these data.
+
+### 12e. The rolling confirmation — and the block's CRPS win does not survive it
+
+§10e is the standing rule: a fresh winner is treated as failing until it replicates, because
+validation has reversed four arms that won on a single reading. The harness is §4b's, run on
+the **fitting half only** — an origin walks across the training seasons, each arm fits on the
+eight seasons before it and scores the origin season itself.
+
+**The origins start at 2015 rather than §7's 2009, and the block is why.** The absence
+composition does not exist before the 2006-07 box-score backfill, so at a lookback of 8 the
+earliest origin whose whole fitting window carries it is 2007 + 8. Restricting the *origins*
+rather than dropping rows is what keeps all five arms on identical rows; an arm fitted on a
+different population would be a confound rather than a comparison. Seven origins, **2,871**
+scored player-seasons.
+
+| arm | CRPS | vs `betabinom` [95%] | origins won | **boundary err** | vs `betabinom` [95%] | body err | shoulder err |
+|---|---|---|---|---|---|---|---|
+| `betabinom` *(reference)* | 10.1100 | — | — | 0.0263 | — | 0.0017 | 0.0211 |
+| `betabinom + absence_mix` | **10.0995** | −0.0105 [−0.0395, +0.0183] | 4 / 7 | 0.0259 | −0.000414 [−0.000767, −0.000036] | 0.0018 | 0.0221 |
+| `compound` | 10.1101 | +0.000143 [+0.000023, +0.000267] | 4 / 7 | 0.0263 | **+0.0000001 [−0.0000010, +0.0000013]** | 0.0017 | 0.0211 |
+| `compound + absence_mix` | 10.0996 | −0.0103 [−0.0394, +0.0184] | 4 / 7 | 0.0259 | −0.000404 [−0.000757, −0.000027] | 0.0018 | 0.0221 |
+| `mixture` *(context)* | 10.1148 | +0.0048 [−0.0195, +0.0318] | 3 / 7 | **0.0184** | **−0.00786 [−0.00821, −0.00752]** | 0.0152 | 0.0109 |
+
+**Two of the round's three readings reverse, and the third does not move at all.**
+
+**The CRPS win is not confirmed.** −0.0610 [−0.1148, −0.0047] on validation becomes
+**−0.0105 [−0.0395, +0.0183]** here: the same sign, **5.8× smaller**, and an interval that
+reopens across zero. Four origins of seven is a coin flip. Under §10e that is an arm which
+**fails until re-confirmed**, and it is the fifth time on this head that a single-reading
+winner has shrunk on the second instrument.
+
+**The boundary win replicates in sign and is marginal in size.** −0.000414 [−0.000767,
+−0.000036] clears zero on the correct side, at **4.2×** less than the validation reading —
+and, on these same rows, **19×** less than what `mixture` buys (−0.00786 [−0.00821,
+−0.00752]). So the second reading agrees with the first about the *conclusion*: the
+composition moves the boundary, and it moves it by a twentieth of what the arm that already
+ships moves it by.
+
+**The shoulder flips sign**, from −0.00167 on validation to **+0.00101** here, on intervals
+that span zero at both readings. §7f is the standing note that a shoulder sign which does not
+replicate is not a result; the block's does not.
+
+**And the compound is nil to six decimal places.** Its boundary margin is
+**+0.0000001 [−0.0000010, +0.0000013]** — an arm returning its own nesting point at every one
+of seven origins. Its CRPS margin of +0.000143 [+0.000023, +0.000267] technically clears
+zero *in the wrong direction*, which is the alternating optimizer stopping a hair short of
+the corner rather than a model doing anything. Both readings, both harnesses, the same null.
+
+### 12f. What this settles
+
+1. **The boundary defect is not a missing-covariate problem.** The head can now be told the
+   *composition* of last season's absences — the four processes §11b separated, with
+   opposite role signatures — and it still misses both ends of its own distribution by 91%
+   of what it missed them by before. The functional-form reading §7 arrived at stands, and
+   it now stands against a direct test rather than by elimination.
+2. **The compound counting process is a null, and it is a null with a mechanism.** Its MLE
+   is the incumbent at `lambda = 1`; the profile is monotone toward that corner; and the
+   rows where the spells genuinely lengthen are the rows where `ρ` collapses to absorb them,
+   from 0.2586 to 0.1772 free and to **0.0393** when the measured spell shape is imposed.
+   **This is §11a's identification argument confirmed prospectively.** §11a derived that
+   clustering and frailty enter a `gp` likelihood only through `C + ρ(n − C)` and so are not
+   separately identified — before this arm existed. The arm that parameterizes clustering
+   most directly inside a `gp` likelihood returns the incumbent, and gives back exactly the
+   variance it puts in. **No further arm on this axis should be built**, and that is now a
+   measured statement rather than an inference from five games-played arms that were built
+   for something else.
+3. **The absence-composition block is real signal and it is unconfirmed.** −0.0610 CRPS on
+   validation is the second-largest margin ever measured on this head and the only one from
+   a covariate block rather than a likelihood; on the rolling harness it is −0.0105 with an
+   interval spanning zero. It does not ship from here, and the reason is §10e rather than a
+   judgement.
+4. **What it would take is one more arm, and it is not this round's.** The block was crossed
+   against `betabinom`; the head that ships is `mixture`. Whether either margin survives the
+   two-component head — and whether the composition belongs on `β`, on `π`, or on both — is
+   unmeasured, and it is the only thing between the block and a port. `docs/potential-to-dos.md`
+   item 8.
+5. **§4's warning fired for the sixth time, from a new direction.** The arm with the best
+   `boundary_tail_error` in this entire document (**0.0087**, past `mixture`'s 0.0109) is a
+   compound pinned at the measured spell shape, 314 log-likelihood points worse than the
+   incumbent, whose low-tail error has flipped sign rather than closed. It fails both halves
+   of D1 on its own intervals. **The selector still needs the body column beside it**, and
+   this is the most expensive demonstration of that yet.
+6. **The head is unchanged.** `three_point_era` window, no season term, role-graded ρ,
+   two-component mixture — §7i, untouched by §10, §11 and this.

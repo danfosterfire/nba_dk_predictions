@@ -146,6 +146,15 @@ def _frailty_frame(n_rows: int = 400, seed: int = 0) -> pd.DataFrame:
     Plain builders and no fixtures, mirroring `tests/test_preprocess.py`. The columns are
     the ones `FEATURE_COLS` and `PI_COLS` actually read; nothing here has to be realistic,
     only well-conditioned enough that the alternating fit converges.
+
+    **The counts are OVERDISPERSED, and that is load bearing.** Drawing them from a plain
+    binomial leaves nothing for `rho` to fit, so every arm here lands on the `RHO_MIN = 1e-6`
+    guard rail — where the shape parameters reach ~1e6 and `scipy.stats.betabinom.pmf`
+    itself carries ~5e-9 of relative error, because it evaluates two log-betas of magnitude
+    1e6 that cancel to a number of order one. The nesting assertions below are equalities
+    against that function, so at the guard rail they would be measuring the *yardstick*.
+    A frailty draw of the same shape the arms assume puts `rho` at ~0.05 instead, which is
+    also what the head actually fits.
     """
     from src.models.availability import FEATURE_COLS
     from src.models.availability_window import PI_COLS
@@ -157,8 +166,9 @@ def _frailty_frame(n_rows: int = 400, seed: int = 0) -> pd.DataFrame:
     frame["minutes_per_game_lag1"] = mpg
     frame["team_games"] = 82
     frame["season"] = np.where(np.arange(n_rows) % 2 == 0, "2018-19", "2019-20")
-    mu = 0.45 + 0.012 * mpg
-    frame["gp"] = rng.binomial(82, np.clip(mu, 0.02, 0.98))
+    mu = np.clip(0.45 + 0.012 * mpg, 0.02, 0.98)
+    scale = (1.0 - 0.05) / 0.05
+    frame["gp"] = rng.binomial(82, rng.beta(mu * scale, (1.0 - mu) * scale))
     return frame
 
 
@@ -565,3 +575,200 @@ def test_l2_confound_counts_the_parameters_the_penalty_never_reaches():
     # And the ordering is the one §7d states: mixture carries the most, the control one.
     assert (L2_UNPENALIZED["mixture"] > L2_UNPENALIZED["finite_mix"]
             > L2_UNPENALIZED["beta_rect"] > L2_UNPENALIZED["betabinom"])
+
+
+# ── §12: the absence-composition block and the compound counting process ──────
+#
+# `src/models/availability_absence.py` crosses a covariate block against a likelihood, and
+# both halves are pinned here rather than in a file of their own because they extend the
+# same axis these tests already cover: the arm has to reproduce the head it nests, and the
+# block has to stay outside the design every other head reaches its rows through.
+
+def test_absence_mix_shares_are_nan_where_the_backfill_has_no_coverage():
+    """The reason columns are structurally ZERO before 2006-07, not missing.
+
+    `missed_decomposition` routes every absence to `missed_unknown` where the box-score
+    backfill has not run, so the four named kinds are exactly 0 there. Taking shares without
+    masking would tell the head there were no healthy scratches in 1997-98 — a fact about
+    the backfill wearing the shape of a fact about the players, and one that no downstream
+    assertion would catch because 0.0 is a perfectly valid share.
+    """
+    from src.models.availability import ABSENCE_MIX_SHARE_COLS, absence_mix_shares
+
+    frame = pd.DataFrame({
+        "season": ["2000-01", "2015-16"], "player_id": [7, 7],
+        "missed_games": [20, 20], "missed_scratch": [0, 5], "missed_inactive": [0, 10],
+        "missed_injury": [0, 2], "missed_not_rostered": [0, 3],
+        "status_coverage": [0.0, 1.0]})
+    shares = absence_mix_shares(frame)
+
+    assert shares.loc[0, ABSENCE_MIX_SHARE_COLS].isna().all()
+    assert shares.loc[1, ABSENCE_MIX_SHARE_COLS].notna().all()
+    assert np.isclose(shares.loc[1, "missed_inactive_share"], 0.5)
+    assert np.isclose(shares.loc[1, "missed_not_rostered_share"], 0.15)
+
+
+def test_absence_mix_shares_are_zero_for_a_season_with_no_absences():
+    # The documented choice at `missed_games == 0`. NaN would drop 4.56% of covered rows for
+    # having had a healthy season, and a league mean would assert a composition of absences
+    # the player did not have.
+    from src.models.availability import ABSENCE_MIX_SHARE_COLS, absence_mix_shares
+
+    frame = pd.DataFrame({
+        "season": ["2015-16"], "player_id": [3], "missed_games": [0],
+        "missed_scratch": [0], "missed_inactive": [0], "missed_injury": [0],
+        "missed_not_rostered": [0], "status_coverage": [1.0]})
+    shares = absence_mix_shares(frame)
+    assert (shares[ABSENCE_MIX_SHARE_COLS].to_numpy() == 0.0).all()
+
+
+def test_absence_mix_block_stays_out_of_every_other_heads_design():
+    """The block is opt-in, and that is what makes it an ablation.
+
+    `build_design` is imported by `stan_minutes`, `stan_composition`, `stan_games_played`,
+    `model_cards`, `sim/season`, `season_terms` and `final_evaluation`. A column that does
+    not exist before 2006-07 entering any of them through `LAG_COLS` or `FEATURE_COLS`
+    would be silent — it is a valid float everywhere it appears.
+    """
+    from src.models.availability import (ABSENCE_MIX_COLS, ABSENCE_MIX_SHARE_COLS,
+                                         FEATURE_COLS, LAG_COLS)
+
+    assert not set(ABSENCE_MIX_COLS) & set(FEATURE_COLS)
+    assert not [c for c in LAG_COLS if c.startswith("missed_")]
+    assert ABSENCE_MIX_COLS == [f"{c}_lag1" for c in ABSENCE_MIX_SHARE_COLS]
+
+
+def test_attach_absence_mix_reads_the_prior_season_only():
+    # The block is a season S-1 quantity like every other lag column. A merge that picked up
+    # the CURRENT season's composition would be the leak `assert_point_in_time` exists for,
+    # and it would score beautifully.
+    from src.models.availability import attach_absence_mix
+
+    seasons = ["2014-15", "2015-16"]
+    frame = pd.DataFrame({
+        "season": ["2014-15", "2015-16"], "player_id": [4, 4],
+        "missed_games": [10, 4], "missed_scratch": [10, 0], "missed_inactive": [0, 4],
+        "missed_injury": [0, 0], "missed_not_rostered": [0, 0],
+        "status_coverage": [1.0, 1.0]})
+    design = pd.DataFrame({
+        "season": ["2015-16"], "player_id": [4],
+        "as_of_date": pd.to_datetime(["2015-10-26"]),
+        "season_start_date": pd.to_datetime(["2015-10-27"])})
+
+    out = attach_absence_mix(design, frame, seasons)
+    # 2014-15's composition — all scratch — not 2015-16's, which is all inactive.
+    assert np.isclose(out.loc[0, "missed_scratch_share_lag1"], 1.0)
+    assert np.isclose(out.loc[0, "missed_inactive_share_lag1"], 0.0)
+
+
+def test_fast_onset_grid_reproduces_scipys_beta_binomial():
+    """The compound's inner loop replaces `betabinom.pmf` with a ratio recursion.
+
+    It is ~10x cheaper and it is evaluated thousands of times per fit, so a subtly wrong
+    fast path would not raise — it would show up as a likelihood that is merely slightly
+    worse, which is indistinguishable from the null this arm is testing for.
+    """
+    from src.models.availability_absence import _onset_pmf_grid
+    from src.models.availability_window import _bb_pmf_grid
+
+    rng = np.random.default_rng(11)
+    n = rng.choice([66.0, 72.0, 82.0], 200)
+    h = rng.uniform(0.03, 0.7, 200)
+    rho = rng.choice([0.05, 0.2, 0.31], 200)
+    k = np.arange(83)
+    assert np.allclose(_onset_pmf_grid(n, h, rho, k), _bb_pmf_grid(n, h, rho, k),
+                       atol=1e-13)
+    # Mass above a row's own schedule is impossible, and the recursion's terms there are
+    # garbage rather than small — they are masked, not clipped.
+    assert (_onset_pmf_grid(n, h, rho, k)[n[:, None] < k[None, :]] == 0.0).all()
+
+
+def test_compound_at_lambda_one_is_the_beta_binomial_to_machine_precision():
+    """`lambda = 1` makes every spell one game, and the beta-binomial's `y -> n - y`
+    symmetry then makes `missed ~ BetaBinom(n, 1 - mu, rho)` the incumbent exactly.
+
+    Checked on the log-likelihood AND on the predictive, for the reason the `finite_mix`
+    test gives one section up: an arm that nests in likelihood but not in pmf scores
+    identically on train and differently on validation, which is the silent version of the
+    same failure.
+    """
+    from src.models.availability_absence import CompoundCountingFrailty
+    from src.models.availability_window import _bb_pmf_grid, _sigmoid
+
+    train = _frailty_frame(300)
+    model = CompoundCountingFrailty(l2=1.0).fit(train)
+    assert assert_nests(model, train) < 1e-8
+
+    df = _frailty_frame(60, seed=5)
+    n = df["team_games"].to_numpy(dtype=float)
+    eta = model._design(df) @ model.beta
+    disp = model._disp_row(df, model.dispersion)
+    k = np.arange(83)
+    at_one = model._pmf(n, eta, disp, model._extra0(), k, df)
+    assert np.allclose(at_one, _bb_pmf_grid(n, _sigmoid(eta), disp, k), atol=1e-12)
+
+
+def test_compound_piles_truncated_mass_at_a_dead_season_and_still_sums_to_one():
+    """A player cannot miss more than his team plays, and the excess is piled rather than
+    renormalized.
+
+    Renormalizing would redistribute mass the schedule has already ruled out back across
+    the support — moving probability *out* of the `gp = 0` tail this arm exists to fill.
+    Piling is also what makes the pmf sum to one by construction instead of by cancellation,
+    which is the half a proper-predictive check can see.
+    """
+    from src.models.availability_absence import CompoundCountingFrailty, _onset_pmf_grid
+    from src.models.availability_window import _sigmoid
+
+    train = _frailty_frame(200)
+    model = CompoundCountingFrailty(l2=1.0).fit(train)
+    df = _frailty_frame(40, seed=6)
+    df["team_games"] = 20                      # a short schedule, so long spells run off it
+    n = df["team_games"].to_numpy(dtype=float)
+    eta = model._design(df) @ model.beta
+    disp = model._disp_row(df, model.dispersion)
+    # No point mass at one game and a heavy-tailed duration: `sum_j L_j > n` is common here.
+    extra = np.array([0.0, float(np.log(0.2 / 0.8)), float(np.log(1.5))])
+    k = np.arange(21)
+
+    pmf = model._pmf(n, eta, disp, extra, k, df)
+    assert (pmf >= 0).all()
+    assert np.allclose(pmf.sum(axis=1), 1.0, atol=1e-12)
+
+    conv, _ = model._tables(extra, 20)
+    untruncated = (_onset_pmf_grid(n, 1.0 - _sigmoid(eta), disp, k) @ conv)[:, 20]
+    # The pile is strictly more than the mass that landed exactly on `missed == n`, which is
+    # the mass from `missed > n` arriving where it belongs.
+    assert (pmf[:, 0] > untruncated + 1e-9).all()
+
+
+def test_compound_profile_pins_lambda_without_moving_its_nesting_point():
+    # `lambda_profile` is what separates "the optimizer stopped at the corner" from "the
+    # corner is the MLE", so a pinned arm still has to reproduce the incumbent — otherwise
+    # the profile is of a different model at every grid point.
+    from src.models.availability_absence import CompoundCountingFrailty
+
+    train = _frailty_frame(200, seed=7)
+    pinned = CompoundCountingFrailty(l2=1.0, lambda_fixed=0.25).fit(train)
+    assert np.isclose(pinned.extra[0], 0.25)
+    assert assert_nests(pinned, train) < 1e-8
+    assert pinned.name == "compound_lambda0.25"
+    # And the duration block can be pinned too, at the spell shape §11b measured.
+    both = CompoundCountingFrailty(l2=1.0, lambda_fixed=0.0, duration_fixed=True).fit(train)
+    assert np.allclose(both.extra, both._extra0() * np.array([0.0, 1.0, 1.0]))
+
+
+def test_crossed_arms_differ_only_in_the_feature_block_or_the_likelihood():
+    """The 2x2 is only a 2x2 if the four cells vary one thing at a time."""
+    from src.models.availability import ABSENCE_MIX_COLS, FEATURE_COLS
+    from src.models.availability_absence import CompoundCountingFrailty, arm_spec
+
+    plain_cls, plain_features = arm_spec("betabinom")
+    mix_cls, mix_features = arm_spec("betabinom__absence_mix")
+    comp_cls, comp_features = arm_spec("compound")
+    both_cls, both_features = arm_spec("compound__absence_mix")
+
+    assert plain_cls is mix_cls is BetaBinomFrailty
+    assert comp_cls is both_cls is CompoundCountingFrailty
+    assert plain_features == comp_features == list(FEATURE_COLS)
+    assert mix_features == both_features == list(FEATURE_COLS) + list(ABSENCE_MIX_COLS)

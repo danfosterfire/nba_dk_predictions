@@ -115,3 +115,17 @@
   keeps garbage-time per-36 outliers out of the PCA, but it also drops real teammates who
   consume real minutes. Build roster aggregates on `season_matrix_roster_tier*.parquet`
   (the unfiltered twin) with reliability shrinkage, never on the qualified matrix.
+- **`scipy.stats.betabinom.pmf` loses ~5e-9 of relative accuracy when `rho` reaches its
+  guard rail, and it is the *reference* that goes wrong, not the caller.** At `rho = 1e-6`
+  the shape parameters reach ~1e6, where the function evaluates two log-betas of magnitude
+  1e6 that cancel to a number of order one; measured against 50-digit arithmetic it reads
+  **+5.5e-9** relative at `k = 70, n = 82` where a successive-ratio recursion reads
+  **+8.5e-15**. This surfaced as `assert_nests` failing at 1e-8 for
+  `availability_absence.CompoundCountingFrailty` on a synthetic frame that drew *binomial*
+  counts — leaving `rho` nothing to fit, so every arm sat on `RHO_MIN`. The fix was the
+  fixture (draw overdispersed counts, which is also what the head actually fits), not the
+  tolerance. Two consequences worth carrying: a nesting assertion written as an equality
+  against `betabinom.logpmf` is only as exact as that function is, and any beta-binomial
+  pmf grid evaluated in an inner loop is both faster and more accurate built from
+  `P(k+1)/P(k) = ((n−k)/(k+1))·((a+k)/(b+n−k−1))` with a `logsumexp` normalization than
+  from `scipy` — ~10× on a (4,027 × 83) grid.
