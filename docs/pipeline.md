@@ -305,6 +305,23 @@ make availability-no-prior
                        #   a draft bucket is a 3.17x gradient for a FIRST appearance and a
                        #   near-flat for a RETURN. Consumed by
                        #   sim.availability.no_design_level.
+                       # P4(a) of preseason-plan rides in the same target →
+                       #   availability_no_prior_preseason.csv. Two extra axes on the SAME
+                       #   ladder: a preseason minutes-share key, and the population the
+                       #   rates are POOLED from. Both FAIL the gate on the draft pool and
+                       #   nothing ships. Pooled, the preseason key passes at both
+                       #   readings — the fourth instrument to show the population
+                       #   restriction is load-bearing.
+
+make rookie-priors     # P4(b): does a no-prior player's own preseason beat his draft
+                       #   bucket? → outputs/predictions/rookie_priors.csv. The incumbent
+                       #   is stan_composition.rookie_share_priors, the bio_draft_number
+                       #   imputation behind his `w_share`. Three arms over one estimator,
+                       #   with the blend's `k` chosen on an inner carve of the FITTING
+                       #   half. The draft bucket is an ANTI-MODEL for rates (R2 -0.043 to
+                       #   +0.046) and the shrunk preseason clears on five of eight targets
+                       #   at 19 of 19 rolling origins; the minutes SHARE — the only target
+                       #   with a live consumer — is a tie. numpy only, ~10 s.
 
 make weekly-scores     # Gate A at the unit a LINEUP is set at: observed against
                        #   simulated dk_pts per player per scoring period, on train and

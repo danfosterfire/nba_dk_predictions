@@ -881,3 +881,78 @@ Nothing about the world was ever at stake here — but note what the reversal di
 the gate. `p1_block` beating `volume` on the fitting half says which arm to carry; it says
 nothing about whether either clears P2's conjunction, which still fails on validation. See
 item 9, which is the open question on this head.
+
+---
+
+## 11. Pool the no-design availability rate over rostered players only
+
+**Opened 2026-08-14 by `docs/preseason-plan.md` P4(a), which found it while measuring
+something else.** Not a preseason item — the defect predates the preseason work entirely and
+would exist if none of it had happened.
+
+### What is wrong
+
+`sim/season.no_design_availability` is applied to players on an **October roster** and to
+nobody else: the simulator's grid is the draft pool. The rate it hands them is pooled over
+**every** no-design player-season before the target, which includes everyone who signed in
+January. Over the covered window those two populations realize:
+
+| | rows | realized `gp / team_games` | share with no preseason row |
+|---|---|---|---|
+| on a season-start roster | **1,336** | **0.5447** | 3.4% |
+| not on one | **695** | **0.1571** | 38.6% |
+
+So a third of the estimator's rows describe a population it is never applied to, and they
+realize under a third of the rate. `no-design-availability-is-graded-by-tenure-and-draft-slot`
+inherited this without noticing, because §8b varied the *key* and held the pool fixed.
+
+### What P4 already measured
+
+On the shipped `tenure_draft` arm, scored on the draftable rows:
+
+| | roster-pooled vs all-pooled |
+|---|---|
+| rolling CRPS | **−0.3486 [−0.6860, −0.0183]**, **13 of 19** origins |
+| rolling bias | **−5.3904 → +1.7935** games |
+| validation CRPS | **+0.7354 [−0.0336, +1.5067]**, 0 of 2 origins |
+| validation bias | −0.3646 → **+6.4056** games |
+
+It wins more rolling origins than any preseason arm in that round and repairs a seven-game
+bias swing, and **it fails the validation half of the same gate**, so it was recorded rather
+than shipped.
+
+### Why the validation half fails, which is the interesting part
+
+The three rolling origins it loses are the **last three**, and two of those three *are* the
+validation seasons. On 2022-23 and 2023-24 the all-rows estimator has a bias of −0.3646
+games — nearly perfect — which is a cancellation between a population error (pooling in
+January signings pulls the rate down) and an era drift (this population's realized rate has
+risen), not accuracy. The roster estimator removes one of the two and the other is left
+exposed at +6.41.
+
+That is a hypothesis with a check attached: if it is right, the roster-pooled arm should
+*also* want an era correction, and the two should be separable on the fitting half where 19
+origins are available.
+
+### What would settle it
+
+- Cross the estimator population with a **recency window** on the pool (all seasons before
+  the target against the last 5 or 10), on the rolling harness. If the roster estimator's
+  recent-origin losses close under a recency cut, the cancellation story is right and the
+  fix is two changes rather than one.
+- Then re-read validation once, on whichever arm the fitting half selects. This is the P3
+  promotion rule and it is what keeps the decision off the split it is scored against.
+
+### What would falsify it
+
+The roster estimator losing the recent origins *under* a recency window too. That would mean
+the pooled estimator is better on recent seasons for a reason that is not the era drift, and
+the honest reading would be that 1,336 draftable rows over 19 origins cannot resolve a
+0.35-CRPS effect — the same power problem P2 hit one head up.
+
+### What it is worth if it works
+
+Bounded by §8b's own simulator readout, which is the template: that change moved season-total
+dk_pts MAE by **3.18** and the per-team no-design minutes share error by **17.2%**. This one
+is a smaller move on the same channel — no scored unit's `μ` changes, and the whole effect
+arrives through the team's fixed minutes pot.

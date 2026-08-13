@@ -845,6 +845,206 @@ probability moves, and §7l is the standing precedent that a head change reachin
 strategy-sweep` against a re-simulated season — and it costs the whole chain, which is P5
 work.
 
+## P4 — the no-prior population: measured 2026-08-14, and the two halves disagree
+
+`make availability-no-prior` → `availability_no_prior_preseason.csv` (a) and
+`make rookie-priors` → `rookie_priors.csv` (b). numpy only, seconds, no CmdStan and no fit.
+The population is the **29.7%** of panel rows P1 sized — players with no usable prior season,
+who are invisible to every fitted head in the project and reach the chain through two
+draft-bucket imputations instead.
+
+**The bar is §8b's own, stated in `availability-window-plan.md` before P4 ran**: a validation
+CRPS paired-bootstrap interval clear of zero *and* the rolling origins agreeing. §8b's
+`tenure_draft` cleared it at −4.5862 [−5.6200, −3.5764] on validation and −2.7413 rolling at
+24 of 26 origins, so the standard the preseason arms are held to is one this ladder has
+already met once.
+
+### (a) The availability level — the preseason key is a tie on the population it would serve
+
+Three arms added to §8b's ladder, all nested inside it: `preseason` (a within-team preseason
+minutes-share bucket alone), `tenure_preseason`, and the declared primary
+`tenure_draft_preseason` — P4's "preseason minutes-share bucket crossed with `tenure_draft`".
+The share cuts are **a priori**, at 0.03 and 0.06 (half an even split of a ~17-man preseason
+rotation, and an even one), and "no preseason row" is its own level rather than a small share.
+Every arm including the reference is scored on the **covered window** only (2004-05 → 2023-24,
+20 of the 27 seasons selection may read), which is P3's precedent one head over.
+
+| `tenure_draft_preseason`, draftable | CRPS vs what ships | origins |
+|---|---|---|
+| **validation** — 145 rows, 2 origins | **+0.3356 [−0.5953, +1.3006]** | 0 of 2 |
+| **rolling origin** — 1,278 rows | **−0.3148 [−0.5851, −0.0400]** | 8 of **14** |
+
+**The gate fails, and unlike P2 it fails in the ordinary direction.** P2's diagnostic for
+separating "underpowered validation" from "no effect" was the rolling reading's own strength —
+there it was 10 of 10 origins at 2.4× the precision, and validation's interval contained it
+comfortably. Here validation's interval does contain the rolling estimate, but the rolling
+reading is itself weak: 8 origins of 14, and the point estimate on validation has the *wrong
+sign*. Two readings that are both indecisive are not the same thing as one decisive reading
+the other cannot resolve.
+
+**Pooled, the same arm passes at both readings, and that is the fourth instrument to say so.**
+
+| `tenure_draft_preseason` | pooled | draftable |
+|---|---|---|
+| validation CRPS vs what ships | **−0.5071 [−1.1888, +0.1475]** | +0.3356 [−0.5953, +1.3006] |
+| rolling CRPS vs what ships | **−0.5874 [−0.7793, −0.3797]**, 11 of 14 | −0.3148 [−0.5851, −0.0400], 8 of 14 |
+
+The census says why, in one line: on the draft pool this population realizes **0.5447** of the
+schedule and **3.4%** have no preseason row; off it they realize **0.1571** and **38.6%** have
+none. A preseason key on the pooled frame is largely detecting who signed in January. P1
+measured that restriction as 5.9× on a ridge ΔR², P2 as 6.2× on the availability head's CRPS,
+and this is the third unit and the fourth instrument.
+
+**The draft bucket beats the preseason share, which reverses the prior this session was
+opened on.** "A preseason minutes-share key is the natural next term of that series" is what
+the risks section says; the arms that *drop* the draft bucket are the worst on validation —
+`preseason` alone reads **+1.8115 [+0.3646, +3.4460]** against the shipped arm and
+`tenure_preseason` **+1.7663**. Only the arm that keeps the bucket and refines it is even a
+tie. For a first NBA appearance the draft slot is a 3.17× gradient (§8b) and the preseason is
+a refinement of it, not a replacement.
+
+⚠️ **And half the primary's rows never reach its key.** `graded_share` is **0.5407** on the
+rolling origins: 24 cells against `MIN_CELL = 50` is more grading than ~1,800 rows of history
+supports, so the arm falls back to `tenure_draft` on most rows and is *bit-identical* to it on
+the first five origins. That is what `origins_compared` exists for — it was added in this
+round, because reading "8 of 19" where the arm could only differ at 14 understates any graded
+arm in exact proportion to how much history its key needs. A shrunk cell estimator would fix
+it and is out of scope: §8b's ladder is deliberately *one* estimator with different keys, and
+changing the estimator class makes the arms incomparable to the ones already selected from.
+
+#### The axis P4 did not ask for: the estimator's population
+
+§8b pools each rate over **every** no-design row before the target. The consumer,
+`sim/season.no_design_availability`, is only ever applied to players on an October roster. So
+the estimator has always been an estimate of the wrong population's rate, and the two realize
+0.5447 against 0.1571. Restricting the pool is one filter, and it was crossed with the key
+axis because P1 decision 5 makes the ladder unreadable otherwise.
+
+| shipped `tenure_draft`, roster-pooled vs all-pooled, draftable | value |
+|---|---|
+| rolling CRPS | **−0.3486 [−0.6860, −0.0183]**, **13 of 19** origins |
+| rolling bias | **−5.3904 → +1.7935** games |
+| validation CRPS | **+0.7354 [−0.0336, +1.5067]**, 0 of 2 origins |
+| validation bias | −0.3646 → **+6.4056** games |
+
+**It repairs a large bias, wins more origins than any preseason arm, and still fails the same
+gate** — and its failure is legible rather than mysterious: the last three rolling origins are
+the ones it loses, and two of those three *are* the validation seasons. The pooled estimator's
+low bias on 2022-23 and 2023-24 is a cancellation between a population error and an era drift,
+not accuracy, but a bar is a bar. It is `potential-to-dos.md` **item 11** rather than a ship,
+with the recency cross that would separate the two written down there.
+
+**Nothing from (a) ships.** `sim.availability.no_design_level` stays `tenure_draft` on the
+all-rows estimator, and `sim/season.no_design_level_arm` now refuses a preseason arm by name
+rather than failing several frames later, since it builds its own keys and never joins the
+panel.
+
+### (b) The rookie priors — the preseason wins decisively, but only shrunk
+
+`stan_composition.rookie_share_priors` is the `bio_draft_number` imputation P4(b) names: an
+expanding-window mean of what past no-prior players in a draft bucket realized, which becomes
+the player's `w_share` — the composition's prior minutes share and, through `order_frame`, his
+place in the allocation order. **1,759** no-prior player-seasons over the covered window,
+**1,204** of them draftable, **97.3%** of those carrying a preseason row.
+
+Three arms over one estimator: the bucket mean, his own preseason reading of the same
+quantity, and the two blended by preseason volume, `w = m / (m + k)`. `k = 0` is the preseason
+arm exactly and `k → ∞` is the incumbent exactly, so the blend contains both endpoints. `k` is
+chosen on an **inner carve of the fitting half** — the last two training seasons scored
+against everything before them, `minutes_preseason`'s own construction — and lands at
+**k = 20** preseason minutes for the share and **k = 160** for the rates.
+
+| target | incumbent R² | `shrunk` R² | rolling MAE vs incumbent [95%] | origins | validation MAE vs incumbent [95%] |
+|---|---|---|---|---|---|
+| `per36_reb` | −0.0031 | **0.3326** | **−0.5863 [−0.6375, −0.5393]** | **19/19** | −0.4299 [−0.5783, −0.2780] |
+| `per36_fga` | 0.0456 | **0.3282** | **−0.4221 [−0.4858, −0.3618]** | **19/19** | −0.3543 [−0.5548, −0.1584] |
+| `per36_ast` | −0.0154 | **0.4357** | **−0.3567 [−0.3976, −0.3169]** | **19/19** | −0.2695 [−0.3880, −0.1560] |
+| `per36_blk` | −0.0069 | **0.2621** | **−0.1223 [−0.1368, −0.1073]** | **19/19** | −0.0701 [−0.1266, −0.0166] |
+| `fg3a_share` | −0.0430 | 0.4228 | **−0.0500 [−0.0534, −0.0466]** | **19/19** | −0.0518 [−0.0624, −0.0420] |
+| `per36_fta` | 0.0191 | 0.0996 | −0.0340 [−0.0741, **+0.0045**] | 11/19 | −0.0189 [−0.1525, +0.1149] |
+| `per36_tov` | 0.0148 | 0.0461 | +0.0013 [−0.0223, **+0.0255**] | 10/19 | −0.0135 [−0.0759, +0.0477] |
+| `per36_stl` | −0.0392 | −0.0650 | +0.0107 [−0.0049, **+0.0256**] | 5/19 | +0.0160 [−0.0330, +0.0614] |
+| `minutes_share` | 0.2532 | 0.3759 | −0.0069 [−0.0127, −0.0014] | 13/19 | +0.0040 [−0.0087, +0.0165] |
+
+**1. The draft bucket is an anti-model for rates.** Its R² on the eight rate targets runs
+**−0.043 to +0.046** — it is no better than predicting the population mean, and on five of
+eight it is worse. §8b found the same shape one axis over ("a single rate was not a weak model
+of these players, it was an anti-model") and the reason is the same: a draft slot says how good
+the league thought a player was, not what he does per minute.
+
+**2. Five of eight rate targets clear the bar on both readings** — `reb`, `fga`, `ast`, `blk`
+and `fg3a_share`, each at **19 of 19** rolling origins with a validation interval clear of
+zero. `fta`, `tov` and `stl` are nulls. That is the same 5-of-7-plus-the-mix shape P1's rate
+gate found on the *veteran* population, arrived at on a disjoint population with a different
+estimator, which is the strongest kind of agreement available here.
+
+**3. The volume shrink is load-bearing here, where P3 found it a null.** Raw preseason is
+*worse* than the incumbent on six of eight rate targets — `per36_stl` reads R² **−3.5798** —
+because a per-36 over ~60 preseason minutes is mostly noise. It is the blend that wins.
+P3 decision 4 recorded `k` as worth 0.05 CRPS minutes on the marginal minutes head and said
+nothing should be built on it; the contrast is the finding rather than a contradiction. There
+the player had a prior season and an L2 penalty already shrinking the delta, so the reliability
+weight had nothing left to do. Here **the preseason is the only observation there is**, and
+without a shrink toward a population mean it is unusable.
+
+**4. `fg3a_share` is the one target the raw preseason wins outright** — R² **0.6407** and
+MAE **−0.0930 [−0.1014, −0.0843]** against the shrunk arm's 0.4228 and −0.0500. Shot mix is
+the most persistent quantity in the panel (P1: `pearson_r` **0.855**), so it needs the least
+shrinking, and its own inner optimum is `k = 10` against the rate family's 160. One `k` per
+family is the decision — eight targets each picking a rung off ~120 rows apiece would be
+fitting the grid — and the per-target curve is written to the artifact as
+`shrinkage_grid_by_target`, **reported and not selected on**, so that a family optimum wrong
+for one member is visible rather than buried.
+
+**5. The share — the only target with a live consumer — is the weakest row in the table.**
+`minutes_share` is a tie on validation (**+0.0040 [−0.0087, +0.0165]**) and a marginal win
+rolling (−0.0069 [−0.0127, −0.0014], 13 of 19), with R² moving **0.2532 → 0.3759** while MAE
+barely moves. The preseason sharpens the *tail* of who will play and not the middle, and MAE
+is the wrong instrument for that; but the bar is the bar, and this row does not clear it.
+
+⚠️ **One unit error is recorded rather than quietly fixed**, because it produced a plausible
+wrong answer. The share comparison was first run against the panel's `min_share_pre`, which is
+a player's share of his **team's** preseason minutes (~1/17), while `minutes_share` is his
+share of **game length** (~0.15–0.35) — a factor of ~5. The comparison reported the preseason
+arm at R² **−1.586** with a bias of −0.2302, which reads exactly like the compression P3
+documented and is instead a unit conversion. The matching statistic is `mpg_pre / 48`, which is
+what `minutes_preseason` already builds its shipped delta from; a test pins it.
+
+### What P4 decides
+
+1. **(a) fails its gate and nothing from it ships.** The preseason key on the availability
+   level is a tie on the draft pool at both readings, and the arms that drop the draft bucket
+   are decisively worse. `sim.availability.no_design_level` stays `tenure_draft`.
+2. **The population restriction is load-bearing at a fourth unit.** Pooled, the same arm
+   passes at both readings; on the draft pool it is a tie. P1 decision 5 has now earned its
+   keep three times.
+3. **The draft bucket is a floor for the availability level and an anti-model for rates**, and
+   P4 is where those two facts sit side by side. It survives (a) and is beaten 5 of 8 in (b).
+4. **(b)'s rate result is the round's finding, and it is not directly shippable today**,
+   because a no-prior player is not in the component heads at all — nothing downstream reads a
+   rate for him. What it establishes is that if he is ever put in, his preseason per-36 is the
+   prior to use and a draft bucket is not.
+5. **The volume shrink is a null on a head with a prior season and load-bearing on one
+   without.** Both readings stand; the axis is how much other evidence the delta is competing
+   against.
+6. **The estimator's pooled population is a real defect and is not this round's to fix.** It is
+   worth −0.3486 CRPS at 13 of 19 rolling origins on the shipped arm and fails the same
+   validation half; `potential-to-dos.md` carries it.
+
+### What P4 does not settle
+
+**Whether `MIN_CELL` is what defeated (a).** The primary grades only 54% of its rolling rows,
+and an arm that cannot reach its key on half the population has not been given a fair test of
+the key. Settling it needs a *shrunk* cell estimator rather than a hard fallback, which is a
+different estimator class and therefore a different ladder — §8b's arms are one estimator with
+different keys precisely so that its verdicts stay comparable.
+
+**Whether (b) is worth anything in the contest.** Both halves reach the chain only through the
+minutes allocation, and §7l is the standing precedent that a change arriving as *shape* rather
+than as *order* can be a measured null there. §8b's own simulator readout is the template — it
+moved season-total MAE by 3.18 dk_pts and the per-team no-design minutes share by 17.2% — and
+running it costs the chain, which is P5 work.
+
 ## Why preseason data should help — and where it plausibly won't
 
 - **Availability.** Participation is a direct health reading taken days before the season:
@@ -872,6 +1072,13 @@ work.
   real NBA rows. §8b's `tenure_draft` grading just shipped for their availability *level*;
   a preseason minutes-share key is the natural next term of that series, and preseason
   per-36 rates compete against the `bio_draft_number` imputation on the rate side.
+  ⚠️ **Half right, and the halves came out the opposite way round from the ordering above.**
+  P4 measured both: the minutes-share key on the availability level is a **tie** on the draft
+  pool at both readings, and the arms that drop the draft bucket are decisively *worse* — so
+  "the natural next term of that series" is the half that fails. The rate side is where the
+  preseason wins, on five of eight targets at 19 of 19 rolling origins, against a draft-bucket
+  prior whose R² never exceeds 0.046. The sentence had the right two candidates and backed the
+  wrong one.
 - **Preseason games are not regular-season games.** Different coaching objectives,
   different effort, exhibition opponents. Every preseason quantity is a *forecast
   covariate*, never a substitute observation — nothing from preseason enters any head's
@@ -1005,8 +1212,9 @@ measured at ~6× cheaper than the full window. A plausible composition-specific 
 checking there: preseason minutes share updating the *ordering* and prior-share feature
 for players who changed teams.
 
-**P4 — the no-prior population.** P1 sized it at **29.7%** of in-scope panel rows.
-Two measurements: (a) extend §8b's `no_design_level`
+**P4 — the no-prior population.** ⚙️ **Ran 2026-08-14 and split: (a) fails, (b) passes on
+five of eight rate targets** — see the section above. P1 sized it at **29.7%** of in-scope
+panel rows. Two measurements: (a) extend §8b's `no_design_level`
 ladder with a preseason key — preseason minutes-share bucket crossed with `tenure_draft` —
 under the same CRPS-on-validation + rolling discipline; (b) rookie rate priors from
 preseason per-36 against the `bio_draft_number` imputation. This is deliberately the
@@ -1031,10 +1239,10 @@ decision registry entries, and register this doc's built artifacts in `make docs
 | 5 (2026-08-13) ❌ | availability arms (point MLE + rolling) — **conjunction failed on validation, rolling passed 10/10** | P2 |
 | 5b (2026-08-13) ⚙️ | `crps_vs_primary` on the availability rolling harness; **both heads ported to Stan** on an owner decision against P2's failing gate | P2, P3 |
 | 6 (2026-08-13) 📝 | model cards, the documentation pass, and the two production docs P5 owed | — |
-| 7 | no-prior ladder + rookie rate prior | P4 |
+| 7 (2026-08-14) ⚙️ | no-prior ladder + rookie rate prior — **(a) fails, (b) clears on 5 of 8 rate targets**, and neither ships | P4 |
 | 4b | the composition's preseason arm at the pilot window — opened by P3's gate | P3 |
 | 6b | the five surviving rate heads' arms — a session P1 *added* | P1→P2 |
-| 8 | posteriors at the other windows, simulator gates, strategy sweep, σ re-read | P5 |
+| 8 | simulator gates, strategy sweep — the σ re-read and the other windows landed early, 2026-08-14 | P5 |
 
 Sessions reorder freely as findings land, and P1 exercised that: **minutes moved ahead of
 availability** because the measurement inverted the plan's a-priori ordering. Anything that
@@ -1125,7 +1333,15 @@ the real window is too short to debug a join in.
   ridge ΔR², two instruments agreeing — and **2.8×** at the rolling reading. The four
   age-split indicators alone carry 45% of the pooled validation margin and 51% of the pooled
   rolling one, against +0.001 and −0.040 on the draft pool. This risk is no longer
-  hypothetical: pooled, the block clears the gate at both readings.
+  hypothetical: pooled, the block clears the gate at both readings. ⚠️ **P4 is the third
+  confirmation and the first where the population change flips the verdict on its own.** On
+  the no-design availability level the same arm reads −0.5874 [−0.7793, −0.3797] pooled at 11
+  of 14 origins and −0.3148 [−0.5851, −0.0400] draftable at 8 of 14 — a pass and a
+  not-quite-pass on identical draws. The mechanism is now measured directly rather than
+  inferred: on the draft pool this population realizes **0.5447** of the schedule with 3.4%
+  missing a preseason row, and off it **0.1571** with 38.6% missing. P4 also found the
+  *estimator* carrying the same defect — the shipped rates are pooled over both populations
+  and handed to one of them — which no round before this one had looked at.
 - **The ADP asymmetry.** Backtests where the field's ADP is pre-preseason overstate our
   edge; the flag in P5's readout is the honest version, and the 2025-26 anchor (captured
   Oct 17, post-preseason) is the one season where the field is measured at the right date.

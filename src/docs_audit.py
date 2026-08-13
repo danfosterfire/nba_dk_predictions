@@ -208,6 +208,12 @@ AEXCH = "outputs/predictions/availability_exchangeability.csv"
 # rows are a separate analysis rather than more columns because the runner-up comparison is
 # the one that settled the design, and a delta between two arms cannot be a column on either.
 ANOP_L = "outputs/predictions/availability_no_design_level.csv"
+# P4 of `docs/preseason-plan.md`, written by the same target. Two extra axes on the same
+# ladder — the preseason KEY and the population the rates are POOLED from — so the lookup
+# needs `estimator` and `population` beside `arm` and `split`, and a claim that omits
+# either would be ambiguous between a pass and a tie rather than merely wrong.
+ANOP_P = "outputs/predictions/availability_no_prior_preseason.csv"
+ROOKIE_P = "outputs/predictions/rookie_priors.csv"
 AABS = "outputs/predictions/availability_absence.csv"
 AABS_I = "outputs/predictions/availability_absence_interaction.csv"
 AABS_L = "outputs/predictions/availability_absence_lambda.csv"
@@ -7768,6 +7774,191 @@ def covered_preseason_seasons() -> list[str]:
     return sorted(have["season"].astype(str))
 
 
+def _preseason_no_prior() -> list[Claim]:
+    """`docs/preseason-plan.md` P4 — the no-prior population, both halves.
+
+    The round's whole point is that the same arm reads differently on two populations, so
+    **every claim here carries `population` explicitly**. A P4 figure quoted without it is
+    the failure P1 decision 5 exists to prevent, and the audit is the only thing that can
+    keep the two apart once they are both in prose a page from each other.
+
+    (a)'s margins are claimed with their bounds AND with `origins_compared`, because "8 of
+    14" is the honest denominator and "8 of 19" is what the same arm reads if a structural
+    tie counts as a loss. (b) is claimed at the five targets that clear and at the three
+    that do not, because "five of eight" is the sentence and it goes stale from either side.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, artifact: str, actual, label: str, **kw) -> None:
+        C.append(_c(quoted, artifact, actual, label, doc=PRESEASON, **kw))
+
+    def lvl(arm: str, split: str, population: str, column: str,
+            estimator: str = "all") -> float:
+        return cell(ANOP_P, column, analysis="preseason_level_arm", arm=arm, split=split,
+                    population=population, estimator=estimator)
+
+    # ── (a) the primary arm, on both populations and both splits ──────────────
+    primary = "tenure_draft_preseason"
+    for population, split, (point, lo, hi) in (
+            ("draftable", "validation", ("+0.3356", "−0.5953", "+1.3006")),
+            ("draftable", "rolling", ("−0.3148", "−0.5851", "−0.0400")),
+            ("pooled", "validation", ("−0.5071", "−1.1888", "+0.1475")),
+            ("pooled", "rolling", ("−0.5874", "−0.7793", "−0.3797"))):
+        for quoted, column in ((point, "crps_vs_shipped"), (lo, "crps_vs_shipped_lo"),
+                               (hi, "crps_vs_shipped_hi")):
+            add(quoted, ANOP_P,
+                lambda p=population, s=split, c=column: lvl(primary, s, p, c),
+                f"P4a primary {split} {population} {column}")
+    for quoted, column in (("8", "origins_won_vs_shipped"),
+                           ("14", "origins_compared_vs_shipped")):
+        add(quoted, ANOP_P,
+            lambda c=column: lvl(primary, "rolling", "draftable", c),
+            f"P4a primary rolling {column}", tol=0.5)
+    add("11", ANOP_P,
+        lambda: lvl(primary, "rolling", "pooled", "origins_won_vs_shipped"),
+        "P4a primary rolling pooled origins won", tol=0.5)
+    add("0.5407", ANOP_P, lambda: lvl(primary, "rolling", "draftable", "graded_share"),
+        "P4a primary rolling graded share")
+
+    # The two arms that DROP the draft bucket, which are the round's reversal.
+    for arm, point in (("preseason", "+1.8115"), ("tenure_preseason", "+1.7663")):
+        add(point, ANOP_P,
+            lambda a=arm: lvl(a, "validation", "draftable", "crps_vs_shipped"),
+            f"P4a {arm} validation draftable vs shipped")
+    add("+0.3646", ANOP_P,
+        lambda: lvl("preseason", "validation", "draftable", "crps_vs_shipped_lo"),
+        "P4a preseason validation lower bound")
+    add("+3.4460", ANOP_P,
+        lambda: lvl("preseason", "validation", "draftable", "crps_vs_shipped_hi"),
+        "P4a preseason validation upper bound")
+
+    # ── the estimator axis, which is a separate finding on the SHIPPED arm ────
+    for quoted, column in (("−0.3486", "crps_vs_shipped"), ("−0.6860", "crps_vs_shipped_lo"),
+                           ("−0.0183", "crps_vs_shipped_hi"),
+                           ("13", "origins_won_vs_shipped")):
+        add(quoted, ANOP_P,
+            lambda c=column: lvl("tenure_draft", "rolling", "draftable", c,
+                                 estimator="roster"),
+            f"P4a roster estimator rolling {column}",
+            **({"tol": 0.5} if column.startswith("origins") else {}))
+    add("+0.7354", ANOP_P,
+        lambda: lvl("tenure_draft", "validation", "draftable", "crps_vs_shipped",
+                    estimator="roster"),
+        "P4a roster estimator validation")
+    for quoted, estimator, split in (("−5.3904", "all", "rolling"),
+                                     ("+1.7935", "roster", "rolling"),
+                                     ("−0.3646", "all", "validation"),
+                                     ("+6.4056", "roster", "validation")):
+        add(quoted, ANOP_P,
+            lambda e=estimator, s=split: lvl("tenure_draft", s, "draftable", "bias",
+                                             estimator=e),
+            f"P4a shipped arm {split} bias, {estimator} estimator")
+
+    # ── the population census — the one line that explains the whole round ───
+    def pop(cell_name: str, column: str) -> float:
+        return cell(ANOP_P, column, analysis="preseason_population", cell=cell_name)
+
+    for cell_name, rate, missing in (("draftable", "0.5447", "3.4%"),
+                                     ("off_roster", "0.1571", "38.6%")):
+        add(rate, ANOP_P, lambda c=cell_name: pop(c, "realized_rate"),
+            f"P4a {cell_name} realized availability rate")
+        # No `* 100` — `_c` already reads a trailing `%` as a scale, and doubling it here
+        # is how 3.4% became 336.826 on the first run.
+        add(missing, ANOP_P, lambda c=cell_name: pop(c, "share_no_preseason"),
+            f"P4a {cell_name} share with no preseason row")
+
+    # ── (b) the rookie priors ─────────────────────────────────────────────────
+    def rk(target: str, arm: str, split: str, column: str,
+           population: str = "draftable") -> float:
+        return cell(ROOKIE_P, column, analysis="rookie_prior_arm", target=target, arm=arm,
+                    split=split, population=population)
+
+    # The five that clear and the three that do not — "five of eight" goes stale from
+    # either side, so both sides are claimed.
+    clears = [("per36_reb", "−0.5863", "−0.6375", "−0.5393", "0.3326", "−0.4299"),
+              ("per36_fga", "−0.4221", "−0.4858", "−0.3618", "0.3282", "−0.3543"),
+              ("per36_ast", "−0.3567", "−0.3976", "−0.3169", "0.4357", "−0.2695"),
+              ("per36_blk", "−0.1223", "−0.1368", "−0.1073", "0.2621", "−0.0701"),
+              ("fg3a_share", "−0.0500", "−0.0534", "−0.0466", "0.4228", "−0.0518")]
+    for target, point, lo, hi, r2, val in clears:
+        for quoted, column in ((point, "mae_vs_incumbent"), (lo, "mae_vs_incumbent_lo"),
+                               (hi, "mae_vs_incumbent_hi"), (r2, "r2")):
+            add(quoted, ROOKIE_P,
+                lambda t=target, c=column: rk(t, "shrunk", "rolling", c),
+                f"P4b {target} shrunk rolling {column}")
+        add(val, ROOKIE_P, lambda t=target: rk(t, "shrunk", "validation",
+                                               "mae_vs_incumbent"),
+            f"P4b {target} shrunk validation margin")
+        add("19", ROOKIE_P, lambda t=target: rk(t, "shrunk", "rolling", "origins_won"),
+            f"P4b {target} rolling origins won", tol=0.5)
+
+    nulls = [("per36_fta", "−0.0340", "+0.0045", "0.0996"),
+             ("per36_tov", "+0.0013", "+0.0255", "0.0461"),
+             ("per36_stl", "+0.0107", "+0.0256", "−0.0650")]
+    for target, point, hi, r2 in nulls:
+        add(point, ROOKIE_P, lambda t=target: rk(t, "shrunk", "rolling",
+                                                 "mae_vs_incumbent"),
+            f"P4b {target} shrunk rolling margin (a null)")
+        add(hi, ROOKIE_P, lambda t=target: rk(t, "shrunk", "rolling",
+                                              "mae_vs_incumbent_hi"),
+            f"P4b {target} null upper bound — the reason it is a null")
+        add(r2, ROOKIE_P, lambda t=target: rk(t, "shrunk", "rolling", "r2"),
+            f"P4b {target} shrunk rolling R2")
+
+    # The share — the only target with a live consumer, and the weakest row.
+    for quoted, column in (("+0.0040", "mae_vs_incumbent"), ("−0.0087", "mae_vs_incumbent_lo"),
+                           ("+0.0165", "mae_vs_incumbent_hi")):
+        add(quoted, ROOKIE_P,
+            lambda c=column: rk("minutes_share", "shrunk", "validation", c),
+            f"P4b minutes_share validation {column}")
+    for quoted, column in (("−0.0069", "mae_vs_incumbent"), ("−0.0127", "mae_vs_incumbent_lo"),
+                           ("−0.0014", "mae_vs_incumbent_hi"), ("0.3759", "r2")):
+        add(quoted, ROOKIE_P,
+            lambda c=column: rk("minutes_share", "shrunk", "rolling", c),
+            f"P4b minutes_share rolling {column}")
+    add("0.2532", ROOKIE_P,
+        lambda: rk("minutes_share", "draft_bucket", "rolling", "r2"),
+        "P4b minutes_share incumbent rolling R2")
+    add("13", ROOKIE_P,
+        lambda: rk("minutes_share", "shrunk", "rolling", "origins_won"),
+        "P4b minutes_share rolling origins won", tol=0.5)
+
+    # The incumbent is an anti-model: its R2 range across the eight rate targets is the
+    # claim, so it is derived rather than typed from one row.
+    rate_targets = [t for t, *_ in clears] + [t for t, *_ in nulls]
+    add("−0.043", ROOKIE_P,
+        lambda: min(rk(t, "draft_bucket", "rolling", "r2") for t in rate_targets),
+        "P4b worst incumbent R2 across the rate targets")
+    add("+0.046", ROOKIE_P,
+        lambda: max(rk(t, "draft_bucket", "rolling", "r2") for t in rate_targets),
+        "P4b best incumbent R2 across the rate targets")
+
+    # Raw preseason without the shrink, which is what makes the shrink the finding.
+    add("−3.5798", ROOKIE_P, lambda: rk("per36_stl", "preseason", "rolling", "r2"),
+        "P4b raw preseason per36_stl R2 — unusable without the shrink")
+    add("0.6407", ROOKIE_P, lambda: rk("fg3a_share", "preseason", "rolling", "r2"),
+        "P4b raw preseason fg3a_share R2 — the one target it wins outright")
+    add("−0.0930", ROOKIE_P,
+        lambda: rk("fg3a_share", "preseason", "rolling", "mae_vs_incumbent"),
+        "P4b raw preseason fg3a_share margin")
+    add("−0.1014", ROOKIE_P,
+        lambda: rk("fg3a_share", "preseason", "rolling", "mae_vs_incumbent_lo"),
+        "P4b raw preseason fg3a_share lower bound")
+    add("−0.0843", ROOKIE_P,
+        lambda: rk("fg3a_share", "preseason", "rolling", "mae_vs_incumbent_hi"),
+        "P4b raw preseason fg3a_share upper bound")
+
+    # The selected shrinkage constants, off the grid rather than typed.
+    def best_k(family: str) -> float:
+        frame = table(ROOKIE_P)
+        part = frame[(frame["analysis"] == "shrinkage_grid") & (frame["family"] == family)]
+        return float(part.loc[part["inner_mae_standardized"].idxmin(), "k"])
+
+    add("20", ROOKIE_P, lambda: best_k("share"), "P4b share family shrinkage k", tol=0.5)
+    add("160", ROOKIE_P, lambda: best_k("rate"), "P4b rate family shrinkage k", tol=0.5)
+    return C
+
+
 def _build() -> tuple[Claim, ...]:
     """Every claim, in doc order. One builder per doc — the registry is long enough that
     a single function made it hard to see which doc a section belonged to.
@@ -7781,7 +7972,8 @@ def _build() -> tuple[Claim, ...]:
                  + _minutes_window() + _availability_window()
                  + _availability_regime() + _availability_exchangeability()
                  + _availability_absence() + _availability_absence_mixture()
-                 + _availability_no_design_level() + _preseason())
+                 + _availability_no_design_level() + _preseason()
+                 + _preseason_no_prior())
 
 
 CLAIMS: tuple[Claim, ...] = _build()

@@ -8550,6 +8550,115 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("head", "simulator", "simulations"),
     ),
     Decision(
+        id="the-preseason-key-does-not-improve-the-no-design-availability-level",
+        topic="availability",
+        claim="**A preseason minutes-share key on top of `tenure_draft` is a TIE on the "
+              "population it would serve.** Validation **+0.3356 [-0.5953, +1.3006]** CRPS "
+              "games against what ships and rolling **-0.3148 [-0.5851, -0.0400]** at 8 of "
+              "14 comparable origins. `docs/preseason-plan.md` P4(a) fails its gate and "
+              "`sim.availability.no_design_level` stays `tenure_draft`.",
+        because="P4 asked whether the preseason is the next term of "
+                "[[no-design-availability-is-graded-by-tenure-and-draft-slot]]'s series, and "
+                "the answer on the draft pool is no. **The arms that DROP the draft bucket "
+                "are the worst on the ladder** — `preseason` alone reads +1.8115 [+0.3646, "
+                "+3.4460] and `tenure_preseason` +1.7663 against the shipped arm — so for a "
+                "first NBA appearance the draft slot is the signal and the preseason is at "
+                "best a refinement of it, which reverses the prior the session opened on. "
+                "**Pooled, the same primary arm PASSES at both readings** (-0.5874 [-0.7793, "
+                "-0.3797] rolling at 11 of 14, -0.5071 validation), and the census says why "
+                "in one line: on the draft pool this population realizes 0.5447 of the "
+                "schedule with 3.4% missing a preseason row, off it 0.1571 with 38.6% "
+                "missing. That is the fourth instrument at the third unit to say the "
+                "restriction is load-bearing, after P1's ridge ΔR² (5.9×) and P2's "
+                "availability CRPS (6.2×) — and the first time it flips a verdict on its "
+                "own. **Half the primary's rows never reach its key**: `graded_share` is "
+                "0.5407 rolling, because 24 cells against `MIN_CELL = 50` is more grading "
+                "than ~1,800 rows of history supports, and on the first five origins the arm "
+                "is bit-identical to its reference. That is what the round's new "
+                "`origins_compared` column exists for — counting a structural tie as a loss "
+                "reads '8 of 19' where the arm could only differ at 14, and understates any "
+                "graded arm in proportion to how much history its key needs. Whether "
+                "`MIN_CELL` is what defeated the key is explicitly NOT settled: fixing it "
+                "needs a shrunk cell estimator, which is a different estimator class and "
+                "therefore not comparable to the arms already selected from.",
+        status="measured",
+        reproduce="make availability-no-prior → "
+                  "outputs/predictions/availability_no_prior_preseason.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-14",
+        date="2026-08-14",
+        tags=("head", "simulator"),
+    ),
+    Decision(
+        id="the-no-design-estimator-pools-a-population-it-is-never-applied-to",
+        topic="availability",
+        claim="**The no-design availability rate is pooled over every no-design row and "
+              "handed only to ROSTERED players, and those two populations realize 0.5447 "
+              "and 0.1571 of the schedule.** Restricting the pool is worth **-0.3486 "
+              "[-0.6860, -0.0183]** CRPS at **13 of 19** rolling origins and repairs a "
+              "**-5.39 game** bias to +1.79 — and it fails the same validation half the "
+              "preseason key does, so it is logged rather than shipped.",
+        because="An axis P4 was not chartered to look at and could not read its own ladder "
+                "without. `sim/season.no_design_availability` is only ever applied to "
+                "players on an October roster; the estimator behind it has always pooled "
+                "over January signings too, who are 34% of the historical rows and realize a "
+                "third of the rate. So the shipped estimator is an estimate of the wrong "
+                "population's quantity — a defect that predates the preseason work entirely "
+                "and that [[no-design-availability-is-graded-by-tenure-and-draft-slot]] "
+                "inherited without noticing. **It fails the same gate for a legible reason**: "
+                "the three origins it loses are the last three, two of which ARE the "
+                "validation seasons, where the pooled estimator's near-zero bias (-0.3646 "
+                "games) is a cancellation between a population error and an era drift rather "
+                "than accuracy. A bar is a bar and it is not re-read after seeing which side "
+                "an arm landed on — the P2 discipline. What would settle it is more scored "
+                "validation seasons, and those are the test split.",
+        status="open",
+        unblocks="more scored validation seasons, or a decision to price it in the chain",
+        reproduce="make availability-no-prior → "
+                  "outputs/predictions/availability_no_prior_preseason.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-14",
+        date="2026-08-14",
+        tags=("head", "simulator", "next"),
+    ),
+    Decision(
+        id="preseason-per36-beats-the-draft-bucket-for-a-no-prior-players-rates",
+        topic="components",
+        claim="**For a player with no prior season the draft bucket is an anti-model of his "
+              "rates and his own preseason per-36 is not.** Shrunk toward the bucket by "
+              "preseason volume, five of eight rate targets clear on both readings at **19 "
+              "of 19** rolling origins — `reb` **-0.5863**, `fga` **-0.4221**, `ast` "
+              "**-0.3567**, `blk` **-0.1223** and `fg3a_share` **-0.0930** MAE — while the "
+              "minutes SHARE, the only target with a live consumer, is a tie.",
+        because="`stan_composition.rookie_share_priors` is the `bio_draft_number` imputation "
+                "`docs/preseason-plan.md` P4(b) names, and its R2 on the eight rate targets "
+                "runs **-0.043 to +0.046**: no better than the population mean and on five of "
+                "eight worse, which is [[no-design-availability-is-graded-by-tenure-and-"
+                "draft-slot]]'s 'a single rate was not a weak model, it was an anti-model' "
+                "one axis over. The preseason takes those to R2 0.26-0.64. **The volume "
+                "shrink is what makes it work, and it is the exact null P3 recorded on the "
+                "marginal minutes head** — raw preseason is WORSE than the incumbent on six "
+                "of eight targets (`per36_stl` reads R2 -3.5798), because a per-36 over ~60 "
+                "preseason minutes is mostly noise. Both readings stand and the contrast is "
+                "the finding: there the player had a prior season and an L2 already "
+                "shrinking the delta, so the reliability weight had nothing to do; here the "
+                "preseason is the ONLY observation. `k` is chosen on an inner carve of the "
+                "fitting half (20 minutes for the share, 160 for the rates), and `k = 0` and "
+                "`k = inf` are the two endpoint arms exactly. `fg3a_share` is the one target "
+                "raw preseason wins outright (R2 **0.6407**), which is P1's redundancy table "
+                "arriving from the other side — shot mix is the most persistent quantity in "
+                "the panel at r = 0.855, so it needs the least shrinking. **Nothing ships "
+                "from this today**: a no-prior player is not in the component heads at all, "
+                "so nothing downstream reads a rate for him. What it establishes is which "
+                "prior to use if he is ever put in.",
+        status="measured",
+        reproduce="make rookie-priors → outputs/predictions/rookie_priors.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-14",
+        date="2026-08-14",
+        tags=("head",),
+    ),
+    Decision(
         id="no-design-players-are-scored-through-the-team-minutes-pot",
         topic="simulations",
         claim="**The no-design availability level is priced at the TEAM, because that is its "
