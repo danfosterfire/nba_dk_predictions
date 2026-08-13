@@ -6,7 +6,8 @@ committed" warning is discharged.
 
 ## What happened on 2026-08-14
 
-Three of the four items the last handoff listed are done, and P4 ran.
+Three of the four items the last handoff listed are done; P4 ran, and session 4b ran after
+it.
 
 - **The minutes-unification stake was re-read** and it reverses a verdict. It was also
   *broken*, not merely stale: the module built its frame through `stan_minutes.build_design`,
@@ -14,6 +15,8 @@ Three of the four items the last handoff listed are done, and P4 ran.
 - **`train_val` posteriors were refitted.** Both windows now carry the preseason blocks
   (availability 10 columns, minutes 5).
 - **P4 ran, both halves.** (a) fails, (b) clears on five of eight rate targets. Nothing ships.
+- **Session 4b ran and passes.** The composition's preseason arm earns a Stan fit; the round
+  found the offset carries it and the ordering does not.
 - Still open: **the chain re-run** (item 2 below), which is the whole of P5.
 
 ### The lesson worth carrying forward
@@ -62,12 +65,16 @@ change reaching the draw as shape rather than order can be a measured null there
 Note the chain now has *two* pending head changes rather than one — the availability and
 minutes blocks — plus a re-read σ that did not move.
 
-### 2. Session 4b — the composition's preseason arm at the pilot window
-**Promoted by this session's re-read.** The marginal head now beats the composition by 33.45
-CRPS minutes at the season unit, up from 25.70, entirely because it gained a block the
-composition does not have. Giving the composition its own arm is the direct answer, and P3's
-gate already opened it. `potential-to-dos.md` item 1 measured the pilot window at ~6× cheaper
-than the full one.
+### 2. ✅ Session 4b — done, and it earned the composition a Stan fit
+`make composition-preseason` passes at the head's own selection unit: **−0.19972 [−0.21661,
+−0.18225]** CRPS minutes per player-game on the draft pool, with **nothing fitted**. What is
+left is the fit itself — a pilot-window `stan-composition` run of the blended-offset arm, at
+`k = 80`. The floor is a screen and not a substitute: `beta` can correct an offset the floor
+cannot, so the increment could shrink under the posterior (P3's own increment *grew*).
+
+Two things not to re-derive: the route that pays is the **offset**, not the ordering (103%
+against 3.75%), and **nothing here needs centring** — `logit_prior` is a within-team ratio, so
+the compression that forced P3's centring cancels exactly.
 
 ### 3. Session 6b — the five surviving rate heads' arms
 `ast`, `fga`, `stl`, `tov`, `reb`, plus `ftm|fta`. A session P1 *added*. P4(b) is weak
