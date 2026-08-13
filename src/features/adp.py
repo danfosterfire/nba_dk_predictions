@@ -45,6 +45,7 @@ from src.data.adp_draftkings import (
     _prefix_match,
     _reversed_key,
 )
+from src.data.preprocess import REGULAR_SEASON, _parse_log_filename
 
 # Season start dates come from the game logs rather than a hardcoded calendar, because the
 # calendar is wrong twice in the sample: 2019-20 and 2020-21 were both COVID-shifted, and
@@ -67,10 +68,18 @@ def normalize_name(name: str) -> str:
 
 
 def season_start_dates(raw_dir: str | Path) -> dict[str, str]:
-    """First game date per season, from the raw game logs."""
+    """First **regular-season** game date per season, from the raw game logs.
+
+    The season type is resolved by `preprocess._parse_log_filename` rather than by a
+    substring test on the filename, because this date is the freeze line every ADP
+    snapshot is judged legal or illegal against. A preseason file carries the same
+    `SEASON_YEAR` as its regular season and starts ~3 weeks earlier, so classifying it
+    by anything less exact would move the opener backwards and silently re-decide which
+    captures are point-in-time safe.
+    """
     starts: dict[str, str] = {}
     for path in sorted(Path(raw_dir).glob(_GAMELOG_GLOB)):
-        if "playoffs" in path.name:
+        if _parse_log_filename(path.stem)[0] != REGULAR_SEASON:
             continue
         try:
             df = pd.read_csv(path, usecols=["SEASON_YEAR", "GAME_DATE"])

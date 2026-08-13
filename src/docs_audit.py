@@ -130,6 +130,10 @@ QUIRKS = "docs/data-quirks.md"             # raw-data and library behaviour
 SPEC = "docs/project-spec.md"              # the spec every workflow reads
 SPLIT = "docs/train-validate-test-split.md"
 SIMS = "docs/simulations-plan.md"           # the simulation and drafting layer
+PRESEASON = "docs/preseason-plan.md"        # current-season preseason games as covariates
+
+PRE_COVERAGE = "outputs/eda/preseason_coverage.csv"
+PRE_PANEL = "data/features/preseason.parquet"
 
 WEEK_INDEX = "outputs/predictions/weekly_score_index.csv"
 WEEK_PERIOD = "outputs/predictions/weekly_score_period.csv"
@@ -6890,6 +6894,83 @@ def _availability_no_design_level() -> list[Claim]:
     return C
 
 
+def _pre(column: str, season: str) -> float:
+    """One reading off `preseason_coverage.csv`, keyed by season."""
+    return _one(table(PRE_COVERAGE), column, season=season)
+
+
+def _pre_agg(column: str, how: str) -> float:
+    """A pooled reading over the seasons that actually carry preseason logs.
+
+    Restricted to `rows_kept > 0` on purpose: the artifact keeps a row for every season in
+    the config so "absent" is a fact it reports rather than a gap, and a mean taken over
+    those zeros would answer a different question from the one the doc asks.
+    """
+    frame = table(PRE_COVERAGE)
+    if frame is None:
+        return float("nan")
+    have = frame[frame["rows_kept"] > 0]
+    return float(getattr(have[column], how)())
+
+
+def _preseason() -> list[Claim]:
+    """`docs/preseason-plan.md` P0 — the coverage artifact and the panel it describes.
+
+    Claimed the moment it was built rather than at P5, because P0's whole output *is*
+    figures: a coverage table is the one kind of section that goes stale invisibly, since
+    re-running the backfill in a later season changes every row of it at once and nothing
+    in the prose would object.
+
+    The planning-probe table above it is claimed nowhere and must not be — it is a
+    superseded scratch measurement, and two of its rows are wrong in ways the doc now
+    records. `historical=True` is for figures a doc keeps *because* they were corrected;
+    that table is kept as a block and carries its own correction inline.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, actual, label: str, **kw) -> None:
+        C.append(_c(quoted, PRE_COVERAGE, actual, label, doc=PRESEASON, **kw))
+
+    add("11,707", lambda: rows(PRE_PANEL), "panel player-seasons")
+    add("23", lambda: float((table(PRE_COVERAGE)["rows_kept"] > 0).sum()),
+        "seasons carrying preseason logs")
+    # `check_values` scales a `%`-quoted figure itself, so these return the fraction.
+    add("94.9%", lambda: _pre_agg("roster_coverage", "mean"),
+        "mean season-start roster coverage")
+    add("66.6%", lambda: _pre("roster_coverage", "2003-04"),
+        "worst season's roster coverage")
+    add("90.8%", lambda: _pre("roster_coverage", "2011-12"),
+        "worst usable season's roster coverage")
+    add("2,515", lambda: _pre_agg("camp_invitees", "sum"), "camp invitees")
+
+    # The three drop reasons. Reported separately because they mean different things —
+    # an API artifact, a game that is not ours to model, and a leak that was caught.
+    add("98", lambda: _pre_agg("rows_null_player", "sum"), "rows with no player_id")
+    add("1,601", lambda: _pre_agg("rows_non_nba_team", "sum"),
+        "exhibition-opponent rows")
+    add("822", lambda: _pre_agg("rows_after_opener", "sum"),
+        "rows at or after the opener — the 2019-20 bubble scrimmages")
+
+    for season, quoted in [("2022-23", "96.9%"), ("2023-24", "95.7%"),
+                           ("2024-25", "96.1%"), ("2025-26", "94.3%")]:
+        add(quoted, lambda s=season: _pre("roster_coverage", s),
+            f"{season} roster coverage")
+
+    # The measurement `coverage_class` rests on: 2003-04 is the sole outlier on the gap
+    # between the last preseason game and the opener, which is what makes a 10-day bar a
+    # measurement rather than a guess.
+    add("20", lambda: _pre("opener_gap_days", "2003-04"), "2003-04 opener gap, days")
+    add("15", lambda: _pre("games", "2003-04"), "2003-04 preseason games")
+    add("24", lambda: _pre("nba_teams", "2003-04"), "2003-04 teams with a preseason game")
+    add("369", lambda: _pre("rows_kept", "2003-04"), "2003-04 usable player rows")
+    add("24.6", lambda: _pre("rows_per_game", "2003-04"), "2003-04 rows per game")
+    add("96", lambda: _pre("rows_null_player", "2003-04"), "2003-04 team-total junk rows")
+    add("3", lambda: _pre("team_games_median", "2004-05"),
+        "2004-05 median team preseason games")
+
+    return C
+
+
 def _build() -> tuple[Claim, ...]:
     """Every claim, in doc order. One builder per doc — the registry is long enough that
     a single function made it hard to see which doc a section belonged to.
@@ -6903,7 +6984,7 @@ def _build() -> tuple[Claim, ...]:
                  + _minutes_window() + _availability_window()
                  + _availability_regime() + _availability_exchangeability()
                  + _availability_absence() + _availability_absence_mixture()
-                 + _availability_no_design_level())
+                 + _availability_no_design_level() + _preseason())
 
 
 CLAIMS: tuple[Claim, ...] = _build()

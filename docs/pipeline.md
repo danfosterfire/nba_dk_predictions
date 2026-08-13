@@ -26,6 +26,12 @@ make aging            # → outputs/eda/aging_curves.csv
 make target-profile   # → outputs/eda/target_{profile.csv,season_totals,trajectories}
 make feature-diagnostics  # → outputs/eda/feature_diagnostics.csv + feature_correlation_tier*
 make game-length      # → game_length.parquet (48 + 5k per game) + coverage csv
+make preseason        # → preseason.parquet + outputs/eda/preseason_coverage.csv
+                      #    current-season preseason games as FORECAST COVARIATES — the
+                      #    only current-season observation the project may read, and never
+                      #    a target row. Its logs are backfillable, so this stays OUT of
+                      #    `make daily-capture`; one fetch after the final preseason game
+                      #    is enough. See docs/preseason-plan.md
 make serial-correlation   # → outputs/eda/serial_correlation.csv
                       #    lag-k autocorrelation + block variance inflation per component
 make variance-budget  # → outputs/eda/variance_budget.csv

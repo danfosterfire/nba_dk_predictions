@@ -183,18 +183,73 @@ REGISTRY: tuple[Decision, ...] = (
                 "preseason games become legitimate inputs. They enter difference-coded "
                 "against the prior-season features with a missing indicator — zero "
                 "recovers the shipped head exactly — never replacing prior-season "
-                "stats. A planning probe puts coverage solid from 2005-06 (absent "
-                "before 2003), so validation and test are fully covered. Availability "
-                "and minutes get arms first; component rates are gated on a train-only "
-                "EDA readout; the no-prior population is primary scope. Open because "
-                "nothing is built: Stage P0 of the plan turns the probe into a "
-                "coverage artifact, which is when this entry gains its reproduce link "
-                "and what preseason data is worth starts being measured.",
+                "stats. Coverage is now measured rather than probed — 23 seasons, "
+                "2003-04 onwards, with validation and test above 94% of the "
+                "season-start roster. Availability and minutes get arms first; "
+                "component rates are gated on a train-only EDA readout; the no-prior "
+                "population is primary scope. Still open because no head reads the "
+                "block yet: P0 built the data, P1 decides whether any of it carries "
+                "signal, and only then does a coefficient exist to price.",
         status="open",
+        reproduce="make preseason → data/features/preseason.parquet, "
+                  "outputs/eda/preseason_coverage.csv",
         source="docs/preseason-plan.md",
         reviewed="2026-08-12",
         date="2026-08-12",
         tags=("constraint",),
+    ),
+    Decision(
+        id="preseason-coverage",
+        topic="data",
+        claim="Preseason games enter as a panel of within-team shares and "
+              "participation, never as raw preseason MPG and never as a target row.",
+        because="A preseason minutes *level* measures how much a coach needs to look at "
+                "a player, which is close to the inverse of what we forecast — the six "
+                "largest 2023-24 preseason minutes shares include four rookies, and "
+                "Embiid played one game of Philadelphia's four. So the panel ships "
+                "within-team share and rank (plus `_late` twins over each team's final "
+                "two games, where the rotation approximates the real one), "
+                "participation (`missed_tail`, `played_final_game`), and per-36 rates "
+                "off the totals. 23 seasons, 11,707 player-seasons, 94.9% mean "
+                "season-start roster coverage; only 2003-04 is unusable, at 66.6% with "
+                "its capture truncated 20 days before the opener where every other "
+                "season ends 3-5 days out. A player with no preseason appearance has "
+                "no row — the logs hold appearances, not rosters — so the roster-share "
+                "column is how the attach step learns who is missing.",
+        status="built",
+        reproduce="make preseason → data/features/preseason.parquet, "
+                  "outputs/eda/preseason_coverage.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("capture", "preseason"),
+    ),
+    Decision(
+        id="preseason-season-type-guard",
+        topic="data",
+        claim="A new game-log prefix in data/raw/ must be registered in "
+              "`preprocess._LOG_PREFIXES`, and `load_raw(\"all\")` means regular plus "
+              "playoffs — never the preseason.",
+        because="This is the 2026-07-29 playoffs pseudo-season bug in a second costume, "
+                "and worse: an unrecognized prefix does not merely invent the label "
+                "`pre-season-2023-24`, it also returns REGULAR_SEASON, so the rows "
+                "arrive in the *default* fitting frame. Two consumers would have "
+                "absorbed them silently. `game_length` reads \"all\" to derive every "
+                "game's length from summed team minutes, and would have folded ~70 "
+                "exhibition games a season into the artifact whose claim is 0 "
+                "disagreements over 37,986 games — rebuilt after the change and "
+                "byte-identical. `adp.season_start_dates` excluded playoff files by a "
+                "substring test on the filename; left alone it would have moved 23 of "
+                "30 season openers ~3 weeks earlier, silently re-deciding which ADP "
+                "captures are point-in-time legal. It now classifies by prefix, and "
+                "reproduces the stored panel's opener on 8 of 8 seasons.",
+        status="settled",
+        reproduce="make game-length → data/features/game_length.parquet, "
+                  "outputs/eda/game_length_coverage.csv",
+        source="docs/data-quirks.md",
+        reviewed="2026-08-12",
+        date="2026-08-12",
+        tags=("capture", "preseason"),
     ),
     Decision(
         id="components-not-dk-pts",

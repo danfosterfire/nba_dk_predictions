@@ -60,11 +60,16 @@ MANIFEST_NAME = "_fetch_manifest.csv"
 #   player_tracking / pt_shot: SportVU cameras in all arenas from 2013-14
 #   hustle:                    LeagueHustleStatsPlayer added for 2015-16
 #   estimated:                 RAPM-based estimated metrics from 2014-15
+#   pre_season:                preseason logs begin 2003-04; every earlier season returns
+#                              a SINGLE all-null row carrying league totals rather than an
+#                              empty frame, which `_has_data_rows` would count as data and
+#                              never re-fetch. Skipping them is what keeps that row off disk.
 _FIRST_YEAR: dict[str, int] = {
     "player_tracking": 2013,
     "pt_shot":         2013,
     "hustle":          2015,
     "estimated":       2014,
+    "pre_season":      2003,
 }
 
 
@@ -77,6 +82,16 @@ def _slug(season: str) -> str:
 def _season_start_year(season: str) -> int:
     """Return the calendar year a season starts in ('2013-14' → 2013)."""
     return int(season.split("-")[0])
+
+
+def _season_type_slug(season_type: str) -> str:
+    """`'Pre Season'` → `'pre_season'`, `'Playoffs'` → `'playoffs'`.
+
+    The API's season-type labels carry a space that `_slug` does not touch, so folding
+    only dashes leaves `game_logs_pre season_2023_24.csv` — a filename with a space in
+    it that `src/data/preprocess.py::_parse_log_filename` cannot classify.
+    """
+    return season_type.lower().replace("-", "_").replace(" ", "_")
 
 
 def _save(df: pd.DataFrame, dest: Path) -> Path:
@@ -153,9 +168,14 @@ def fetch_season_game_logs(season: str, output_dir: str | Path = "data/raw",
     one: every downstream consumer treats `game_logs_{season}.csv` as the regular season,
     and a deep run would otherwise silently inflate games played. As prior-season
     *workload* they matter — ~20 extra high-intensity games that are invisible today.
+
+    **Preseason logs follow the same rule for a stronger reason.** They are a *forecast
+    covariate* for the season about to start, never a target row in any head's likelihood
+    (`docs/preseason-plan.md`), so mixing them into `game_logs_{season}.csv` would inflate
+    games played *and* feed exhibition minutes to eleven component heads.
     """
     output_dir = Path(output_dir)
-    suffix = "" if season_type == "Regular Season" else f"_{_slug(season_type.lower())}"
+    suffix = "" if season_type == "Regular Season" else f"_{_season_type_slug(season_type)}"
     dest = output_dir / f"game_logs{suffix}_{_slug(season)}.csv"
     if _skip_or_fetch(dest, f"game_logs/{season_type} {season}"):
         return dest
@@ -388,6 +408,14 @@ def fetch_all_for_season(season: str, output_dir: str | Path = "data/raw", delay
     tasks.append(("game_logs", lambda: fetch_season_game_logs(season, output_dir)))
     tasks.append(("game_logs/Playoffs",
                   lambda: fetch_season_game_logs(season, output_dir, "Playoffs")))
+
+    # Preseason (2003-04+) — backfillable, so it stays out of `make daily-capture`.
+    if year >= _FIRST_YEAR["pre_season"]:
+        tasks.append(("game_logs/Pre Season",
+                      lambda: fetch_season_game_logs(season, output_dir, "Pre Season")))
+    else:
+        print(f"  Skipping game_logs/Pre Season for {season} "
+              f"(available from {_FIRST_YEAR['pre_season']}-XX onwards)")
 
     # Official rosters — 30 calls, so it goes last in the per-season block below
     tasks.append(("team_rosters", lambda: fetch_team_rosters(season, output_dir, delay)))

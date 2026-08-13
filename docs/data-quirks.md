@@ -111,6 +111,57 @@
     loses to the floor at *every* alpha under `log_own` because it needs a spline — a
     documented modelling finding, not the penalty misbehaving — so a floor crossing alone
     cannot be the trigger.
+- **Preseason logs are a fourth season type, and every one of their quirks is a way to
+  contaminate a frame silently.** `make preseason` (`src/features/preseason.py` →
+  `data/features/preseason.parquet`, `outputs/eda/preseason_coverage.csv`) — see
+  `docs/preseason-plan.md`.
+  - **A new file prefix in `data/raw/` is a pseudo-season waiting to happen.** This is the
+    playoffs bug of 2026-07-29 in a second costume, and worse: `_parse_log_filename` does
+    not merely invent the label `pre-season-2023-24`, it also returns `REGULAR_SEASON`, so
+    unrecognized rows arrive in the **default** frame rather than an opt-in one. Prefixes
+    belong in `preprocess._LOG_PREFIXES`, never in a caller's glob.
+  - **`load_raw(season_type="all")` means regular + playoffs, and excludes the preseason
+    deliberately.** A preseason game is a forecast covariate, never a target row.
+    `src/features/game_length.py` is the reason the default runs that way: it reads `"all"`
+    to derive every game's length from summed team minutes, and would have absorbed ~70
+    exhibition games a season into an artifact whose whole claim is that its two
+    independent estimates disagree on **0** of 37,986 games.
+  - **The API's season-type label carries a space.** `_slug("pre season")` leaves it, so
+    the file lands as `game_logs_pre season_2023_24.csv` — unclassifiable by prefix.
+    `fetch._season_type_slug` folds spaces as well as dashes.
+  - **The 2019-20 preseason file straddles its own opener.** The July 2020 bubble
+    scrimmages carry the `Pre Season` label under the 2019-20 season key: **822** rows over
+    33 games played 2020-07-22 → 2020-07-28, against a **2019-10-22** opener. Reading them
+    as a 2019-20 feature is not a subtle leak, it is the season itself. Every row is
+    filtered against the season's first regular-season game date and the drop is counted
+    per season, because an assertion here would simply fail.
+  - **The same instrument is load-bearing for ADP.** `features/adp.py::season_start_dates`
+    used to exclude playoff files by a substring test on the filename. With preseason files
+    on disk that test passes them through, and since they carry the same `SEASON_YEAR` it
+    would move **23 of 30** season openers ~3 weeks earlier — silently re-deciding which
+    ADP captures are point-in-time legal. It now classifies by `_parse_log_filename`.
+  - **Exhibition opponents are not NBA teams.** Real Madrid (12315), Flamengo (12325),
+    Maccabi Ra'anana (50009), the New Zealand Breakers (15020) and the Cairns Taipans
+    (15022) appear with ids outside the `1610612737–1610612766` block, and so do their
+    players — up to **10** such teams in a season, **1,601** rows across the backfill. The
+    NBA team's own rows in those games are real preseason games and are kept.
+  - **Some rows have no `player_id`.** 2003-04 carries **96** of them — team-total rows with
+    `MIN` of exactly 480 (= 2 × 5 × 48) or 530 (one overtime) — plus one stray each in
+    2010-11 and 2017-18, **98** in all. Every season before 2003-04 is a *single* such row
+    and nothing else, which is why `fetch._FIRST_YEAR["pre_season"] = 2003` stops the
+    orchestrator writing those files: a header plus one junk row reads as populated to
+    `_has_data_rows` and would never re-fetch.
+  - **The preseason window must be derived, never assumed to be October.** 2020-21 ran
+    **Dec 11–19** (COVID) and 2011-12 ran **Dec 16–22** (the lockout, exactly 2 games per
+    team). Both are real, complete preseasons at an unusual date — the same calendar trap
+    the ADP freeze rule hit.
+  - **Coverage runs 2003-04 → 2025-26 and only 2003-04 is unusable.** A preseason ends
+    **3–5** days before the opener in 22 of the 23 seasons; 2003-04 ends **20** days out
+    with **15** games across **24** teams, which is the signature of a truncated capture
+    rather than a short preseason. That is what `coverage_class == "tail_missing"` marks,
+    and the tail is exactly what the participation features are read over. 2004-05 is the
+    milder version — the final week only, Oct 22–29, **3** games per team — and it is
+    classified `covered` because its tail is present.
 - **The season matrix serves the PCA, not roster aggregation.** Its `GP≥20 & MIN≥10` filter
   keeps garbage-time per-36 outliers out of the PCA, but it also drops real teammates who
   consume real minutes. Build roster aggregates on `season_matrix_roster_tier*.parquet`

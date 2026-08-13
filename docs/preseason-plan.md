@@ -34,10 +34,11 @@ Four scoping decisions were taken in the planning session (2026-08-12), all four
 
 ## What was measured during planning — scratch figures, 2026-08-12
 
-Measured with a throwaway probe script against `nba_api`'s `PlayerGameLogs`
-(`season_type_nullable="Pre Season"`), not yet a `make` target; Stage A turns coverage
-into an artifact and these figures earn audited status there, per the `adp-plan.md`
-precedent. This doc is **not yet in `make docs-audit`**.
+**Superseded on 2026-08-12 by the P0 artifact below, and two of these rows were wrong.**
+Kept as the record of what the planning session believed, per the house convention that a
+superseded figure stays beside its correction. Measured with a throwaway probe script
+against `nba_api`'s `PlayerGameLogs` (`season_type_nullable="Pre Season"`), not yet a
+`make` target.
 
 | season probed | rows | distinct games | date window |
 |---|---|---|---|
@@ -50,19 +51,112 @@ precedent. This doc is **not yet in `make docs-audit`**.
 | 2023-24 | 2,078 | 73 | Oct 5–20 |
 | 2025-26 | 2,021 | 71 | Oct 2–17 |
 
-What this settles:
+What this settled at the time, and what P0 revised:
 
-- **Coverage is solid from 2005-06 onward, partial 2003-05, absent before.** Preseason
-  features exist for ~17 of the 25 training target seasons. The ~8 early seasons take the
-  missing-indicator treatment — the same pattern as the absence-composition block, which is
-  structurally zero before 2006-07.
+- **Coverage is solid from 2005-06 onward, partial 2003-05, absent before.** ⚠️ Revised:
+  it is solid from **2004-05**, and only **2003-04** is unusable. See P0.
+- **2003-04 is "partial — far too few rows per game" (465 rows, 96 games).** ❌ **Wrong,
+  and wrong in an instructive way.** 96 of those 465 rows are team-total rows with no
+  `player_id`; the real content is **369 player rows over 15 games at 24.6 rows per game**,
+  which is *complete* per game. 2003-04's defect is that the API holds only the first four
+  days of it. The probe diagnosed a within-game problem where the problem is the schedule.
 - **Validation (2022-23, 2023-24) and test (2024-25, 2025-26) are fully covered**, so
-  selection and the final evaluation see the feature at full strength.
+  selection and the final evaluation see the feature at full strength. ✅ Confirmed:
+  season-start roster coverage 96.9% / 95.7% / 96.1% / 94.3%.
 - **The availability head's shipped fitting window (2012-13 onward) sits entirely inside
-  preseason coverage**, so its increment arm has no missing-era complication at all.
+  preseason coverage**, so its increment arm has no missing-era complication at all. ✅
+  Confirmed.
 - **The 2020-21 December preseason is the same calendar trap the ADP freeze rule hit.**
   The preseason window must be derived from the data (game dates relative to the season's
-  first regular-season game), never from "October".
+  first regular-season game), never from "October". ✅ Confirmed, and the probe missed two
+  more: the **2011-12 lockout** preseason (Dec 16–22, two games per team) and the far worse
+  **2019-20** case below, where the window straddles its own opener.
+
+---
+
+## P0 — coverage: shipped 2026-08-12
+
+`make preseason` (`src/features/preseason.py`) → `data/features/preseason.parquet` and
+`outputs/eda/preseason_coverage.csv`. The backfill wrote 23 seasons of
+`game_logs_pre_season_*.csv`; the panel holds **11,707** player-seasons over **23**
+seasons. Both artifacts are in `make docs-audit`, so the figures below fail the build
+rather than going stale.
+
+### The plumbing came first, because three consumers would have absorbed the new files
+
+Adding a fourth season type to `data/raw/` is not an additive change. Three guards ship
+with the panel, each pinned by a test, and the details are in `docs/data-quirks.md`:
+
+1. `preprocess._parse_log_filename` learns the `pre_season_` prefix. Without it the rows
+   become the pseudo-season `pre-season-2023-24` **and** are typed `REGULAR_SEASON`, so
+   they arrive in the default fitting frame — the 2026-07-29 playoffs bug, one costume on.
+2. `load_raw(season_type="all")` now means **regular + playoffs** explicitly. `game_length`
+   reads it, and would otherwise have folded ~70 exhibition games a season into the
+   artifact whose claim is 0 disagreements over 37,986 games. Rebuilt after the change and
+   byte-identical.
+3. `features/adp.py::season_start_dates` classifies by prefix rather than by a substring
+   test. Left alone it would have moved **23 of 30** season openers ~3 weeks earlier,
+   silently re-deciding which ADP captures are point-in-time legal. Verified against the
+   stored panel: 0 of 8 seasons moved.
+
+### Coverage
+
+| | |
+|---|---|
+| seasons with preseason logs | **23** of 30 (2003-04 → 2025-26) |
+| player-seasons in the panel | **11,707** |
+| mean season-start roster coverage | **94.9%** |
+| worst season | **2003-04** at **66.6%** — the only `tail_missing` row |
+| worst usable season | **2011-12** at **90.8%** (the lockout, 2 games per team) |
+| camp invitees never reaching a season-start roster | **2,515** |
+| rows dropped: no `player_id` / exhibition opponent / at-or-after opener | **98** / **1,601** / **822** |
+
+The four seasons that matter most for selection are all healthy: **96.9%** (2022-23),
+**95.7%** (2023-24), **96.1%** (2024-25), **94.3%** (2025-26).
+
+**The 822 dropped rows are one season and one event.** The NBA labels the July 2020 bubble
+scrimmages `Pre Season` under the 2019-20 key — 33 games played 2020-07-22 → 2020-07-28,
+against a 2019-10-22 opener. That is why the opener check ships as a **filter with a
+count** rather than the assertion the plan specified: an assertion would simply fail, and
+the number dropped is the thing worth watching.
+
+**`coverage_class` is mechanical and rests on one measurement.** A preseason ends **3–5**
+days before the opener in 22 of 23 seasons. 2003-04 ends **20** days out, which is the
+signature of a truncated capture rather than a short preseason — and the tail is exactly
+what `missed_tail` and the late-weighted shares read. So the class is `tail_missing` above
+a 10-day gap and `covered` otherwise. 2004-05 (the final week only, 3 games per team) is
+`covered`: its *head* is missing, which shifts a within-team share's denominator but
+degrades gracefully, where a missing tail destroys the participation signal outright.
+Interpreting a *short* preseason — 2011-12's lockout, 2020-21's COVID window — is not
+derivable from the file and stays in `data-quirks.md` where knowledge that is not in the
+data belongs.
+
+### What the panel holds, and one thing it deliberately does not
+
+One row per (player, season) for every player with **at least one preseason appearance**:
+volume (`gp_pre`, `min_pre`, box totals) counted across every team, and everything
+schedule-relative read over his **last** preseason team — the project's traded-player
+convention. The forecast quantities are within-team **shares and ranks**
+(`min_share_pre`, `min_rank_pre`, and their `_late` twins over each team's final
+`late_games = 2`), participation (`missed_tail`, `missed_lead`, `played_final_game`), and
+per-36 rates for the seven count heads plus `pre_fg3a_share`. Shares sum to exactly 1.0
+within a team, which is the panel's own arithmetic check.
+
+**Raw preseason MPG is not a headline column, and the 2023-24 panel says why.** The six
+largest minutes shares that preseason belong to Ausar Thompson, Scoot Henderson, Jonathan
+Kuminga, Brandon Miller, Tobias Harris and Tyrese Maxey — four of them rookies. Joel Embiid
+played one game of Philadelphia's four. A preseason minutes *level* measures how much a
+coach needs to look at a player, which is close to the inverse of what we are forecasting;
+a within-team share at least normalizes the compression away.
+
+**A player with no preseason appearance has no row.** The logs hold appearances, not
+rosters — the same construction limit `src/features/availability.py` documents at length,
+and it is not solvable here either. The `has_preseason` indicator and the zero-delta
+convention belong to each head's attach step, where the join against that head's
+population happens. What P0 owes that step is a measurement of who is missing, which is
+the roster-coverage column above. **P1's missingness census is therefore not optional
+colour** — a ~5% hole that is disproportionately veterans resting and stars injured is a
+covariate, not noise.
 
 ## Why preseason data should help — and where it plausibly won't
 
@@ -147,8 +241,10 @@ rates), plus a `has_preseason` indicator:
 
 | piece | where | pattern it follows |
 |---|---|---|
-| fetch | `fetch_season_game_logs(season, out, "Pre Season")` — already works; add the task to `fetch_all_for_season` and backfill 2003-04 → 2025-26. Files land as `game_logs_pre_season_{season}.csv`, **never** mixed into `game_logs_{season}.csv` | the playoffs-file precedent in the same function |
-| panel | `src/features/preseason.py` → `data/features/preseason.parquet`, one row per (player_id, season): `gp_pre`, `team_pre_games`, `min_pre`, within-team minutes share (late-weighted), per-36 rates for the count components, `fg3a` share, `played_final_game`, `missed_tail`, preseason `team_id` | `src/features/availability.py` |
+| fetch ✅ | `fetch_season_game_logs(season, out, "Pre Season")` — ⚠️ it did *not* already work: `_slug` does not fold the space in `"pre season"`, so the file landed with a space in its name and no prefix parser could classify it. `_season_type_slug` fixes that. Task added to `fetch_all_for_season` behind `_FIRST_YEAR["pre_season"] = 2003`; 2003-04 → 2025-26 backfilled. Files land as `game_logs_pre_season_{season}.csv`, **never** mixed into `game_logs_{season}.csv` | the playoffs-file precedent in the same function |
+| season type ✅ | `preprocess._LOG_PREFIXES` + `PRE_SEASON`; `load_raw(season_type="all")` narrowed to regular + playoffs explicitly | the 2026-07-29 playoffs pseudo-season fix |
+| panel ✅ | `src/features/preseason.py` → `data/features/preseason.parquet`, one row per (player_id, season): `gp_pre`, `team_pre_games`, `min_pre`, within-team minutes share (late-weighted), per-36 rates for the count components, `fg3a` share, `played_final_game`, `missed_tail`, preseason `team_id` | `src/features/availability.py` |
+| coverage ✅ | `preseason.preseason_coverage` → `outputs/eda/preseason_coverage.csv`, written by the same `make preseason` | `draft_pool.py`'s coverage twin |
 | EDA gate | `src/eda/preseason_value.py` → `outputs/eda/preseason_value.csv`, `make preseason-value` | `context_value.py` |
 | heads | `availability.attach_preseason` + `PRESEASON_COLS`, **opt-in** — `build_design` is imported by seven modules and must not change under them | `attach_absence_mix` / `ABSENCE_MIX_COLS`, verbatim |
 | deltas | computed in each head's attach step (they need that head's own lag columns), from the panel's raw aggregates | the lag machinery already in each design |
@@ -161,11 +257,11 @@ Every gate states its bar before running, selection reads validation only
 (`selection_split`), and anything fitted from data — the delta shrinkage constant included
 — is estimated on the fitting half alone.
 
-**P0 — coverage (fetch + panel).** Backfill the preseason logs, build the panel, write a
-coverage artifact (rows, games, date window, share of season-start roster with preseason
-rows, per season). Record the quirks in `data-quirks.md`: exhibition opponents with
-non-NBA team ids, camp invitees who never reach a season-start roster, the 2020-21
-December window, the 2003-05 partial seasons.
+**P0 — coverage (fetch + panel).** ✅ **Shipped 2026-08-12** — see the section above.
+Backfill the preseason logs, build the panel, write a coverage artifact (rows, games, date
+window, share of season-start roster with preseason rows, per season). Record the quirks in
+`data-quirks.md`: exhibition opponents with non-NBA team ids, camp invitees who never reach
+a season-start roster, the 2020-21 December window, the 2003-05 partial seasons.
 
 **P1 — the EDA gate (train seasons only).** Three measurements, one decision:
 (a) *redundancy* — correlation of each preseason quantity with its prior-season
@@ -211,8 +307,8 @@ decision registry entries, and register this doc's built artifacts in `make docs
 
 | session | contents | gate |
 |---|---|---|
-| 1 (2026-08-12, this) | plan, scoping decisions, router + registry entries | — |
-| 2 | fetch backfill, preseason panel, coverage artifact, quirks, tests | P0 |
+| 1 (2026-08-12) | plan, scoping decisions, router + registry entries | — |
+| 2 (2026-08-12) ✅ | fetch backfill, preseason panel, coverage artifact, quirks, tests | P0 |
 | 3 | EDA gate; decide the rates question; freeze each head's exact block | P1 |
 | 4 | availability arms (point MLE + rolling), Stan port if survived | P2 |
 | 5 | marginal minutes arm; composition go/no-go | P3 |

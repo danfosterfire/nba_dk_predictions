@@ -107,6 +107,13 @@ features:
     # dropping anyone injured in October.
     roster_window_games: 10
 
+  preseason:
+    # How many of a team's FINAL preseason games count as "late". Early preseason games
+    # are experiments; the last one or two approximate the rotation the season opens with,
+    # and are the only part of a preseason rotation that forecasts anything. Two rather
+    # than one because a single game is one rest decision away from uninformative.
+    late_games: 2
+
   opponent:
     # Deliberately small. Effective support is 892 team-seasons and the matchup
     # interaction is worth ~1% of within-player residual variance, so rank 2 over

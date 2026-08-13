@@ -12,7 +12,7 @@ PIP    := .venv/bin/pip
         capture-calendar \
         report-calibration \
         season-total adp adp-draftkings adp-fantasypros adp-panel adp-profile \
-        adp-status game-length serial-correlation component-rates \
+        adp-status game-length preseason serial-correlation component-rates \
         variance-budget residual-correlation season-effects \
         stan stan-availability stan-availability-mixture stan-minutes \
         stan-components stan-composition \
@@ -121,6 +121,12 @@ component-targets:
 
 game-length:
 	$(PYTHON) -m src.features.game_length
+
+# Current-season preseason games as forecast covariates (docs/preseason-plan.md, P0).
+# The logs are BACKFILLABLE — one fetch after the final preseason game is enough, so this
+# deliberately stays out of `make daily-capture`.
+preseason:
+	$(PYTHON) -m src.features.preseason
 
 context-value:
 	$(PYTHON) -m src.eda.context_value
