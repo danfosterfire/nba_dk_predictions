@@ -315,6 +315,167 @@ panel rows (**29.7%**) belong to players with no usable prior season, so measure
 cannot see them at all. For those rows a preseason game is the first NBA observation rather
 than a marginal update, which is the whole of P4's case.
 
+## P3 — the marginal minutes arm: shipped 2026-08-13
+
+`make minutes-preseason` (`src/models/minutes_preseason.py`) → `minutes_preseason.csv`,
+`minutes_preseason_rolling.csv`, `minutes_preseason_shrinkage.csv`. Point MLE on the
+`minutes-window` machinery, so no CmdStan; nine nested arms, two readings, and one gate.
+
+**The gate passes on both halves, and the increment is the largest measured on this head.**
+The declared primary arm reads validation CRPS **−4.789** minutes against the incumbent
+with a paired-bootstrap interval of **[−8.08, −1.59]**, and the rolling-origin harness
+agrees at **−7.940 [−9.41, −6.44]** on **12 of 13** origins. So `price_composition = True`
+and the composition go/no-go opens.
+
+### The rolling harness is *larger* than validation, which has not happened before here
+
+Every previous block on this project shrank the other way — 4–6× on availability
+(`availability-window-plan.md` §12e, §14f), and this head's own fitting-window axis went
+from −2.687 on validation to −0.079 rolling with 6 of 13 origins
+(`minutes-window-plan.md` §3). Here validation is **0.60×** the rolling reading rather than
+5–30× it. The mechanism is visible in the harness: the rolling origins fit a mean of
+**3,685** rows against validation's 6,152, and a preseason delta is worth more where the
+prior-season block is weaker. That makes this the first block in the round whose validation
+figure is the *conservative* one.
+
+### The coverage restriction is load-bearing on this head, unlike on availability
+
+The panel begins at 2004-05 and this head fits from **1997-98**, so **2,154 of 8,306**
+training rows (25.9%) have no preseason row for a reason that is a fact about the NBA's API,
+and the missing indicator would read as an era dummy on every one of them. This is exactly
+the "coverage interactions" risk below, which the availability head's 2012-13 window dodges
+and this head does not. So **every arm, the reference included, fits the covered window
+only** — 6,152 rows — and the first covered season is read off `preseason_coverage.csv`
+rather than hard-coded.
+
+That restriction is not free and it is reported rather than absorbed: the full-window
+incumbent reads CRPS **147.149** on the draftable rows against the covered-window
+incumbent's **145.963**, so the cut is worth 1.19 minutes *before any preseason column
+exists*. Crediting that to the block would have inflated the increment by a quarter.
+Validation is fully covered (742 of 742), and **697 of 742** validation rows (93.9%) are
+draftable, which is the population every figure here is quoted on per P1 decision 5.
+
+### The ladder — on the season-start-roster population
+
+Nine arms, all nested on the shipped `logit_own_spline` variant with shared ρ. `crps_vs_primary`
+is a second paired bootstrap against the declared primary, so "arm X beats the primary" is
+an interval rather than two point estimates read side by side.
+
+| arm | cols | CRPS | vs incumbent [95%] | vs primary [95%] | PIT KS | MAE | bias | pred. sd |
+|---|---|---|---|---|---|---|---|---|
+| `carry_forward` *(floor)* | 0 | 163.871 | — | — | 0.1130 | 217.78 | +21.94 | 327.98 |
+| `incumbent_full_window` *(context)* | 0 | 147.149 | — | — | 0.0691 | 204.60 | −16.19 | 309.59 |
+| `incumbent` *(reference)* | 0 | 145.963 | — | +4.789 [+1.59, +8.08] | 0.0634 | 203.65 | −19.24 | 299.52 |
+| `missing_only` | 4 | 145.861 | −0.101 [−0.94, +0.71] | +4.688 | 0.0752 | 203.49 | −14.89 | 298.17 |
+| `share_late_only` | 5 | 145.643 | −0.320 [−1.99, +1.37] | +4.470 | 0.0636 | 203.04 | −14.38 | 295.90 |
+| `own_delta_reliability` | 6 | 141.731 | −4.231 [−7.50, −1.04] | +0.558 [+0.13, +0.99] | 0.0579 | 200.77 | −38.15 | 283.22 |
+| `own_delta` **(primary)** | 5 | 141.173 | **−4.789 [−8.08, −1.59]** | — | 0.0544 | 199.96 | −36.68 | 283.16 |
+| `p1_block` | 11 | 141.531 | −4.432 [−7.75, −1.31] | +0.357 [−0.45, +1.19] | 0.0479 | 200.30 | −30.80 | 282.43 |
+| `own_delta_shrunk` | 5 | 140.184 | −5.779 [−9.00, −2.73] | −0.989 [−2.04, −0.04] | 0.0608 | 198.25 | −40.54 | 283.04 |
+| `mpg_scale` | 5 | 140.514 | −5.449 [−8.68, −2.32] | −0.659 [−1.33, +0.01] | 0.0536 | 198.67 | −32.08 | 282.83 |
+| **`own_delta_centered`** | 5 | **139.379** | **−6.583 [−9.87, −3.48]** | **−1.794 [−2.96, −0.63]** | 0.0654 | 195.32 | **−10.95** | 282.63 |
+
+**1. The block is the delta, and the delta alone.** `missing_only` — P1's age-split
+indicator with no delta at all — is a tie at **−0.101 [−0.94, +0.71]**, and
+`share_late_only` is a tie at **−0.320**. Whatever the preseason is worth on this head, it
+is not "a preseason row exists" and it is not the within-team late share either. That is
+the attribution P1 built for the rate family, run here on the head it moved to the front.
+
+**2. More columns do not help.** P1's seven-column block scores **−4.432** against the
+single delta's **−4.789**, an interval against the primary of [−0.45, +1.19] — a tie at
+double the width. The gate's own reading predicted this (the block scored +0.0492 R²
+against `pre_d_mpg`'s +0.0519 alone) and it reproduces at the head's own unit.
+
+**3. The link matters less than the level.** `mpg_scale` is P1's `log1p`-MPG column
+verbatim and the primary is the same quantity on this head's own logit-share link; they sit
+0.66 CRPS apart with an interval touching zero. Difference coding on the head's link is the
+plan's stated rule and it costs nothing to follow, but it is not where the result lives.
+
+### The finding: preseason minutes are compressed, and the compression is a nuisance level
+
+`own_delta_centered` — the same delta with **each season's own mean removed** — beats the
+declared primary on validation at **−1.794 [−2.96, −0.63]** *and* on the rolling harness at
+**−0.459 [−0.71, −0.21]**, 9 of 13 origins. And it does something no other arm does: it
+**repairs the bias**. The primary predicts **−36.68** minutes low per player-season against
+the incumbent's −19.24; centring takes that to **−10.95**, better than the incumbent
+itself.
+
+That is the compression P0 named, measured. A starter plays 15–20 preseason minutes, so
+`logit(mpg_pre / 48) − logit(minutes_share_lag1)` is systematically negative and its
+magnitude varies by season; a coefficient on the uncentred column is therefore part
+player-specific update and part **league-level shift the point head has no season term to
+absorb**. Centring separates them, and the whole of the level turns out to be nuisance.
+
+**P0 pointed at the right problem and reached for the wrong instrument.** Its argument was
+that "a within-team share at least normalizes the compression away", and that instrument —
+`share_late_only` — is a **tie**. Centring the raw delta is what works. Both facts are worth
+keeping: the diagnosis was right and the prescription was not.
+
+**The promotion is a fitting-half decision, not a validation-driven swap.** `own_delta_centered`
+was an attribution arm, so preferring it after seeing validation would be exactly the
+mistake the split guards exist to prevent. It wins on the rolling harness too, on rows that
+never touch the selection split, which is what licenses carrying it into the Stan port.
+Its one cost is calibration: PIT KS **0.0654** against the primary's 0.0544 and the
+incumbent's 0.0634, so it is the better-fitting and slightly worse-calibrated arm. Centring
+is point-in-time — a season's own preseason mean is on disk before its opener — and a test
+pins that it never pools across seasons.
+
+### The shrinkage constant the plan left open, closed
+
+`docs/preseason-plan.md` left the volume question open between an empirical-Bayes shrink and
+a reliability interaction, and said the gate decides on train. Selected on an inner carve of
+the **fitting half** (the last two training seasons scored, 5,416 fitted / 736 scored):
+
+| k (preseason minutes) | 0 | **20** | 40 | 80 | 160 | 320 |
+|---|---|---|---|---|---|---|
+| inner CRPS | 132.152 | **132.106** | 132.357 | 132.372 | 132.948 | 133.421 |
+
+**k = 20 wins by 0.05 CRPS minutes over no shrinkage at all**, and the curve is monotone
+upward after it. So the shrink is real but negligible, and the honest reading is that the
+volume question is a **null on this head**: at 4–6 preseason games the delta is already
+being shrunk by the L2 penalty and the reliability weight has nothing left to do. P1's
+additive alternative is worse than either — `own_delta_reliability` is the only arm that
+*loses* to the primary with an interval clear of zero (+0.558 [+0.13, +0.99]).
+
+### What the CRPS column does not show, and what it costs
+
+**The predictive narrows 5.4%**, from **299.52** to **283.16** (283.16 for the primary,
+282.63 centred). This head ships **solely** for its season-level spread — `make
+minutes-unification` reads 302.75 against the composition's 64.65 — so an arm that improves
+CRPS by narrowing the one thing the head exists to supply is not automatically an
+improvement, and `predictive_sd` is reported rather than barred for that reason. The
+context is reassuring but not settled: `minutes-window-plan.md` §4 found the shipped
+`sim.minutes.player_season_sigma = 0.450` still tying a marginal arm at predictive sd
+**265.67**, which is narrower than anything here. Re-running the injection stake against a
+preseason-armed reference is P5 work and is not done.
+
+**Central coverage degrades slightly.** Realized 50% coverage runs 0.5696 (incumbent) →
+0.5481 (primary) → 0.5423 (centred) against a nominal 0.5, while 95% holds at 0.9555 →
+0.9555 → 0.9527. The same shape `minutes-window-plan.md` §2 reports for its own arms: better
+overall calibration, slightly too sharp through the middle.
+
+### What P3 decides
+
+1. **The preseason block ships onward on the minutes head** — both halves of the bar clear,
+   and this is the first block in the project whose rolling reading is the larger one.
+2. **The shipped column is the season-centred delta**, `pre_d_logit_share` with each
+   season's own mean removed, plus P1's four age-split missing indicators. Five columns.
+3. **The composition is priced**, per P3's own conditional — at the pilot window first.
+4. **The volume shrink is a null.** `k = 20` is retained because it is the inner split's
+   optimum, but it is worth 0.05 CRPS and nothing should be built on it.
+5. **Nothing ships into the chain from here.** This is a point-MLE ladder; the arm has
+   earned a Stan port on `stan_minutes`, which is the same standing `minutes-window-plan.md`
+   §5 gives its own graded-ρ recommendation.
+
+### What P3 does not settle
+
+The port itself. The point MLE collapses the posterior over β to its mode, so a Stan fit
+owes two things this cannot say: whether the increment survives integrating over coefficient
+uncertainty, and what the block does to the season-level predictive **jointly** with the
+year effect `season_terms` already gives this head — the centring finding is a statement
+about a league-level level, and a year effect is the term that would otherwise own it. The
+two may be partly redundant, and nothing here has crossed them.
+
 ## Why preseason data should help — and where it plausibly won't
 
 - **Availability.** Participation is a direct health reading taken days before the season:
@@ -445,10 +606,16 @@ preseason block on the mean function, and the participation signal on `PI_COLS`.
 blocks on this head won validation and shrank 4–6× rolling (§12e, §14f), so validation
 alone ships nothing.
 
-**P3 — minutes.** *P1 moved this ahead of P2*: `pre_d_mpg` is the single most valuable
-column measured in the gate (+0.0519 R² alone, partial r 0.334). The marginal head's
-increment runs on the `minutes-window` point-MLE machinery (cheap, no CmdStan). The composition is priced only if the marginal arm wins,
-and first at the pilot window (2018-19 onward), which `potential-to-dos.md` item 1
+**P3 — minutes.** ✅ **Shipped 2026-08-13** — see the section above. *P1 moved this ahead of
+P2*: `pre_d_mpg` was the single most valuable column measured in the gate (+0.0519 R² alone,
+partial r 0.334). The marginal head's increment ran on the `minutes-window` point-MLE
+machinery (cheap, no CmdStan), against a bar stated before the run — validation CRPS
+paired-bootstrap interval clear of zero on the draftable population **and** the
+rolling-origin harness agreeing. **Both cleared** (−4.789 [−8.08, −1.59] and −7.940
+[−9.41, −6.44] on 12 of 13 origins), so the arm earns a Stan port and the composition's
+conditional opens. The shipped column is the **season-centred** delta, which an attribution
+arm found beats the declared primary on both readings and repairs its bias. The composition
+is priced first at the pilot window (2018-19 onward), which `potential-to-dos.md` item 1
 measured at ~6× cheaper than the full window. A plausible composition-specific win worth
 checking there: preseason minutes share updating the *ordering* and prior-share feature
 for players who changed teams.
@@ -475,16 +642,19 @@ decision registry entries, and register this doc's built artifacts in `make docs
 | 1 (2026-08-12) | plan, scoping decisions, router + registry entries | — |
 | 2 (2026-08-12) ✅ | fetch backfill, preseason panel, coverage artifact, quirks, tests | P0 |
 | 3 (2026-08-12) ✅ | EDA gate; the rates question answered; each head's block frozen | P1 |
-| 4 | marginal minutes arm; composition go/no-go | P3 |
+| 4 (2026-08-13) ✅ | marginal minutes arm; composition go/no-go | P3 |
 | 5 | availability arms (point MLE + rolling), Stan port if survived | P2 |
 | 6 | no-prior ladder + rookie rate prior | P4 |
+| 4b | the composition's preseason arm at the pilot window — opened by P3's gate | P3 |
 | 6b | the five surviving rate heads' arms — a session P1 *added* | P1→P2 |
 | 7 | posteriors, simulator gates, strategy sweep, spec/README rewrite | P5 |
 
 Sessions 4–6 reorder freely as findings land, and P1 exercised that: **minutes moved ahead
 of availability** because the measurement inverted the plan's a-priori ordering. Anything
 that fails its gate is recorded and the session bank shrinks rather than the bar — but the
-rate result went the other way and the bank grew by one.
+rate result went the other way and the bank grew by one. P3 adds a **session 4b**: the
+composition go/no-go it opened is a separate fit at the pilot window, not a continuation of
+the marginal arm's session.
 
 ## Production runbook — October 2026
 
@@ -520,13 +690,22 @@ the real window is too short to debug a join in.
   such, and `fg3m|fg3a`'s apparent gain is `has_preseason` rather than preseason 3P%.
 - **The rolling-shrinkage pattern.** Twice now a block won validation and shrank 4–6× on
   the rolling harness. The bars above are stated before any arm runs, and the rolling
-  harness is part of the gate, not a post-hoc check.
+  harness is part of the gate, not a post-hoc check. ⚠️ **P3 is the first counter-example
+  and it does not retire the risk.** On the minutes head the rolling reading is the
+  *larger* one (−7.940 against validation's −4.789, a ratio of 0.60× rather than 5–30×),
+  because the rolling origins fit a mean of 3,685 rows against validation's 6,152 and a
+  preseason delta is worth more where the prior-season block is weaker. That is a property
+  of this block on this head, not evidence that the pattern is gone — the availability head
+  is where it bit twice and P2 has not run.
 - **Coverage interactions.** ✅ **Handled at P1 rather than deferred**: `covered_seasons`
   restricts every measurement to the 22 seasons with an intact tail, so a block that is
   structurally zero before 2004-05 cannot dilute a ΔR² with a fact about the API. The
   restriction still binds on any head fitting a pre-2005 window, which must show the
   indicator is not soaking up an era effect — the availability head's 2012-13 window dodges
-  this entirely.
+  this entirely. ⚠️ **The minutes head does not**, and P3 is where the risk actually bit:
+  it fits from 1997-98, so 2,154 of 8,306 training rows (25.9%) predate coverage. Every arm
+  including the reference fits the covered window only, and the restriction is worth 1.19
+  CRPS minutes on its own — a quarter of the increment, if it had been left inside it.
 - **A population can look like a feature.** P1's first reading was +0.1171 R² on `gp_share`
   and 6× of it was mid-season signings, who have no preseason row for a contract reason.
   Nothing leaked — both facts are knowable at the draft — but the head is only ever applied

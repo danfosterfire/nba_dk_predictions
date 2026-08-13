@@ -7106,6 +7106,123 @@ def _preseason_value() -> list[Claim]:
         "in-scope panel rows")
     add("29.7%", lambda: _pv("no_prior", "panel_rows", "reach",
                              "share_without_design_row"), "P4's share of the panel")
+    return C + _preseason_minutes()
+
+
+PRE_MIN = "outputs/predictions/minutes_preseason.csv"
+PRE_MIN_ROLL = "outputs/predictions/minutes_preseason_rolling.csv"
+PRE_MIN_SHRINK = "outputs/predictions/minutes_preseason_shrinkage.csv"
+
+
+def _pm(arm: str, column: str, population: str = "draftable") -> float:
+    """One reading off the P3 ladder, on the population every verdict is quoted on."""
+    return _one(table(PRE_MIN), column, arm=arm, population=population)
+
+
+def _pmr(arm: str, column: str) -> float:
+    return _one(table(PRE_MIN_ROLL), column, arm=arm)
+
+
+def _preseason_minutes() -> list[Claim]:
+    """`docs/preseason-plan.md` P3 — the marginal minutes arm.
+
+    Claimed densely for the same reason P1 is: the section's output is a **gate**, and both
+    halves of a conjunction have to hold. A doc that kept the validation figure fresh and let
+    the rolling one rot would read as a pass on evidence that no longer exists — which is
+    precisely the failure the two-half bar was written to prevent.
+
+    The three arms whose *ties* carry the attribution (`missing_only`, `share_late_only`,
+    `p1_block`) are registered alongside the winners, because "the gain is the delta and
+    nothing else" is a claim about the losing rows.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, actual, label: str, artifact: str = PRE_MIN, **kw) -> None:
+        C.append(_c(quoted, artifact, actual, label, doc=PRESEASON, **kw))
+
+    # The gate itself — both halves, since the decision is their conjunction.
+    add("−4.789", lambda: _pm("own_delta", "crps_vs_incumbent"),
+        "primary arm, validation CRPS against the incumbent")
+    add("−8.08", lambda: _pm("own_delta", "crps_vs_incumbent_lo"), "primary arm, val lo")
+    add("−1.59", lambda: _pm("own_delta", "crps_vs_incumbent_hi"), "primary arm, val hi")
+    add("−7.940", lambda: _pmr("own_delta", "crps_vs_incumbent"),
+        "primary arm, rolling CRPS against the incumbent", artifact=PRE_MIN_ROLL)
+    add("−9.41", lambda: _pmr("own_delta", "crps_vs_incumbent_lo"),
+        "primary arm, rolling lo", artifact=PRE_MIN_ROLL)
+    add("−6.44", lambda: _pmr("own_delta", "crps_vs_incumbent_hi"),
+        "primary arm, rolling hi", artifact=PRE_MIN_ROLL)
+    add("12", lambda: _pmr("own_delta", "origins_won"), "primary arm, origins won",
+        artifact=PRE_MIN_ROLL)
+    add("13", lambda: _pmr("own_delta", "n_origins"), "origins in the harness",
+        artifact=PRE_MIN_ROLL)
+    add("3,685", lambda: _pmr("own_delta", "mean_fit_rows"),
+        "mean rolling fit rows — why the rolling reading is the larger one",
+        artifact=PRE_MIN_ROLL)
+
+    # The coverage restriction, priced on its own so it cannot be credited to the block.
+    add("147.149", lambda: _pm("incumbent_full_window", "val_crps"),
+        "full-window incumbent CRPS")
+    add("145.963", lambda: _pm("incumbent", "val_crps"), "covered-window incumbent CRPS")
+    add("6,152", lambda: _pm("incumbent", "n_train"), "covered-window training rows")
+    add("697", lambda: _pm("incumbent", "n_val"), "draftable validation rows")
+    add("742", lambda: _pm("incumbent", "n_val", population="all"), "validation rows")
+
+    # The ladder, arm by arm. The ties are the attribution and are claimed as such.
+    for arm, crps, delta in [("carry_forward", "163.871", None),
+                             ("missing_only", "145.861", "−0.101"),
+                             ("share_late_only", "145.643", "−0.320"),
+                             ("own_delta_reliability", "141.731", "−4.231"),
+                             ("own_delta", "141.173", None),
+                             ("p1_block", "141.531", "−4.432"),
+                             ("own_delta_shrunk", "140.184", "−5.779"),
+                             ("mpg_scale", "140.514", "−5.449"),
+                             ("own_delta_centered", "139.379", "−6.583")]:
+        add(crps, lambda a=arm: _pm(a, "val_crps"), f"{arm} validation CRPS")
+        if delta is not None:
+            add(delta, lambda a=arm: _pm(a, "crps_vs_incumbent"),
+                f"{arm} against the incumbent")
+
+    # The centring finding — the arm that beat the declared primary, on both readings.
+    add("−1.794", lambda: _pm("own_delta_centered", "crps_vs_primary"),
+        "centred against the primary, validation")
+    add("−2.96", lambda: _pm("own_delta_centered", "crps_vs_primary_lo"),
+        "centred against the primary, val lo")
+    add("−0.63", lambda: _pm("own_delta_centered", "crps_vs_primary_hi"),
+        "centred against the primary, val hi")
+    add("−0.459", lambda: _pmr("own_delta_centered", "crps_vs_primary"),
+        "centred against the primary, rolling", artifact=PRE_MIN_ROLL)
+    add("−0.71", lambda: _pmr("own_delta_centered", "crps_vs_primary_lo"),
+        "centred against the primary, rolling lo", artifact=PRE_MIN_ROLL)
+    add("−0.21", lambda: _pmr("own_delta_centered", "crps_vs_primary_hi"),
+        "centred against the primary, rolling hi", artifact=PRE_MIN_ROLL)
+    add("+0.558", lambda: _pm("own_delta_reliability", "crps_vs_primary"),
+        "P1's additive reliability term, the only arm losing to the primary")
+
+    # The bias repair, which is the mechanism rather than the score.
+    for arm, quoted in [("incumbent", "−19.24"), ("own_delta", "−36.68"),
+                        ("own_delta_centered", "−10.95")]:
+        add(quoted, lambda a=arm: _pm(a, "val_bias"), f"{arm} season-total bias")
+
+    # The predictive spread, which is the whole reason this head ships.
+    for arm, quoted in [("incumbent", "299.52"), ("own_delta", "283.16"),
+                        ("own_delta_centered", "282.63")]:
+        add(quoted, lambda a=arm: _pm(a, "predictive_sd"), f"{arm} predictive sd")
+    for arm, quoted in [("incumbent", "0.0634"), ("own_delta", "0.0544"),
+                        ("own_delta_centered", "0.0654")]:
+        add(quoted, lambda a=arm: _pm(a, "val_pit_ks"), f"{arm} PIT KS")
+    for arm, quoted in [("incumbent", "0.5696"), ("own_delta", "0.5481"),
+                        ("own_delta_centered", "0.5423")]:
+        add(quoted, lambda a=arm: _pm(a, "coverage_50"), f"{arm} realized 50% coverage")
+
+    # The shrinkage grid — a null, and a null is worth auditing so it is not rebuilt.
+    for k, quoted in [(0.0, "132.152"), (20.0, "132.106"), (40.0, "132.357"),
+                      (80.0, "132.372"), (160.0, "132.948"), (320.0, "133.421")]:
+        add(quoted, lambda kk=k: _one(table(PRE_MIN_SHRINK), "inner_crps", k=kk),
+            f"inner CRPS at k={k:.0f}", artifact=PRE_MIN_SHRINK)
+    add("5,416", lambda: _one(table(PRE_MIN_SHRINK), "n_fit", k=0.0),
+        "shrinkage inner fit rows", artifact=PRE_MIN_SHRINK)
+    add("736", lambda: _one(table(PRE_MIN_SHRINK), "n_score", k=0.0),
+        "shrinkage inner score rows", artifact=PRE_MIN_SHRINK)
     return C
 
 

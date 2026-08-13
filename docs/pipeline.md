@@ -212,6 +212,23 @@ make minutes-window    # the marginal minutes head's fitting window x dispersion
                        #   short window makes the marginal head a HARDER reference to tie
                        #   rather than an easier one.
 
+make minutes-preseason # preseason-plan P3: the preseason block as a NESTED arm on the
+                       #   marginal minutes head → outputs/predictions/
+                       #   minutes_preseason{,_rolling,_shrinkage}.csv. Same point-MLE
+                       #   machinery as `minutes-window`, so no CmdStan; needs
+                       #   `make preseason` and `make preseason-value` first.
+                       #   THE GATE PASSES on both halves — validation -4.789
+                       #   [-8.08, -1.59] and a 13-origin rolling harness at -7.940
+                       #   [-9.41, -6.44], 12 of 13 — so the composition's conditional
+                       #   opens. THREE THINGS TO KNOW. Every arm INCLUDING the reference
+                       #   fits the covered window (2004-05 on), because this head fits
+                       #   from 1997-98 and the missing indicator would be an era dummy on
+                       #   a quarter of its rows; that cut alone is worth 1.19 CRPS. The
+                       #   rolling reading is LARGER than validation, the first time in
+                       #   this repo. And the shipped column is the delta CENTRED within
+                       #   season: preseason minutes are compressed, the level is nuisance,
+                       #   and centring both wins and repairs a bias the raw delta creates.
+
 make availability-regime # the last two open axes on the availability head's fitting rule
                        #   → outputs/predictions/availability_{regime,shrinkage,
                        #   regime_confirmation}.csv. (1) an explicit COVID-regime indicator

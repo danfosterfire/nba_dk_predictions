@@ -19,7 +19,7 @@ PIP    := .venv/bin/pip
         stan-components stan-composition \
         stan-substitution season-terms games-played stan-games-played \
         stan-game-length posteriors model-cards minutes-unification minutes-window \
-        composition-effects \
+        minutes-preseason composition-effects \
         scoring-periods draft-pool simulate-season weekly-scores bracket draft-sim \
         draft-sim-need draft-room draft-room-prep strategy-sweep strategy-sweep-need \
         pick-log-stake mixture-value final-evaluation
@@ -433,6 +433,20 @@ minutes-unification:
 # `make posteriors` for step 4 only.
 minutes-window:
 	$(PYTHON) -m src.models.minutes_window
+
+# P3 of docs/preseason-plan.md: the preseason block as a NESTED arm on the marginal minutes
+# head, which P1's gate moved ahead of availability because the block is worth 2.5x more
+# here on the population it would be used on (+0.0492 R^2 against +0.0198). Same point-MLE
+# machinery as `minutes-window`, so no CmdStan and an arm can be rejected before any
+# sampler time is spent.
+#
+# Every arm — the reference included — fits the COVERED window only (2004-05 onward), since
+# this head fits from 1997-98 and a missing-preseason indicator would otherwise read as an
+# era dummy on a quarter of the training rows. The bar is stated in the module docstring and
+# is BOTH validation and the rolling-origin harness; the composition head is priced only if
+# it passes. Needs `make preseason` and `make preseason-value`.
+minutes-preseason:
+	$(PYTHON) -m src.models.minutes_preseason
 
 # Item 3d: fit the per-(player, season) random effect `make minutes-unification` measured
 # the need for, and sweep a team-context block alongside it. Four arms — a same-window

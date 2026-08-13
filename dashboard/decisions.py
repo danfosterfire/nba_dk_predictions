@@ -187,14 +187,18 @@ REGISTRY: tuple[Decision, ...] = (
                 "2003-04 onwards, with validation and test above 94% of the "
                 "season-start roster. Availability and minutes get arms first; "
                 "component rates are gated on a train-only EDA readout; the no-prior "
-                "population is primary scope. Still open because no head reads the "
-                "block yet: P0 built the data, P1 measured that it carries signal, and "
-                "only when a head fits it does a coefficient exist to price.",
+                "population is primary scope. **The first head has now fitted it**: P3's "
+                "marginal minutes arm clears both halves of its bar "
+                "([[preseason-minutes-arm-clears-both-halves]]), so a coefficient exists "
+                "and is worth −4.789 validation CRPS minutes. Still open because that is "
+                "a point-MLE ladder — nothing enters the chain until a Stan port ships, "
+                "and availability, the rate heads and the no-prior population have not "
+                "run.",
         status="open",
         reproduce="make preseason → data/features/preseason.parquet, "
                   "outputs/eda/preseason_coverage.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-13",
         date="2026-08-12",
         tags=("constraint",),
     ),
@@ -223,7 +227,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make preseason-value → outputs/eda/preseason_value.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-13",
         date="2026-08-12",
         tags=("preseason", "eda"),
     ),
@@ -246,7 +250,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make preseason-value → outputs/eda/preseason_value.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-13",
         date="2026-08-12",
         tags=("preseason", "eda"),
     ),
@@ -267,7 +271,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make preseason-value → outputs/eda/preseason_value.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-13",
         date="2026-08-12",
         tags=("preseason", "eda"),
     ),
@@ -275,7 +279,10 @@ REGISTRY: tuple[Decision, ...] = (
         id="preseason-coverage",
         topic="data",
         claim="Preseason games enter as a panel of within-team shares and "
-              "participation, never as raw preseason MPG and never as a target row.",
+              "participation, and never as a target row. ⚠️ The 'never as raw preseason "
+              "MPG' half was **qualified by P3**: the panel's construction stands, but "
+              "the column the minutes head actually ships is a season-centred MPG delta, "
+              "and the within-team share is the arm that fails.",
         because="A preseason minutes *level* measures how much a coach needs to look at "
                 "a player, which is close to the inverse of what we forecast — the six "
                 "largest 2023-24 preseason minutes shares include four rookies, and "
@@ -288,12 +295,18 @@ REGISTRY: tuple[Decision, ...] = (
                 "its capture truncated 20 days before the opener where every other "
                 "season ends 3-5 days out. A player with no preseason appearance has "
                 "no row — the logs hold appearances, not rosters — so the roster-share "
-                "column is how the attach step learns who is missing.",
+                "column is how the attach step learns who is missing. **The compression "
+                "argument was right and its instrument was wrong**: P3 finds the "
+                "within-team late share alone is a tie on the minutes head (−0.320 "
+                "[−1.99, +1.37]) while *centring* the raw MPG delta within season removes "
+                "the same compression and is the strongest arm on the ladder — see "
+                "[[preseason-delta-is-centred-within-season]]. A share was the right "
+                "diagnosis of a level problem and the wrong subtraction.",
         status="built",
         reproduce="make preseason → data/features/preseason.parquet, "
                   "outputs/eda/preseason_coverage.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-13",
         date="2026-08-12",
         tags=("capture", "preseason"),
     ),
@@ -7718,6 +7731,118 @@ REGISTRY: tuple[Decision, ...] = (
         reviewed="2026-08-12",
         date="2026-08-12",
         tags=("architecture",),
+    ),
+    Decision(
+        id="preseason-minutes-arm-clears-both-halves",
+        topic="minutes",
+        claim="**The preseason block earns a Stan port on the marginal minutes head.** "
+              "Validation CRPS −4.789 [−8.08, −1.59] against the covered-window "
+              "incumbent, and the rolling-origin harness agrees at −7.940 [−9.41, −6.44] "
+              "on 12 of 13 origins.",
+        because="P3's bar was stated before any arm ran and is a conjunction, because "
+                "[[preseason-value-gate]] is an R² screen on a point estimate and twice "
+                "on this project a block won a validation reading and shrank 4-6x on the "
+                "rolling harness. Both halves clear. **The rolling reading is the LARGER "
+                "one here — 0.60x rather than 5-30x — which has not happened before in "
+                "this repo**: the rolling origins fit a mean of 3,685 rows against "
+                "validation's 6,152, and a preseason delta is worth more where the "
+                "prior-season block is weaker, so validation is the conservative figure "
+                "rather than the flattering one. The gain is the delta and nothing else: "
+                "the age-split indicator alone is a tie at −0.101 [−0.94, +0.71] and the "
+                "within-team late share alone is a tie at −0.320, while P1's full "
+                "seven-column block (−4.432) cannot be told from the single delta. "
+                "Nothing ships into the chain from a point-MLE ladder — the arm earns a "
+                "port, exactly as "
+                "[[minutes-dispersion-is-role-graded-and-the-window-is-not]] does one "
+                "axis over.",
+        status="measured",
+        reproduce="make minutes-preseason → outputs/predictions/minutes_preseason.csv, "
+                  "outputs/predictions/minutes_preseason_rolling.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-13",
+        date="2026-08-13",
+        tags=("preseason", "specification"),
+    ),
+    Decision(
+        id="preseason-delta-is-centred-within-season",
+        topic="minutes",
+        claim="**The preseason delta enters with each season's own mean removed.** "
+              "Preseason minutes are compressed, so the delta's level is a league-wide "
+              "nuisance the point head has no season term to absorb — centring wins on "
+              "both readings and repairs the bias the uncentred column creates.",
+        because="`own_delta_centered` beats the declared primary at −1.794 [−2.96, −0.63] "
+                "on validation AND at −0.459 [−0.71, −0.21] on the rolling harness, 9 of "
+                "13 origins, and takes season-total bias from −36.68 minutes to **−10.95** "
+                "— better than the incumbent's own −19.24. A starter plays 15-20 preseason "
+                "minutes, so `logit(mpg_pre/48) − logit(minutes_share_lag1)` is "
+                "systematically negative and varies by season; a coefficient on the "
+                "uncentred column is part player-specific update and part level shift, and "
+                "the level turns out to be all nuisance. **[[preseason-coverage]] "
+                "diagnosed this and prescribed the wrong instrument**: its within-team "
+                "share was meant to normalize the compression away, and alone that share "
+                "is a tie (−0.320 [−1.99, +1.37]) while centring the raw delta is the "
+                "strong arm. The promotion rests on the ROLLING reading — an attribution "
+                "arm preferred after seeing validation would be a validation-driven swap; "
+                "preferred on the fitting half it is not. Cost: PIT KS 0.0654 against the "
+                "uncentred 0.0544, so it is the better-fitting and slightly worse-"
+                "calibrated arm. Centring is point-in-time — a season's own preseason mean "
+                "is on disk before its opener.",
+        status="settled",
+        reproduce="make minutes-preseason → outputs/predictions/minutes_preseason.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-13",
+        date="2026-08-13",
+        tags=("preseason", "specification"),
+    ),
+    Decision(
+        id="preseason-arms-fit-the-covered-window-only",
+        topic="minutes",
+        claim="Every preseason arm on the minutes head — **the reference included** — "
+              "fits from 2004-05, because this head fits from 1997-98 and the missing "
+              "indicator would otherwise be an era dummy on a quarter of its rows.",
+        because="`docs/preseason-plan.md`'s coverage-interactions risk says the "
+                "availability head's 2012-13 window dodges this entirely. The minutes "
+                "head does not: 2,154 of 8,306 training rows (25.9%) predate the panel, "
+                "with no preseason row for a reason that is a fact about the NBA's API "
+                "rather than about the player. The restriction is not free and is "
+                "reported rather than absorbed — the full-window incumbent reads CRPS "
+                "147.150 against the covered-window incumbent's 145.963, so the cut is "
+                "worth **1.19 minutes before any preseason column exists**, a quarter of "
+                "the measured increment. Crediting it to the block is the mistake this "
+                "guards, and it is the same shape as "
+                "[[preseason-draftable-population]]: a fact about which rows are in the "
+                "frame, wearing a model result's clothes. The first covered season is "
+                "read off `preseason_coverage.csv`, never hard-coded.",
+        status="settled",
+        reproduce="make minutes-preseason → outputs/predictions/minutes_preseason.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-13",
+        date="2026-08-13",
+        tags=("preseason", "methodology"),
+    ),
+    Decision(
+        id="preseason-volume-shrink-is-a-null",
+        topic="minutes",
+        claim="The empirical-Bayes volume shrink `min_pre / (min_pre + k)` is worth "
+              "**0.05 CRPS minutes** on this head, and P1's additive reliability term is "
+              "actively worse than no reliability term at all.",
+        because="`docs/preseason-plan.md` left the volume question open between an EB "
+                "shrink and a reliability interaction and said the gate decides on train. "
+                "Selected on an inner carve of the fitting half, the grid runs 132.153 "
+                "(k=0, no shrink) / **132.106** (k=20) / 132.357 / 132.372 / 132.948 / "
+                "133.421 — an interior optimum whose whole margin is 0.05, monotone "
+                "upward afterwards. At 4-6 preseason games the L2 penalty is already "
+                "shrinking the delta and the weight has nothing left to do. The additive "
+                "form P1 shipped is the only arm on the ladder that LOSES to the primary "
+                "with an interval clear of zero (+0.558 [+0.13, +0.99]). k=20 is retained "
+                "as the inner split's optimum, and nothing should be built on it.",
+        status="null",
+        reproduce="make minutes-preseason → "
+                  "outputs/predictions/minutes_preseason_shrinkage.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-13",
+        date="2026-08-13",
+        tags=("preseason", "next"),
     ),
     Decision(
         id="availability-mixture-contest-value-is-a-null",
