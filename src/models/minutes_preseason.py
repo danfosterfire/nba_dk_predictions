@@ -109,9 +109,10 @@ import pandas as pd
 import yaml
 
 from src.data.fetch import _season_start_year
-from src.eda.preseason_value import (AGE_EDGES, AGE_LABELS, EPS, attach_availability_block,
-                                     attach_prior_shares, attach_season_start_roster,
-                                     covered_seasons, logit)
+from src.eda.preseason_value import (EPS, MISSING_AGE_COLS, attach_availability_block,
+                                     attach_missing_age_indicators, attach_prior_shares,
+                                     attach_season_start_roster, covered_seasons, logit,
+                                     season_centered)
 from src.models.availability import split_seasons
 from src.models.availability_window import restrict_window
 from src.models.held_out import as_plain, selection_split
@@ -144,9 +145,11 @@ RELIABILITY = "pre_log_min"
 P1_PARTICIPATION = ["pre_d_min_share_late", "pre_gp_share", "pre_missed_tail_share",
                     "pre_played_final_game"]
 
-# The missing-preseason indicator, split on P1's own age cells (decision 3). Coded on the
-# MISSING side: 3.8% of draftable rows, and zero across the block still means "incumbent".
-MISSING_AGE_COLS = [f"pre_missing__{label}" for label in AGE_LABELS]
+# The missing-preseason indicator, split on P1's own age cells (decision 3), and the
+# season-centring device below both live in `preseason_value` — P2 attaches the same two to
+# a different head, and a second copy is where two heads start disagreeing about what
+# "missing" means. Re-exported here because this module's tests and `docs-audit` name it.
+MISSING_AGE_COLS = list(MISSING_AGE_COLS)
 
 # Pseudo-minutes for the empirical-Bayes weight `min_pre / (min_pre + k)`. 0 is no shrinkage
 # — the weight is identically 1 and the arm is `own_delta` exactly, which is what makes the
@@ -295,20 +298,12 @@ def add_own_columns(frame: pd.DataFrame) -> pd.DataFrame:
     # The same delta with each season's own mean removed, over the rows that actually have a
     # preseason — the zeros are a fill and averaging them in would shrink the centring by
     # the missing rate. A missing row keeps its zero, so the nesting argument still holds.
-    seasons_present = out["season"].where(present)
-    means = out[OWN_DELTA].where(present).groupby(seasons_present).transform("mean")
-    out[CENTERED_DELTA] = np.where(present,
-                                   out[OWN_DELTA] - means.fillna(0.0).to_numpy(float), 0.0)
+    out[CENTERED_DELTA] = season_centered(out, OWN_DELTA)
 
     # Needed as a level by the reliability weight, and zero is the value the nesting
     # argument wants for a row with no preseason.
     out["min_pre"] = out["min_pre"].fillna(0.0)
-
-    cells = pd.cut(out["age"].to_numpy(dtype=float), AGE_EDGES,
-                   labels=AGE_LABELS).astype(str)
-    for label in AGE_LABELS:
-        out[f"pre_missing__{label}"] = ((~present) & (cells == label)).astype(float)
-    return out
+    return attach_missing_age_indicators(out)
 
 
 def with_shrunk_delta(frame: pd.DataFrame, k: float) -> pd.DataFrame:

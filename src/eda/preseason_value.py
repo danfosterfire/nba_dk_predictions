@@ -273,6 +273,62 @@ def attach_availability_block(design: pd.DataFrame,
     return out
 
 
+# ── Two encodings P1 decided on and every later session needs ─────────────────
+#
+# Both live here rather than in the head that first built them, for the reason
+# `docs/preseason-plan.md` gives about the delta builders: P2, P3 and P4 all attach a
+# preseason block, and a second copy of either of these is a place where two heads can
+# silently disagree about what "missing" or "centred" means. `minutes_preseason` (P3) built
+# them and `availability_preseason` (P2) reuses them from here.
+
+#: P1 decision 3's indicator, split on the census's own age cells. Coded on the **missing**
+#: side, so zero across the block still means "the incumbent" and the columns stay sparse.
+MISSING_AGE_COLS = [f"pre_missing__{label}" for label in AGE_LABELS]
+
+
+def attach_missing_age_indicators(frame: pd.DataFrame) -> pd.DataFrame:
+    """`MISSING_AGE_COLS` on a frame carrying `has_preseason` and `age`.
+
+    P1 decision 3, as code. On the draftable frame a 32-plus player with no preseason row
+    loses 0.247 of the season and 4.93 MPG while a 24-to-27 player with no preseason row
+    loses 0.34 MPG — a rested veteran and an injured star are the same indicator and
+    different events, and one column cannot tell them apart. By *role* the same gap is flat,
+    which is why the split is on age and only on age.
+
+    The four indicators partition the missing rows exactly, so they sum to
+    `1 - has_preseason` and a caller can swap them for the plain indicator without changing
+    what the block spans.
+    """
+    out = frame.copy()
+    present = out["has_preseason"].to_numpy(dtype=float) > 0
+    cells = pd.cut(out["age"].to_numpy(dtype=float), AGE_EDGES,
+                   labels=AGE_LABELS).astype(str)
+    for label in AGE_LABELS:
+        out[f"pre_missing__{label}"] = ((~present) & (cells == label)).astype(float)
+    return out
+
+
+def season_centered(frame: pd.DataFrame, column: str) -> np.ndarray:
+    """`column` with each season's own mean removed, over the rows that have a preseason.
+
+    P3's finding, generalized: preseason quantities carry a **league-level shift that varies
+    by season** — a starter plays 15-20 preseason minutes and how many of them depends on
+    that year's calendar, which is 2 games a team in the 2011-12 lockout and 8 in an ordinary
+    year. A coefficient on the uncentred column is therefore part player-specific update and
+    part nuisance level, and a head with no season term has nowhere to put the second half.
+
+    The mean is taken over **present** rows only: the zeros are a fill, and averaging them in
+    would shrink the centring by the missing rate. A missing row keeps its zero, so the
+    nesting argument survives. The centring constant is a season's own preseason mean, which
+    is on disk before that season's opener, so this stays point-in-time.
+    """
+    present = frame["has_preseason"].to_numpy(dtype=float) > 0
+    values = frame[column]
+    means = values.where(present).groupby(frame["season"].where(present)).transform("mean")
+    return np.where(present, values.to_numpy(dtype=float)
+                    - means.fillna(0.0).to_numpy(dtype=float), 0.0)
+
+
 def rate_block(component: str) -> list[str]:
     return [f"pre_d_{component}"] + RATE_BLOCK_SHARED
 

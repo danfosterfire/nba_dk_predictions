@@ -190,10 +190,14 @@ REGISTRY: tuple[Decision, ...] = (
                 "population is primary scope. **The first head has now fitted it**: P3's "
                 "marginal minutes arm clears both halves of its bar "
                 "([[preseason-minutes-arm-clears-both-halves]]), so a coefficient exists "
-                "and is worth −4.789 validation CRPS minutes. Still open because that is "
-                "a point-MLE ladder — nothing enters the chain until a Stan port ships, "
-                "and availability, the rate heads and the no-prior population have not "
-                "run.",
+                "and is worth −4.789 validation CRPS minutes. **The second head has now "
+                "refused it**: P2's availability arm fails the CRPS half of its own bar on "
+                "the draft pool and buys calibration instead "
+                "([[preseason-availability-arm-fails-its-crps-bar]]), so the block is "
+                "worth different things on different heads rather than being a general "
+                "gain. Still open because both readings are point-MLE ladders — nothing "
+                "enters the chain until a Stan port ships, and the rate heads and the "
+                "no-prior population have not run.",
         status="open",
         reproduce="make preseason → data/features/preseason.parquet, "
                   "outputs/eda/preseason_coverage.csv",
@@ -7843,6 +7847,165 @@ REGISTRY: tuple[Decision, ...] = (
         reviewed="2026-08-13",
         date="2026-08-13",
         tags=("preseason", "next"),
+    ),
+    Decision(
+        id="preseason-availability-arm-fails-its-crps-bar",
+        topic="availability",
+        claim="**The preseason block does not earn a Stan port on the availability head.** "
+              "On the draftable population its validation CRPS margin is a tie — "
+              "−0.102 [−0.322, +0.121] — which is the half of the bar this round declared. "
+              "What it buys instead is calibration: `boundary_tail_error` 0.01998 → "
+              "0.01140, −0.00684 [−0.01036, −0.00021].",
+        because="P2's bar was written into `docs/preseason-plan.md` before any arm ran and "
+                "is §14's `wins_crps_holds_boundary` — a CRPS interval clear of zero with "
+                "the boundary held — because `mixture` already spent the boundary gain and "
+                "what an arm bolted onto it has to buy is the CRPS that head gave up. The "
+                "block delivers the mirror image, so it clears §8's **D1** and not the bar "
+                "the round stated. Both predicates ride as columns on every ladder row for "
+                "exactly this reason; moving to the bar an arm happens to clear is the "
+                "failure `README.md` records for the games-played Gate D. **The preseason "
+                "is a calibration input on this head and an accuracy one on minutes** — "
+                "P3 bought −4.789 CRPS minutes and paid in PIT KS "
+                "([[preseason-minutes-arm-clears-both-halves]]); here all seven arms that "
+                "carry a preseason column improve the boundary, six of them clear zero on "
+                "it, and not one CRPS interval does. Two sub-results: adding participation "
+                "to the "
+                "disruption weight `π` makes the boundary worse with an interval "
+                "([[preseason-block-does-not-belong-on-pi]]), and P1's 'use a smaller "
+                "block' is a **tie** at this head's unit (P1's whole block reads −0.0445 "
+                "[−0.128, +0.039] against the single column), as it was on the minutes "
+                "head — so the small block is parsimony, not a measured margin.",
+        status="measured",
+        reproduce="make availability-preseason → "
+                  "outputs/predictions/availability_preseason.csv, "
+                  "outputs/predictions/availability_preseason_rolling.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-13",
+        date="2026-08-13",
+        tags=("preseason", "specification"),
+    ),
+    Decision(
+        id="preseason-availability-gain-is-six-times-the-population",
+        topic="availability",
+        claim="**The same preseason block passes the gate pooled and fails it on the draft "
+              "pool**: CRPS −0.636 [−0.900, −0.390] over every player who appeared, "
+              "−0.102 [−0.322, +0.121] over the season-start roster. A **6.2×** gap, "
+              "against the **5.9×** P1 measured on a ridge ΔR².",
+        because="[[preseason-draftable-population]] was decided on an EDA screen and this "
+                "is the confirmation at a head's own unit, at the size of a shipping "
+                "decision: read pooled, the block is the largest CRPS margin any covariate "
+                "block has posted on this head — 11.0× §14's absence block, interval clear "
+                "of zero — and it would have been ported. The attribution says where it "
+                "goes. The four age-split missing indicators **alone**, carrying no "
+                "preseason quantity at all, are worth 45% of the pooled margin (−0.284 "
+                "[−0.497, −0.072]) and **+0.001 [−0.152, +0.174]** on the draft pool. "
+                "'He has no preseason row' predicts a short season among everyone who "
+                "appeared in season S, because most such players signed in January; among "
+                "players who were on a roster in October it predicts nothing. The block is "
+                "**267 training log-likelihood points for five columns**, 14× the absence "
+                "block's 18.48, and most of what it fits is a fact about who is in the "
+                "frame. Two instruments — a ridge ΔR² and a paired CRPS bootstrap — "
+                "agreeing to a tenth on the factor.",
+        status="settled",
+        reproduce="make availability-preseason → "
+                  "outputs/predictions/availability_preseason.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-13",
+        date="2026-08-13",
+        tags=("preseason", "methodology"),
+    ),
+    Decision(
+        id="preseason-block-does-not-belong-on-pi",
+        topic="availability",
+        claim="Preseason participation on the mixture's disruption weight `π` is a **null**, "
+              "and it makes the boundary worse with an interval: +0.00214 "
+              "[+0.00025, +0.00267] given the block is already on `β`. `PI_COLS` stays at "
+              "eight columns.",
+        because="§14d found the absence composition helping `β` and costing CRPS on `π`, "
+                "and left open whether a block with a real claim on disruption risk would "
+                "behave differently. The preseason has the strongest claim a covariate "
+                "could have — 'who missed the tail of the preseason, days before the "
+                "opener' is a direct reading of who is about to lose the season — and it "
+                "behaves the same way. The `π`-only arm is the **worst CRPS row on the "
+                "ladder** (+0.0671) while carrying the second-best PIT KS (0.0533) and a "
+                "much better body error, which is §14d's 'buys fit, gives back "
+                "generalization' reproduced by a different block on the same parameter. "
+                "It is not a small change either: `θ` goes 0.1116 → **0.7453**, mean `π` "
+                "0.0445 → 0.1524 and the low component's mean 0.0999 → 0.2869, so the arm "
+                "becomes a substantially different mixture and predicts worse. The `l2` "
+                "confound points the wrong way and does not save it — the penalty reaches "
+                "`beta[1:]` only, so the `π` arms carry 7 unpenalized parameters the "
+                "shipped head does not, which can only flatter them. **Two blocks, two "
+                "refusals, and the second had the better prior.**",
+        status="null",
+        reproduce="make availability-preseason → "
+                  "outputs/predictions/availability_preseason_effects.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-13",
+        date="2026-08-13",
+        tags=("preseason", "specification"),
+    ),
+    Decision(
+        id="preseason-columns-carry-a-season-level-nuisance",
+        topic="eda",
+        claim="A preseason column's **season mean moves by half its cross-player spread**, "
+              "so a head with no year term absorbs a calendar fact as if it were a player "
+              "fact. Measured on the availability head's own fitting window: the mean of "
+              "`pre_log_min` runs 3.795 → 4.681 across ten seasons (sd **0.310**) against a "
+              "within-season sd of **0.616**.",
+        because="[[preseason-delta-is-centred-within-season]] found this on the minutes "
+                "head as a property of a *delta* — preseason minutes are compressed, so "
+                "the delta's level is nuisance — and it generalizes to a **level** on a "
+                "different head. The calendar is the mechanism and it is visible in the "
+                "same artifact: `team_pre_games` runs from **2** (the 2011-12 lockout) to "
+                "**8** inside a ten-season window, with the 2020-21 December preseason in "
+                "between, which is also why `pre_missed_tail_share` is a share rather than "
+                "a count. On the availability head the uncentred column is what wrecks the "
+                "middle of the distribution — `body_error` 0.0386 → 0.0514 — while "
+                "centring takes it to **0.0165**, a margin of −0.0350 [−0.0359, −0.0114] "
+                "against the uncentred arm, and gives the ladder its best CRPS and its "
+                "best PIT KS (0.0481 against the shipped head's 0.0928). Centring is "
+                "point-in-time: a season's own preseason mean is on disk before its "
+                "opener, and the mean is taken over present rows only so the missing-row "
+                "zeros cannot shrink it. **Any later preseason arm should carry the "
+                "centred column**, on any head without a year effect.",
+        status="measured",
+        reproduce="make availability-preseason → "
+                  "outputs/predictions/availability_preseason_block.csv, "
+                  "outputs/predictions/availability_preseason.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-13",
+        date="2026-08-13",
+        tags=("preseason", "specification"),
+    ),
+    Decision(
+        id="availability-boundary-defect-is-larger-on-the-draft-pool",
+        topic="availability",
+        claim="**The shipped head's boundary error is 1.84× larger on the population it is "
+              "applied to** — 0.01085 pooled against **0.01998** on the season-start "
+              "roster — and the low-tail error changes *sign* between the two.",
+        because="Every round on this axis (§7, §12, §14) scored all 883 validation rows, "
+                "and P2 is the first to split them. Pooled, the head under-predicts the "
+                "dead season: P(GP < 10) 0.0683 predicted against 0.0815 observed. On the "
+                "draft pool it **over**-predicts it by 2.25×, 0.0582 against 0.0259 — it "
+                "assigns 5.8% of draftable players a sub-ten-game season where 2.6% "
+                "realize one. **The pooled figure is the average of two opposite errors**, "
+                "which is the cumulative-threshold cancellation "
+                "[[availability-head-selected-on-calibration-with-a-crps-guard]] guards "
+                "against, one level up — across populations rather than across bands. PIT "
+                "KS is 0.0631 pooled and 0.0928 draftable, and realized 50% coverage 0.598 "
+                "against 0.639 on a nominal 0.5, so the predictive is much too wide there. "
+                "**What is NOT measured is whether the single-component head is also worse "
+                "on the draft pool**, which is what would say whether §7's 0.0201 → 0.0109 "
+                "selection survives the restriction; this round fits no such arm. Two "
+                "fits, ~2 minutes, and the machinery exists — `potential-to-dos.md` item 9.",
+        status="measured",
+        reproduce="make availability-preseason → "
+                  "outputs/predictions/availability_preseason.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-13",
+        date="2026-08-13",
+        tags=("preseason", "availability"),
     ),
     Decision(
         id="availability-mixture-contest-value-is-a-null",

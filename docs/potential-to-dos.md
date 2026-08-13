@@ -754,3 +754,69 @@ four more that duplicate `π`'s information would show up as a CRPS margin whose
 reopens across zero. It would also be falsified in a more useful way if the block helped `β`
 and did nothing on `π` — that would say the composition is a mean-function fact rather than a
 disruption-risk fact, and would settle where it belongs if it is ever ported.
+
+---
+
+## 9. Re-read the availability head's boundary selection on the population it serves
+
+**`docs/availability-window-plan.md` §7 selected the two-component `mixture` on a
+`boundary_tail_error` of 0.0201 → 0.0109, measured on all 883 validation rows. On the 772 of
+them that are on a season-start roster the shipped head reads 0.01998**, and the
+single-component reference was never scored there. If the mixture's calibration gain does not
+transfer to the draft pool, the head that ships was chosen on a frame it is never applied to.
+
+### Why this is worth measuring
+
+`docs/preseason-plan.md` P2 measured the shipped head on both populations because P1 decision
+5 requires it, and the reference row is the part that has nothing to do with the preseason:
+
+| `mixture` | pooled (n = 883) | draftable (n = 772) |
+|---|---|---|
+| `boundary_tail_error` | 0.01085 | **0.01998** (1.84×) |
+| P(GP < 10) predicted / observed | 0.0683 / 0.0815 — **under** by 0.0132 | 0.0582 / 0.0259 — **over** by 0.0323 |
+| PIT KS | 0.0631 | 0.0928 |
+| realized 50% coverage (nominal 0.5) | 0.598 | 0.639 |
+
+**The low-tail error changes sign between the two.** Pooled, the head under-predicts the dead
+season; on the draft pool it over-predicts it by 2.25×, assigning 5.8% of draftable players a
+sub-ten-game season where 2.6% realize one. The pooled figure is the average of two opposite
+errors, which is §1's cumulative-threshold warning one level up — the cancellation happens
+across populations rather than across bands.
+
+That does not by itself impugn the selection: `betabinom` may be worse still on the draft
+pool, in which case the mixture's margin survives and only its *level* was flattered. Nobody
+has looked, because every round on this axis (§7, §12, §14) scored the pooled frame.
+
+### What to compare, and how
+
+Two fits, and the machinery exists. `availability_absence.crossed_ladder` already fits
+`betabinom` and `mixture` at the shipped window; what it lacks is the population split that
+`availability_preseason.score_population` implements — score the same fitted arms on
+`on_season_start_roster > 0` as well as on everything, with `_bootstrap_arms` paired inside
+the row as usual. Roughly two minutes of point MLE.
+
+| row | what it answers |
+|---|---|
+| `betabinom`, draftable | is the single-component head *also* worse on the draft pool |
+| `mixture`, draftable | already measured: 0.01998 |
+| the margin between them, draftable | whether §7's 0.0201 → 0.0109 survives the restriction |
+
+Worth taking the same reading on §14's `mixture + absence_mix` arm while the frames are in
+memory, since that block's own margins were quoted pooled as well.
+
+### What would settle it
+
+The paired boundary margin `mixture − betabinom` on the draftable rows. If it is negative and
+clear of zero, §7's selection stands and the only correction is that every boundary figure in
+that document is quoted on a frame 12.6% larger than the draft pool. If it straddles zero or
+flips sign, the mixture's calibration case was a pooled artifact and the ladder is worth
+re-reading — which would be a shipped-head reversal, so the rolling harness (§4b, restricted
+the same way) is part of the bar rather than a follow-up.
+
+### What would falsify it
+
+The two populations giving the same ordering, which is the likelier outcome: 87.4% of the
+validation rows are draftable, so a statistic that moves 1.84× between them is being driven by
+the 12.6% that are not, and a *difference* of two arms can be stable where each arm's level is
+not. That would still be worth having on the record — it is the difference between "the
+selection is fine" and "nobody checked".

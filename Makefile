@@ -8,7 +8,8 @@ PIP    := .venv/bin/pip
         availability availability-profile injury-reports injuries daily-capture \
         boxscore-status availability-model availability-window \
         availability-weighting availability-regime availability-exchangeability \
-        availability-no-prior availability-absence capture-status \
+        availability-no-prior availability-absence availability-preseason \
+        capture-status \
         capture-calendar \
         report-calibration \
         season-total adp adp-draftkings adp-fantasypros adp-panel adp-profile \
@@ -249,6 +250,22 @@ availability-exchangeability:
 # re-derives §12 from.
 availability-absence:
 	$(PYTHON) -m src.models.availability_absence
+
+# P2 of docs/preseason-plan.md: the preseason block as a NESTED arm on the availability head
+# that SHIPS — the two-component mixture, three_point_era window, role-graded rho. Eight
+# arms, and the block goes to two different places: the mean function `beta` and the
+# disrupted-season weight `pi`, which §14d established are different questions. The declared
+# primary is ONE column plus P1's age-split indicator, because P1 measured every column of
+# its own block beating the block that contains them on this target.
+#
+# Unlike P3 nothing is cut for coverage: the shipped window starts 2012-13 and the panel
+# starts 2004-05. What IS load-bearing is the POPULATION — P1's first reading here was 6x
+# too large because it pooled mid-season signings — so every arm is scored on both and the
+# verdict is read on the season-start roster. The bar is BOTH validation and the
+# rolling-origin harness; §12e and §14f are two blocks that won validation on these exact
+# rows and shrank 4-6x rolling. Point MLE, numpy, ~1 h. Needs `make preseason`.
+availability-preseason:
+	$(PYTHON) -m src.models.availability_preseason
 
 # What the players the head has NO ROW FOR actually realize — rookies and returning
 # veterans, who reach the simulator through `sim/season.no_design_availability` rather than

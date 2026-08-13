@@ -229,6 +229,25 @@ make minutes-preseason # preseason-plan P3: the preseason block as a NESTED arm 
                        #   season: preseason minutes are compressed, the level is nuisance,
                        #   and centring both wins and repairs a bias the raw delta creates.
 
+make availability-preseason
+                       # preseason-plan P2: the same block as a NESTED arm on the
+                       #   AVAILABILITY head that ships — the two-component mixture →
+                       #   outputs/predictions/availability_preseason{,_rolling,_effects,
+                       #   _block}.csv. Eight arms, point MLE, ~1 h, no CmdStan. The block
+                       #   goes to two places, `beta` and the disruption weight `pi`,
+                       #   because availability-window-plan §14d established those are
+                       #   different questions. THE GATE FAILS on the half it declared:
+                       #   validation CRPS -0.102 [-0.322, +0.121] on the draftable
+                       #   population is a tie, so nothing is ported. What it buys is
+                       #   CALIBRATION — boundary error 0.01998 -> 0.01140 with an interval
+                       #   clear of zero, which is the OTHER bar (§8's D1) and not this
+                       #   round's. TWO THINGS TO KNOW. The pooled reading passes the gate
+                       #   (-0.636 [-0.900, -0.390]) and 6.2x of it is mid-season signings,
+                       #   which is P1's population finding at this head's own unit. And the
+                       #   SHIPPED head's own boundary error is 1.84x larger on the draft
+                       #   pool than on the frame §7 selected it on, with the low-tail error
+                       #   changing sign — potential-to-dos item 9.
+
 make availability-regime # the last two open axes on the availability head's fitting rule
                        #   → outputs/predictions/availability_{regime,shrinkage,
                        #   regime_confirmation}.csv. (1) an explicit COVID-regime indicator

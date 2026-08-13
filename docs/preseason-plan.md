@@ -476,6 +476,203 @@ year effect `season_terms` already gives this head — the centring finding is a
 about a league-level level, and a year effect is the term that would otherwise own it. The
 two may be partly redundant, and nothing here has crossed them.
 
+## P2 — the availability arm: measured 2026-08-13, and **the gate fails**
+
+`make availability-preseason` (`src/models/availability_preseason.py`) →
+`availability_preseason.csv`, `availability_preseason_rolling.csv`,
+`availability_preseason_effects.csv`, `availability_preseason_block.csv`. Point MLE on the
+`availability-window` machinery, so no CmdStan; eight nested arms on the head that **ships**
+— the two-component `mixture`, `three_point_era` window, no season term, role-graded ρ.
+
+**The bar was stated in this document before the round ran** and is §14's
+`wins_crps_holds_boundary`: a validation CRPS paired-bootstrap interval clear of zero with
+`boundary_tail_error` **held**, on the draftable population, *and* the rolling-origin harness
+agreeing. The declared primary arm reads CRPS **−0.102 [−0.322, +0.121]** — an interval
+across zero — so **the round fails on its first half and no rolling reading can rescue it**.
+
+What it buys instead is the other half of the same bar, decisively: `boundary_tail_error`
+**0.01998 → 0.01140**, a paired margin of **−0.00684 [−0.01036, −0.00021]**. That is
+`d1_passes` — the bar §8 wrote for this head *before* `mixture` shipped, which asks for a
+calibration gain and settles for CRPS non-inferiority. **The two bars disagree, and the round
+is read against the one it declared.** Both predicates ride as columns on every ladder row for
+exactly this reason; moving to the bar an arm happens to clear is the failure mode
+`README.md` records for the games-played head's Gate D.
+
+### The headline is the population, and it reproduces P1's factor of six on a different metric
+
+| `mixture__volume`, the declared primary | pooled (n = 883) | draftable (n = 772) |
+|---|---|---|
+| CRPS against the shipped head | **−0.636 [−0.900, −0.390]** | **−0.102 [−0.322, +0.121]** |
+| `wins_crps_holds_boundary` | ✅ | ❌ |
+| the age-split indicator **alone** | −0.284 [−0.497, −0.072] | **+0.001 [−0.152, +0.174]** |
+
+Pooled, this is the largest CRPS margin any covariate block has posted on this head —
+**11.0×** §14's absence block, and clear of zero by a wide interval. On the season-start roster it is a
+tie. The ratio is **6.2×**, and P1 measured the same restriction as **5.9×** on a ridge ΔR²
+(+0.1171 → +0.0198). Two different instruments at two different units agreeing to a tenth on
+how much of a preseason reading is population rather than model.
+
+**The attribution says exactly where it goes.** `missing_only` — the four age-split
+indicators P1's census decided on, carrying no preseason quantity at all — is worth **45%**
+of the pooled margin and **nothing whatsoever** on the draft pool (+0.001, inside an interval
+more than a hundred times as wide). "He has no preseason row" is a strong predictor of a short season
+among everyone who appeared in season S, because most such players signed in January; among
+players who were on a roster in October it predicts no games at all. The block is **267**
+training log-likelihood points for five columns — **14.5×** the absence block's 18.48 — and
+most of what it fits is a fact about who is in the frame.
+
+**So the population restriction is now load-bearing at three units** (`preseason_value.csv`'s
+ΔR², this head's CRPS, and this head's calibration), and P1 decision 5 has earned its keep:
+a figure quoted on the pooled frame here would have reported a decisive win for a block that
+does nothing on the population the head is applied to.
+
+### The defect the mixture was shipped to fix is **larger** on the draft pool, and it points the other way
+
+The shipped head's boundary error is **0.01085** pooled — reproducing §14c's 0.0109 to four
+decimals, which is the control that licenses reading this round against that one — and
+**0.01998** on the draftable rows. **1.84× worse on the population it is applied to.** The
+decomposition says why, and the sign is the finding:
+
+| `mixture`, P(GP < 10) | predicted | observed | error |
+|---|---|---|---|
+| pooled | 0.0683 | 0.0815 | **−0.0132** (under) |
+| draftable | 0.0582 | 0.0259 | **+0.0323** (over, 2.25×) |
+
+**The pooled figure is the average of two opposite errors.** Among everyone who appeared, the
+head under-predicts the dead season; among players who were on a roster in October it
+over-predicts it by a factor of 2.25 — it assigns 5.8% of the draft pool a season under ten
+games where 2.6% realize one. §1's warning about cumulative thresholds letting opposite-sign
+errors cancel inside a tail, one level up: here they cancel across *populations*.
+
+That is also the mechanism for the calibration gain. The preseason block tells the head who
+was actually on the floor in October, and it spends that almost entirely on the low tail:
+P(<10) 0.0582 → **0.0480** against 0.0259, and P(full schedule) 0.0387 → **0.0304** against
+an observed 0.0311, which is very nearly exact. Realized 50% coverage goes 0.6386 → 0.5816
+against a nominal 0.5, so the block sharpens a predictive that was much too wide on this
+population. PIT KS goes 0.0927 → 0.0853, and to **0.0481** on the centred arm — against
+**0.0631** for the shipped head on the pooled frame, which is the same population gap once
+more.
+
+**What is not measured, and it matters:** whether the single-component `betabinom` is also
+worse on the draft pool. §7 selected `mixture` on a *pooled* boundary reading (0.0201 →
+0.0109), and if that gain does not transfer to the population the head serves, the selection
+rests on a frame the head is never applied to. This round cannot say — it fits no
+single-component arm — and the two fits that would settle it are logged in
+`docs/potential-to-dos.md` rather than run here, because re-deciding a shipped head is not
+what a preseason round is for.
+
+### The ladder — on the season-start-roster population
+
+Eight arms, all nested on the shipped head (`theta = 0` nests at any width of `π`, so
+`assert_nests` reads **0.0** on all eight). Observed on these 772 rows: P(<10) **0.0259**,
+P(full) **0.0311**.
+
+| arm | β | π | params | train ll | CRPS | vs `mixture` [95%] | PIT KS | **boundary** | vs `mixture` [95%] | body | shoulder |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `mixture` *(reference — what ships)* | 0 | 0 | 35 | −16,174.52 | 8.9730 | — | 0.0927 | 0.01998 | — | 0.0386 | 0.0201 |
+| **`volume`** *(primary)* | 5 | 0 | 40 | −15,907.17 | 8.8710 | **−0.1020 [−0.3223, +0.1215]** | 0.0853 | **0.01140** | **−0.00684 [−0.01036, −0.00021]** | 0.0514 | 0.0121 |
+| `volume_centered` | 5 | 0 | 40 | −15,918.41 | **8.7928** | −0.1802 [−0.4190, +0.0611] | **0.0481** | 0.01432 | −0.00594 [−0.00986, −0.00413] | **0.0165** | 0.0184 |
+| `p1_block` | 10 | 0 | 45 | −15,875.40 | 8.8264 | −0.1465 [−0.3923, +0.0997] | 0.0744 | **0.01017** | −0.00822 [−0.01124, −0.00241] | 0.0448 | 0.0089 |
+| `participation` | 8 | 0 | 43 | −15,898.20 | 8.8807 | −0.0923 [−0.3221, +0.1354] | 0.0815 | 0.01083 | −0.00739 [−0.01037, −0.00143] | 0.0475 | 0.0101 |
+| `volume_pi` | 5 | 7 | 47 | −15,877.84 | 8.8540 | −0.1189 [−0.3563, +0.1175] | 0.0789 | 0.01354 | −0.00529 [−0.00951, **+0.00193**] | 0.0432 | 0.0109 |
+| `missing_only` | 4 | 0 | 39 | −16,062.21 | 8.9743 | +0.0013 [−0.1524, +0.1741] | 0.0718 | 0.01691 | −0.00313 [−0.00422, −0.00213] | 0.0254 | 0.0203 |
+| `pi` | 0 | 7 | 42 | −16,030.10 | 9.0401 | +0.0671 [−0.1880, +0.3371] | 0.0533 | 0.01363 | −0.00601 [−0.00773, −0.00325] | 0.0172 | 0.0242 |
+
+**1. Every arm improves the boundary and none of them improves CRPS with an interval.** All
+seven arms that carry a preseason column move the boundary the right way and **six** of them
+clear zero on it, including the indicator alone; not one CRPS interval does. On this head, on
+this population, the preseason is a **calibration** input.
+
+**2. The `l2` confound points the wrong way for the `π` arms and does not rescue them.** The
+penalty reaches `beta[1:]` only, so the two `π` arms carry 7 unpenalized parameters the
+shipped head does not (§14b's arithmetic, one block wider), and a fixed penalty therefore
+favours them. One of them is the worst CRPS row on the ladder and the other is the only arm
+whose boundary margin fails to clear zero.
+
+**3. P1 decision 4 is a tie rather than a confirmation.** The decision said the availability
+block should be *smaller* than P1's seven columns because a ridge overfit them. At this
+head's own unit the wider blocks are indistinguishable from the single column — P1's whole
+block reads **−0.0445 [−0.128, +0.039]** against the primary and the participation block
+**+0.0097 [−0.029, +0.049]** — so the small block ships on parsimony rather than on a
+measured margin. P3's comparison was also a tie (+0.357 [−0.45, +1.19]), with the point
+estimate on the other side. **Two heads, two ties: "fewer columns" is not evidence in either
+direction here.**
+
+**4. No arm on the ladder clears the CRPS bar, so the verdict does not turn on which one was
+declared primary.** The best interval on the table is the centred arm's [−0.4190, +0.0611]
+and it spans zero as well. A round whose failure could be undone by re-reading the ladder
+would not be a gate, and this one cannot be.
+
+### The block does not belong on `π`, and this time the boundary says so
+
+§14d found the absence composition helping `β` and costing CRPS on `π`, and predicted that
+a block with a genuine claim on disruption risk might not behave that way. The preseason has
+that claim — "who missed the tail of the preseason, days before the opener" is a direct
+reading of who is about to lose the season — and it behaves the same way:
+
+| effect of adding the block to `π`, given it is already on `β` | delta [95%] | |
+|---|---|---|
+| CRPS | −0.0169 [−0.0565, +0.0270] | nil |
+| **`boundary_tail_error`** | **+0.00214 [+0.00025, +0.00267]** | **clears zero in the WRONG direction** |
+| `body_error` | −0.00824 [−0.00920, −0.00717] | better |
+| `shoulder_error` | −0.00122 [−0.00179, +0.00511] | nil |
+
+And the `π`-only arm is the worst CRPS row on the ladder (+0.0671) while carrying the second-
+best PIT KS (0.0533) and a much better body — §14d's "buys fit, gives back generalization",
+reproduced by a different block on the same weight. The arm's own structure shows it is not a
+small change: `θ` goes 0.1116 → **0.7453**, mean `π` 0.0445 → 0.1524, and the low component's
+mean 0.1000 → **0.2869**. It becomes a substantially different mixture and predicts worse.
+
+**So `PI_COLS` stays at eight columns for the second time, and the second refusal is the more
+informative one.** §14's block was about last season; this one is about the fortnight before
+the opener, which is the strongest a-priori case a covariate could have for that parameter,
+and it still does not belong there.
+
+### Centring replicates across heads, and it is the arm to watch
+
+P3's finding was that a preseason column carries a **season-level nuisance** the point head
+has no year term to absorb. It reproduces here on a level rather than a delta, and the
+diagnostics measure the level directly: across the ten fitting seasons the mean of
+`pre_log_min` runs **3.795 → 4.681** (sd **0.310**) against a within-season sd of **0.616**,
+so the calendar moves the column by half its cross-player spread. `team_pre_games` runs
+**2 to 8** in the window — the 2011-12 lockout against an ordinary year — which is the same
+quirk `pre_missed_tail_share` is a share to survive.
+
+Centred, the arm has the best CRPS on the ladder (**8.7928**, −0.078 [−0.166, +0.013] against
+the uncentred primary), the best PIT KS (**0.0481** against the shipped head's 0.0927) and a
+`body_error` of **0.0165** against the uncentred arm's 0.0514 — a margin of **−0.0350
+[−0.0359, −0.0114]**, clear of zero. It gives back part of the boundary (+0.0029, interval
+spanning zero). **The uncentred level is what wrecks the body**, which is §4's standing
+warning firing at the primary arm rather than at some straw man: `volume` buys the boundary
+and pays for it in the middle, and centring is what stops it doing so.
+
+### What P2 decides
+
+1. **The gate fails and nothing is ported.** The declared bar asks for CRPS with the boundary
+   held; the block delivers the boundary with CRPS held. Recorded against the bar it stated,
+   not against the bar it clears.
+2. **The preseason is a calibration input on this head, not an accuracy one** — the opposite
+   of P3, where it was worth −4.789 CRPS minutes and the calibration column was a cost.
+3. **Every preseason figure on this head is quoted on the draftable population**, and the
+   pooled/draftable ratio is now **6.2×** at this head's own unit. P1 decision 5 stands and is
+   the most load-bearing decision in the round.
+4. **`PI_COLS` stays at eight columns.** Two blocks, two refusals, and this one had the
+   stronger prior.
+5. **P1 decision 4 is withdrawn as a *measured* claim and kept as a convention.** The small
+   block is not better; it is indistinguishable, on both heads that have tested it.
+6. **The shipped head's boundary defect on the draft pool is a new open question**, sized
+   here (0.01085 pooled against 0.01998 draftable, with the low-tail error changing *sign*)
+   and parked in `docs/potential-to-dos.md`.
+
+### What P2 does not settle
+
+Whether the calibration gain is worth having. This round measures CRPS, PIT and three
+regional errors; what the contest cares about is whether a roster's Round-1 advance
+probability moves, and §7l is the standing precedent that a head change which reaches the
+draw as *shape* rather than as *order* can be a measured null there. The instrument exists —
+`make strategy-sweep` against a re-simulated season — and it costs the whole chain, which is
+P5 work. Nothing here justifies spending it on an arm that failed its own gate.
+
 ## Why preseason data should help — and where it plausibly won't
 
 - **Availability.** Participation is a direct health reading taken days before the season:
@@ -484,6 +681,12 @@ two may be partly redundant, and nothing here has crossed them.
   exactly what a late-preseason absence speaks to. This is the head where the case is
   strongest a priori, and also the head with two recent rolling-harness failures
   (`availability-window-plan.md` §12e, §14f), so the replication bar is set first (below).
+  ⚠️ **Half right, measured by P2.** The participation reading is real and lands on
+  *calibration* — all seven arms that carry a preseason column improve `boundary_tail_error`
+  and six of them clear zero on it — while the accuracy the gate asks for does not appear on
+  the population that matters. And the `π` candidacy is a **null**: adding participation to the disruption
+  weight makes the boundary worse with an interval, which is §14d's verdict reached by the
+  block that had the better claim on it.
 - **Minutes and lineup structure.** Preseason rotations reveal the coach's intent and a
   new-team player's usage — information the S−1 minutes weights cannot carry. Two caveats
   shape the features: preseason minutes are *compressed* (starters play ~15–20 minutes,
@@ -594,17 +797,22 @@ the finding is recorded as a null. **Five of seven count heads cleared it**, whi
 the outcome the plan expected; the census says the indicator needs splitting on **age**;
 and the two remaining measurements reordered P2 and P3.
 
-**P2 — availability.** *P1 moved this behind P3* — on the draftable population the block
-is worth +0.0198 R² here against +0.0492 on minutes. The block is also smaller than P1's
-seven columns, since `pre_log_min` alone beats the whole block on this target, and
-`has_preseason` enters split by age. Point-MLE increment arms first, Stan port only for a
-survivor.
+**P2 — availability.** ❌ **Ran 2026-08-13 and FAILED its gate** — see the section above.
+*P1 moved this behind P3* — on the draftable population the block is worth +0.0198 R² here
+against +0.0492 on minutes. The block was also smaller than P1's seven columns, since
+`pre_log_min` alone beats the whole block on this target, and `has_preseason` entered split
+by age. Point-MLE increment arms first, Stan port only for a survivor.
 Two separate arms, per the §14d lesson that `β` and `π` are different questions: the
 preseason block on the mean function, and the participation signal on `PI_COLS`.
-**The bar is stated now:** validation CRPS paired-bootstrap interval clear of zero with
-`boundary_tail_error` held, **and** the rolling-origin harness agreeing — the last two
-blocks on this head won validation and shrank 4–6× rolling (§12e, §14f), so validation
-alone ships nothing.
+**The bar was stated before the round ran:** validation CRPS paired-bootstrap interval clear
+of zero with `boundary_tail_error` held, **and** the rolling-origin harness agreeing — the
+last two blocks on this head won validation and shrank 4–6× rolling (§12e, §14f), so
+validation alone ships nothing. **The CRPS half fails on the draftable population**
+(−0.102 [−0.322, +0.121]) while the boundary half passes decisively (0.01998 → 0.01140), so
+the arm clears §8's D1 and not the bar this round declared. Nothing is ported. The two
+findings the round leaves behind are a **6.2× pooled/draftable gap** on the same block at
+this head's own unit, and the shipped head's own boundary defect being **1.84× larger** on
+the draft pool than on the frame §7 selected it on.
 
 **P3 — minutes.** ✅ **Shipped 2026-08-13** — see the section above. *P1 moved this ahead of
 P2*: `pre_d_mpg` was the single most valuable column measured in the gate (+0.0519 R² alone,
@@ -643,7 +851,7 @@ decision registry entries, and register this doc's built artifacts in `make docs
 | 2 (2026-08-12) ✅ | fetch backfill, preseason panel, coverage artifact, quirks, tests | P0 |
 | 3 (2026-08-12) ✅ | EDA gate; the rates question answered; each head's block frozen | P1 |
 | 4 (2026-08-13) ✅ | marginal minutes arm; composition go/no-go | P3 |
-| 5 | availability arms (point MLE + rolling), Stan port if survived | P2 |
+| 5 (2026-08-13) ❌ | availability arms (point MLE + rolling) — **gate failed, no port** | P2 |
 | 6 | no-prior ladder + rookie rate prior | P4 |
 | 4b | the composition's preseason arm at the pilot window — opened by P3's gate | P3 |
 | 6b | the five surviving rate heads' arms — a session P1 *added* | P1→P2 |
@@ -654,7 +862,9 @@ of availability** because the measurement inverted the plan's a-priori ordering.
 that fails its gate is recorded and the session bank shrinks rather than the bar — but the
 rate result went the other way and the bank grew by one. P3 adds a **session 4b**: the
 composition go/no-go it opened is a separate fit at the pilot window, not a continuation of
-the marginal arm's session.
+the marginal arm's session. **P2 is the first session to shrink the bank**: it failed on the
+half of its bar it declared and no Stan port follows, so the availability head is unchanged
+and the round's residue is two measurements rather than a coefficient.
 
 ## Production runbook — October 2026
 
@@ -702,7 +912,10 @@ the real window is too short to debug a join in.
   structurally zero before 2004-05 cannot dilute a ΔR² with a fact about the API. The
   restriction still binds on any head fitting a pre-2005 window, which must show the
   indicator is not soaking up an era effect — the availability head's 2012-13 window dodges
-  this entirely. ⚠️ **The minutes head does not**, and P3 is where the risk actually bit:
+  this entirely, ✅ **confirmed by P2**: all 10 fitting seasons and both validation seasons
+  are inside coverage, 0 rows are cut, and the harness's first origin is derived from
+  `preseason_coverage.csv` rather than hard-coded. ⚠️ **The minutes head does not**, and P3
+  is where the risk actually bit:
   it fits from 1997-98, so 2,154 of 8,306 training rows (25.9%) predate coverage. Every arm
   including the reference fits the covered window only, and the restriction is worth 1.19
   CRPS minutes on its own — a quarter of the increment, if it had been left inside it.
@@ -711,7 +924,13 @@ the real window is too short to debug a join in.
   Nothing leaked — both facts are knowable at the draft — but the head is only ever applied
   to season-start rosters, so **every preseason figure from here on is quoted on the
   draftable population** and one quoted without that restriction is a population statement
-  wearing a model's clothes.
+  wearing a model's clothes. ⚠️ **P2 is the confirmation, at the head's own unit and at the
+  size of a shipping decision.** The same block reads CRPS −0.636 [−0.900, −0.390] pooled and
+  −0.102 [−0.322, +0.121] draftable — a **6.2×** gap against P1's 5.9× on a ridge ΔR², two
+  instruments agreeing — and the pooled reading passes the round's gate while the draftable
+  one fails it. The four age-split indicators alone carry 45% of the pooled margin and
+  **+0.001** of the draftable one. This risk is no longer hypothetical: it is the difference
+  between porting a block into the chain and not.
 - **The ADP asymmetry.** Backtests where the field's ADP is pre-preseason overstate our
   edge; the flag in P5's readout is the honest version, and the 2025-26 anchor (captured
   Oct 17, post-preseason) is the one season where the field is measured at the right date.

@@ -7106,7 +7106,7 @@ def _preseason_value() -> list[Claim]:
         "in-scope panel rows")
     add("29.7%", lambda: _pv("no_prior", "panel_rows", "reach",
                              "share_without_design_row"), "P4's share of the panel")
-    return C + _preseason_minutes()
+    return C + _preseason_minutes() + _preseason_availability()
 
 
 PRE_MIN = "outputs/predictions/minutes_preseason.csv"
@@ -7223,6 +7223,211 @@ def _preseason_minutes() -> list[Claim]:
         "shrinkage inner fit rows", artifact=PRE_MIN_SHRINK)
     add("736", lambda: _one(table(PRE_MIN_SHRINK), "n_score", k=0.0),
         "shrinkage inner score rows", artifact=PRE_MIN_SHRINK)
+    return C
+
+
+PRE_AV = "outputs/predictions/availability_preseason.csv"
+PRE_AV_ROLL = "outputs/predictions/availability_preseason_rolling.csv"
+PRE_AV_EFF = "outputs/predictions/availability_preseason_effects.csv"
+PRE_AV_BLOCK = "outputs/predictions/availability_preseason_block.csv"
+
+
+def _pa(arm: str, column: str, population: str = "draftable") -> float:
+    """One reading off the P2 ladder, on the population every verdict is quoted on."""
+    return _one(table(PRE_AV), column, arm=arm, population=population)
+
+
+def _par(arm: str, column: str, population: str = "draftable") -> float:
+    return _one(table(PRE_AV_ROLL), column, arm=arm, population=population)
+
+
+def _pae(effect: str, metric: str, column: str = "delta") -> float:
+    return _one(table(PRE_AV_EFF), column, effect=effect, metric=metric)
+
+
+def _pab(statistic: str, scope: str = "fitting window") -> float:
+    return _one(table(PRE_AV_BLOCK), "value", scope=scope, statistic=statistic)
+
+
+def _preseason_availability() -> list[Claim]:
+    """`docs/preseason-plan.md` P2 — the availability arm, and the gate it fails.
+
+    Claimed densely for the reason P1 and P3 are, plus one this section adds: **a failed
+    gate is the easiest kind of figure to let rot**, because nothing downstream consumes it
+    and no later round re-derives it. The two halves of the bar are registered separately
+    and on **both populations**, since the round's headline is that the pooled reading
+    passes and the draftable one does not — a doc that kept one fresh and let the other go
+    stale would read as the opposite verdict.
+
+    The `mixture` control rows are registered too: 0.01085 pooled is §14c's 0.0109 to four
+    decimals, and it is what licenses reading this round against that one at all.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, actual, label: str, artifact: str = PRE_AV, **kw) -> None:
+        C.append(_c(quoted, artifact, actual, label, doc=PRESEASON, **kw))
+
+    # ── the gate, both halves, on the population the verdict is read on ───────
+    add("−0.102", lambda: _pa("mixture__volume", "crps_vs_mixture"),
+        "primary arm, draftable validation CRPS against the shipped head")
+    add("−0.322", lambda: _pa("mixture__volume", "crps_vs_mixture_lo"), "primary, val lo")
+    add("+0.121", lambda: _pa("mixture__volume", "crps_vs_mixture_hi"), "primary, val hi")
+    add("0.01998", lambda: _pa("mixture", "boundary_tail_error"),
+        "the SHIPPED head's boundary error on the draft pool")
+    add("0.01140", lambda: _pa("mixture__volume", "boundary_tail_error"),
+        "primary arm's boundary error, draftable")
+    add("−0.00684", lambda: _pa("mixture__volume", "boundary_vs_mixture"),
+        "primary arm's boundary margin, draftable")
+    add("−0.01036", lambda: _pa("mixture__volume", "boundary_vs_mixture_lo"),
+        "primary boundary lo")
+    add("−0.00021", lambda: _pa("mixture__volume", "boundary_vs_mixture_hi"),
+        "primary boundary hi")
+
+    # ── the population gap, which is the round's headline ────────────────────
+    add("−0.636", lambda: _pa("mixture__volume", "crps_vs_mixture", "all"),
+        "primary arm, POOLED validation CRPS")
+    add("−0.900", lambda: _pa("mixture__volume", "crps_vs_mixture_lo", "all"),
+        "primary, pooled lo")
+    add("−0.390", lambda: _pa("mixture__volume", "crps_vs_mixture_hi", "all"),
+        "primary, pooled hi")
+    add("6.2", lambda: _pa("mixture__volume", "crps_vs_mixture", "all")
+        / _pa("mixture__volume", "crps_vs_mixture"), "pooled / draftable CRPS ratio")
+    # P1's own ratio on a different instrument, re-derived rather than restated — the two
+    # agreeing to a tenth is the claim, so it has to be computed from P1's artifact.
+    add("5.9", lambda: (_pv("availability", "block", "gp_share", "delta_r2")
+                        / _pv("availability_draftable", "block", "gp_share", "delta_r2")),
+        "P1's pooled / draftable ΔR² ratio", artifact=PRE_VALUE)
+    for pop, quoted in (("all", "−0.284"), ("draftable", "+0.001")):
+        add(quoted, lambda p=pop: _pa("mixture__missing_only", "crps_vs_mixture", p),
+            f"the age-split indicator alone, {pop}")
+    add("−0.497", lambda: _pa("mixture__missing_only", "crps_vs_mixture_lo", "all"),
+        "indicator alone, pooled lo")
+    add("−0.072", lambda: _pa("mixture__missing_only", "crps_vs_mixture_hi", "all"),
+        "indicator alone, pooled hi")
+    add("−0.152", lambda: _pa("mixture__missing_only", "crps_vs_mixture_lo"),
+        "indicator alone, draftable lo")
+    add("+0.174", lambda: _pa("mixture__missing_only", "crps_vs_mixture_hi"),
+        "indicator alone, draftable hi")
+    add("45", lambda: 100.0 * _pa("mixture__missing_only", "crps_vs_mixture", "all")
+        / _pa("mixture__volume", "crps_vs_mixture", "all"),
+        "share of the pooled margin the indicator alone carries")
+    add("267", lambda: _pa("mixture", "train_loglik") * -1
+        + _pa("mixture__volume", "train_loglik"), "training log-likelihood the block buys")
+    # Both cross-round ratios are re-derived from §14's artifact rather than restated, so a
+    # change to either round moves them. They are the whole basis for "largest block ever
+    # measured on this head", and a stale one would leave that superlative unbacked.
+    add("11.0", lambda: _pa("mixture__volume", "crps_vs_mixture", "all")
+        / _one(table(AABS_M), "crps_vs_mixture", arm="mixture__absence_mix"),
+        "pooled margin against §14's absence block")
+    add("14.5", lambda: (_pa("mixture__volume", "train_loglik")
+                         - _pa("mixture", "train_loglik"))
+        / (_one(table(AABS_M), "train_loglik", arm="mixture__absence_mix")
+           - _one(table(AABS_M), "train_loglik", arm="mixture")),
+        "training log-likelihood against §14's absence block")
+    add("18.48", lambda: _one(table(AABS_M), "train_loglik", arm="mixture__absence_mix")
+        - _one(table(AABS_M), "train_loglik", arm="mixture"),
+        "§14's absence block train log-likelihood, for the comparison", artifact=AABS_M)
+
+    # ── the shipped head's own defect, split by population ───────────────────
+    add("0.01085", lambda: _pa("mixture", "boundary_tail_error", "all"),
+        "the shipped head's boundary error, pooled — §14c's control")
+    add("1.84", lambda: _pa("mixture", "boundary_tail_error")
+        / _pa("mixture", "boundary_tail_error", "all"),
+        "how much larger the defect is on the draft pool")
+    for pop, pred, obs in (("all", "0.0683", "0.0815"), ("draftable", "0.0582", "0.0259")):
+        add(pred, lambda p=pop: _pa("mixture", "pred_below_10", p),
+            f"predicted P(GP < 10), {pop}")
+        add(obs, lambda p=pop: _pa("mixture", "obs_below_10", p),
+            f"observed P(GP < 10), {pop}")
+    add("2.25", lambda: _pa("mixture", "pred_below_10") / _pa("mixture", "obs_below_10"),
+        "how much the shipped head over-predicts the dead season on the draft pool")
+    add("0.0387", lambda: _pa("mixture", "pred_full_schedule"),
+        "predicted P(full schedule), draftable")
+    add("0.0304", lambda: _pa("mixture__volume", "pred_full_schedule"),
+        "primary arm's predicted P(full schedule), draftable")
+    add("0.0311", lambda: _pa("mixture", "obs_full_schedule"),
+        "observed P(full schedule), draftable")
+    add("0.0480", lambda: _pa("mixture__volume", "pred_below_10"),
+        "primary arm's predicted P(GP < 10), draftable")
+    for arm, quoted in (("mixture", "0.0927"), ("mixture__volume", "0.0853"),
+                        ("mixture__volume_centered", "0.0481")):
+        add(quoted, lambda a=arm: _pa(a, "val_pit_ks"), f"{arm} PIT KS, draftable")
+    add("0.0631", lambda: _pa("mixture", "val_pit_ks", "all"),
+        "the shipped head's PIT KS, pooled")
+    for arm, quoted in (("mixture", "0.6386"), ("mixture__volume", "0.5816")):
+        add(quoted, lambda a=arm: _pa(a, "coverage_50"),
+            f"{arm} realized 50% coverage, draftable")
+
+    # ── the ladder, arm by arm. The ties are the attribution and are claimed as such. ──
+    for arm, crps, boundary in [("mixture", "8.9730", "0.01998"),
+                                ("mixture__volume", "8.8710", "0.01140"),
+                                ("mixture__volume_centered", "8.7928", "0.01432"),
+                                ("mixture__p1_block", "8.8264", "0.01017"),
+                                ("mixture__participation", "8.8807", "0.01083"),
+                                ("mixture__volume_pi", "8.8540", "0.01354"),
+                                ("mixture__missing_only", "8.9743", "0.01691"),
+                                ("mixture__pi", "9.0401", "0.01363")]:
+        add(crps, lambda a=arm: _pa(a, "val_crps"), f"{arm} draftable CRPS")
+        add(boundary, lambda a=arm: _pa(a, "boundary_tail_error"), f"{arm} boundary error")
+    add("+0.0671", lambda: _pa("mixture__pi", "crps_vs_mixture"),
+        "the pi-only arm, the worst CRPS on the ladder")
+    # The centred arm's interval is what "no arm clears the CRPS bar" rests on — it is the
+    # best one on the table — so it is registered rather than left as prose.
+    add("−0.1802", lambda: _pa("mixture__volume_centered", "crps_vs_mixture"),
+        "the centred arm, the best CRPS margin on the ladder")
+    add("−0.4190", lambda: _pa("mixture__volume_centered", "crps_vs_mixture_lo"),
+        "centred arm, val lo")
+    add("+0.0611", lambda: _pa("mixture__volume_centered", "crps_vs_mixture_hi"),
+        "centred arm, val hi — the bar's best chance, and it spans zero")
+    add("0.0533", lambda: _pa("mixture__pi", "val_pit_ks"), "the pi-only arm's PIT KS")
+
+    # ── where the block does and does not belong ─────────────────────────────
+    for label, metric, quoted in [
+            ("preseason on pi | already on beta", "val_crps", "−0.0169"),
+            ("preseason on pi | already on beta", "boundary_tail_error", "+0.00214"),
+            ("preseason on pi | already on beta", "body_error", "−0.00824"),
+            ("preseason on pi | already on beta", "shoulder_error", "−0.00122"),
+            ("P1's whole block | volume", "val_crps", "−0.0445"),
+            ("participation on beta | volume", "val_crps", "+0.0097"),
+            ("centring the volume column", "val_crps", "−0.078"),
+            ("centring the volume column", "body_error", "−0.0350")]:
+        add(quoted, lambda e=label, m=metric: _pae(e, m), f"{label}, {metric}",
+            artifact=PRE_AV_EFF)
+    for label, metric, lo, hi in [
+            ("preseason on pi | already on beta", "boundary_tail_error",
+             "+0.00025", "+0.00267"),
+            ("preseason on pi | already on beta", "body_error", "−0.00920", "−0.00717"),
+            ("P1's whole block | volume", "val_crps", "−0.128", "+0.039"),
+            ("participation on beta | volume", "val_crps", "−0.029", "+0.049"),
+            ("centring the volume column", "val_crps", "−0.166", "+0.013"),
+            ("centring the volume column", "body_error", "−0.0359", "−0.0114")]:
+        add(lo, lambda e=label, m=metric: _pae(e, m, "delta_lo"), f"{label} {metric} lo",
+            artifact=PRE_AV_EFF)
+        add(hi, lambda e=label, m=metric: _pae(e, m, "delta_hi"), f"{label} {metric} hi",
+            artifact=PRE_AV_EFF)
+
+    # The pi arm's own fitted structure — it is not a small change, and that is the reading.
+    for arm, theta, pi_mean, mu_low in (("mixture", "0.1116", "0.0445", "0.1000"),
+                                        ("mixture__pi", "0.7453", "0.1524", "0.2869")):
+        add(theta, lambda a=arm: _pa(a, "shape_theta"), f"{arm} theta")
+        add(pi_mean, lambda a=arm: _pa(a, "shape_pi_mean"), f"{arm} mean pi, draftable")
+        add(mu_low, lambda a=arm: _pa(a, "shape_mu_low"), f"{arm} low-component mean")
+
+    # ── the block's own diagnostics, which motivate the centred arm ──────────
+    for statistic, quoted in [("volume_season_mean_min", "3.795"),
+                              ("volume_season_mean_max", "4.681"),
+                              ("volume_season_mean_sd", "0.310"),
+                              ("volume_sd_within_season", "0.616"),
+                              ("team_pre_games_min", "2"),
+                              ("team_pre_games_max", "8"),
+                              ("n_seasons", "10"),
+                              ("n_seasons_outside_coverage", "0")]:
+        add(quoted, lambda s=statistic: _pab(s), f"block diagnostic: {statistic}",
+            artifact=PRE_AV_BLOCK)
+    add("772", lambda: _pab("n_rows", "validation draftable"), "draftable validation rows",
+        artifact=PRE_AV_BLOCK)
+    add("883", lambda: _pab("n_rows", "validation"), "validation rows",
+        artifact=PRE_AV_BLOCK)
     return C
 
 
