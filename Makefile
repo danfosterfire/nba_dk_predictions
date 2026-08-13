@@ -9,6 +9,7 @@ PIP    := .venv/bin/pip
         boxscore-status availability-model availability-window \
         availability-weighting availability-regime availability-exchangeability \
         availability-no-prior availability-absence availability-preseason \
+        rookie-priors \
         capture-status \
         capture-calendar \
         report-calibration \
@@ -280,8 +281,28 @@ availability-preseason:
 # the target — so `pooled` reproduces the shipped scalar exactly and the comparison is a
 # mean function against a mean function. Scored through the beta-binomial the simulator
 # itself applies, at the fringe bucket's rho. `tenure_draft` ships. numpy only, seconds.
+#
+# P4(a) of docs/preseason-plan.md rides along in the same target rather than taking its own:
+# it is the SAME ladder on the SAME rows with a preseason minutes-share key joined on, and a
+# second target would have to rebuild the panel, the design and the classification to ask a
+# question one merge away. It adds two axes — the key, and the population the rates are
+# POOLED from, since the consumer is only ever applied to rostered players and the estimator
+# has always pooled over January signings too. Both readings are quoted on the draftable
+# population per P1 decision 5. Needs `make preseason`; skipped with a message without it.
 availability-no-prior:
 	$(PYTHON) -m src.models.availability_no_prior
+
+# P4(b): the OTHER thing a no-prior player gets from his draft slot. `stan_composition.
+# rookie_share_priors` hands him an expanding-window mean of what past players in his draft
+# bucket realized, which becomes his `w_share` — the composition's prior minutes share and,
+# through `order_frame`, his place in the allocation order. This asks whether his own
+# preseason beats that, on the share and on the seven per-36 rates plus the 3PA mix.
+#
+# Three arms over ONE estimator, the §8b discipline: the bucket mean, his preseason reading,
+# and the two blended by preseason volume with `k` chosen on an inner carve of the FITTING
+# half. `k = 0` and `k = inf` are the two endpoint arms exactly. numpy only, ~1 min.
+rookie-priors:
+	$(PYTHON) -m src.models.rookie_priors
 
 # ── Stan heads ────────────────────────────────────────────────────────────────
 # Fitted SEPARATELY, one model per head, because the chain availability -> min |

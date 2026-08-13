@@ -20,13 +20,17 @@ must come back `NaN` rather than `inf`.
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.eda.season_effects import ROLE_LABELS
-from src.models.availability_no_prior import (FITTED_ROLE_RHO, MIN_CELL, appearance_gap,
-                                              classify, implied_rho, imputed_bucket,
-                                              ladder, level_keys, level_rates,
-                                              level_tables, primary_team_cells, realized,
-                                              spreads)
+from src.models.availability_no_prior import (FITTED_ROLE_RHO, MIN_CELL, NO_PRESEASON,
+                                              PRESEASON_KEY_ARMS, PRESEASON_SHARE_EDGES,
+                                              PRESEASON_SHARE_LABELS, SHIPPED_LEVEL_ARM,
+                                              _pool, appearance_gap,
+                                              attach_preseason_keys, classify, implied_rho,
+                                              imputed_bucket, ladder, level_keys,
+                                              level_rates, level_tables, preseason_bucket,
+                                              primary_team_cells, realized, spreads)
 
 
 def _panel(rows: list[tuple[str, int, int, int]]) -> pd.DataFrame:
@@ -244,3 +248,110 @@ def test_spread_refuses_a_ratio_over_a_genuine_zero():
     assert np.isnan(out.loc["left tail", "spread"])
     assert np.isclose(out.loc["left tail", "gap"], 0.43)
     assert np.isclose(out.loc["level", "spread"], 0.83 / 0.25)
+
+
+# ── P4(a), the preseason key ──────────────────────────────────────────────────
+#
+# The ladder gained two axes, and each one can be wrong in a way a CRPS column cannot show.
+# The key can silently not exist (a cross whose cells all fall back is indistinguishable
+# from the arm it falls back to, which is why `origins_compared` was added); the bucket can
+# treat "no preseason row" as a small share rather than as its own event; and the estimator
+# population can leak January signings into a rate handed to October rosters.
+
+def _pre(rows, shares):
+    """`_history` rows plus a preseason share per player_id — `None` means no row at all."""
+    history = _history(rows)
+    panel = pd.DataFrame([{"season": s, "player_id": p, "min_share_pre": shares[p]}
+                          for s, p, *_ in rows if shares.get(p) is not None])
+    if panel.empty:
+        panel = pd.DataFrame(columns=["season", "player_id", "min_share_pre"])
+    return attach_preseason_keys(history, panel)
+
+
+def test_no_preseason_row_is_its_own_bucket_and_not_a_small_share():
+    """`NO_PRESEASON` is a level. Collapsing it into `bench` would assert that a player who
+    never took the floor in October and one who played nine minutes a night are the same
+    event, which P1's census measured as false on exactly this population."""
+    assert preseason_bucket(pd.Series([np.nan]))[0] == NO_PRESEASON
+    assert preseason_bucket(pd.Series([0.0]))[0] == PRESEASON_SHARE_LABELS[0]
+    assert preseason_bucket(pd.Series([0.02, 0.05, 0.20])).tolist() == list(
+        PRESEASON_SHARE_LABELS)
+
+
+def test_the_share_cuts_are_the_declared_ones_and_are_closed_on_the_right_side():
+    """The edges are a-priori constants, so the only thing to pin is which side each is
+    closed on — `pd.cut` is right-closed, so an exactly-even share is `fringe`, not
+    `rotation`, and the doc's "at or above an even split" would otherwise be wrong."""
+    lo, hi = PRESEASON_SHARE_EDGES
+    assert preseason_bucket(pd.Series([lo]))[0] == PRESEASON_SHARE_LABELS[0]
+    assert preseason_bucket(pd.Series([hi]))[0] == PRESEASON_SHARE_LABELS[1]
+    assert preseason_bucket(pd.Series([hi + 1e-9]))[0] == PRESEASON_SHARE_LABELS[2]
+
+
+def test_the_cross_nests_inside_tenure_draft_rather_than_replacing_it():
+    """The fallback rung has to be a coarsening of the same key. If `tenure_draft_pre` did
+    not carry `tenure_draft` as its prefix, a row whose cell is under `MIN_CELL` would drop
+    to a *different* partition and the ladder would be four estimators rather than one."""
+    rows = _pre([("2020-21", 1, 40, "lottery", 0), ("2020-21", 2, 40, "undrafted", 3)],
+                {1: 0.10, 2: 0.01})
+    for _, row in rows.iterrows():
+        assert row["tenure_draft_pre"].startswith(row["tenure_draft"] + "__")
+        assert row["tenure_pre"].startswith(row["tenure_class"] + "__")
+
+
+def test_a_thin_cross_falls_back_to_tenure_draft_and_reports_that_it_did():
+    """The failure this whole column exists for: a graded arm that graded nothing. With one
+    row per cell the cross cannot clear `MIN_CELL`, so every row must take the coarser rung
+    AND `rung != 0` must say so — otherwise it is indistinguishable from a real grading."""
+    history = _pre(_bulk("2019-20", MIN_CELL + 10, 20, "undrafted", 0)
+                   + _bulk("2019-20", MIN_CELL + 10, 70, "lottery", 0, first_id=200),
+                   {p: 0.10 for p in range(400)})
+    # One target row whose preseason cell is `bench` — a cell the history never fills.
+    target = _pre([("2020-21", 1, 0, "lottery", 0)], {1: 0.001})
+    seasons = ["2019-20", "2020-21"]
+    rate, rung = level_rates(target, level_tables(history, "2020-21", seasons,
+                                                  "tenure_draft_preseason"))
+    coarse, _ = level_rates(target, level_tables(history, "2020-21", seasons,
+                                                 "tenure_draft"))
+    assert (rung != 0).all()
+    assert np.allclose(rate, coarse)
+
+
+def test_an_arm_without_its_key_raises_rather_than_grading_nothing():
+    """A preseason arm run on rows that never saw the panel would fall all the way to `all`
+    and score as `pooled` while being labelled `tenure_draft_preseason`. That is the one
+    failure mode that produces a plausible number, so it is an exception and not a fallback."""
+    history = _history(_bulk("2019-20", MIN_CELL + 10, 20, "undrafted", 0))
+    with pytest.raises(KeyError):
+        level_tables(history, "2020-21", ["2019-20", "2020-21"], "tenure_draft_preseason")
+
+
+def test_the_roster_estimator_pools_only_rostered_rows():
+    """The axis P4 added outside its charter. The consumer is applied to October rosters, so
+    an estimator pooled over January signings estimates the wrong quantity — and the two
+    populations realize very different rates, which is what makes this a bug rather than a
+    refinement."""
+    history = _history(_bulk("2019-20", 60, 70, "undrafted", 0)
+                       + _bulk("2019-20", 60, 10, "undrafted", 0, first_id=100))
+    history["on_season_start_roster"] = np.where(history["player_id"] < 100, 1.0, 0.0)
+    rows = _history(_bulk("2020-21", 1, 0, "undrafted", 0))
+    seasons = ["2019-20", "2020-21"]
+    pooled, _ = level_rates(rows, level_tables(_pool(history, "all"), "2020-21", seasons,
+                                               "pooled"))
+    roster, _ = level_rates(rows, level_tables(_pool(history, "roster"), "2020-21", seasons,
+                                               "pooled"))
+    assert np.allclose(pooled, (60 * 70 + 60 * 10) / (120 * 82))
+    assert np.allclose(roster, 70 / 82)
+    assert _pool(history, "all").shape[0] == 120
+
+
+def test_the_simulator_refuses_to_be_configured_with_a_preseason_arm():
+    """`sim/season` builds its own keys and never joins the preseason panel, so naming one
+    of P4's arms there is a config that cannot work. It fails at the config rather than
+    several frames later inside `level_tables`."""
+    from src.sim import season as S
+
+    for arm in PRESEASON_KEY_ARMS:
+        with pytest.raises(ValueError, match="preseason"):
+            S.no_design_level_arm({"sim": {"availability": {"no_design_level": arm}}})
+    assert S.no_design_level_arm({}) == SHIPPED_LEVEL_ARM

@@ -145,9 +145,9 @@ from src.data.preprocess import compute_dk_pts
 from src.eda.residual_correlation import MINUTES_CONDITIONED
 from src.eda.residual_correlation import to_matrix as residual_matrix
 from src.features.targets import BONUS_GAME_OVERDISPERSION, bonus_part
-from src.models.availability_no_prior import (KEY_LADDERS, SHIPPED_LEVEL_ARM,
-                                              appearance_gap, level_keys, level_rates,
-                                              level_tables, primary_team_cells)
+from src.models.availability_no_prior import (KEY_LADDERS, PRESEASON_KEY_ARMS,
+                                              SHIPPED_LEVEL_ARM, appearance_gap, level_keys,
+                                              level_rates, level_tables, primary_team_cells)
 from src.models.component_rates import (CONVERSION_HEADS, COUNT_HEADS, DERIVED_COUNTS,
                                         build_design as component_build_design)
 from src.models.games_played import (EdgeResampler, allocate_spells, edge_blocks,
@@ -323,12 +323,25 @@ def roster_grid(features_dir: Path, season: str, slots: pd.DataFrame) -> pd.Data
 
 
 def no_design_level_arm(cfg: dict) -> str:
-    """The configured key ladder for the no-design availability level."""
+    """The configured key ladder for the no-design availability level.
+
+    P4's preseason arms are refused here rather than allowed to fail deep inside
+    `level_tables`: this module's own key builder does not join the preseason panel, so
+    naming one would be a config that cannot work. They are measured by
+    `make availability-no-prior` and `docs/preseason-plan.md` P4 records that none of them
+    ships, so the refusal costs nothing today and is a clear message rather than a `KeyError`
+    if that ever changes.
+    """
     name = str(cfg.get("sim", {}).get("availability", {})
                .get("no_design_level", SHIPPED_LEVEL_ARM))
-    if name not in KEY_LADDERS:
+    usable = [a for a in KEY_LADDERS if a not in PRESEASON_KEY_ARMS]
+    if name in PRESEASON_KEY_ARMS:
+        raise ValueError(f"sim.availability.no_design_level {name!r} needs a preseason key "
+                         f"this module does not build — see `docs/preseason-plan.md` P4, "
+                         f"where it is measured and not shipped")
+    if name not in usable:
         raise ValueError(f"unknown sim.availability.no_design_level {name!r}; expected one "
-                         f"of {sorted(KEY_LADDERS)}")
+                         f"of {sorted(usable)}")
     return name
 
 
