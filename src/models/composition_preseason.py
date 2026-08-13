@@ -7,26 +7,32 @@ minutes, **no CmdStan and no fit of the head** — which is the whole design of 
 
 Every other preseason block in this project is `docs/preseason-plan.md`'s house pattern: extra
 columns on `beta`, difference-coded, coefficient zero recovering the incumbent. On the
-composition head that pattern **cannot reach the thing worth testing**. `w_share` — a player's
-prior-season minutes share, or his draft bucket's expanding mean if he has none — is not a
-feature. It is:
+composition head that pattern reaches **one of the three routes** `w_share` takes into the
+model. A player's prior-season minutes share — or his draft bucket's expanding mean if he has
+none — enters as:
 
-1. the **offset**. `sequential_columns` turns it into `logit_prior`, the carry-forward the
-   head's `beta` only corrects; and
-2. the **allocation order**. `order_frame` sorts each team-season by `w_share` descending, and
-   the multinomial's decomposition into sequential binomials is taken in that order.
+1. a **feature**. `OWN = logit_share_lag1` is `logit(w_share)` and is in every variant's
+   feature list, so a coefficient does modulate it and the house pattern *can* add a
+   preseason column beside it;
+2. the **offset**. `sequential_columns` turns `w_share` into `logit_prior`, the carry-forward
+   `beta` only corrects — **no coefficient can move it**; and
+3. the **allocation order**. `order_frame` sorts each team-season by `w_share` descending and
+   the multinomial's decomposition into sequential binomials is taken in that order — again
+   **unreachable by any coefficient**.
 
-So a preseason quantity entering `w_share` changes the model in a way no coefficient path
-can, which is exactly what P3 flagged when it opened this session: *"a plausible
-composition-specific win worth checking there: preseason minutes share updating the ordering
-and prior-share feature for players who changed teams."*
+So routes 2 and 3 are the part of this head the round's house pattern cannot get at, and they
+are exactly what P3 flagged when it opened this session: *"a plausible composition-specific
+win worth checking there: preseason minutes share updating the ordering and prior-share
+feature for players who changed teams."*
 
 ## Why this is cheap, and why cheap is the right first gate
 
 `FloorComposition` — the head's own no-fit floor — has a mean function that is **the offset
-alone**. Its only fitted quantity is a shared dispersion. So a change to `w_share` is fully
-visible in the floor with no sampler involved, and the floor is the arm every fitted variant
-is scored against in `stan_composition`'s own ladder.
+alone**: `predict_samples` sets `eta = 0`, so route 1 is switched off entirely and only routes
+2 and 3 remain. That is not a limitation of the screen, it is what makes it the right one —
+the floor isolates precisely the two channels no coefficient can reach, with no sampler
+involved, and it is the arm every fitted variant is scored against in `stan_composition`'s own
+ladder.
 
 That makes this the composition's version of P1: a screen that can reject an arm before any
 of the head's 9.92 h (full window) or ~1 h (pilot) is spent. It is not a substitute for the

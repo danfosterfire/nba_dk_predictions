@@ -1056,28 +1056,34 @@ running it costs the chain, which is P5 work.
 (2018-19 on, P3 decision 3). numpy only, **48 seconds, no CmdStan and no fit of the head** —
 which is the design rather than a shortcut.
 
-### The composition is the one head the house pattern cannot reach
+### Two of this head's three routes are unreachable by a coefficient
 
-Every other block in this round is difference-coded columns on `beta`. On this head the thing
-worth testing is not a feature at all. `w_share` — a player's prior-season minutes share, or
-his draft bucket's expanding mean if he has none — enters the model **twice**:
+Every other block in this round is difference-coded columns on `beta`. `w_share` — a player's
+prior-season minutes share, or his draft bucket's expanding mean if he has none — enters this
+head **three** ways:
 
-1. as the **offset**, through `sequential_columns` → `logit_prior`, the carry-forward `beta`
+1. as a **feature**: `OWN = logit_share_lag1` is `logit(w_share)` and sits in every variant's
+   feature list, so a coefficient *does* modulate it and the house pattern could add a
+   preseason column beside it;
+2. as the **offset**, through `sequential_columns` → `logit_prior`, the carry-forward `beta`
    only corrects; and
-2. as the **allocation order**, through `order_frame`, which is the order the multinomial is
+3. as the **allocation order**, through `order_frame`, which is the order the multinomial is
    decomposed into sequential binomials in.
 
-No coefficient path reaches either. So the arm is `w' = ω·pre + (1 − ω)·w_share` with
+**No coefficient reaches 2 or 3**, and those are what this round tests. So the arm is
+`w' = ω·pre + (1 − ω)·w_share` with
 `ω = m/(m + k)` over preseason minutes, where `k → ∞` is the incumbent exactly and a player
 with no preseason row has `ω = 0` by his own volume rather than by a special case.
 
 ### Why it is scored on the floor, and why that is the right first gate
 
-`FloorComposition`'s mean function is **the offset alone** — its only fitted quantity is a
-shared dispersion. So the whole change is visible in the head's own no-fit floor with no
-sampler involved, and the floor is what every fitted variant in `stan_composition`'s ladder is
-scored against. That makes this the composition's version of P1: a screen that can reject an
-arm before any of the head's 9.92 h (full window) or ~1 h (pilot) is spent.
+`FloorComposition`'s mean function is **the offset alone** — `predict_samples` sets `eta = 0`,
+so route 1 is switched off and only routes 2 and 3 remain, and its one fitted quantity is a
+shared dispersion. **That is the point rather than a limitation**: the floor isolates exactly
+the two channels no coefficient can reach, with no sampler involved, and it is what every
+fitted variant in `stan_composition`'s ladder is scored against. That makes this the
+composition's version of P1 — a screen that can reject an arm before any of the head's 9.92 h
+(full window) or ~1 h (pilot) is spent.
 
 The control is that the incumbent arm reproduces the shipped floor. `carry_forward` reads
 **4.6776** in `stan_composition`'s own ladder and **4.64939** here — the gap is the pilot

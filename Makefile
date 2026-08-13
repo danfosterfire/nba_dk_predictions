@@ -502,12 +502,12 @@ minutes-preseason:
 composition-effects:
 	$(PYTHON) -m src.models.composition_effects
 
-# Session 4b of docs/preseason-plan.md, gate 1. The composition is the one head where the
-# preseason CANNOT enter as a feature column: `w_share` is the offset (`logit_prior`) AND
-# the allocation ORDER (`order_frame`), so a coefficient path cannot reach it. This blends a
-# preseason minutes share into `w_share` and scores it through the head's OWN no-fit floor,
-# whose mean function is the offset alone — so the whole question is answered with no
-# CmdStan and no fit of the head, and a losing arm never costs the sampler an hour.
+# Session 4b of docs/preseason-plan.md, gate 1. `w_share` enters this head THREE ways — as
+# the feature OWN, as the offset (`logit_prior`), and as the allocation ORDER (`order_frame`)
+# — and NO COEFFICIENT reaches the last two, which is what the round's house pattern cannot
+# get at. This blends a preseason minutes share into `w_share` and scores it through the
+# head's OWN no-fit floor, which sets eta = 0 and so isolates exactly those two routes: the
+# whole question is answered with no CmdStan and no fit, and a losing arm never costs an hour.
 #
 # `k -> inf` is the incumbent EXACTLY and `k` is selected on an inner carve of the fitting
 # half. Both units, because `make minutes-unification` is the standing demonstration that
