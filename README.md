@@ -354,10 +354,14 @@ preseason minutes are compressed by an amount that varies with the calendar and 
 no year term to absorb it; centring also takes the season-total bias from −36.68 to **−10.95**,
 better than the pre-block head's own −19.24. `docs/preseason-plan.md` P3.
 
-⚠️ **The block narrowed this head's season-level ρ from 0.05025 to 0.041894**, ~9%, and this
-head ships *for* its season-level spread. Every `make minutes-unification` figure below —
-and `sim.minutes.player_season_sigma = 0.450`, which was calibrated against the wider one —
-predates it and has not been re-read. That is P5 work and it is not done.
+~~⚠️ **The block narrowed this head's season-level ρ from 0.05025 to 0.041894**, ~9%, and
+this head ships *for* its season-level spread.~~ ✅ **Re-read 2026-08-14, and the narrowing is
+an improvement rather than a cost.** At the season unit the post-block head is better on every
+row of `make minutes-unification`: CRPS **136.60** (was 144.35), MAE **190.21** (was 200.12),
+R² **0.8947** (was 0.8829), bias **−11.91** (was −14.09) and PIT KS **0.0668** (was 0.0735),
+on a predictive sd that did narrow, **277.23** against 302.75. Sharper *and* better calibrated
+is the signature of a real covariate, not of a head that lost its spread. The consequence is
+downstream and it is a reversal — see the injection stake below.
 
 **Minutes as a team-game composition**
 ([stan_composition.py](src/models/stan_composition.py)) is the second minutes head, and it
@@ -375,17 +379,22 @@ game-level dispersion is a *data measurement* that happens to live in `stan_minu
 fitted object never appears in it — and the composition fits its own, role-graded from
 **0.1768** for fringe players to **0.0855** for stars. And the composition matches the
 marginal head on the season-level **mean**: scored at the season unit on the 742 validation
-player-seasons both cover, MAE **200.28** against **200.12** and R² **0.8848** against
-**0.8829**, with a bias of **+2.41** against **−14.09**, so it is the less biased of the two.
+player-seasons both cover, MAE **200.28** against **190.21** and R² **0.8848** against
+**0.8947**, with a bias of **+2.41** against **−11.91**, so it is the less biased of the two.
+(Against the pre-preseason marginal head those read 200.12, 0.8829 and −14.09, and the
+composition led on MAE rather than trailing it — every figure in this section that moved on
+2026-08-14 moved because the *marginal* head improved. The composition carries no preseason
+block and its numbers are bit-identical.)
 
 What survives is the season-level **spread**. Summed composition draws give a season-total
-predictive sd of **64.65** minutes against the marginal head's **302.75** — **4.68×** too
-narrow, CRPS **170.06** against **144.35** with a paired-bootstrap interval of
-**[+18.96, +33.25]** — because draws that are iid across games cannot manufacture
+predictive sd of **64.65** minutes against the marginal head's **277.23** — **4.29×** too
+narrow, CRPS **170.06** against **136.60** with a paired-bootstrap interval of
+**[+26.15, +41.335]** — because draws that are iid across games cannot manufacture
 season-level heterogeneity. The sharpest form of it is that at the season unit the
 composition does not clear the no-fit carry-forward floor (170.06 against **161.29**) on the
 same draws that clear its own per-team-game floor decisively (**4.4945** against 4.6776).
-Same head, same posterior, opposite verdicts at two units.
+Same head, same posterior, opposite verdicts at two units. (The gap was **+25.70**
+**[+18.96, +33.25]** at 4.68× before the preseason block.)
 
 **That gap is a missing parameter, not a ceiling — measured, and it matters for what gets
 built next.** A *shared* effect cannot fix it: a season term is a league-wide shift, and
@@ -393,20 +402,30 @@ against a head that allocates every minute in the league it has **0.000000%** of
 variance to reach. But a **per-(player, season)** effect is not shared, and injecting one
 into the existing posterior — `σ·z` per player-season per draw, shared across that player's
 games, re-run through the head's own allocation — moves the season-total predictive sd from
-64.65 to **239.45** at σ = **0.375** and the CRPS to **142.17**, which *ties* the marginal
-head (**−2.18**, interval **[−6.96, +2.85]**) while keeping the team constraint exact — and
-at σ = 0.45 the season-unit calibration passes it outright, PIT KS **0.0659** against 0.0735.
-MAE barely moves, so it buys spread and not fit.
+64.65 to **239.45** at σ = **0.375** and the CRPS to **142.17**, which is the closest it comes
+to the marginal head (**+5.57**, interval **[−0.07, +11.06]**) while keeping the team
+constraint exact — and at σ = 0.45 the season-unit calibration passes it outright, PIT KS
+**0.0659** against 0.0668. MAE barely moves, so it buys spread and not fit.
 
 **The caveat that made that a bound rather than a score is now closed.** σ was read off
 validation, which is the split it is scored against — so the same grid was re-run on the last
 two *training* seasons (1,145 player-seasons) and its optimum is interior at **σ = 0.450**
 (CRPS **117.07** on those rows), one grid step from validation's 0.375 and worth 0.4 CRPS
 minutes between them. Two grids on disjoint rows agreeing to a step is the evidence that the
-figure was never moved by the evaluation data. At σ = 0.450 the validation reading is CRPS **142.87** against 144.35 — gap
-**−1.49**, interval **[−6.14, +3.22]**, a tie — with the better PIT KS of the two and the team
-constraint still exact. So the injection is shippable today with a σ that owes the evaluation
-rows nothing, and retiring the marginal head is a live prospect rather than a closed one.
+figure was never moved by the evaluation data. **σ therefore stands at 0.450 after the
+preseason block**, because that grid is the composition scored against realized minutes and
+the marginal head is not in it — nothing about the block could move it, and nothing did.
+
+⚠️ **What the block did move is the stake, and it is a reversal.** At σ = 0.450 the validation
+reading is CRPS **142.87** against the marginal head's **136.60** — gap **+6.26**, interval
+**[+0.92, +11.49]**, so the injected composition now **loses** with an interval clear of zero
+where it used to tie (142.87 against 144.35, **−1.49 [−6.14, +3.22]**). σ = 0.375 is the
+nearest thing to a tie left, at **+5.57 [−0.07, +11.06]**. So the injection is still shippable
+with a σ that owes the evaluation rows nothing, and **retiring the marginal head is closed for
+now rather than live** — the preseason block is the second thing the marginal head has that
+the composition does not, and it is worth 7.75 CRPS minutes at the unit the two are compared
+at. Giving the composition its own preseason arm is `docs/preseason-plan.md`'s session 4b, and
+this is now the strongest argument for running it.
 
 **So the injection ships**, as `sim.minutes.player_season_sigma = 0.450`, applied by
 `minutes_unification.rehydrate_composition` — a consumer gets the effect by loading the head
@@ -433,8 +452,8 @@ team's season minutes are a fixed pot, so teammates' season totals are negativel
 a fixed sum over K players forces mean pairwise **r = −1/(K−1)**, which at the measured
 **16.05**-player roster size is **−0.0664**. Over **963** single-team validation
 player-seasons the composition sits on it at **−0.0509**. The marginal head reads
-**−0.0001** and puts a **1,022.9**-minute predictive sd on a team season total that is
-physically fixed. That is invisible in every marginal metric and lands on two strategy axes
+**+0.0007** (−0.0001 before the preseason block — a null either way) and puts a **946.1**-minute
+predictive sd on a team season total that is physically fixed. That is invisible in every marginal metric and lands on two strategy axes
 directly: a same-team stack's minutes are *anti*-correlated rather than independent, and
 handcuffing a starter with his backup is a hedge that exists only if the model carries the
 sign.
@@ -600,18 +619,26 @@ the selected arm's rank — nothing about the verdict reversed.
 **And the same head loses to the same comparator at the season unit, which is why both
 minutes heads ship.** `make minutes-unification`. Summed to season totals on the 742
 validation player-seasons both heads cover, the composition reads CRPS **170.06** against the
-marginal head's **144.35** — a paired-bootstrap gap of **+25.70** minutes, interval
-**[+18.96, +33.25]** — and does not clear the no-fit carry-forward floor's **161.29** at that
-unit. The mean is not what fails: MAE **200.28** against **200.12**, R² **0.8848** against
-**0.8829**, bias **+2.41** against **−14.09**. The predictive **spread** is, at **4.68×** too
-narrow (sd **64.65** against **302.75**, PIT KS **0.3341** against **0.0735**), because
+marginal head's **136.60** — a paired-bootstrap gap of **+33.45** minutes, interval
+**[+26.15, +41.335]** — and does not clear the no-fit carry-forward floor's **161.29** at that
+unit. The mean is not what fails: MAE **200.28** against **190.21**, R² **0.8848** against
+**0.8947**, bias **+2.41** against **−11.91**. The predictive **spread** is, at **4.29×** too
+narrow (sd **64.65** against **277.23**, PIT KS **0.3341** against **0.0668**), because
 iid-across-games draws cannot make season-level heterogeneity. **A head is only a model at
 the unit it was scored at**, and this is the cleanest demonstration of that in the repo: one
 posterior, two units, opposite verdicts against the same two floors. The follow-up measured
-in the same target — an injected per-player-season effect closes the gap to a **tie** at
-σ = 0.375, while a league-wide season term has **0.000000%** of the residual variance to
-reach — is in §2's minutes section, because it changes what gets built rather than what
-shipped.
+in the same target — an injected per-player-season effect at σ = 0.375 gets the gap to
+**+5.57 [−0.07, +11.06]**, while a league-wide season term has **0.000000%** of the residual
+variance to reach — is in §2's minutes section, because it changes what gets built rather than
+what shipped.
+
+**Re-read 2026-08-14 against the preseason-armed marginal head, and the injection's verdict
+reverses.** Every figure in the paragraph above moved because the *marginal* head improved;
+the composition carries no preseason block and reproduced bit-for-bit. Before the block the
+gap was **+25.70 [+18.96, +33.25]** at 4.68× and the shipped σ = 0.450 injection **tied** the
+marginal head (**−1.49 [−6.14, +3.22]**); it now **loses** at **+6.26 [+0.92, +11.49]**. σ
+itself is unmoved — its grid never contained the marginal head — but "retiring the marginal
+head is a live prospect" is withdrawn.
 
 **The 3PA/2PA substitution is best handled by reparameterization — re-measured
 un-handicapped, and now shipped.** `make stan-substitution` for the measurement;

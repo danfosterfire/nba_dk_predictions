@@ -1766,31 +1766,31 @@ def _minutes_unification_claims(doc: str) -> list[Claim]:
 
     # The verdict: CRPS at the season unit, both arms and the floor they are read against.
     add("170.06", "crps_minutes", COMP, "composition summed to season totals, CRPS")
-    add("144.35", "crps_minutes", MINS, "marginal minutes head, season-total CRPS")
+    add("136.60", "crps_minutes", MINS, "marginal minutes head, season-total CRPS")
     add("161.29", "crps_minutes", FLOOR,
         "the season-unit no-fit carry-forward floor the composition fails to clear")
 
     # The mean is a tie — three figures on each side, because "a tie" is the claim.
     add("200.28", "mae_minutes", COMP, "composition season-total MAE")
-    add("200.12", "mae_minutes", MINS, "marginal head season-total MAE")
+    add("190.21", "mae_minutes", MINS, "marginal head season-total MAE")
     add("0.8848", "r2_minutes", COMP, "composition season-total R2")
-    add("0.8829", "r2_minutes", MINS, "marginal head season-total R2")
+    add("0.8947", "r2_minutes", MINS, "marginal head season-total R2")
     add("+2.41", "bias_minutes", COMP, "composition season-total bias")
-    add("−14.09", "bias_minutes", MINS, "marginal head season-total bias")
+    add("−11.91", "bias_minutes", MINS, "marginal head season-total bias")
 
     # The spread is not, and this is what keeps both heads in the chain.
     add("64.65", "predictive_sd", COMP, "composition season-total predictive sd")
-    add("302.75", "predictive_sd", MINS, "marginal head season-total predictive sd")
+    add("277.23", "predictive_sd", MINS, "marginal head season-total predictive sd")
     add("0.3341", "pit_ks", COMP, "composition season-total PIT KS")
-    add("0.0735", "pit_ks", MINS, "marginal head season-total PIT KS")
+    add("0.0668", "pit_ks", MINS, "marginal head season-total PIT KS")
     add("0.00", "team_season_sd", ALL,
         "a team's season minutes are fixed across draws — the structural half")
 
     # The paired bootstrap, which is what makes the gap a verdict rather than a margin.
-    add("+25.70", "crps_delta", DELTA, "paired-bootstrap CRPS gap, composition − minutes")
-    add("+18.96", "ci_lo", DELTA, "bootstrap interval, lower")
-    add("+33.25", "ci_hi", DELTA, "bootstrap interval, upper")
-    add("4.68", "sd_ratio_minutes_over_composition", DELTA,
+    add("+33.45", "crps_delta", DELTA, "paired-bootstrap CRPS gap, composition − minutes")
+    add("+26.15", "ci_lo", DELTA, "bootstrap interval, lower")
+    add("+41.335", "ci_hi", DELTA, "bootstrap interval, upper")
+    add("4.29", "sd_ratio_minutes_over_composition", DELTA,
         "how much narrower the composition's season total is")
 
     # Coverage: the composition's genuine advantage, reported as its own row.
@@ -1830,10 +1830,10 @@ def _minutes_unification_claims(doc: str) -> list[Claim]:
            doc=doc),
         _c("239.45", MIN_UNIF, lambda: ps("predictive_sd"),
            "the season-total spread the injection recovers", doc=doc),
-        _c("−2.18", MIN_UNIF, lambda: ps("crps_delta"),
+        _c("+5.57", MIN_UNIF, lambda: ps("crps_delta"),
            "injected arm against the marginal head", doc=doc),
-        _c("−6.96", MIN_UNIF, lambda: ps("ci_lo"), "injected arm interval, lower", doc=doc),
-        _c("+2.85", MIN_UNIF, lambda: ps("ci_hi"), "injected arm interval, upper", doc=doc),
+        _c("−0.07", MIN_UNIF, lambda: ps("ci_lo"), "injected arm interval, lower", doc=doc),
+        _c("+11.06", MIN_UNIF, lambda: ps("ci_hi"), "injected arm interval, upper", doc=doc),
         _c("0.0659", MIN_UNIF, lambda: ps("pit_ks", 0.45),
            "best PIT KS in the sweep — better calibrated than the marginal head", doc=doc),
     ]
@@ -1861,11 +1861,11 @@ def _minutes_unification_claims(doc: str) -> list[Claim]:
            "training player-seasons the fallback's sigma is estimated over", doc=doc),
         _c("142.87", MIN_UNIF, lambda: ps("crps_minutes", 0.45),
            "validation CRPS at the train-estimated sigma", doc=doc),
-        _c("−1.49", MIN_UNIF, lambda: ps("crps_delta", 0.45),
+        _c("+6.26", MIN_UNIF, lambda: ps("crps_delta", 0.45),
            "the train-estimated sigma against the marginal head", doc=doc),
-        _c("−6.14", MIN_UNIF, lambda: ps("ci_lo", 0.45),
+        _c("+0.92", MIN_UNIF, lambda: ps("ci_lo", 0.45),
            "that arm's interval, lower", doc=doc),
-        _c("+3.22", MIN_UNIF, lambda: ps("ci_hi", 0.45),
+        _c("+11.49", MIN_UNIF, lambda: ps("ci_hi", 0.45),
            "that arm's interval, upper", doc=doc),
     ]
 
@@ -1877,11 +1877,11 @@ def _minutes_unification_claims(doc: str) -> list[Claim]:
     C += [
         _c("−0.0509", MIN_UNIF, lambda: couple("r_teammates", COMP),
            "composition teammate correlation", doc=doc),
-        _c("−0.0001", MIN_UNIF, lambda: couple("r_teammates", MINS),
+        _c("+0.0007", MIN_UNIF, lambda: couple("r_teammates", MINS),
            "marginal head teammate correlation — the failure", doc=doc),
         _c("−0.0664", MIN_UNIF, lambda: couple("r_implied_by_fixed_sum", COMP),
            "what a fixed team total forces at the measured roster size", doc=doc),
-        _c("1,022.9", MIN_UNIF, lambda: couple("team_season_sum_sd", MINS),
+        _c("946.1", MIN_UNIF, lambda: couple("team_season_sum_sd", MINS),
            "the marginal head's spread on a physically fixed team total", doc=doc),
         _c("16.05", MIN_UNIF, lambda: couple("roster_size", COMP),
            "mean single-team roster size the coupling is measured over", doc=doc),
@@ -5802,11 +5802,11 @@ def _minutes_window() -> list[Claim]:
         "ladder post_2014__role realized 95% coverage")
 
     # The reference check — the point MLE against the shipped Stan head's own figures.
-    add("144.352", MIN_UNIF,
+    add("136.603", MIN_UNIF,
         lambda: cell(MIN_UNIF, "crps_minutes", arm="minutes_head",
                      unit="season_total"),
         "shipped Stan head season-unit CRPS")
-    add("302.75", MIN_UNIF,
+    add("277.23", MIN_UNIF,
         lambda: cell(MIN_UNIF, "predictive_sd", arm="minutes_head",
                      unit="season_total"),
         "shipped Stan head season-unit predictive sd")

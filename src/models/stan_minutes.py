@@ -233,9 +233,15 @@ def head_design(cfg: dict, preseason: bool | None = None) -> pd.DataFrame:
     """`build_design` plus the preseason block — **this head's path and no other's**.
 
     Separate from `build_design` for the reason `stan_availability.head_design` is separate
-    from `availability_design`: that builder is how `stan_composition`, `minutes_window`,
-    `minutes_unification`, `minutes_preseason` and the model cards reach their rows, and a
-    column that is structurally zero before 2004-05 must not enter any of them by accident.
+    from `availability_design`: that builder is how `stan_composition`, `minutes_window` and
+    `minutes_preseason` reach their rows, and a column that is structurally zero before
+    2004-05 must not enter any of them by accident.
+
+    **`minutes_unification` is the exception, and it is the rule rather than a violation of
+    it**: that module rehydrates *this head's persisted posterior* and calls its own
+    `predict_samples`, so it needs the columns the posterior was fitted on. Anything that
+    scores the shipped head comes through here; anything that builds its own model on these
+    rows goes through `build_design`. `model_cards` is the other one, for the same reason.
 
     The block is built by `availability_preseason.attach_preseason` — the same function P2
     and the P3 ladder used — so the coefficients this head fits are coefficients on columns

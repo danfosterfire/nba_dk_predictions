@@ -217,16 +217,19 @@ def sigma_block(cards: dict, row: pd.Series, th: dict) -> None:
              f"Against the marginal head in season-total CRPS minutes, 95% interval "
              f"[{float(at_shipped['val_ci_lo']):+,.2f}, "
              f"{float(at_shipped['val_ci_hi']):+,.2f}] — an interval straddling zero is a "
-             f"tie, which is what `{at_shipped['verdict']}` in the artifact records"),
+             f"tie and one clear of it is not, which is the reading the artifact records "
+             f"as `{at_shipped['verdict']}`"),
             ("Predictive sd · injected", f"{float(at_shipped['val_sd']):,.2f}",
              "The injected composition's season-total predictive sd, in minutes, at the "
              "shipped σ" + against),
         ]
         if marginal_ks is not None:
+            better = float(at_shipped["val_pit_ks"]) < marginal_ks
             tiles.append((
                 "PIT KS · injected", f"{float(at_shipped['val_pit_ks']):.4f}",
                 f"Against the marginal head's {marginal_ks:.4f} at the same unit — the "
-                f"injected arm is the better calibrated of the two, with the team "
+                f"injected arm is the "
+                f"{'better' if better else 'worse'} calibrated of the two, with the team "
                 f"constraint still exact"))
         for col, (label, value, helptext) in zip(st.columns(max(len(tiles), 3)), tiles):
             col.metric(label, value, help=helptext)
@@ -236,13 +239,16 @@ def sigma_block(cards: dict, row: pd.Series, th: dict) -> None:
             fig_paired(gaps, th, baseline="the marginal head",
                        unit="season-total CRPS minutes"),
             width="stretch", key=f"sigma-gap-{head}", config={"displayModeBar": False})
+        closed = (f"and the shipped σ takes that to "
+                  f"{float(at_shipped['val_delta']):+,.2f}"
+                  if at_shipped is not None else "and one parameter closes most of it")
         st.caption(
             "The same encoding the tournament page uses for a comparison that does not "
             "resolve, because it is the same idea: **an interval straddling zero is a "
             "tie**, carried three ways at once — the interval visibly crosses the "
             "baseline, the marker is hollow, and the legend and the table below both say "
-            "so. Here a tie is the *result*: the un-injected head loses by "
-            f"{float(gaps['gap'].iloc[0]):+,.2f} and one parameter closes it.")
+            "so. Here what one parameter is worth is the *result*: the un-injected head "
+            f"loses by {float(gaps['gap'].iloc[0]):+,.2f} {closed}.")
 
     st.plotly_chart(
         fig_sigma_grids(sweep, th, marginal_crps=marginal),

@@ -3553,9 +3553,16 @@ def test_the_shipped_sigma_is_the_train_grids_own_optimum():
     assert shipped is not None
     assert float(sweep.loc[sweep["train_crps"].idxmin(), "sigma"]) == pytest.approx(shipped)
     assert model_cards.sigma_row(sweep, shipped) is not None
-    # And at that σ the gap against the marginal head is a tie, which is the claim tiled.
+    # The gap against the marginal head at that σ is NOT pinned to a verdict. It was a tie
+    # until 2026-08-13 and became a loss (+6.26 [+0.92, +11.49]) when the preseason block
+    # made the marginal head stronger, without σ moving at all — which is precisely the
+    # property above, holding. Pinning "it ties" here made this test fail for a change it
+    # was never guarding, so what is asserted is that the interval and the artifact's own
+    # verdict agree, which is what the page tiles.
     row = model_cards.sigma_row(sweep, shipped)
-    assert float(row["val_ci_lo"]) < 0 < float(row["val_ci_hi"])
+    lo, hi = float(row["val_ci_lo"]), float(row["val_ci_hi"])
+    assert lo <= hi
+    assert (str(row["verdict"]) == "ties") == (lo < 0 < hi)
 
 
 def test_the_shipped_index_lets_both_minutes_heads_render_all_seven_blocks():

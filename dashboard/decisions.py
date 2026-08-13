@@ -4601,8 +4601,10 @@ REGISTRY: tuple[Decision, ...] = (
         topic="minutes",
         claim="**The injection's sigma, re-estimated on TRAIN, is 0.450** — one grid step "
               "from the 0.375 read off validation. The fallback in "
-              "[[player-season-effect-is-fitted-not-injected]] is therefore shippable today, "
-              "and ties the marginal head at the season unit.",
+              "[[player-season-effect-is-fitted-not-injected]] is therefore shippable today. "
+              "⚠️ Its second half — 'and ties the marginal head at the season unit' — was "
+              "true until 2026-08-13 and is not now; see "
+              "[[preseason-block-breaks-the-injection-tie]]. **Sigma itself does not move.**",
         because="The injection's load-bearing caveat was that sigma is tuned on the split it "
                 "is scored against. `minutes_unification.estimate_sigma_on_train` runs the "
                 "identical grid — same arithmetic, same metric, same code path — over the "
@@ -4636,6 +4638,54 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("architecture",),
     ),
     Decision(
+        id="preseason-block-breaks-the-injection-tie",
+        topic="minutes",
+        claim="**The preseason block made the marginal minutes head strong enough that the "
+              "injected composition no longer ties it.** At `sim.minutes.player_season_sigma "
+              "= 0.450` the season-unit gap goes **-1.49 [-6.14, +3.22]** (a tie) to "
+              "**+6.26 [+0.92, +11.49]** (a loss). **Sigma is unchanged at 0.450**, and "
+              "retiring `stan_minutes` moves from a live prospect to a closed one.",
+        because="`make minutes-unification` was re-run on 2026-08-14 against the posteriors "
+                "the preseason ports wrote, and every figure that moved moved on ONE side: "
+                "the composition carries no preseason block and reproduced bit-for-bit "
+                "(CRPS 170.06, MAE 200.28, R2 0.8848, bias +2.41, predictive sd 64.65, PIT "
+                "KS 0.3341 — all identical), while the marginal head went CRPS 144.35 -> "
+                "**136.60**, MAE 200.12 -> **190.21**, R2 0.8829 -> **0.8947**, bias -14.09 "
+                "-> **-11.91** and PIT KS 0.0735 -> **0.0668**. So the head-to-head gap "
+                "widens +25.70 [+18.96, +33.25] -> **+33.45 [+26.15, +41.335]** and the "
+                "narrowness ratio falls 4.68x -> **4.29x**. **The narrowing that prompted "
+                "this re-read turns out to be an improvement, not a cost**: "
+                "`docs/preseason-plan.md` P3 flagged that the block took this head's "
+                "season-level rho 0.05025 -> 0.041894 and warned that a head shipping FOR "
+                "its spread might have lost the thing it ships for. It did narrow — "
+                "predictive sd 302.75 -> 277.23 — and got better on accuracy AND calibration "
+                "at the same time, which is what a real covariate does and a lost-spread "
+                "head cannot. **Sigma does not move and could not have**, which is "
+                "[[injected-sigma-estimated-on-train-is-0.45]]'s own rule holding under a "
+                "change from outside its axis: the train grid is the composition scored "
+                "against realized minutes and the marginal head appears nowhere in it, so "
+                "its optimum reproduced at 0.450 (117.07) unchanged. What moved is the "
+                "VERDICT. `docs/minutes-window-plan.md` §4 predicted exactly this — 'the "
+                "constant survives a stronger marginal head without change, and would not "
+                "survive one much stronger than that' — and the block delivered a head "
+                "stronger than every arm on that ladder within the week. The consequence for "
+                "what gets built: the composition now trails on two counts rather than one, "
+                "and giving it its own preseason arm (`docs/preseason-plan.md` session 4b) "
+                "is the direct answer rather than a nice-to-have. One bug was fixed to get "
+                "the reading at all — `minutes_unification` built its frame through "
+                "`stan_minutes.build_design`, which carries no preseason column, so "
+                "rehydrating the shipped head raised `KeyError` rather than scoring it; it "
+                "goes through `head_design` now, and the module docstring records that "
+                "anything SCORING the shipped head takes that path while anything fitting "
+                "its own model on these rows keeps `build_design`.",
+        status="measured",
+        reproduce="make minutes-unification → outputs/predictions/minutes_unification.csv",
+        source="docs/minutes-window-plan.md",
+        reviewed="2026-08-14",
+        date="2026-08-14",
+        tags=("architecture",),
+    ),
+    Decision(
         id="simulator-minutes-draw-is-both-heads",
         topic="simulations",
         claim="**The simulator's minutes draw is an OPEN design question, and blending the "
@@ -4654,7 +4704,9 @@ REGISTRY: tuple[Decision, ...] = (
                 "mean pairwise teammate correlation is **-0.0001** against the **-0.0664** a "
                 "fixed team total forces at the measured 16.05-player roster size, and it "
                 "puts a **1,022.9**-minute predictive sd on a team season total that is "
-                "physically fixed near 19,810. The composition sits on the constraint at "
+                "physically fixed near 19,810 (**+0.0007** and **946.1** since the preseason "
+                "block — a null either way, and the composition's side is unchanged). "
+                "The composition sits on the constraint at "
                 "-0.0509. Two strategy axes depend on that sign directly and are both in "
                 "the sweep's config: a same-team **stack**'s minutes are anti-correlated "
                 "rather than independent, and **handcuffing** a starter with his backup is "

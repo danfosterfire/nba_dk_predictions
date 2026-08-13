@@ -13,8 +13,9 @@ It exists because `docs/availability-window-plan.md` §9 item 1 called it **the 
 stake in that line of work** — the only item on the list that could revise a *shipped*
 decision rather than add one. `make minutes-unification` ships the marginal minutes head
 **solely** for its season-level spread (season-total predictive sd **302.75** minutes against
-the composition's **64.65**), so if that spread turned out to be an average over a contracted
-window, `sim.minutes.player_season_sigma = 0.450` would move.
+the composition's **64.65** when this round ran; **277.23** since the preseason block, §4),
+so if that spread turned out to be an average over a contracted window,
+`sim.minutes.player_season_sigma = 0.450` would move.
 
 **It does not move.** The stake is a null, and the mechanism is the opposite of the one that
 was hypothesized. What the round *does* find is a different and larger win on the axis it was
@@ -118,9 +119,17 @@ break, on the ladder so its premise is tested rather than inherited.
 
 **The reference is the shipped head, and that is checked rather than asserted.**
 `full__shared` reads CRPS **144.228** and predictive sd **302.04** against the Stan head's
-own season-unit figures in `minutes_unification.csv` — **144.352** and **302.75**. The two
-differ by the posterior over `β`, which the point MLE collapses to its mode, and by nothing
-else, so an arm that moves either column here moves it there.
+own season-unit figures in `minutes_unification.csv` — **144.352** and **302.75** when this
+was written. The two differ by the posterior over `β`, which the point MLE collapses to its
+mode, and by nothing else, so an arm that moves either column here moves it there.
+
+⚠️ **That control lapsed on 2026-08-13 and the artifact now reads 136.603 and 277.23.** The
+Stan head gained the preseason block (`docs/preseason-plan.md` P3) and this ladder did not, so
+the two sides are no longer the same head and the agreement above is a historical reading
+rather than a live check. Nothing on the ladder moves — every arm here is the point MLE on
+`build_design`, which carries no preseason column — but **the ladder's incumbent is no longer
+the head that ships**, and re-running the window axis against a preseason-armed reference is
+the honest version of this check. It is not done.
 
 **Every arm on the ladder beats the incumbent on validation with an interval clear of zero.**
 Read alone, that says ship the shortest window with the graded dispersion. §3 says otherwise
@@ -268,12 +277,24 @@ which is a statement about the *verdict*, not about the constant.
 edge**: one grid step higher (0.525) loses. So the constant survives a stronger marginal head
 without change, and would not survive one much stronger than that.
 
+⚠️ **That last clause was a prediction and it came true within the week.** The preseason block
+shipped on `stan_minutes` on 2026-08-13 and took the *actual* head to season-unit CRPS
+**136.603** — stronger than `post_2014__role`, the strongest arm on this ladder. Re-read on
+2026-08-14, σ = 0.450 no longer ties it: **+6.26 [+0.92, +11.49]**, an interval clear of zero,
+and σ = 0.375 is the nearest tie left at +5.57 [−0.07, +11.06]. The table above is unchanged
+and still correct about what it measures — every arm on it is the point MLE on `build_design`,
+which carries no preseason column — but the reference it is quoted against is no longer the
+head in the chain. **The constant still does not move**, for the reason finding 1 gives; the
+*verdict* did.
+
 **3. The round moves the retirement question in the opposite direction from the one it was
 opened for.** §9 item 1 was written in the hope of weakening the marginal head's one
 remaining claim. Instead the head gets materially better — CRPS 144.23 → 138.91 and PIT KS
 0.0737 → 0.0392 — and its PIT is now better than **every** injected composition arm's,
 including the shipped σ's 0.0659 and the grid optimum's 0.0808. Retiring `stan_minutes` is a
-*less* live prospect after this round than before it.
+*less* live prospect after this round than before it. ✅ **Confirmed twice over by the
+preseason block**, which is a second thing the marginal head carries and the composition does
+not, worth 7.75 CRPS minutes at the unit the two are compared at.
 
 ---
 
@@ -296,7 +317,9 @@ already reproduces the incumbent bit for bit.
 
 **2. The stake is closed as a null.** `sim.minutes.player_season_sigma = 0.450` stands.
 Recorded so it is not re-opened: the constant is not calibrated against the marginal head, so
-no window on the marginal head can move it.
+no window on the marginal head can move it. ✅ **Re-tested 2026-08-14 by a change that came
+from outside this axis** — the preseason block — and the rule held exactly: σ's train grid
+reproduced its 0.450 optimum unchanged, because the marginal head is not in that estimator.
 
 **3. What a graded-ρ port would owe.** Two things this ladder cannot answer. The point MLE
 profiles ρ per bucket holding the mean fixed; the Stan port fits them **jointly**, and on
