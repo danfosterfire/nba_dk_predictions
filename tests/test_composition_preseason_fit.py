@@ -29,10 +29,11 @@ import pandas as pd
 import yaml
 
 from src.models.composition_preseason import crps_series
-from src.models.composition_preseason_fit import (ARMS, BASE_VARIANT, COMPARISONS, ROUTE,
-                                                  SELECTED_K, _cell, _draftable, _flush,
-                                                  announce_metric, arm_rows, margins,
-                                                  report, retention)
+from src.models.composition_preseason_fit import (ARM_SPECS, ARMS, BASE_VARIANT,
+                                                  COMPARISONS, ROUTE, SELECTED_K, _cell,
+                                                  _draftable, _flush, announce_metric,
+                                                  arm_rows, artifact_stem, margins, report,
+                                                  resolve_windows, retention)
 
 
 def _val(n_games: int = 3, n_players: int = 4) -> pd.DataFrame:
@@ -62,7 +63,16 @@ def test_the_declared_arm_is_the_shipped_variant_on_the_offset_route_at_the_inne
     assert SELECTED_K == 80.0
     assert ROUTE == "offset_only"
     assert BASE_VARIANT == "betabinom_ot_graded"
-    assert ARMS == ("base", "preseason")
+    assert ARMS == ("base", "preseason", "base_full_window")
+
+
+def test_only_the_declared_arm_carries_the_blend_and_only_it_is_window_restricted():
+    """The two gate arms fit the covered window and the control that prices the cut does
+    not — which is legal for exactly one reason, that it carries no preseason column."""
+    assert [a for a in ARMS if ARM_SPECS[a]["blend"]] == ["preseason"]
+    assert ARM_SPECS["base"]["window"] == ARM_SPECS["preseason"]["window"] == "covered"
+    assert ARM_SPECS["base_full_window"]["window"] == "head"
+    assert ARM_SPECS["base_full_window"]["blend"] is False
 
 
 def test_the_floor_and_the_fitted_arm_go_through_one_scorer():
@@ -120,6 +130,7 @@ def test_margins_pair_every_comparison_at_both_units_and_populations():
     roster = {("2022-23", 10), ("2022-23", 12)}
     series = {"base": crps_series(_samples(val, 16, 1.0), val),
               "preseason": crps_series(_samples(val, 16, 0.0), val),
+              "base_full_window": crps_series(_samples(val, 16, 1.2), val),
               "floor_base": crps_series(_samples(val, 16, 2.0), val),
               "floor_preseason": crps_series(_samples(val, 16, 1.5), val)}
     frame = pd.DataFrame(margins(series, roster, SELECTED_K, ROUTE))
@@ -161,6 +172,26 @@ def test_the_gate_fails_an_interval_that_spans_zero():
     assert report(arms, margin, pd.DataFrame()) is False
 
 
+def test_the_context_rows_print_without_touching_the_gates_verdict():
+    """The window cut and the ship margin are REPORTED, never barred. The bar was frozen
+    before session 4c ran and adding a clause after the arms are on disk is what P2 records
+    as not being a bar — so a `ship_margin` pointing the wrong way must not flip a pass, and
+    a run that never fitted the full-window control must not raise on its absence.
+
+    Cheap to pin and expensive to get wrong: this branch only executes after the last fit,
+    so a typo in it costs the whole run rather than failing fast.
+    """
+    arms, margin = _gate_frames(hi=-0.05, team_error=0.0)
+    context = pd.DataFrame([
+        {"comparison": c, "arm": "x", "reference": "y", "unit": u,
+         "population": "draftable", "n": 10, "crps_delta": d, "ci_lo": d - 0.1,
+         "ci_hi": d + 0.1}
+        for c, d in (("window_cost", -0.03), ("ship_margin", +0.40))
+        for u, d in ((u, d) for u in ("player_game", "player_season"))])
+    assert report(arms, pd.concat([margin, context], ignore_index=True),
+                  pd.DataFrame()) is True
+
+
 def test_the_gate_fails_a_broken_team_constraint_even_when_crps_wins():
     """The two halves are independent: an arm that improves CRPS by no longer summing to the
     team total has given away the one thing this head exists for."""
@@ -186,6 +217,56 @@ def test_the_configured_warmup_keeps_this_arm_on_the_dense_metric():
     assert announce_metric(25, 4, int(pre["warmup"])) == "dense_e"
     assert announce_metric(25, 4, 500) == "diag_e"       # what the cliff looks like
     assert announce_metric(25, 4, 600) == "dense_e"      # and where it sits, exactly
+
+
+def _coverage() -> pd.DataFrame:
+    """`preseason_coverage.csv`'s three columns `covered_seasons` reads, including the one
+    season it excludes: 2003-04 has rows but a truncated tail."""
+    return pd.DataFrame([
+        {"season": "2003-04", "rows_kept": 369, "coverage_class": "tail_missing"},
+        {"season": "2004-05", "rows_kept": 1154, "coverage_class": "covered"},
+        {"season": "2005-06", "rows_kept": 2251, "coverage_class": "covered"}])
+
+
+def test_the_covered_window_is_read_off_the_coverage_artifact_not_typed_in():
+    """P3's rule, one head over. 2003-04 has 369 real preseason rows and is still not the
+    first covered season, because its tail is missing and two of the shipped columns are
+    read over exactly the games it does not hold — so a hard-coded year would be wrong by
+    one season in the direction that silently poisons the block."""
+    windows = resolve_windows(_coverage(), "1996-97")
+    assert windows["covered"] == "2004-05"
+    assert windows["head"] == "1996-97"
+
+
+def test_the_cut_never_pulls_a_window_backwards():
+    """The pilot starts well inside coverage, so 4c must reproduce byte-for-byte: the cut is
+    a `max`, not an assignment. A `min` here would silently re-run the pilot on 14 extra
+    seasons and nothing would raise."""
+    windows = resolve_windows(_coverage(), "2018-19")
+    assert windows["covered"] == "2018-19" == windows["head"]
+
+
+def test_resolve_windows_refuses_an_empty_coverage_artifact():
+    empty = pd.DataFrame({"season": [], "rows_kept": [], "coverage_class": []})
+    try:
+        resolve_windows(empty, "1996-97")
+    except ValueError as exc:
+        assert "intact tail" in str(exc)
+    else:
+        raise AssertionError("an empty coverage artifact must raise, not fit the full "
+                             "window with a structurally absent block")
+
+
+def test_a_labelled_round_cannot_overwrite_the_pilots_audited_artifact():
+    """A build gate, not tidiness. `make docs-audit` re-derives ~45 of session 4c's figures
+    from the unlabelled stem and 4c is the PILOT window; a covered-window run landing there
+    would answer a different question under those claims' names."""
+    cfg = yaml.safe_load(open("configs/default.yaml"))
+    label = cfg["stan"]["composition"]["preseason"].get("label", "")
+    assert artifact_stem("") == "composition_preseason_fit"
+    assert artifact_stem(label) != artifact_stem("")
+    # And the config that ships is the one that moves off the pilot's paths.
+    assert label
 
 
 def test_flush_merges_by_identity_so_a_partial_rerun_keeps_the_other_arm(tmp_path):

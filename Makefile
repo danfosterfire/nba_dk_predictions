@@ -243,13 +243,22 @@ availability-exchangeability:
 # different parameters. `lambda = 1` nests the incumbent exactly, and the round profiles
 # it rather than trusting a free fit that stops at the corner. Point MLE, numpy, minutes.
 #
-# TWO ROUNDS, selected by `features.availability.absence.rounds`. The 2x2 above is
+# THREE ROUNDS, selected by `features.availability.absence.rounds`. The 2x2 above is
 # `crossed`, and it measured the block against `betabinom` — which is not the head that
 # ships. `mixture` is §14: the same block crossed against the shipped two-component head,
 # with the block on `beta` alone in one arm and on `beta` AND the disruption weight `pi` in
 # the other, because those are different questions. The rounds write DISJOINT artifacts, so
 # `rounds: [mixture]` re-runs §14 without touching the five files `make docs-audit`
 # re-derives §12 from.
+#
+# `population` is §15a (`potential-to-dos.md` item 9) and it asks a question about a
+# SHIPPED head: §7 selected the two-component `mixture` over `betabinom` on a boundary
+# error measured on all 883 validation rows, and 772 of those are on an October roster —
+# the only population this head is ever applied to. Every arm is fitted ONCE and the
+# population is a mask on the SCORED rows, so a column difference is the same head on a
+# subset rather than a head refitted for it. Validation and §4b's rolling harness both,
+# because a sign flip on a shipped head's selection metric is what §10e's replicate-or-fail
+# rule exists for. ~30 min.
 availability-absence:
 	$(PYTHON) -m src.models.availability_absence
 
@@ -290,6 +299,14 @@ availability-preseason:
 # POOLED from, since the consumer is only ever applied to rostered players and the estimator
 # has always pooled over January signings too. Both readings are quoted on the draftable
 # population per P1 decision 5. Needs `make preseason`; skipped with a message without it.
+#
+# `run_recency` is §15b (`potential-to-dos.md` item 11) and rides along for the same reason:
+# it crosses that population axis with the pool's DEPTH — all seasons before the target
+# against the last 10 or 5 — on the shipped key. P4(a) left a hypothesis that the all-rows
+# estimator's near-zero validation bias is a CANCELLATION between a population error and an
+# era drift rather than accuracy, and this is what separates them. It does: the drift is
+# real and removing it makes CRPS monotonically WORSE, because a shallow pool starves
+# `MIN_CELL` and `graded_share` falls 0.7926 -> 0.5524. Nothing ships. numpy only.
 availability-no-prior:
 	$(PYTHON) -m src.models.availability_no_prior
 
@@ -522,14 +539,28 @@ composition-preseason:
 # per-team-game level is exactly what a fitted intercept is good at soaking up, so both
 # directions have a precedent.
 #
-# Two pilot-window fits of the SHIPPED variant — a same-window `base` control and the
-# blended-offset arm at k = 80 — plus both frames' own no-fit floors at the same 200
-# predictive draws, so the retention (fitted increment / floor increment) is a
-# within-artifact ratio rather than a comparison across two rounds' draw budgets.
+# Fits of the SHIPPED variant — a same-window `base` control and the blended-offset arm at
+# k = 80 — plus both frames' own no-fit floors at the same 200 predictive draws, so the
+# retention (fitted increment / floor increment) is a within-artifact ratio rather than a
+# comparison across two rounds' draw budgets.
+#
+# ⚙️ SESSION 4D promoted this off the pilot window, and the promotion brings a THIRD arm.
+# The preseason panel starts at 2004-05 and this head fits from 1996-97, so the two gate
+# arms are cut to the covered window — P3's rule, since a missing-preseason indicator on a
+# pre-2005 row is an era dummy — and `base_full_window` fits 1996-97 carrying no preseason
+# column, which is what prices that cut on its own. P3 measured the same cut at 1.19 CRPS
+# minutes BEFORE any preseason column existed, a quarter of that round's increment.
 #
 # Deliberately NOT part of `make stan`, and deliberately not writing
 # outputs/predictions/stan_composition_*.csv: that artifact is the incumbent's record and
-# `make docs-audit` re-derives eleven quoted figures from it. Needs `make preseason`. ~30 min.
+# `make docs-audit` re-derives eleven quoted figures from it. The same argument applies one
+# level up — a labelled run (`stan.composition.preseason.label`) keeps 4c's PILOT artifact
+# intact, since docs-audit re-derives ~45 figures from that one too.
+#
+# ⚠️ Cost: ~1.9 h per covered-window arm and ~2.6 h for the full-window control, so ~6.3 h
+# for the three. NOT the 9.92 h "per arm" an earlier handoff quoted — that figure is the
+# WHOLE four-variant `make stan-composition` sweep (2.01 + 2.60 + 2.50 + 2.67 h, plus probe
+# and comparator), not one fit. Each arm checkpoints as it lands. Needs `make preseason`.
 composition-preseason-fit:
 	$(PYTHON) -m src.models.composition_preseason_fit
 

@@ -464,7 +464,9 @@ overall calibration, slightly too sharp through the middle.
    ✅ **Done 2026-08-14, session 4b**, and it passes: a preseason-blended `w_share` moves the
    head's own no-fit floor by **−0.19972 [−0.21661, −0.18225]** CRPS minutes per player-game
    on the draft pool, with no fit at all. The route that pays is the **offset** and not the
-   ordering P3 named beside it.
+   ordering P3 named beside it. ✅ **Fitted in 4c** (retention 1.040) and ✅ **carried to the
+   covered window in 4d**, where the increment reaches **−0.23418 [−0.24551, −0.22314]** and
+   beats the head that actually ships by **−0.25409 [−0.26520, −0.24315]** per player-game.
 4. **The volume shrink is a null.** `k = 20` is retained because it is the inner split's
    optimum, but it is worth 0.05 CRPS and nothing should be built on it.
 5. ~~**Nothing ships into the chain from here.**~~ ✅ **Superseded the same day.** This is a
@@ -1321,15 +1323,198 @@ conservative screen at the per-game unit and a badly misleading one at the seaso
 
 ### What session 4c does not settle
 
-**The full window.** Everything here is 2018-19 onward. The shipped head fits from 1996-97
-and the preseason panel starts at 2004-05, so a full-window version needs the coverage cut
-P3's head needed — and P3 priced that cut at 1.19 CRPS minutes *before any preseason column
-existed*, which is a quarter of its increment. That is the next fit, at 9.92 h.
+~~**The full window.**~~ ✅ **Closed 2026-08-14 by session 4d, and the increment grew again.**
+Everything here is 2018-19 onward; 4d runs the covered window (2004-05 on, the cut P3's head
+needed) with a third arm at 1996-97 to price the cut itself. The increment goes −0.20883 →
+**−0.23418** and the retention 1.040 → **1.115**, and the cut turns out to be worth −0.01991
+per player-game — the same direction as P3's, but **8.5%** of the increment rather than the
+quarter that round paid. ⚠️ **And "at 9.92 h" was wrong**: that figure is the whole
+four-variant `make stan-composition` sweep (2.01 + 2.60 + 2.50 + 2.67 h plus probe and
+comparator), not one fit. A single fit of the shipped variant is ~2.5 h, and 4d's three came
+to **7.76 h**.
 
 **What it is worth in the contest**, which is P5 and costs the chain. Note this arm reaches
 the draw as a change to the *allocation mean*, which is `order` rather than pure `shape` —
 so §7l's standing precedent for a measured null there applies less cleanly than it does to
 the availability block.
+
+## Session 4d — the composition at the window the head actually fits
+
+`make composition-preseason-fit` at `stan.composition.preseason.first_season: "1996-97"` and
+`label: covered` → `composition_preseason_fit_covered.csv` (plus `_arms` and
+`_diagnostics`). **Three** fits, 7.76 h, closing the one thing 4c named as unsettled: *"the
+full window. Everything here is 2018-19 onward."*
+
+The pilot's artifacts are untouched — a `label` namespaces this round's stem, because
+`make docs-audit` re-derives ~45 of 4c's figures from the unlabelled one and a
+covered-window run landing there would answer a different question under those claims'
+names. That is `stan_composition_*.csv`'s own rule, one level up.
+
+### The coverage cut, and the third arm it makes necessary
+
+The preseason panel begins at **2004-05** and this head fits from **1996-97**, so the two
+gate arms are cut to the covered window — P3's rule verbatim, since a missing-preseason
+indicator on a pre-2005 row is an era dummy rather than a feature. The first covered season
+is read off `preseason_coverage.csv` rather than typed, which matters by exactly one season:
+2003-04 has 369 real preseason rows and is still excluded, because `covered_seasons` drops
+it as `tail_missing` and two of this round's inputs are read over the tail.
+
+**`base_full_window` is the arm that makes the round decidable**, and it is the one arm that
+deliberately fits below coverage — which it can, because it carries no preseason column at
+all. It is the shipped head. Without it this round could say the block beats a control
+nobody runs, and not whether *covered window + block* beats what is on disk today. P3 needed
+the same control and priced its own cut at **1.19 CRPS minutes before any preseason column
+existed**, a quarter of that round's increment.
+
+| arm | `w_share` on the offset | window | fitting rows |
+|---|---|---|---|
+| `base` | incumbent | 2004-05 on | 448,464 |
+| `preseason` | blended at `k = 80` | 2004-05 on | 448,464 |
+| `base_full_window` *(what ships)* | incumbent | 1996-97 on | 631,158 |
+
+All three score the **same** 52,295 validation player-games over 4,920 team-games (47,726
+draftable, 883 player-seasons), which is what makes every margin below a paired one.
+
+### The gate passes, and the increment is larger than the pilot's
+
+Two fits, three arms, **max R̂ 1.00436**, **0** divergences, **0** treedepth saturation, min
+ESS bulk 2,457. On the draftable population, per player-game:
+
+| arm | kind | CRPS | R² | MAE | PIT KS | ρ |
+|---|---|---|---|---|---|---|
+| `floor_base_full_window` | floor | 4.66767 | 0.43891 | 6.37591 | 0.04861 | — |
+| `floor_base` | floor | 4.64212 | 0.43922 | 6.37499 | 0.03831 | — |
+| `base_full_window` **(ships)** | fitted | 4.48615 | 0.46821 | 6.30560 | 0.04713 | 0.12592 |
+| `base` *(control)* | fitted | 4.46624 | 0.46923 | 6.30314 | 0.04391 | 0.11479 |
+| `floor_preseason` | floor | **4.43206** | 0.48163 | 6.32743 | 0.05349 | — |
+| **`preseason`** | fitted | **4.23206** | **0.51899** | **5.97594** | 0.04557 | 0.10286 |
+
+**The bar clears**: `fitted_increment` is **−0.23418 [−0.24551, −0.22314]** CRPS minutes per
+player-game on the draft pool, and `team_sum_abs_error` is exactly **0** on all six arms.
+
+**And it is 12% larger than the pilot's −0.20883, with retention rising rather than falling.**
+
+| | pilot (4c) | covered (4d) |
+|---|---|---|
+| fitted increment, per player-game | −0.20883 | **−0.23418** |
+| floor increment, per player-game | −0.20081 | −0.21006 |
+| **retention** | 1.040 | **1.11485** |
+| retention, per player-season | 2.75 | 2.69311 |
+
+That is now the third time this block has read larger the more evidence is brought to it —
+P3's own went −4.789 → −5.911 under the posterior, 4c's floor → fit went 1.040, and the
+pilot → full window goes 1.115.
+
+### What the coverage cut costs, and it is a *quarter* of what P3's did
+
+| `window_cost` — `base` vs `base_full_window`, no block on either | draftable |
+|---|---|
+| per player-game | **−0.01991 [−0.02515, −0.01498]** |
+| per player-season | −0.13348 [−1.15660, **+0.84972**] |
+
+**The cut helps, and it is small.** Per player-game the covered window is better with an
+interval clear of zero; at the season unit it is a tie. The direction matches P3 — that
+round's cut was worth 1.19 CRPS minutes in the same direction — but the *proportion* does
+not: there the cut was **a quarter** of the increment and here it is **8.5%** of it
+(0.01991 against 0.23418). So on this head the block is not mostly window, and P3's warning
+that "crediting that to the block would have inflated the increment by a quarter" does not
+transfer. It was still worth measuring rather than assuming, which is the whole reason the
+third arm exists.
+
+`potential-to-dos.md` item 1 predicted this sign from a different direction — it found the
+*pilot* window beating the full window on this head's own per-team-game metrics — and this is
+the first paired interval on that axis rather than a two-point comparison at different
+iteration counts.
+
+### The comparison a ship decision turns on
+
+| `ship_margin` — covered + block, against what ships today | draftable |
+|---|---|
+| per player-game | **−0.25409 [−0.26520, −0.24315]** |
+| per player-season | **−17.27296 [−22.32569, −11.92164]** |
+
+**Decisive at both units**, which the gate's own contrast is not obliged to be and 4b's floor
+was not. It is reported rather than barred, deliberately: the bar was frozen in
+`composition_preseason_fit.report` before 4c ran, and re-reading it after seeing which side
+an arm landed on is what P2 records as not being a bar.
+
+The decomposition is **exactly additive**, which is a useful arithmetic check on the three
+arms: `window_cost + fitted_increment = ship_margin`, −0.01991 + −0.23418 = −0.25409 per
+player-game and −0.13348 + −17.13948 = −17.27296 per season.
+
+### The season unit, and 4c's main finding reproduced on 4.6× the rows
+
+| arm | season CRPS | R² | MAE | bias | predictive sd |
+|---|---|---|---|---|---|
+| `floor_base` | 181.42923 | 0.86857 | 209.10307 | −6.15582 | 60.27473 |
+| `floor_base_full_window` | 180.45159 | 0.86867 | 208.97601 | −6.24365 | 62.70130 |
+| `floor_preseason` | 175.06503 | 0.89443 | 203.64302 | −10.64076 | 60.14598 |
+| `base` | 171.31431 | 0.89170 | 199.34833 | −7.12869 | 59.57738 |
+| `base_full_window` | 171.44780 | 0.89076 | 200.50048 | −7.00842 | 61.46343 |
+| **`preseason`** | **154.17484** | **0.91014** | **181.64455** | −7.86942 | 57.63522 |
+
+**The floor's season-unit tie does not survive the fit, again.** `floor_increment` at the
+season unit is **−6.36419 [−15.31395, +2.68556]** — spanning zero, as 4b's did — while
+`fitted_increment` is **−17.13948 [−22.06742, −11.97281]**, decisive at **2.69×**. Retention
+is 1.11 per game and 2.69 per season on the same posterior. 4c called this the round's main
+finding on 4 training seasons; it reproduces on 18.
+
+**And it is the mean, not the spread.** Season-total MAE falls **17.70** minutes against the
+control (199.35 → 181.64, against 4c's 15.05), while the predictive sd *narrows*
+59.58 → 57.64. No season-level heterogeneity is manufactured, so
+`sim.minutes.player_season_sigma` remains the only parameter for that and nothing in this
+round touches it.
+
+### Three smaller things, one of which is new
+
+- **The un-fitted blended floor beats the fitted incumbent at *both* windows.** 4.43206
+  against `base`'s 4.46624 and `base_full_window`'s **4.48615**. 4c made this comparison
+  within-artifact against a pilot control; it now holds against **the head that actually
+  ships**, which is the stronger form.
+- **ρ moves in opposite directions on the two axes.** The block *lowers* it, 0.11479 →
+  0.10286 (−10.4%, matching 4c's ~10%) — a better offset leaves less residual overdispersion.
+  The longer window *raises* it, 0.11479 → **0.12592**, which is the pre-2005 seasons asking
+  for more dispersion and is a second reading on the same era question item 1 opens.
+- **Calibration gives back a little per game and gains per season**, the shape P3's centred
+  arm showed: PIT KS 0.04391 → 0.04557 per game, 0.34450 → 0.32618 per season.
+
+⚠️ **One artifact defect, recorded rather than fixed.** This round's `_diagnostics.csv`
+carries **no provenance stamp**, because `stan_utils.diagnostics_frame` gained one *during*
+the run and the sampling process had already imported it. Nothing about the fits is affected
+— every edit made after launch was to other modules or to that one function's output columns
+— but it is a live instance of exactly the defect the stamp was built for, and the next run
+of any Stan head will carry it. Re-running 7.76 h to refresh a provenance column would cost
+more than the column is worth.
+
+### What session 4d decides
+
+1. **The arm survives the window the head actually fits, and grows.** −0.23418
+   [−0.24551, −0.22314] per player-game on the draft pool, against the pilot's −0.20883, with
+   retention 1.115 against 1.040 and the team constraint exact.
+2. **The coverage cut is worth −0.01991 per player-game, it points the same way as P3's, and
+   it is 8.5% of the increment rather than a quarter.** The block is not mostly window on this
+   head.
+3. **Against the head that ships, the arm wins at both units** — `ship_margin` −0.25409
+   [−0.26520, −0.24315] per game and −17.27296 [−22.32569, −11.92164] per season. That is the
+   production comparison and it is reported, not barred.
+4. **The floor remains a conservative screen per game and a misleading one per season**, now
+   measured on 18 training seasons rather than 4: retention 1.11 against 2.69 on one posterior.
+5. **Nothing is shipped by this round.** `stan.composition.preseason` still configures the
+   *measurement* target only; no consumer reads it and `make stan-composition` is untouched.
+   What adopting it would mean is a `first_season` of 2004-05 on the head itself plus
+   `make posteriors --groups composition` at all three fit windows, which is P5.
+
+### What session 4d does not settle
+
+**What it is worth in the contest**, which is P5 and costs the chain. This arm reaches the
+draw as a change to the *allocation mean* — `order` rather than pure `shape` — so §7l's
+standing precedent for a measured null there applies less cleanly than to the availability
+block, but "less cleanly" is not evidence.
+
+**Whether the era question is about the block or about the head.** `window_cost` is the first
+paired interval saying the pre-2005 seasons cost this head something, and ρ rising from
+0.11479 to 0.12592 at the longer window is a second reading on it. Both are
+`potential-to-dos.md` item 1's territory, and neither was measured *for* it.
 
 ## Why preseason data should help — and where it plausibly won't
 
@@ -1528,6 +1713,7 @@ decision registry entries, and register this doc's built artifacts in `make docs
 | 7 (2026-08-14) ⚙️ | no-prior ladder + rookie rate prior — **(a) fails, (b) clears on 5 of 8 rate targets**, and neither ships | P4 |
 | 4b (2026-08-14) ✅ | the composition's preseason arm at the pilot window — **passes at the head's own unit**, and it is the OFFSET rather than the ordering | P3 |
 | 4c (2026-08-13) ✅ | 4b's arm **fitted** — the increment survives the posterior and grows (retention 1.040), and the season unit's tie does not | P3 |
+| 4d (2026-08-14) ✅ | the same arm at the **covered window** (2004-05 on) plus a full-window control that prices the coverage cut — the increment grows again (**−0.23418**, retention **1.115**) and beats the shipped head at both units | P3 |
 | 6b | the five surviving rate heads' arms — a session P1 *added* | P1→P2 |
 | 8 | simulator gates, strategy sweep — the σ re-read and the other windows landed early, 2026-08-14 | P5 |
 

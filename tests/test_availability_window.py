@@ -971,7 +971,7 @@ def test_an_unknown_round_name_raises_before_anything_is_fitted():
            "features": {"availability": {"absence": {"rounds": ["crossed", "mixtures"]}}}}
     with pytest.raises(ValueError, match="unknown absence round"):
         run(cfg)
-    assert ROUNDS == ("crossed", "mixture")
+    assert ROUNDS == ("crossed", "mixture", "population")
 
 
 def test_the_mixture_rounds_interaction_is_the_blocks_margin_at_both_likelihoods():
@@ -994,3 +994,138 @@ def test_the_mixture_rounds_interaction_is_the_blocks_margin_at_both_likelihoods
     named |= {a for spec in MIXTURE_INTERACTIONS for a in spec[1:]}
     assert named <= set(MIXTURE_ARMS)
     assert MIXTURE_REFERENCE in MIXTURE_ARMS
+
+
+# ── §15: a population is a SCORING restriction, never a refit ─────────────────
+
+def _population_frame(n_rows: int = 400, seed: int = 0) -> pd.DataFrame:
+    """`_frailty_frame` plus the two columns §15's round reads.
+
+    `on_season_start_roster` is the draft-pool mask, and `ABSENCE_MIX_COLS` are the block
+    `crossed_ladder` refuses to fit without.
+    """
+    from src.models.availability_absence import ABSENCE_MIX_COLS
+
+    rng = np.random.default_rng(seed + 1)
+    frame = _frailty_frame(n_rows, seed)
+    for col in ABSENCE_MIX_COLS:
+        frame[col] = rng.uniform(0.0, 0.4, n_rows)
+    # Deliberately NOT all-ones: a mask that keeps every row would let a bug that ignores
+    # the mask entirely pass this file.
+    frame["on_season_start_roster"] = (np.arange(n_rows) % 4 != 0).astype(float)
+    return frame
+
+
+def test_the_two_populations_are_one_fit_scored_twice():
+    """§15's whole design, and what makes "the same head reads worse on the draft pool" a
+    legitimate sentence.
+
+    If the draftable column came from arms refitted on draftable rows it would be a
+    different model answering a different question. `fit_arms` takes no validation frame at
+    all, which is how that is enforced rather than remembered.
+    """
+    import inspect
+
+    from src.models.availability_absence import fit_arms, population_ladder
+
+    assert "val" not in inspect.signature(fit_arms).parameters
+
+    train, val = _population_frame(500), _population_frame(240, seed=7)
+    arms = ("mixture", "betabinom")
+    table = population_ladder(train, val, 82, arms=arms, seed=0)
+
+    assert set(table["population"]) == {"all", "draftable"}
+    assert len(table) == len(arms) * 2
+    draftable = int((val["on_season_start_roster"] > 0).sum())
+    assert set(table.loc[table["population"] == "all", "n_val"]) == {len(val)}
+    assert set(table.loc[table["population"] == "draftable", "n_val"]) == {draftable}
+    # The fitted objects are shared across populations, so anything read off the FIT rather
+    # than off the scored rows has to be identical between the two columns.
+    for name in arms:
+        rows = table[table["arm"] == name]
+        assert rows["train_loglik"].nunique() == 1
+        assert rows["n_params"].nunique() == 1
+
+
+def test_the_population_verdict_reads_the_single_component_arm_against_the_mixture():
+    """§7 chose `mixture` over `betabinom` on the boundary, so the quantity that settles
+    whether that transfers is the `betabinom` − `mixture` margin — positive and clear of
+    zero means the single-component head is ALSO worse on the draft pool."""
+    from src.models.availability_absence import population_verdict
+
+    table = pd.DataFrame([
+        {"arm": "betabinom", "population": "all", "boundary_vs_mixture": +0.009,
+         "boundary_vs_mixture_lo": +0.004, "boundary_vs_mixture_hi": +0.010},
+        {"arm": "betabinom", "population": "draftable", "boundary_vs_mixture": -0.003,
+         "boundary_vs_mixture_lo": -0.007, "boundary_vs_mixture_hi": -0.002},
+    ])
+    verdict = population_verdict(table)
+    assert verdict["all"]["selection_survives"] is True
+    assert verdict["draftable"]["selection_survives"] is False
+
+    # An interval spanning zero is not a survival either — the bar is the interval, not the
+    # point estimate, which is the half a reader is most likely to soften later.
+    spanning = table.copy()
+    spanning.loc[spanning["population"] == "all", "boundary_vs_mixture_lo"] = -0.001
+    assert population_verdict(spanning)["all"]["selection_survives"] is False
+
+
+def test_the_rolling_harness_refuses_a_draftable_reading_it_cannot_take():
+    """`absence_rolling` masks the SCORED rows, so it needs the roster column on the frame
+    it walks. Failing loudly beats silently returning a pooled number under a draftable
+    label — the class of error §15 exists to correct."""
+    from src.models.availability_absence import absence_rolling
+
+    with pytest.raises(ValueError, match="on_season_start_roster"):
+        absence_rolling(_frailty_frame(80), 82, populations=("all", "draftable"))
+
+
+# ── §15b: the recency axis on the no-design pool ──────────────────────────────
+
+def test_a_recency_window_keeps_the_last_k_seasons_and_none_keeps_them_all():
+    """The knob §15b turns. `None` has to be the shipped estimator EXACTLY — it is the
+    reference every margin in that table is taken against, so a `recency` that quietly
+    dropped a season would make the whole column measure two changes."""
+    from src.models.availability_no_prior import level_tables
+
+    seasons = [f"20{y:02d}-{y + 1:02d}" for y in range(4, 20)]
+    history = pd.DataFrame({
+        "season": np.repeat(seasons, 60),
+        "all": "all",
+        "gp": np.tile(np.arange(60), len(seasons)),
+        "team_games": 82})
+
+    target = seasons[-1]
+    full = level_tables(history, target, seasons, "pooled")[0][1]
+    last5 = level_tables(history, target, seasons, "pooled", recency=5)[0][1]
+
+    # 15 eligible seasons before the target at 60 rows each; a 5-season cut sees a third.
+    assert int(full["rows"].iloc[0]) == 15 * 60
+    assert int(last5["rows"].iloc[0]) == 5 * 60
+    # And `None` is the identity, not "a very large window".
+    assert level_tables(history, target, seasons, "pooled",
+                        recency=None)[0][1].equals(full)
+
+
+def test_the_recency_verdict_needs_both_halves_of_p4s_gate():
+    """P4's bar is unchanged by §15b: a rolling interval clear of zero AND a validation one.
+    The roster arm has always cleared the first and failed the second, and a recency cut
+    that fixed only the bias must not be allowed to read as a pass."""
+    from src.models.availability_no_prior import recency_verdict
+
+    def row(recency, split, delta, hi):
+        return {"estimator": "roster", "recency": recency, "split": split,
+                "population": "draftable", "crps_vs_shipped": delta,
+                "crps_vs_shipped_lo": delta - 0.3, "crps_vs_shipped_hi": hi,
+                "origins_won_vs_shipped": 13, "origins_compared_vs_shipped": 19,
+                "bias": 0.06}
+
+    # What was measured: rolling clears, validation does not.
+    table = pd.DataFrame([row("all", "rolling", -0.3486, -0.0183),
+                          row("all", "validation", +0.7354, +1.5067)])
+    assert recency_verdict(table)["all"]["passes"] is False
+
+    # Both halves clearing is the only thing that passes.
+    both = pd.DataFrame([row("all", "rolling", -0.3486, -0.0183),
+                         row("all", "validation", -0.5000, -0.1000)])
+    assert recency_verdict(both)["all"]["passes"] is True

@@ -8633,15 +8633,65 @@ REGISTRY: tuple[Decision, ...] = (
                 "PIT KS 0.03874 to 0.04647. Two fits, 41 min, max R-hat 1.0047, 0 "
                 "divergences.",
         status="measured",
-        unblocks="the full-window fit, which needs P3's coverage cut — the panel starts "
-                 "2004-05 and the shipped head fits from 1996-97",
         reproduce="make composition-preseason-fit → "
                   "outputs/predictions/composition_preseason_fit.csv, "
                   "outputs/predictions/composition_preseason_fit_arms.csv, "
                   "outputs/predictions/composition_preseason_fit_diagnostics.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-13",
+        reviewed="2026-08-14",
         date="2026-08-13",
+        tags=("head", "next"),
+    ),
+    Decision(
+        id="the-compositions-preseason-arm-survives-the-window-the-head-actually-fits",
+        topic="minutes",
+        claim="**Carried from the 2018-19 pilot to the covered window (2004-05 on, 448,464 "
+              "fitting rows), the blended offset's increment GROWS again: −0.23418 "
+              "[−0.24551, −0.22314]** CRPS minutes per player-game on the draft pool "
+              "against the pilot's −0.20883, with retention rising **1.040 → 1.115** and "
+              "`team_sum_abs_error` exactly 0 on all six arms. **Against the head that "
+              "actually ships it wins at both units** — −0.25409 [−0.26520, −0.24315] per "
+              "player-game and **−17.27296 [−22.32569, −11.92164]** per player-season.",
+        because="`docs/preseason-plan.md` session 4d, and the round exists because 4c could "
+                "not say whether a 4-training-season pilot survives the 18 the head fits. "
+                "**A third arm is what makes it decidable.** The preseason panel starts "
+                "2004-05 and this head fits from 1996-97, so the two gate arms take P3's "
+                "coverage cut; `base_full_window` fits 1996-97 carrying no preseason column "
+                "and is the shipped head, which is the only thing a ship decision can be "
+                "read against. **The cut costs −0.01991 [−0.02515, −0.01498] per "
+                "player-game and it HELPS** — P3's direction — but at **8.5%** of the "
+                "increment rather than the **quarter** P3 paid, so on this head the block is "
+                "not mostly window. The decomposition is exactly additive: window_cost + "
+                "fitted_increment = ship_margin. **4c's main finding reproduces on 4.6x the "
+                "rows**: the floor's season-unit increment spans zero (−6.36419 [−15.31395, "
+                "**+2.68556**]) and the fitted one does not (−17.13948 [−22.06742, "
+                "−11.97281]), retention 1.11 per game against 2.69 per season on one "
+                "posterior — so [[the-composition-preseason-increment-grows-under-the-"
+                "posterior]]'s lesson about the floor holds at 18 training seasons. It is "
+                "the MEAN, not the spread: season MAE falls **17.70** minutes while the "
+                "predictive sd NARROWS 59.58 → 57.64, so "
+                "[[injected-sigma-estimated-on-train-is-0.45]] is untouched. Two smaller "
+                "readings: the un-fitted blended floor (4.43206) now beats the FITTED "
+                "shipped head (4.48615), which is the stronger form of 4c's line; and rho "
+                "moves opposite ways on the two axes — the block lowers it 0.11479 → "
+                "0.10286 while the longer window raises it to **0.12592**, a second reading "
+                "on the era question. **Nothing ships from this round**: "
+                "`stan.composition.preseason` configures the measurement target only, and "
+                "adoption would mean a `first_season` of 2004-05 on the head plus "
+                "`make posteriors --groups composition` at all three fit windows, which is "
+                "P5. Three fits, 7.76 h, max R-hat 1.00436, 0 divergences, 0 treedepth "
+                "saturation.",
+        status="measured",
+        unblocks="P5 — pricing it in the contest costs the whole chain, and this arm "
+                 "reaches the draw as a change to the allocation MEAN rather than as pure "
+                 "shape",
+        reproduce="make composition-preseason-fit → "
+                  "outputs/predictions/composition_preseason_fit_covered.csv, "
+                  "outputs/predictions/composition_preseason_fit_covered_arms.csv, "
+                  "outputs/predictions/composition_preseason_fit_covered_diagnostics.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-14",
+        date="2026-08-14",
         tags=("head", "next"),
     ),
     Decision(
@@ -8966,5 +9016,93 @@ REGISTRY: tuple[Decision, ...] = (
         reviewed="2026-08-12",
         date="2026-08-12",
         tags=("head", "null", "architecture"),
+    ),
+    Decision(
+        id="the-mixtures-boundary-selection-does-not-transfer-to-the-draft-pool",
+        topic="availability",
+        claim="**§7 selected the two-component `mixture` over `betabinom` on a boundary "
+              "error measured on all 883 validation rows, and on the 772 that are on an "
+              "October roster the two likelihoods SWAP PLACES on that metric.** The "
+              "`betabinom` − `mixture` boundary margin is **+0.00891 [+0.00420, +0.00994]** "
+              "pooled and **−0.00308 [−0.00733, −0.00210]** on the draft pool — clear of "
+              "zero in *opposite* directions, **and it replicates on the rolling harness** "
+              "(**+0.00786 [+0.00752, +0.00821]** and **−0.00049 [−0.00086, −0.00012]**). "
+              "The head is unchanged, because the other half of D1 selects it there instead: "
+              "`mixture` wins CRPS on the draft pool at **+0.04280 [+0.00406, +0.08235]** on "
+              "validation and **+0.02864 [+0.00257, +0.05156]** rolling, where pooled it "
+              "only tied.",
+        because="The simulator's grid is the draft pool and nothing else, so every figure "
+                "this head is selected on should be read there. `preseason-plan.md` P2 found "
+                "the shipped head's low-tail error changing SIGN between the populations — "
+                "pooled it under-predicts the dead season, on the draft pool it "
+                "over-predicts it by 2.25× — and the single-component reference had never "
+                "been scored there, so nobody could say whether the mixture's calibration "
+                "case survived the restriction. It does not. A second component exists to "
+                "put mass in the low tail, and on the draft pool there is already too much "
+                "there; `betabinom` wins the shoulder for the same reason (**0.00797** "
+                "against 0.02006) and loses the body badly (0.05426 against **0.03861**), "
+                "which is where the CRPS goes. **The correction owed is to the "
+                "documentation, not to the head**: every boundary figure in §7, §12 and §14 "
+                "is quoted on a frame 14.4% larger than the population served, and on that "
+                "population the ordering of the two likelihoods on that metric is reversed. "
+                "The controls are what license reading this at all — `mixture` reproduces "
+                "§7c's pooled 0.0109 at **0.01085** and P2's draftable 0.01998 at "
+                "**0.01998**, and `betabinom` reproduces §7's 0.0201 at **0.02013**. Every "
+                "arm is fitted ONCE and the population is a mask on the SCORED rows, so a "
+                "column difference is the same head on a subset rather than a head refitted "
+                "for it. **The SIGN is the finding and the SIZE is a validation reading**: "
+                "the draftable boundary margin shrinks **6.3×** between the two readings and "
+                "the between-population level ratio goes 1.84× to **1.09×**, while every "
+                "ordering holds — which `potential-to-dos.md` item 9 predicted about its own "
+                "1.84× before the round ran. Extends "
+                "[[the-availability-head-is-a-two-component-mixture]].",
+        status="measured",
+        reproduce="make availability-absence → "
+                  "outputs/predictions/availability_absence_population.csv, "
+                  "outputs/predictions/availability_absence_population_rolling.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-13",
+        date="2026-08-13",
+        tags=("head", "calibration", "population"),
+    ),
+    Decision(
+        id="the-no-design-rates-era-drift-is-real-and-a-recency-cut-does-not-pay-for-it",
+        topic="availability",
+        claim="**A recency cut on the no-design availability pool removes the era drift "
+              "almost exactly and makes CRPS monotonically worse, so the population fix "
+              "stays one change rather than two.** At a five-season pool the roster-pooled "
+              "estimator's validation bias is **+0.0642** games against the all-rows "
+              "estimator's **−10.0796**; the roster arm's rolling CRPS margin degrades from "
+              "**−0.3486 [−0.6860, −0.0183]** at 13 of 19 origins to **+0.2753** at 7 of 19.",
+        because="P4(a) found `sim/season.no_design_availability` pooling its rate over every "
+                "no-design player-season before the target while being applied to October "
+                "rosters alone — two populations realizing **0.5447** and **0.1571** — and "
+                "found the roster fix winning rolling and failing validation, losing exactly "
+                "the last three origins, two of which ARE the validation seasons. The "
+                "hypothesis was a CANCELLATION: the all-rows estimator's near-zero "
+                "validation bias (**−0.3646**) is a population error meeting an era drift "
+                "rather than accuracy. **Crossing the pool's population with its depth "
+                "confirms the diagnosis and refutes the fix.** Confirmed, by direct "
+                "measurement: cutting depth removes the drift from both estimators and "
+                "leaves the population error, which only the all-rows one carries, so its "
+                "bias moves monotonically AWAY from zero (−0.36 → −3.73 → −10.08) while the "
+                "roster estimator's moves monotonically TOWARD it (+6.41 → +3.12 → +0.06). "
+                "Refuted, by the entry's own falsifier: the cut starves the cells — a "
+                "five-season roster pool holds 379 rows against 1,263, so `MIN_CELL` sends "
+                "more rows to a coarser rung and `graded_share` falls **0.7926 → 0.5524** "
+                "rolling — and a proper score sees the grading loss as well as the bias "
+                "gain. **The second change it needs is an estimator class, not a shallower "
+                "pool**: a shrunk cell estimator rather than a hard `MIN_CELL` fallback, "
+                "which is the same instrument P4(a) named for the KEY axis, so both axes now "
+                "point at one unbuilt piece. Nothing ships; "
+                "[[no-design-availability-is-graded-by-tenure-and-draft-slot]] keeps the "
+                "all-rows estimator.",
+        status="null",
+        reproduce="make availability-no-prior → "
+                  "outputs/predictions/availability_no_prior_recency.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-13",
+        date="2026-08-13",
+        tags=("simulator", "null", "population"),
     ),
 )

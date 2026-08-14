@@ -85,16 +85,17 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from src.models.composition_preseason import (INCUMBENT_K, crps_series, frame_at, paired,
-                                              preseason_share, season_start_roster,
-                                              season_totals)
+from src.models.composition_preseason import (INCUMBENT_K, blended_frame, crps_series,
+                                              cut_window, paired, preseason_share,
+                                              season_start_roster, season_totals)
 from src.models.held_out import selection_split
-from src.models.stan_composition import (DENSE_DRAWS_PER_PARAM, GROUP_KEYS,
-                                         PILOT_FIRST_SEASON, TEST_SEASONS,
-                                         FloorComposition, StanComposition, choose_metric,
-                                         score_samples, variants)
+from src.models.stan_composition import (GROUP_KEYS, PILOT_FIRST_SEASON, TEST_SEASONS,
+                                         FloorComposition, StanComposition, score_samples,
+                                         variants)
+from src.models.stan_composition import announce_metric as stan_announce_metric
 from src.models.stan_utils import (crps_from_samples, diagnostics_frame, ks_uniform,
                                    pit_from_samples)
+from src.eda.preseason_value import covered_seasons
 
 #: The shipped variant, and the only one fitted here. The ladder that chose it
 #: (`stan_composition.FITTED_VARIANTS`) is not re-run: this round asks what one input change
@@ -108,14 +109,40 @@ SELECTED_K = 80.0
 #: 3.75%, so only the offset is fitted.
 ROUTE = "offset_only"
 
-ARMS = ("base", "preseason")
+#: `{arm: (carries the blend, which window it fits)}`.
+#:
+#: **Two windows, and the second one is why this table exists.** The preseason panel begins
+#: at 2004-05 and the shipped composition fits from 1996-97, so the two gate arms fit the
+#: `covered` window — P3's rule one head over, stated there as "every arm, the reference
+#: included, fits the covered window only", because a missing-preseason indicator on a
+#: pre-2005 row is an era dummy rather than a feature. `base_full_window` is the one arm
+#: that deliberately fits below coverage, and it can, because it carries no preseason
+#: column at all: it is the **shipped head**, and it exists to price the cut on its own.
+#:
+#: Without it this round could say the block beats a control that nobody ships, and not
+#: whether `covered window + block` beats what is on disk today — which is the only
+#: question a ship decision turns on. P3 measured the same cut at **1.19 CRPS minutes on
+#: its own head, before any preseason column existed**, a quarter of that round's
+#: increment, and crediting it to the block would have inflated the result.
+ARM_SPECS = {
+    "base": {"blend": False, "window": "covered"},
+    "preseason": {"blend": True, "window": "covered"},
+    "base_full_window": {"blend": False, "window": "head"},
+}
+
+#: Ordered by DECISION VALUE, not by cost — `composition_effects`' rule, and `_flush`
+#: checkpoints each arm as it lands so a run cut short still leaves the gate evaluable.
+#: The two covered-window arms decide the bar; the full-window control is context and runs
+#: last because it is also the most expensive (it fits ~8 more seasons than the others).
+ARMS = ("base", "preseason", "base_full_window")
 
 #: Draws for the predictive and for the bootstrap that reads it.
 SEED = 0
 N_BOOTSTRAP = 2000
 
 
-def build_arms(cfg: dict, pre: pd.DataFrame, first_season: str, k: float, route: str,
+def build_arms(cfg: dict, pre: pd.DataFrame, windows: dict[str, str], k: float, route: str,
+               arms: tuple[str, ...] = ARMS,
                test_seasons: int = TEST_SEASONS) -> dict:
     """`{arm: (train, val, features, dispersed, n_rho)}` — one frame built per arm.
 
@@ -123,10 +150,18 @@ def build_arms(cfg: dict, pre: pd.DataFrame, first_season: str, k: float, route:
     means and its `rho_bin` edges are all estimated on its own fitting half. Sharing the
     control's would score a blended offset through a design fitted for a different one,
     which is the mistake `composition_preseason.score_arm` already refuses one layer down.
+
+    `windows` maps `ARM_SPECS`' window names to season labels. The uncut frame is built
+    once per distinct blend and cut per window, so the two unblended arms — which differ
+    only in where their fitting rows start — pay for `order_frame` once between them.
     """
-    out = {}
-    for arm in ARMS:
-        frame = frame_at(cfg, pre, INCUMBENT_K if arm == "base" else k, first_season, route)
+    out, built = {}, {}
+    for arm in arms:
+        spec = ARM_SPECS[arm]
+        arm_k = k if spec["blend"] else INCUMBENT_K
+        if arm_k not in built:
+            built[arm_k] = blended_frame(cfg, pre, arm_k, route)
+        frame = cut_window(built[arm_k], windows[spec["window"]])
         train, val = selection_split(frame, test_seasons)
         tr, te, feats, dispersed, n_rho = variants(train, val)[BASE_VARIANT]
         out[arm] = (tr, te, feats, dispersed, n_rho)
@@ -190,28 +225,51 @@ def arm_rows(samples: np.ndarray, val: pd.DataFrame, roster: set, arm: str, kind
 
 
 def announce_metric(n_features: int, n_rho: int, warmup: int) -> str:
-    """The metric this arm will get, printed **before** the sampler starts.
+    """The metric this arm will get, printed before the sampler starts.
 
-    ⚠️ **A cost cliff, not a preference, and it is invisible in the artifact until the fit
-    is over.** `choose_metric` grants `dense_e` only when `warmup >= 20 × parameters`, and
-    this arm is 25 features + intercept + 4 dispersion bins = 30 — so the threshold is
-    exactly 600 warmup draws. `stan_composition`'s own probe measured NUTS held at treedepth
-    8–9 under `diag_e` against treedepth 4 under `dense_e`, ~10× the wall clock. A first
-    attempt at `warmup: 500` — copied from the `effects` block, which sits under the same
-    cliff — ran **32 minutes without completing its 500 warmup draws**, against
-    `composition_effects`' **880 s** for this same arm at this same window for the whole
-    500+500 fit under `dense_e`, and nothing said so until it was killed. CmdStan writes no
-    draw until warmup ends and its progress lines are buffered away, so the *only* early
-    signal is the metric itself. This prints it in the first second.
+    This arm is 25 features + intercept + 4 dispersion bins = 30 parameters, so its
+    threshold is exactly 600 warmup draws — the cliff a first attempt at `warmup: 500` fell
+    off, at a cost of 32 minutes that produced no draw.
+
+    Kept as a named function because this module's tests pin the threshold through it, and
+    delegating rather than duplicating because `stan_composition` owns `choose_metric`: the
+    two lived in different modules for one day, and this copy had no `U_n` term, so it would
+    have promised `dense_e` to a random-effect arm that cannot reach it at any warmup.
     """
-    n_params = n_features + 1 + n_rho
-    metric = choose_metric(n_params, warmup)
-    print(f"    {n_params} parameters, {warmup} warmup draws → {metric}")
-    if metric != "dense_e":
-        print(f"    /!\\  `diag_e` on this head is ~10× the wall clock of `dense_e` "
-              f"(treedepth 8–9 against 4 on its own probe). `dense_e` needs warmup ≥ "
-              f"{DENSE_DRAWS_PER_PARAM * n_params:.0f} and this run has {warmup}.")
-    return metric
+    return stan_announce_metric(n_features, n_rho, warmup)
+
+
+def artifact_stem(label: str) -> str:
+    """The artifact stem for one round of this target.
+
+    See the note in `run`: `make docs-audit` re-derives ~45 of session 4c's figures from the
+    unlabelled stem and that run is the PILOT window, so a covered-window run must not land
+    there. An empty label restores the pilot's paths exactly, which is what makes re-running
+    4c a config edit rather than a code one.
+    """
+    return "composition_preseason_fit" + (f"_{label}" if label else "")
+
+
+def resolve_windows(coverage: pd.DataFrame, head_first_season: str) -> dict[str, str]:
+    """`{"head": ..., "covered": ...}` — the two fitting windows, as season labels.
+
+    **A cut, not an assertion, and that is the change this round makes.** Session 4c ran at
+    the pilot window, which starts well inside preseason coverage, so it could afford to
+    *raise* when asked to fit below it. At the head's own window it cannot: the shipped
+    composition fits from 1996-97 and the panel's first intact-tail season is 2004-05, so
+    refusing would refuse the run. P3 hit the same wall one head over and its answer is the
+    one taken here — cut every preseason-carrying arm to the covered window, the reference
+    among them, and report what the cut costs rather than absorbing it.
+
+    The covered season is read off `preseason_coverage.csv` rather than hard-coded, which is
+    P3's rule verbatim: 2003-04 is excluded as `tail_missing` by `covered_seasons`, and a
+    number typed in here would not know that.
+    """
+    covered = covered_seasons(coverage)
+    if not covered:
+        raise ValueError("preseason_coverage.csv lists no season with an intact tail — "
+                         "`make preseason` has not run, or its coverage classes are empty")
+    return {"head": head_first_season, "covered": max(head_first_season, covered[0])}
 
 
 def _draftable(frame: pd.DataFrame, roster: set) -> np.ndarray:
@@ -224,16 +282,27 @@ def _cell(rows: list[dict], unit: str, population: str) -> dict:
     return next(r for r in rows if r["unit"] == unit and r["population"] == population)
 
 
-#: The four comparisons, as `(label, arm, reference)`. The first two are the round's
-#: question — the same contrast measured under the posterior and under the floor, on the
-#: same frames at the same draw budget, so the retention between them is within-artifact.
-#: The last two are the control the screen could not run: fitting has to still be worth
-#: something on top of the better offset, or the arm has improved the floor by making the
-#: head redundant.
+#: The comparisons, as `(label, arm, reference)`. The first two are the round's question —
+#: the same contrast measured under the posterior and under the floor, on the same frames at
+#: the same draw budget, so the retention between them is within-artifact. The next two are
+#: the control the screen could not run: fitting has to still be worth something on top of
+#: the better offset, or the arm has improved the floor by making the head redundant.
+#:
+#: The last two arrive with the full window and are a different question from the bar.
+#: `window_cost` is what the coverage cut is worth **before any preseason column exists** —
+#: P3 measured its own at 1.19 CRPS minutes and in the direction that *helped*, so a round
+#: that folded it into the increment would have credited the block with a quarter of a
+#: result it did not produce. `ship_margin` is the arm against what is actually on disk:
+#: covered window plus the block, against the full window without it. **That is the only
+#: comparison a ship decision turns on**, and it is deliberately not the bar — the bar was
+#: frozen before session 4c ran and re-reading it now would be the thing P2 records as not
+#: being a bar.
 COMPARISONS = (("fitted_increment", "preseason", "base"),
                ("floor_increment", "floor_preseason", "floor_base"),
                ("fit_value_base", "base", "floor_base"),
-               ("fit_value_preseason", "preseason", "floor_preseason"))
+               ("fit_value_preseason", "preseason", "floor_preseason"),
+               ("window_cost", "base", "base_full_window"),
+               ("ship_margin", "preseason", "base_full_window"))
 
 
 def margins(series: dict, roster: set, k: float, route: str) -> list[dict]:
@@ -334,6 +403,32 @@ def report(arms: pd.DataFrame, margin_frame: pd.DataFrame, ret: pd.DataFrame) ->
           f"  team_sum_abs_error exactly 0 on every arm: "
           f"{'PASS' if exact else 'FAIL'}")
     print(f"  → session 4b's fit {'PASSES' if clear and exact else 'FAILS'}")
+
+    # Reported beside the gate and deliberately NOT part of it. The bar was frozen before
+    # session 4c ran, on the same-window control; adding a clause to it now — after the
+    # arms are on disk — is what P2 records as not being a bar. These two say what the
+    # window cut costs on its own and what the arm is worth against the head that actually
+    # ships, which is what a ship decision reads and what P3 reported one head over.
+    for comparison, blurb in (
+            ("window_cost",
+             "the coverage cut alone, before any preseason column exists "
+             "(covered vs full window, no block on either)"),
+            ("ship_margin",
+             "covered window + the block, against WHAT SHIPS TODAY "
+             "(full window, no block)")):
+        for unit in ("player_game", "player_season"):
+            part = margin_frame[(margin_frame["comparison"] == comparison)
+                                & (margin_frame["unit"] == unit)
+                                & (margin_frame["population"] == "draftable")]
+            if part.empty:
+                continue
+            point = float(part["crps_delta"].iloc[0])
+            lo, hi = float(part["ci_lo"].iloc[0]), float(part["ci_hi"].iloc[0])
+            verdict = ("clear of zero" if hi < 0 else
+                       "clear of zero, AGAINST" if lo > 0 else "spans zero")
+            if unit == "player_game":
+                print(f"\nContext — {blurb}:")
+            print(f"    {unit:<14} {point:+.5f} [{lo:+.5f}, {hi:+.5f}]  ({verdict})")
     return clear and exact
 
 
@@ -346,10 +441,11 @@ def run(cfg: dict) -> dict[str, Path]:
     comp_cfg = cfg_stan.get("composition", {})
     pre_cfg = comp_cfg.get("preseason", {})
 
-    first_season = str(pre_cfg.get("first_season", PILOT_FIRST_SEASON))
+    head_first_season = str(pre_cfg.get("first_season", PILOT_FIRST_SEASON))
     k = float(pre_cfg.get("blend_k", SELECTED_K))
     route = str(pre_cfg.get("route", ROUTE))
     arms_to_fit = tuple(pre_cfg.get("arms", ARMS))
+    label = str(pre_cfg.get("label", "") or "")
     keep = int(comp_cfg.get("predictive_samples", 200))
     iters = {"warmup": int(pre_cfg.get("warmup", cfg_stan.get("select_warmup", 500))),
              "samples": int(pre_cfg.get("samples", cfg_stan.get("select_samples", 500)))}
@@ -357,31 +453,48 @@ def run(cfg: dict) -> dict[str, Path]:
     test_seasons = int(cfg.get("features", {}).get("availability", {})
                        .get("test_seasons", 2))
 
-    print("Composition preseason FIT — does the blended offset survive the posterior?")
-    print(f"  window {first_season} on; arms {', '.join(arms_to_fit)}; "
-          f"k = {k:g} on the {route} route; {iters['warmup']}+{iters['samples']} × "
-          f"{cfg_stan.get('chains', 4)} chains, {keep} predictive draws")
-
     from src.eda.preseason_value import covered_seasons
 
-    covered = set(covered_seasons(pd.read_csv(eda_dir / "preseason_coverage.csv")))
-    if first_season < min(covered):
-        raise ValueError(f"the fit window starts at {first_season}, before the preseason "
-                         f"panel's first covered season {min(covered)} — the blend would "
-                         f"be a structural no-op on the early rows")
+    windows = resolve_windows(pd.read_csv(eda_dir / "preseason_coverage.csv"),
+                              head_first_season)
+
+    print("Composition preseason FIT — does the blended offset survive the posterior?")
+    print(f"  arms {', '.join(arms_to_fit)}; k = {k:g} on the {route} route; "
+          f"{iters['warmup']}+{iters['samples']} × {cfg_stan.get('chains', 4)} chains, "
+          f"{keep} predictive draws")
+    print(f"  The head fits from {windows['head']} and the preseason panel's first covered "
+          f"season is {windows['covered']}.")
+    if windows["covered"] > windows["head"]:
+        print(f"  So the two GATE arms — the blended one and its control — fit "
+              f"{windows['covered']} on, and the reference\n  is cut with them (P3's rule, "
+              f"`docs/preseason-plan.md`): a missing-preseason indicator on a\n  pre-"
+              f"{windows['covered']} row is an era dummy, not a feature. `base_full_window` "
+              f"fits {windows['head']} on\n  precisely because it carries no preseason "
+              f"column, and it is what prices the cut.")
 
     pre = preseason_share(pd.read_parquet(features_dir / "preseason.parquet"))
     roster = season_start_roster(cfg)
-    built = build_arms(cfg, pre, first_season, k, route, test_seasons)
-    tr0, te0 = built["base"][0], built["base"][1]
-    print(f"  {len(tr0):,} fit / {len(te0):,} select player-games over "
-          f"{te0.groupby(GROUP_KEYS, sort=False).ngroups:,} validation team-games; "
-          f"{len(roster):,} season-start-roster keys")
+    built = build_arms(cfg, pre, windows, k, route, arms_to_fit, test_seasons)
+    for arm in arms_to_fit:
+        tr, te = built[arm][0], built[arm][1]
+        print(f"  {arm}: {len(tr):,} fit / {len(te):,} select player-games over "
+              f"{te.groupby(GROUP_KEYS, sort=False).ngroups:,} validation team-games "
+              f"({windows[ARM_SPECS[arm]['window']]} on)")
+    print(f"  {len(roster):,} season-start-roster keys.")
     print("  The test split is LOCKED — this round fits and scores VALIDATION only "
           "(src/models/held_out.py).")
 
-    arm_dest = out_dir / "composition_preseason_fit_arms.csv"
-    diag_dest = out_dir / "composition_preseason_fit_diagnostics.csv"
+    # ⚠️ **The artifact stem is namespaced by round, and that is a build gate rather than
+    # tidiness.** `make docs-audit` re-derives ~45 of session 4c's figures from
+    # `composition_preseason_fit.csv` — every arm cell, both margins, the retention — and
+    # that run is the PILOT window. A covered-window run writing there would not disagree
+    # with those claims so much as answer a different question under their names, which is
+    # the same failure `stan_composition_*.csv` has its own target to avoid, one level up.
+    # An empty `label` keeps the pilot's paths, so re-running 4c is a config edit and not a
+    # code one.
+    stem = artifact_stem(label)
+    arm_dest = out_dir / f"{stem}_arms.csv"
+    diag_dest = out_dir / f"{stem}_diagnostics.csv"
     diag_dest.unlink(missing_ok=True)
 
     rows: list[dict] = []
@@ -393,12 +506,15 @@ def run(cfg: dict) -> dict[str, Path]:
         # The floor first, on this arm's own frames — cheap, and it is what makes the
         # retention a within-artifact ratio rather than a comparison across two rounds'
         # draw budgets.
+        arm_k = k if ARM_SPECS[arm]["blend"] else INCUMBENT_K
+        arm_window = windows[ARM_SPECS[arm]["window"]]
+
         floor_label = f"floor_{arm}"
         floor_samples = FloorComposition(keep).fit(tr).predict_samples(te, seed)
         floor_rows = arm_rows(floor_samples, te, roster, floor_label, "floor", seed)
         for row in floor_rows:
-            row.update({"k": INCUMBENT_K if arm == "base" else k, "route": route,
-                        "first_season": first_season, "n_features": 0})
+            row.update({"k": arm_k, "route": route,
+                        "first_season": arm_window, "n_features": 0})
         rows += floor_rows
         series[floor_label] = crps_series(floor_samples, te)
         _flush(arm_dest, floor_rows, ("arm", "unit", "population"))
@@ -413,8 +529,8 @@ def run(cfg: dict) -> dict[str, Path]:
         samples = model.predict_samples(te, seed)
         fitted_rows = arm_rows(samples, te, roster, arm, "fitted", seed)
         for row in fitted_rows:
-            row.update({"k": INCUMBENT_K if arm == "base" else k, "route": route,
-                        "first_season": first_season, "n_features": len(feats),
+            row.update({"k": arm_k, "route": route,
+                        "first_season": arm_window, "n_features": len(feats),
                         "rho": float(model.rho),
                         "metric": model.diagnostics["metric"],
                         "wall_clock_s": float(time.perf_counter() - started)})
@@ -438,7 +554,7 @@ def run(cfg: dict) -> dict[str, Path]:
 
     table = pd.concat([arms, margin_frame, ret], ignore_index=True)
     table["gate_passed"] = passed
-    dest = out_dir / "composition_preseason_fit.csv"
+    dest = out_dir / f"{stem}.csv"
     table.to_csv(dest, index=False)
     print(f"\nWrote {len(table):,} rows → {dest}")
 

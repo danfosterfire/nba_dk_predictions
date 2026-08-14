@@ -441,8 +441,26 @@ stan:
       # per-team-game unit, which the deviation regression does not reach. Put `ps_team`
       # back if `ps` passes P2 and the team block is wanted in the shipped arm.
       arms: [base, ps, team]
-      warmup: 500
-      samples: 500
+      # ⚠️ RAISED FROM 500 ON 2026-08-13, and 500 was NOT the cheaper setting.
+      # `choose_metric` grants `dense_e` only when warmup >= 20 x parameters. `base` is 25
+      # features + intercept + 4 dispersion bins = 30 and `team` is 36, so both needed 600
+      # and both were silently getting `diag_e` — which this head's own probe measures at
+      # treedepth 8-9 against 4, roughly 10x the wall clock. That cliff cost
+      # `composition_preseason_fit` a 32-minute false start that produced no draw.
+      #
+      # The third arm is the honest complication and it points the same way. `ps` carries
+      # 2,204 player-season effects, so it cannot reach `dense_e` at any warmup this project
+      # would run and `diag_e` is correct for it — doubling the draws doubles its cost. It
+      # is worth paying anyway: at 500 it posted max R-hat 1.13173, which is not a converged
+      # fit, and warmup is the thing it was short of. So `base` and `team` get ~10x cheaper
+      # and `ps` gets 2x dearer for draws it needed.
+      #
+      # ⚠️ The metric recorded in `composition_effects_metrics.csv` predates this rule and
+      # says `dense_e` for a `base` arm that today's `choose_metric` puts on `diag_e`. The
+      # artifact carries no record of which code version wrote it, which is the general
+      # defect; `announce_metric` now prints the metric in the first second either way.
+      warmup: 1000
+      samples: 1000
       # Half-normal scale on sigma_u. Weakly informative by ~2x against the injection's
       # measured 0.375-0.45, so Gate P5 is a replication rather than a foregone conclusion.
       u_sd_scale: 1.0
@@ -465,10 +483,29 @@ stan:
     # itself is 48 s of numpy with no CmdStan, which is the property that makes the screen
     # worth re-running.
     preseason:
-      # The PILOT window, per P3 decision 3, and it starts well inside the preseason
-      # panel's coverage (2004-05) so the two constraints agree here. `base` is a
-      # SAME-WINDOW control, never the full-window incumbent.
-      first_season: "2018-19"
+      # ── Session 4d: the covered window, promoted from the pilot on 2026-08-13 ──
+      # 4c ran this at "2018-19" (P3 decision 3) and passed at both units, so the open
+      # question is whether the arm survives the window the head actually fits. This is
+      # now THE HEAD'S OWN `first_season` above, and the module cuts it:
+      #
+      #   * the two GATE arms fit `max(this, first covered season)` = 2004-05, because the
+      #     preseason panel starts there and a missing-preseason indicator on a pre-2005 row
+      #     is an era dummy rather than a feature. That is P3's rule verbatim, one head over,
+      #     and the covered season is READ OFF `preseason_coverage.csv`, never typed here —
+      #     2003-04 is excluded as `tail_missing` and a hard-coded year would not know it.
+      #   * `base_full_window` fits this window as written, and it can, because it carries
+      #     no preseason column at all. It is the shipped head, and it is what prices the
+      #     cut on its own — P3 measured the same cut at 1.19 CRPS minutes BEFORE any
+      #     preseason column existed, a quarter of that round's increment.
+      #
+      # Set this back to "2018-19" with `label: ""` to reproduce 4c exactly.
+      first_season: "1996-97"
+      # Artifact stem suffix, and it is a BUILD GATE rather than tidiness. `make docs-audit`
+      # re-derives ~45 of session 4c's figures from `composition_preseason_fit.csv`, and
+      # that run is the pilot. A covered-window run writing there would answer a different
+      # question under those claims' names — the same failure `stan_composition_*.csv` has
+      # its own target to avoid, one level up. Empty restores the pilot's paths.
+      label: covered
       # `w' = omega*pre + (1 - omega)*w_share` with `omega = m / (m + blend_k)` over
       # preseason minutes. Selected on an inner carve of the FITTING half (interior at
       # 4.44562 against 4.49481 at 40 and 4.46834 at 160); validation's own optimum is 160,
@@ -481,7 +518,11 @@ stan:
       # the sequential decomposition and therefore the whole likelihood's block structure —
       # so only the offset is fitted. `both` and `order_only` are the other two settings.
       route: offset_only
-      arms: [base, preseason]
+      # ORDERED BY DECISION VALUE, not by cost — `effects`' rule, and each arm checkpoints
+      # as it lands, so a run cut short still leaves the gate evaluable. `base` and
+      # `preseason` decide the bar at the covered window; `base_full_window` is context and
+      # runs last because it is also the most expensive (~8 more fitting seasons).
+      arms: [base, preseason, base_full_window]
       # ⚠️ FULL LENGTH, and 500 IS NOT A CHEAPER VERSION OF IT — it is a MORE expensive one.
       # `choose_metric` grants `dense_e` only when warmup >= 20 x parameters, and this arm
       # has 25 features + intercept + 4 dispersion bins = 30, so the threshold is exactly

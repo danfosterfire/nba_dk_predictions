@@ -151,11 +151,33 @@ def blend_hook(pre: pd.DataFrame, k: float, route: str = "both"):
     return hook
 
 
+def blended_frame(cfg: dict, pre: pd.DataFrame, k: float,
+                  route: str = "both") -> pd.DataFrame:
+    """The ordered composition frame at blend constant `k`, over **every** season.
+
+    Split out from `frame_at` so a caller fitting the same blend at two windows builds it
+    once. `composition_preseason_fit` does exactly that — its covered-window control and its
+    full-window one are the same unblended frame cut in two places — and rebuilding it per
+    arm re-runs `order_frame` over 700k rows for a result that is identical by construction.
+    """
+    hook = None if k >= INCUMBENT_K else blend_hook(pre, k, route)
+    return composition_frame(cfg, share_hook=hook)
+
+
 def frame_at(cfg: dict, pre: pd.DataFrame, k: float, first_season: str,
              route: str = "both") -> pd.DataFrame:
     """The ordered composition frame at blend constant `k`, cut to the fitting window."""
-    hook = None if k >= INCUMBENT_K else blend_hook(pre, k, route)
-    frame = composition_frame(cfg, share_hook=hook)
+    return cut_window(blended_frame(cfg, pre, k, route), first_season)
+
+
+def cut_window(frame: pd.DataFrame, first_season: str) -> pd.DataFrame:
+    """The fitting window, as a season-label suffix of an already-built frame.
+
+    The frame is built over every season regardless of this — the lag columns and the
+    expanding rookie prior both reach backwards, so trimming earlier would drop the
+    window's own first cohort rather than window it. `stan_composition.run` takes the same
+    two steps in the same order.
+    """
     return frame[frame["season"] >= first_season].reset_index(drop=True)
 
 

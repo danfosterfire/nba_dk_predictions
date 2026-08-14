@@ -1,102 +1,148 @@
-# Next session — after session 4c
+# Next session — after session 4d
 
 Read `CLAUDE.md` and `docs/project-spec.md` first, then `docs/preseason-plan.md`. Everything
-below is measurement. **Nothing in this round is committed** — the working tree carries
-session 4c in full.
+below is measurement. **Nothing in this round is committed** — the working tree carries the
+whole of 2026-08-14.
 
-## What happened on 2026-08-13 (session 4c)
+## What happened on 2026-08-14
 
-The previous handoff's item 0 ran and **passes**. `make composition-preseason-fit`
-(`src/models/composition_preseason_fit.py`) fits 4b's blended-offset arm at the pilot window
-against a same-window control, plus both frames' own no-fit floors at the same 200 predictive
-draws.
+Three items from the previous handoff: **1** (the composition's full-window fit), **4** (both
+availability to-dos), and **5** (both small items). Items **2** (the P5 chain) and **3**
+(session 6b, the rate heads' arms) are untouched.
 
-- **The increment survives the posterior and grows.** Draftable, per player-game:
-  **−0.20883 [−0.22129, −0.19693]** fitted against the floor's −0.20081 [−0.21697, −0.18411]
-  on the same frames — **retention 1.040**. That is P3's direction, not the shrink 4b allowed
-  for.
-- **The season unit reverses half of 4b decision 4.** The floor's tie (−5.31580 [−14.44243,
-  **+3.83015**]) becomes **−14.62649 [−19.48503, −9.54922]** once fitted, at 2.75×. The
-  *reason* 4b gave survives — the season predictive sd **narrows** (56.25 → 55.31), so no
-  spread was manufactured and σ is still the only parameter for that — but what moves is the
-  **mean**, season-total MAE falling **15.05** minutes.
-- **4b's suggestive cross-artifact line is now within-artifact and holds**: the *un-fitted*
-  blended floor (4.41998) beats the *fitted* incumbent-offset arm (4.44188).
-- Sampler: max R̂ **1.0047**, 0 divergences, 0 treedepth saturation, 41 min over two fits.
+### 1. The composition's preseason arm survives the window the head fits — session 4d
 
-### Two lessons worth carrying forward
+`make composition-preseason-fit` at `first_season: "1996-97"` / `label: covered` →
+`composition_preseason_fit_covered.csv`. **Three** fits, 7.76 h, max R̂ 1.00436, 0
+divergences, 0 treedepth saturation.
 
-**`FloorComposition` is a conservative screen per game and a misleading one per season.** Its
-mean is the offset alone (`eta = 0`), so it cannot see anything a coefficient re-weights —
-and that blindness *compounds with aggregation*, which is why the per-game retention is 1.04
-and the per-season one is 2.75. Any future round that reaches for this floor as a cheap gate
-should read it at the per-game unit only.
+- **The gate passes and the increment grows a third time.** −0.20883 (pilot) →
+  **−0.23418 [−0.24551, −0.22314]** CRPS minutes per player-game on the draft pool, retention
+  **1.040 → 1.115**, `team_sum_abs_error` exactly 0 on all six arms.
+- **A third arm is what made the round decidable.** `base_full_window` fits 1996-97 carrying
+  no preseason column — it is the shipped head. Against it the arm wins at **both** units:
+  `ship_margin` **−0.25409 [−0.26520, −0.24315]** per player-game and **−17.27296
+  [−22.32569, −11.92164]** per player-season.
+- **The coverage cut costs −0.01991 [−0.02515, −0.01498] per player-game and it helps** —
+  P3's direction, but **8.5%** of the increment rather than the quarter P3 paid. The
+  decomposition is exactly additive: `window_cost + fitted_increment = ship_margin`.
+- **4c's floor lesson reproduces on 4.6× the rows**: the floor's season increment spans zero
+  (−6.36419 [−15.31395, +2.68556]), the fitted one does not (−17.13948). Retention 1.11 per
+  game against 2.69 per season, one posterior.
+- It is the **mean**: season MAE falls 17.70 min while the predictive sd *narrows* 59.58 →
+  57.64. `sim.minutes.player_season_sigma` is untouched.
 
-**`warmup: 500` on the composition is not a cheaper fit — it is a slower one, and nothing
-says so.** `choose_metric` grants `dense_e` only at `warmup ≥ 20 × parameters`; this arm has
-30, so the threshold is exactly **600**. At 500 the head silently drops to `diag_e`, which
-this head's own probe measures at treedepth 8–9 against 4. A first attempt ran **32 minutes
-without completing its 500 warmup draws**, against `composition_effects`' **880 s** for the
-same arm at the same window for a whole 500+500 fit. The only early signal is the metric
-itself — CmdStan writes no draw until warmup ends and its progress lines are buffered away —
-so `composition_preseason_fit.announce_metric` now prints it in the first second and warns on
-`diag_e`, with a test pinning the threshold. ⚠️ **The `effects` block sits under the same
-cliff and has not been changed.**
+### 4. Both availability to-dos — `docs/availability-window-plan.md` §15
+
+**Item 9 (§15a).** `make availability-absence` gained a `population` round. Every arm is
+**fitted once and scored twice**; the population is a mask on the *scored* rows.
+**§7 selected `mixture` on a boundary error measured pooled, and on the draft pool the two
+likelihoods swap places** — `betabinom` − `mixture` is +0.00891 [+0.00420, +0.00994] pooled
+and **−0.00308 [−0.00733, −0.00210]** draftable, and it **replicates rolling** (+0.00786 and
+−0.00049, both clear of zero). The head is unchanged because D1's other half selects it there
+instead (CRPS +0.04280 validation, +0.02864 rolling). **The sign is the finding and the size
+is not** — the draftable margin shrinks 6.3× between readings, which item 9 predicted about
+its own 1.84× before the round ran.
+
+**Item 11 (§15b).** `availability_no_prior.run_recency` crosses the estimator's population
+with the pool's depth. **The cancellation is confirmed and the fix is falsified.** At depth 5
+the biases are +0.0642 (roster) and −10.0796 (all) — the drift is real and separable — but
+CRPS degrades monotonically and the roster arm goes from −0.3486 at 13/19 origins to +0.2753
+at 7/19, because `graded_share` falls 0.7926 → 0.5524. **The second change it needs is an
+estimator class, not a shallower pool** — a shrunk cell estimator, the same instrument P4(a)
+named for the *key* axis.
+
+### 5. Both small items
+
+- **The provenance stamp ships.** `stan_utils.diagnostics_frame` — the one function every
+  Stan head goes through — now appends `git_commit`, `git_dirty`, `src_digest`, `written_at`.
+  `src_digest` is the field that would have caught 2026-08-13: the two fits shared a commit
+  and were both dirty, so only a content hash over `src/models`, `src/stan` and
+  `src/features` separates them.
+- **`stan.composition.effects.warmup` 500 → 1000.** `base` (30 params) and `team` (36) both
+  needed 600 for `dense_e`. ⚠️ The nuance the previous handoff did not have: `ps` carries
+  2,204 effects, cannot reach `dense_e` at any warmup, and so pays **2×** rather than saving
+  10× — worth it anyway, because at 500 it posted **max R̂ 1.13173**. `announce_metric` moved
+  into `stan_composition` beside `choose_metric` and now prints in `composition_effects` too.
+
+### Three lessons worth carrying forward
+
+**The previous handoff's "~9.92 h per arm" was wrong by ~4×, and it nearly mis-scoped the
+session.** 9.92 h is the whole four-variant `make stan-composition` sweep (2.01 + 2.60 + 2.50
++ 2.67 h plus probe and comparator). One fit of the shipped variant is ~2.5 h. Read
+`stan_composition_diagnostics.csv` per row before budgeting.
+
+**Do not run other jobs on the box while a composition arm samples.** Arm 1 took 8,873 s
+against a ~6,700 s projection because the §15 rounds and two test-suite passes shared the 14
+cores. Arms 2 and 3 on a quiet box came in at 8,006 s and 11,052 s.
+
+**An artifact written across a code edit records the wrong code, and this round produced a
+live example.** `composition_preseason_fit_covered_diagnostics.csv` carries **no** provenance
+stamp, because `diagnostics_frame` gained one *during* the 7.76 h run and the process had
+already imported it. Nothing about the fits is affected. The next run of any head will carry
+it.
 
 ## Do NOT re-decide these
 
-1. **`k = 80`, `route = offset_only`, `betabinom_ot_graded`.** All three are 4b decisions off
-   the fitting half; validation prefers `k = 160` and reading it would select on the split
-   the arm is scored against.
-2. **The composition's preseason arm is measured, NOT shipped.** Everything is 2018-19
-   onward. `stan.composition.preseason` configures the *measurement* target only — no
-   consumer reads it and `make stan-composition` is untouched.
-3. **`sim.minutes.player_season_sigma` stays 0.450**, and nothing in 4c touches it. The
-   season-unit gain here is mean, not spread, and the predictive sd went the other way.
-4. Everything the previous two handoffs list under this heading still holds: the injected
-   composition loses to the marginal head (+6.26 [+0.92, +11.49]); P4(a) and P4(b) ship
-   nothing; the availability gate failed and the block ships anyway.
+1. **`k = 80`, `route = offset_only`, `betabinom_ot_graded`** — 4b decisions off the fitting
+   half. Validation prefers `k = 160` and reading it would select on the split the arm is
+   scored against.
+2. **The composition's preseason arm is measured, NOT shipped.** `stan.composition.preseason`
+   configures the *measurement* target only; no consumer reads it and `make stan-composition`
+   is untouched.
+3. **`sim.minutes.player_season_sigma` stays 0.450.** 4d's season-unit gain is mean, not
+   spread, and the predictive sd went the other way.
+4. **The availability head is unchanged.** §15a is a documentation correction, not a
+   selection reversal — D1 selects `mixture` on both populations, by different routes.
+5. **`sim.availability.no_design_level` stays `tenure_draft` on the all-rows estimator.**
+   §15b ships nothing.
+6. Everything the previous handoffs list under this heading still holds.
 
 ## Verified green at the end of the pass
 
 ```
-make docs-audit        # 0 disagreements, 0 stale claims, 3,402 figures checked
+make docs-audit        # 0 disagreements, 0 stale claims, 3,521 figures checked
 make dashboard-audit   # 0 orphaned artifacts, 0 pending constants
-pytest tests/          # 1,803 passed
+pytest tests/          # 1,819 passed
 ```
 
 `make dashboard-audit` reports 241 `reviewed`-date drifts, unchanged by this round.
 
 ## The work
 
-### 1. ⚙️ The composition's full-window preseason fit — the direct continuation
-The pilot passed at both units, so the remaining question is whether it survives the full
-window. **It needs P3's coverage cut first**: the preseason panel starts at 2004-05 and this
-head fits from 1996-97, so the missing indicator would be an era dummy on the early rows —
-and P3 priced its own cut at **1.19 CRPS minutes before any preseason column existed**, a
-quarter of that round's increment. Budget ~9.92 h per arm at the full window, so this is a
-two-arm run of most of a day and Gate A should be read before starting.
-
-Note the arm is a change to the **allocation mean**, so it reaches the draw as *order* rather
-than pure *shape* — §7l's standing precedent for a measured null in the contest applies less
-cleanly here than to the availability block.
-
-### 2. The chain is stale — P5, and it is still the largest item
+### 1. 🔥 The chain is stale — P5, and it is now clearly the largest item
 `make simulate-season`, `weekly-scores`, `bracket`, `draft-sim`, `strategy-sweep`. Hours of
 compute. Two pending head changes (availability and marginal minutes) plus a re-read σ that
-did not move; the composition arm is **not** among them unless item 1 ships first.
+did not move.
 
-### 3. Session 6b — the five surviving rate heads' arms
-`ast`, `fga`, `stl`, `tov`, `reb`, plus `ftm|fta`. A session P1 *added*.
+**4d changes the calculus here.** The composition arm now beats the shipped head decisively
+at both units, so the question "should the composition's preseason arm ship?" is live rather
+than open — and if it does, the chain has to be re-run *after* it lands rather than before.
+Adopting it means `first_season: 2004-05` on `stan.composition` plus `make posteriors
+--groups composition` at all three fit windows (~6 h: train, train_val, full — the same
+season floor, different splits). **Decide that before spending the chain**, or the sweep gets
+run twice.
 
-### 4. Two open items on the availability head, both in `potential-to-dos.md`
-- **Item 9** — the head's boundary defect on the draft pool, still unmeasured.
-- **Item 11** — the no-design availability rate is pooled over a population it is never
-  applied to (0.5447 realized against 0.1571).
+One open question that is genuinely a decision rather than a measurement: `make
+stan-composition`'s ~11 audited figures describe the un-blended head at 1996-97. Adopting 4d
+makes them describe a head that no longer exists. Re-running a 9.92 h ladder to refresh
+records is usually not worth the sampler time — but it should be decided deliberately.
 
-### 5. Small, un-scheduled
-- The `make stan-*` metric artifacts still carry no record of which code version wrote them,
-  which is what let the wrong availability arm reach the docs on 2026-08-13.
-- **`stan.composition.effects.warmup: 500` is under the `dense_e` cliff** (see above). Any
-  re-run of `make composition-effects` should raise it to 1000 first, or it pays ~10× for
-  nothing.
+### 2. Session 6b — the five surviving rate heads' arms
+`ast`, `fga`, `stl`, `tov`, `reb`, plus `ftm|fta`. A session P1 *added*. Untouched.
+
+### 3. Two follow-ups §15 opened
+- **A shrunk cell estimator for the no-design level**, replacing the hard `MIN_CELL`
+  fallback. Both axes of P4(a) now point at it: the key axis graded only 54% of its rolling
+  rows, and §15b's recency cut fails because grading collapses. It is a different estimator
+  class, so it makes a new ladder rather than a new arm.
+- **The era question on the composition**, which 4d touched twice without measuring for it:
+  `window_cost` is the first paired interval saying the pre-2005 seasons cost this head
+  something, and ρ rising 0.11479 → 0.12592 at the longer window is a second reading.
+  `potential-to-dos.md` item 1.
+
+### 4. Small, un-scheduled
+- The `make stan-*` **metric** artifacts still carry no provenance; the stamp went on the
+  **diagnostics** artifacts, which is where every head shares a code path. Metric artifacts
+  are written per-module and would need six edits.
+- `dashboard-audit`'s 241 `reviewed`-date drifts have been carried for several sessions.

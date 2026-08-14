@@ -547,7 +547,85 @@ def standardized(train: pd.DataFrame, frames: list[pd.DataFrame], features: list
     return [scaler.transform(matrix(f)) for f in frames], scaler
 
 
+#: Source trees whose contents decide what a Stan fit actually fitted. `src/models/` holds
+#: every head's design and column list, `src/stan/` the four likelihoods, `src/features/`
+#: the builders those designs read. A change in any of them can silently make an artifact
+#: describe a model that no longer exists.
+PROVENANCE_TREES = (("models", "*.py"), ("stan", "*.stan"), ("features", "*.py"))
+
+#: The columns `code_provenance` adds. Named so a consumer can drop them when diffing two
+#: runs' *metrics* — they are provenance, not results, and they change on every commit.
+PROVENANCE_COLS = ("git_commit", "git_dirty", "src_digest", "written_at")
+
+
+def code_provenance(root: Path | None = None) -> dict:
+    """Which version of the code wrote this artifact.
+
+    **The defect this closes, stated concretely.** On 2026-08-13 the availability head was
+    ported twice. The first fit, at 14:19, carried a five-column preseason block; at 14:25 —
+    six minutes later — `PRESEASON_COLS` was switched to the shipped ten-column block, and
+    the artifacts from the *earlier* fit were written into `docs/preseason-plan.md` and
+    `dashboard/decisions.py` as if they described the head that shipped. Nothing objected:
+    the artifacts were internally consistent, `make docs-audit` had no claim on the term
+    count, and the numbers were plausible. It was caught by hand, by arithmetic on a term
+    count, the following day. **An artifact carried no record of which version of the code
+    wrote it**, so a source edit landing between a fit and its documentation was invisible
+    to every guard in the repo.
+
+    Three fields, because they fail in different ways and the third is the one that would
+    have caught this case:
+
+    * `git_commit` — HEAD's short SHA. Pins a *committed* state, and is empty outside a
+      checkout rather than raising, since an artifact is still worth writing there.
+    * `git_dirty` — whether tracked files differ from HEAD. The 14:19 fit and the 14:25 edit
+      shared a commit, so the SHA alone would have said they matched.
+    * `src_digest` — a CRC32 over the contents of `PROVENANCE_TREES`, which is what actually
+      moved between those two fits. Two artifacts with the same digest were written by the
+      same code; two with different digests were not, whatever the commit says.
+
+    Deliberately **not** a guard that raises. It is a record, and what to do about a
+    mismatch is a judgement — a dirty tree is the normal state during a working session,
+    and refusing to fit in one would make the stamp cost more than the defect.
+    """
+    import subprocess
+    from datetime import datetime, timezone
+
+    root = Path(__file__).resolve().parents[1] if root is None else Path(root)
+
+    def git(*args: str) -> str:
+        try:
+            return subprocess.run(("git", *args), cwd=root, capture_output=True,
+                                  text=True, timeout=10).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return ""
+
+    digest = 0
+    for subdir, pattern in PROVENANCE_TREES:
+        for path in sorted((root / subdir).glob(pattern)):
+            digest = zlib.crc32(path.read_bytes(), zlib.crc32(path.name.encode(), digest))
+
+    return {"git_commit": git("rev-parse", "--short", "HEAD"),
+            "git_dirty": bool(git("status", "--porcelain", "--untracked-files=no")),
+            "src_digest": f"{digest:08x}",
+            "written_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+
+
 def diagnostics_frame(rows: list[dict]) -> pd.DataFrame:
-    return pd.DataFrame(rows)[
+    """One row per fit, plus the stamp saying which code wrote them.
+
+    The stamp rides here because this is the one function every Stan head in the project
+    goes through — `stan_availability`, `stan_minutes`, `stan_components`, `stan_composition`,
+    `stan_game_length`, `stan_games_played`, `season_terms` and the preseason rounds all
+    call it — so a head cannot acquire diagnostics without acquiring provenance. Putting it
+    in each caller instead is how one of them would end up without it, which is the state
+    this closes.
+
+    The columns are appended, never inserted, and every consumer in the repo reads these
+    artifacts by name (`docs_audit.cell`), so a widened schema is additive.
+    """
+    frame = pd.DataFrame(rows)[
         ["label", "max_rhat", "min_ess_bulk", "min_ess_tail", "divergences",
          "treedepth_saturated", "n_draws", "wall_clock_s", "converged", "cmdstan"]]
+    for column, value in code_provenance().items():
+        frame[column] = value
+    return frame

@@ -329,16 +329,24 @@ make composition-preseason
                        #   3.75% of the margin, which reverses half of what P3 predicted.
 
 make composition-preseason-fit
-                       # Session 4c: the half the screen above explicitly does not settle →
-                       #   outputs/predictions/composition_preseason_fit.csv. `beta` can
-                       #   correct an offset the floor cannot, so the increment could shrink
-                       #   under a fit — or grow, as P3's own did. Two PILOT-window fits of
-                       #   the shipped variant (a same-window `base` control and the
+                       # Sessions 4c and 4d: the half the screen above does not settle.
+                       #   `beta` can correct an offset the floor cannot, so the increment
+                       #   could shrink under a fit — or grow, as P3's own did. Fits of the
+                       #   shipped variant (a same-window `base` control and the
                        #   blended-offset arm at k = 80), plus BOTH frames' no-fit floors at
                        #   the same 200 predictive draws, which makes the retention —
                        #   fitted increment / floor increment — a within-artifact ratio.
-                       #   The bar is frozen in `report()` before the run. ~30 min. NOT part
-                       #   of `make stan`, and it does not write stan_composition_*.csv.
+                       #   The bar is frozen in `report()` before the run.
+                       #   4c ran the PILOT window (2018-19 on, ~30 min) →
+                       #     composition_preseason_fit.csv, and docs-audit re-derives ~45
+                       #     figures from it, so a later round must not overwrite it.
+                       #   4d runs the head's own window, which the module CUTS to the
+                       #     preseason panel's coverage (2004-05) for the two gate arms —
+                       #     P3's rule — and adds `base_full_window` at 1996-97 carrying no
+                       #     preseason column, to price that cut on its own. ~6.3 h for the
+                       #     three; `stan.composition.preseason.label` namespaces its
+                       #     artifacts → composition_preseason_fit_covered*.csv.
+                       #   NOT part of `make stan`; does not write stan_composition_*.csv.
 
 make rookie-priors     # P4(b): does a no-prior player's own preseason beat his draft
                        #   bucket? → outputs/predictions/rookie_priors.csv. The incumbent

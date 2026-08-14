@@ -757,7 +757,27 @@ disruption-risk fact, and would settle where it belongs if it is ever ported.
 
 ---
 
-## 9. Re-read the availability head's boundary selection on the population it serves
+## 9. ✅ Re-read the availability head's boundary selection on the population it serves — MEASURED 2026-08-13
+
+**Built as `make availability-absence`'s `population` round →
+`availability_absence_population.csv`; the write-up is
+`docs/availability-window-plan.md` §15a.** The answer is the one this entry's
+"what would settle it" called the *unlikelier* outcome: on the draft pool the
+`betabinom` − `mixture` boundary margin is **−0.00308 [−0.00733, −0.00210]**, so
+the two likelihoods **swap places** on §7's own selection metric with an interval
+clear of zero. What keeps `mixture` shipped is the other half of D1 — it wins CRPS
+there at **+0.04280 [+0.00406, +0.08235]**, where pooled it only tied. So the head
+is unchanged and its recorded *reason* is a pooled statement.
+
+**The rolling harness agrees on every ordering and on none of the sizes**, which is
+this entry's own caveat firing on the round it licensed. The draftable boundary
+margin reads **−0.00049 [−0.00086, −0.00012]** against validation's −0.00308 — the
+same sign, clear of zero, **6.3× smaller** — and the between-population level ratio
+goes 1.84× to **1.09×**. The text above says "the sign flip is the robust half and
+the 1.84× is not"; it was right, and a future round quoting −0.003 as the effect
+size would be quoting 772 rows.
+
+## 9x. The original entry, kept for the record
 
 **`docs/availability-window-plan.md` §7 selected the two-component `mixture` on a
 `boundary_tail_error` of 0.0201 → 0.0109, measured on all 883 validation rows. On the 772 of
@@ -884,7 +904,32 @@ item 9, which is the open question on this head.
 
 ---
 
-## 11. Pool the no-design availability rate over rostered players only
+## 11. ⚙️ Pool the no-design availability rate over rostered players only — MEASURED 2026-08-13, and **the recency half is falsified**
+
+**Built as `availability_no_prior.run_recency` →
+`availability_no_prior_recency.csv`; the write-up is
+`docs/availability-window-plan.md` §15b.** The cross this entry specified was run
+— estimator population × pool depth (all / 10 / 5 seasons) on the shipped
+`tenure_draft` key — and it split:
+
+- **The cancellation story is confirmed, by direct measurement.** At depth 5 the
+  two estimators' validation biases are **+0.0642** (roster) and **−10.0796**
+  (all): cutting the pool's depth removes the era drift from both and leaves the
+  population error, which only the all-rows estimator has. Its full-depth
+  **−0.3646** is those two opposite errors meeting, exactly as hypothesized.
+- **The fix is falsified, by this entry's own falsifier.** CRPS degrades
+  monotonically under the cut on both estimators and both splits; the roster arm's
+  rolling win goes from **−0.3486 at 13/19 origins** to **+0.2753 at 7/19**.
+  `graded_share` says why — **0.7926 → 0.5524** rolling — because a five-season
+  pool holds 379 roster rows against 1,263 and `MIN_CELL` starves.
+
+**So this is one change, not two, and the missing second change is an estimator
+class rather than a shallower pool** — a shrunk cell estimator instead of a hard
+`MIN_CELL` fallback, which is the same instrument P4(a) named for the *key* axis.
+That is what this entry now points at; nothing ships and
+`sim.availability.no_design_level` stays `tenure_draft` on the all-rows estimator.
+
+## 11x. The original entry, kept for the record
 
 **Opened 2026-08-14 by `docs/preseason-plan.md` P4(a), which found it while measuring
 something else.** Not a preseason item — the defect predates the preseason work entirely and

@@ -435,10 +435,22 @@ coefficient touches. `make composition-preseason` scored it on the head's own no
 composition-preseason-fit` then fitted it against a same-window control: **−0.20883 [−0.22129,
 −0.19693]**, retention **1.040**, so the increment *grows* under the posterior. At the season
 unit — the unit this whole comparison lives at — the floor's tie becomes **−14.62649 [−19.48503,
-−9.54922]** once the head is fitted, through the **mean** rather than the spread. It is not
-shipped: everything is 2018-19 onward and the full window needs P3's coverage cut, since the
-panel starts at 2004-05 and this head fits from 1996-97. `docs/preseason-plan.md` sessions 4b
-and 4c.
+−9.54922]** once the head is fitted, through the **mean** rather than the spread.
+
+✅ **And it survives the window the head actually fits — the increment grows a third time, and
+it now beats the shipped head rather than a pilot control.** Session 4d takes the arm to the
+covered window (2004-05 on, the cut the panel forces since it starts there and this head fits
+from 1996-97) and adds a **third** arm at 1996-97 carrying no preseason column, which is the
+shipped head and the only thing a ship decision can be read against. The increment reaches
+**−0.23418 [−0.24551, −0.22314]** CRPS minutes per player-game on the draft pool, retention
+**1.115**; against what ships today it is **−0.25409 [−0.26520, −0.24315]** per player-game and
+**−17.27296 [−22.32569, −11.92164]** per player-season. The coverage cut is worth **−0.01991**
+of that on its own — P3's direction, but **8.5%** of the increment rather than the quarter that
+round paid, so the block is not mostly window. Season MAE falls **17.70** minutes while the
+predictive sd *narrows*, so it is the mean and the injected σ is untouched. Three fits, 7.76 h,
+0 divergences. **Still not shipped**: `stan.composition.preseason` configures the measurement
+target only, and adopting it means a `first_season` of 2004-05 on the head plus `make
+posteriors --groups composition`, which is P5. `docs/preseason-plan.md` sessions 4b–4d.
 
 **So the injection ships**, as `sim.minutes.player_season_sigma = 0.450`, applied by
 `minutes_unification.rehydrate_composition` — a consumer gets the effect by loading the head

@@ -220,7 +220,7 @@ MIXTURE_INTERACTIONS: tuple[tuple[str, str, str, str, str], ...] = (
 #: a partial run cannot overwrite the other's rows — which is what makes this safe where
 #: `composition_effects` needed a merge. §12's round costs the compound arms and an eight-row
 #: profile; §14's costs four more mixture fits and its own rolling harness.
-ROUNDS: tuple[str, ...] = ("crossed", "mixture")
+ROUNDS: tuple[str, ...] = ("crossed", "mixture", "population")
 
 #: `mixture`'s validation `boundary_tail_error` (§7c). The bar axis 1 has to clear on its
 #: own for the compound arm to need re-motivating, and the level the round is read against.
@@ -650,6 +650,34 @@ def arm_spec(name: str) -> tuple[type, list[str], dict]:
     return cls, features, kwargs
 
 
+def fit_arms(cut: pd.DataFrame, arms: tuple[str, ...],
+             l2: float = 1.0) -> dict[str, tuple[object, list[str], float]]:
+    """`{arm: (fitted model, its features, its nesting gap)}`, fitted on `cut`.
+
+    Split out of `crossed_ladder` so an arm can be **fitted once and scored more than
+    once**. Nothing here depends on the validation frame, which is the property that makes
+    a population split a *scoring* restriction rather than a different model —
+    `availability_preseason.rolling` states the same rule for its own two populations, and
+    it is the difference between "the same head reads worse on the draft pool" and "a head
+    fitted on the draft pool reads differently".
+    """
+    out: dict[str, tuple[object, list[str], float]] = {}
+    for name in arms:
+        cls, features, kwargs = arm_spec(name)
+        missing = [c for c in features if c not in cut.columns]
+        if missing:
+            raise ValueError(f"{name} needs {missing}; call `attach_absence_mix` first")
+        if cut[features].isna().any().any():
+            bad = [c for c in features if cut[c].isna().any()]
+            raise ValueError(
+                f"{name} has NaN in {bad} on the fitting window. The absence-mix shares "
+                f"are masked where `status_coverage` is 0, so a window reaching before "
+                f"2006-07 must be excluded rather than fitted.")
+        model = cls(l2=l2, features=features, **kwargs).fit(cut)
+        out[name] = (model, features, assert_nests(model, cut))
+    return out
+
+
 def crossed_ladder(train: pd.DataFrame, val: pd.DataFrame, max_games: int,
                    arms: tuple[str, ...] = LADDER_ARMS, l2: float = 1.0,
                    seed: int = 42, reference: str = ABSENCE_REFERENCE,
@@ -677,19 +705,7 @@ def crossed_ladder(train: pd.DataFrame, val: pd.DataFrame, max_games: int,
     per_row: dict[str, np.ndarray] = {}
     tails: dict[str, dict[str, np.ndarray]] = {}
 
-    for name in arms:
-        cls, features, kwargs = arm_spec(name)
-        missing = [c for c in features if c not in cut.columns]
-        if missing:
-            raise ValueError(f"{name} needs {missing}; call `attach_absence_mix` first")
-        if cut[features].isna().any().any():
-            bad = [c for c in features if cut[c].isna().any()]
-            raise ValueError(
-                f"{name} has NaN in {bad} on the fitting window. The absence-mix shares "
-                f"are masked where `status_coverage` is 0, so a window reaching before "
-                f"2006-07 must be excluded rather than fitted.")
-        model = cls(l2=l2, features=features, **kwargs).fit(cut)
-        gap = assert_nests(model, cut)
+    for name, (model, features, gap) in fit_arms(cut, arms, l2).items():
         row, scores = score_arm(name, model, cut, val, features, max_games, seed)
         block = name.partition("__")[2]
         row.update({"likelihood": name.partition("__")[0],
@@ -894,7 +910,8 @@ def absence_rolling(train: pd.DataFrame, max_games: int,
                     arms: tuple[str, ...] = LADDER_ARMS, l2: float = 1.0,
                     lookback: int = LIKELIHOOD_LOOKBACK,
                     first_origin: int = ABSENCE_FIRST_ORIGIN,
-                    seed: int = 42, reference: str = ABSENCE_REFERENCE) -> pd.DataFrame:
+                    seed: int = 42, reference: str = ABSENCE_REFERENCE,
+                    populations: tuple[str, ...] = ("all",)) -> pd.DataFrame:
     """The 2x2 on §4b's harness — fitting half only, all arms on identical rows.
 
     §10e is the standing rule that a fresh winner is treated as failing until it replicates,
@@ -907,7 +924,16 @@ def absence_rolling(train: pd.DataFrame, max_games: int,
     whose fitting window reaches behind it would have to drop rows for two of the five arms.
     Restricting the origins keeps every arm on the same population, which is the only way
     the contrast stays a contrast.
+
+    `populations` is §15's axis and defaults to pooled-only, which is what §12 and §14 read.
+    Asking for `draftable` needs `on_season_start_roster` on `train`; the mask is applied to
+    the **scored** rows after each fit, never to the fitting rows, so the draft-pool reading
+    is the same fitted arm on fewer rows. Both populations come out of one pass over the
+    origins, so the second costs no additional fits.
     """
+    if "draftable" in populations and "on_season_start_roster" not in train.columns:
+        raise ValueError("a draftable reading needs `on_season_start_roster` on the "
+                         "fitting frame; call `attach_season_start_roster` first")
     years = season_start_year(train)
     origins = [int(y) for y in np.unique(years) if y >= first_origin]
     per_arm: dict[str, dict[str, list]] = {}
@@ -927,44 +953,56 @@ def absence_rolling(train: pd.DataFrame, max_games: int,
             assert_nests(model, fit_rows)
             scored = _origin_scores(model, score, max_games)
             scored["origin"] = np.full(len(score), origin)
+            scored["draftable"] = (score["on_season_start_roster"].to_numpy(dtype=float)
+                                   if "on_season_start_roster" in score.columns
+                                   else np.ones(len(score)))
             slot = per_arm.setdefault(name, {})
             for key, values in scored.items():
                 slot.setdefault(key, []).append(values)
         print(f"  origin {origin}: {len(fit_rows):,} fit / {len(score):,} scored")
 
-    pooled = {k: {m: np.concatenate(v) for m, v in d.items()} for k, d in per_arm.items()}
-    parts = {name: _rolling_parts(d) for name, d in pooled.items()}
-    ref_scores = pooled[reference]["crps"]
+    walked = {k: {m: np.concatenate(v) for m, v in d.items()} for k, d in per_arm.items()}
     suffix = _suffix(reference)
-
     rows = []
     grid = np.linspace(0, 1, 101)
-    for name, d in pooled.items():
-        y, n, org = d["y"], d["n"], d["origin"]
-        mean, lo, hi = paired_bootstrap(d["crps"], ref_scores, seed=seed)
-        u = d["pit"]
-        idx = np.arange(len(y))
-        boundary, body, shoulder = _tail_errors(parts[name], idx)
-        block = name.partition("__")[2]
-        rows.append({
-            "arm": name, "likelihood": name.partition("__")[0],
-            "absence_mix": bool(block), "absence_mix_on_pi": block == "absence_mix_pi",
-            "n_origins": int(len(np.unique(org))), "n_scored": int(len(y)),
-            "crps": float(d["crps"].mean()), f"crps_vs_{suffix}": mean,
-            f"crps_vs_{suffix}_lo": lo, f"crps_vs_{suffix}_hi": hi,
-            "origins_won": sum(1 for o in np.unique(org)
-                               if d["crps"][org == o].mean() < ref_scores[org == o].mean()),
-            "pit_ks": float(np.max(np.abs(np.searchsorted(np.sort(u), grid) / len(u)
-                                          - grid))),
-            "err_below_10": float(d["p_below_10"].mean() - (y < 10).mean()),
-            "err_full_schedule": float(d["p_full"].mean() - (y == n).mean()),
-            "boundary_tail_error": boundary, "body_error": body,
-            "shoulder_error": shoulder,
-        })
-    margins = _bootstrap_arms(parts, tuple(pooled), reference, seed=seed)
-    for row in rows:
-        row.update(margins[row["arm"]])
-    return pd.DataFrame(rows).sort_values("boundary_tail_error").reset_index(drop=True)
+
+    for population in populations:
+        keep = (np.ones(len(walked[reference]["y"]), dtype=bool) if population == "all"
+                else walked[reference]["draftable"] > 0)
+        pooled = {name: {m: v[keep] for m, v in d.items()} for name, d in walked.items()}
+        parts = {name: _rolling_parts(d) for name, d in pooled.items()}
+        ref_scores = pooled[reference]["crps"]
+        part = []
+        for name, d in pooled.items():
+            y, n, org = d["y"], d["n"], d["origin"]
+            mean, lo, hi = paired_bootstrap(d["crps"], ref_scores, seed=seed)
+            u = d["pit"]
+            idx = np.arange(len(y))
+            boundary, body, shoulder = _tail_errors(parts[name], idx)
+            block = name.partition("__")[2]
+            part.append({
+                "arm": name, "likelihood": name.partition("__")[0],
+                "population": population,
+                "absence_mix": bool(block), "absence_mix_on_pi": block == "absence_mix_pi",
+                "n_origins": int(len(np.unique(org))), "n_scored": int(len(y)),
+                "crps": float(d["crps"].mean()), f"crps_vs_{suffix}": mean,
+                f"crps_vs_{suffix}_lo": lo, f"crps_vs_{suffix}_hi": hi,
+                "origins_won": sum(
+                    1 for o in np.unique(org)
+                    if d["crps"][org == o].mean() < ref_scores[org == o].mean()),
+                "pit_ks": float(np.max(np.abs(np.searchsorted(np.sort(u), grid) / len(u)
+                                              - grid))),
+                "err_below_10": float(d["p_below_10"].mean() - (y < 10).mean()),
+                "err_full_schedule": float(d["p_full"].mean() - (y == n).mean()),
+                "boundary_tail_error": boundary, "body_error": body,
+                "shoulder_error": shoulder,
+            })
+        margins = _bootstrap_arms(parts, tuple(pooled), reference, seed=seed)
+        for row in part:
+            row.update(margins[row["arm"]])
+        rows += part
+    return (pd.DataFrame(rows)
+            .sort_values(["population", "boundary_tail_error"]).reset_index(drop=True))
 
 
 def _rolling_parts(d: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
@@ -1020,6 +1058,116 @@ def block_diagnostics(frame: pd.DataFrame, fitting: pd.DataFrame,
         rows.append({"statistic": f"mean_{kind}_share",
                      "value": float(fitting[col].mean())})
     return pd.DataFrame(rows)
+
+
+#: The two populations §15 reads every arm on. `all` is what §7, §12 and §14 scored; the
+#: draft pool is the only one the head is ever applied to.
+POPULATIONS: tuple[str, ...] = ("all", "draftable")
+
+
+def population_ladder(train: pd.DataFrame, val: pd.DataFrame, max_games: int,
+                      arms: tuple[str, ...] = MIXTURE_ARMS, l2: float = 1.0,
+                      seed: int = 42, reference: str = MIXTURE_REFERENCE
+                      ) -> pd.DataFrame:
+    """§15 — the same fitted arms, scored on both populations.
+
+    **The question, and it is about a shipped head.** §7 selected the two-component
+    `mixture` over `betabinom` on `boundary_tail_error`, 0.0201 → 0.0109, measured on all
+    883 validation rows. `docs/preseason-plan.md` P2 then found that on the 772 rows that
+    are on a season-start roster the shipped head reads **0.01998**, and that its low-tail
+    error *changes sign* between the populations — pooled it under-predicts the dead season,
+    on the draft pool it over-predicts it. The single-component reference was never scored
+    there. So if the mixture's calibration gain does not transfer, the head that ships was
+    chosen on a frame it is never applied to. `docs/potential-to-dos.md` item 9.
+
+    **Every arm is fitted once and scored twice**, which is the whole design. The fitting
+    rows are unchanged and the population enters only as a mask on the *scored* rows — so a
+    difference between the two columns is the same head reading differently on a subset,
+    never a head refitted for it. `availability_preseason.rolling` states the same rule, and
+    P2's own draftable figures were produced this way, which is what makes this round's
+    `mixture` row a control that has to reproduce 0.01998 rather than a new measurement.
+
+    The margins are recomputed **within** each population rather than differenced across
+    them: `boundary_tail_error` is two absolute values of differences of means, so it is not
+    linear in the rows and a pooled margin is not a weighted average of the two.
+    """
+    cut = restrict_window(train, WINDOWS[LIKELIHOOD_WINDOW])
+    fitted = fit_arms(cut, arms, l2)
+    rows: list[dict] = []
+
+    for population in POPULATIONS:
+        mask = (np.ones(len(val), dtype=bool) if population == "all"
+                else val["on_season_start_roster"].to_numpy(dtype=float) > 0)
+        frame = val.loc[mask].reset_index(drop=True)
+        y, n = frame["gp"].to_numpy(), frame["team_games"].to_numpy()
+        per_row: dict[str, np.ndarray] = {}
+        tails: dict[str, dict[str, np.ndarray]] = {}
+        part: list[dict] = []
+
+        for name, (model, features, gap) in fitted.items():
+            row, scores = score_arm(name, model, cut, frame, features, max_games, seed)
+            block = name.partition("__")[2]
+            row.update({"population": population, "n_val": len(frame),
+                        "likelihood": name.partition("__")[0],
+                        "absence_mix": bool(block),
+                        "absence_mix_on_pi": block == "absence_mix_pi",
+                        "n_params": model.n_params, "nesting_loglik_gap": gap,
+                        "train_loglik": model.train_loglik,
+                        "selectable": name != reference})
+            row.update({f"shape_{k}": v for k, v in model.shape_report(frame).items()})
+            part.append(row)
+            per_row[name] = scores
+            tails[name] = _tail_parts(model.predict_pmf(frame, max_games), y, n)
+
+        suffix = _suffix(reference)
+        ref_scores = per_row[reference]
+        boundary = _bootstrap_arms(tails, tuple(fitted), reference, reps=BOOTSTRAP_REPS,
+                                   seed=seed)
+        for row in part:
+            delta, lo, hi = paired_bootstrap(per_row[row["arm"]], ref_scores, seed=seed)
+            row[f"crps_vs_{suffix}"] = delta
+            row[f"crps_vs_{suffix}_lo"] = lo
+            row[f"crps_vs_{suffix}_hi"] = hi
+            row[f"beats_{suffix}"] = bool(hi < 0.0)
+            row.update(boundary[row["arm"]])
+        rows += part
+
+        print(f"\n  {population} — {len(frame):,} validation rows:")
+        for row in part:
+            print(f"    {row['arm']:<26} CRPS {row['val_crps']:.4f}  "
+                  f"boundary {row['boundary_tail_error']:.5f}  "
+                  f"vs {suffix} {row.get(f'boundary_vs_{suffix}', float('nan')):+.5f} "
+                  f"[{row.get(f'boundary_vs_{suffix}_lo', float('nan')):+.5f}, "
+                  f"{row.get(f'boundary_vs_{suffix}_hi', float('nan')):+.5f}]")
+    return pd.DataFrame(rows)
+
+
+def population_verdict(table: pd.DataFrame,
+                       reference: str = MIXTURE_REFERENCE) -> dict:
+    """Does §7's boundary selection survive the restriction? Stated as code.
+
+    §7 chose `mixture` over `betabinom` on the boundary, so the quantity that settles it is
+    the **`betabinom` − `mixture`** boundary margin read on the draft pool. Positive and
+    clear of zero means the single-component head is *also* worse there, §7's ordering
+    stands, and the only correction is that its levels are quoted on a frame 12.6% larger
+    than the population served. Straddling zero, or negative, means the calibration case was
+    a pooled artifact.
+    """
+    suffix = _suffix(reference)
+    out: dict = {}
+    for population in POPULATIONS:
+        row = table[(table["population"] == population)
+                    & (table["arm"] == "betabinom")]
+        if row.empty:
+            continue
+        lo = float(row[f"boundary_vs_{suffix}_lo"].iloc[0])
+        out[population] = {
+            "boundary_delta": float(row[f"boundary_vs_{suffix}"].iloc[0]),
+            "lo": lo, "hi": float(row[f"boundary_vs_{suffix}_hi"].iloc[0]),
+            # `betabinom` is quoted against `mixture`, so §7's ordering survives when the
+            # SINGLE-component arm is worse — a positive margin clear of zero.
+            "selection_survives": bool(lo > 0.0)}
+    return out
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -1144,6 +1292,61 @@ def run(cfg: dict) -> dict[str, Path]:
         print(f"\nWrote {len(m_rolling):,} arms × {int(m_rolling['n_scored'].max()):,} "
               f"scored rows → {m_roll_dest}")
         written["availability_absence_mixture_rolling"] = m_roll_dest
+
+    if "population" in rounds:
+        from src.eda.preseason_value import attach_season_start_roster
+
+        window_games = int(cfg.get("features", {}).get("team_context", {})
+                           .get("roster_window_games", 10))
+        scored = attach_season_start_roster(val, list(cfg["data"]["seasons"]),
+                                            cfg["data"]["raw_dir"], window_games)
+        draftable = int((scored["on_season_start_roster"] > 0).sum())
+        print(f"\n§15 — the SAME fitted arms, scored on both populations "
+              f"(`potential-to-dos.md` item 9).\n  §7 selected `mixture` over `betabinom` on "
+              f"a boundary error measured on all {len(scored):,}\n  validation rows; "
+              f"{draftable:,} of them ({draftable / len(scored):.1%}) are on a season-start "
+              f"roster,\n  which is the only population this head is ever applied to. The "
+              f"single-component\n  reference was never scored there. Every arm is fitted "
+              f"ONCE and masked after the fit.")
+        pop = population_ladder(train, scored, max_games, l2=l2, seed=seed)
+        pop_dest = out_dir / "availability_absence_population.csv"
+        pop.to_csv(pop_dest, index=False)
+        written["availability_absence_population"] = pop_dest
+
+        verdict = population_verdict(pop)
+        print("\n  Does §7's boundary selection survive the restriction? The quantity is "
+              "the\n  `betabinom` - `mixture` boundary margin — positive and clear of zero "
+              "means the\n  single-component head is ALSO worse on the draft pool and the "
+              "ordering stands:")
+        for population, v in verdict.items():
+            print(f"    {population:<10} {v['boundary_delta']:+.5f} "
+                  f"[{v['lo']:+.5f}, {v['hi']:+.5f}]  → "
+                  f"{'SURVIVES' if v['selection_survives'] else 'DOES NOT survive'}")
+        print(f"\nWrote {len(pop):,} arm x population rows → {pop_dest}")
+
+        # The rolling half is part of the bar rather than a follow-up, because a sign flip
+        # on a SHIPPED head's selection criterion is the kind of claim §10e's rule exists
+        # for: a reading that reverses on one split is treated as failing until it
+        # replicates on rows that split never touches.
+        print(f"\n  §15's second reading — the same split on §4b's rolling harness "
+              f"(fitting half only,\n  lookback {LIKELIHOOD_LOOKBACK}, origins from "
+              f"{ABSENCE_FIRST_ORIGIN}). Validation is 772 draftable rows and\n  a sign "
+              f"flip on the head that ships does not get to rest on that alone:")
+        scored_train = attach_season_start_roster(train, list(cfg["data"]["seasons"]),
+                                                  cfg["data"]["raw_dir"], window_games)
+        pop_roll = absence_rolling(scored_train, max_games, arms=MIXTURE_ARMS, l2=l2,
+                                   seed=seed, reference=MIXTURE_REFERENCE,
+                                   populations=POPULATIONS)
+        roll_dest = out_dir / "availability_absence_population_rolling.csv"
+        pop_roll.to_csv(roll_dest, index=False)
+        written["availability_absence_population_rolling"] = roll_dest
+
+        roll_verdict = population_verdict(pop_roll)
+        for population, v in roll_verdict.items():
+            print(f"    {population:<10} {v['boundary_delta']:+.5f} "
+                  f"[{v['lo']:+.5f}, {v['hi']:+.5f}]  → "
+                  f"{'SURVIVES' if v['selection_survives'] else 'DOES NOT survive'}")
+        print(f"\nWrote {len(pop_roll):,} arm x population rows → {roll_dest}")
 
     return written
 

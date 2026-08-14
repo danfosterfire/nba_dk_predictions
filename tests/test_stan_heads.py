@@ -1170,3 +1170,66 @@ def test_negbinomial_head_recovers_a_known_rate_and_respects_exposure():
                        rtol=1e-6)
     predicted = model.predict_mean(frame)
     assert np.corrcoef(predicted, y)[0, 1] > 0.8
+
+
+def test_every_stan_head_stamps_which_code_wrote_its_diagnostics(tmp_path):
+    """The 2026-08-13 defect, closed.
+
+    The availability head was ported twice that day, six minutes apart, and the *earlier*
+    fit's artifacts were written into `docs/preseason-plan.md` and `dashboard/decisions.py`
+    as if they described the head that shipped. Nothing objected — the artifacts were
+    internally consistent, `make docs-audit` had no claim on the term count, and the numbers
+    were plausible. An artifact carried no record of which version of the code wrote it.
+
+    The stamp rides on `diagnostics_frame` rather than on each head, because that is the one
+    function every head goes through: a head cannot acquire diagnostics without acquiring
+    provenance, which is what stops one of them from quietly lacking it.
+    """
+    from src.models.stan_utils import (PROVENANCE_COLS, code_provenance,
+                                       diagnostics_frame)
+
+    row = {"label": "x", "max_rhat": 1.0, "min_ess_bulk": 400, "min_ess_tail": 400,
+           "divergences": 0, "treedepth_saturated": 0, "n_draws": 4000,
+           "wall_clock_s": 1.0, "converged": True, "cmdstan": "2.35.0"}
+    frame = diagnostics_frame([row])
+    assert set(PROVENANCE_COLS) <= set(frame.columns)
+    # Appended, never inserted: every consumer reads these artifacts by column NAME, and
+    # the diagnostic columns must keep their positions for a human reading the CSV.
+    assert list(frame.columns)[:10] == list(row)
+    assert list(frame.columns)[-len(PROVENANCE_COLS):] == list(PROVENANCE_COLS)
+
+
+def test_the_source_digest_moves_when_a_head_does_and_the_commit_alone_would_not(tmp_path):
+    """`src_digest` is the field that would actually have caught 2026-08-13.
+
+    The two fits that day shared a commit — the column list was edited between them without
+    committing — so `git_commit` matched and `git_dirty` was true for both. Only a digest
+    over the source trees separates them.
+    """
+    from src.models.stan_utils import PROVENANCE_TREES, code_provenance
+
+    root = tmp_path / "src"
+    for subdir, pattern in PROVENANCE_TREES:
+        (root / subdir).mkdir(parents=True)
+        (root / subdir / f"head{pattern[1:]}").write_text("PRESEASON_COLS = [1, 2, 3, 4, 5]")
+
+    before = code_provenance(root)["src_digest"]
+    edited = root / PROVENANCE_TREES[0][0] / "head.py"
+    edited.write_text("PRESEASON_COLS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]")
+    after = code_provenance(root)["src_digest"]
+    edited.write_text("PRESEASON_COLS = [1, 2, 3, 4, 5]")
+
+    assert before != after                      # the five-column fit and the ten-column one
+    assert code_provenance(root)["src_digest"] == before      # and it is content-addressed
+
+
+def test_provenance_records_rather_than_raises_outside_a_checkout(tmp_path):
+    """A record, not a guard. A dirty tree is the normal state during a working session and
+    refusing to fit in one would cost more than the defect; an artifact written outside a
+    git checkout is still worth writing."""
+    from src.models.stan_utils import code_provenance
+
+    (tmp_path / "models").mkdir()
+    stamp = code_provenance(tmp_path)
+    assert stamp["git_commit"] == ""
+    assert stamp["src_digest"] and stamp["written_at"]

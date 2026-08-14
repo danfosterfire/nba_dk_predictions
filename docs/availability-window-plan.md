@@ -3432,3 +3432,161 @@ twice.
    plus the four columns on `features` and nothing on `pi_features`.
 7. **The head is unchanged.** `three_point_era` window, no season term, role-graded ρ,
    two-component mixture — §7i, untouched by §10 through §14.
+
+## 15. Two population defects on this head, measured 2026-08-13 — and **neither ships**
+
+Two entries from `docs/potential-to-dos.md`, run in one session because they are the same
+mistake at two levels of the head: **a quantity estimated or selected on a population the
+head is never applied to.** The simulator's grid is the draft pool — every player on an
+October roster and nobody else — and both items ask what happens when a figure that was
+read pooled is read there instead.
+
+Neither changes what ships. Both change what is *known* about what ships, and item 9's
+answer is the more uncomfortable of the two.
+
+### 15a. §7's boundary selection does not transfer to the draft pool — item 9
+
+`make availability-absence` (round `population`, `src/models/availability_absence.py`)
+→ `availability_absence_population.csv`. Every arm of `MIXTURE_ARMS` is **fitted once and
+scored twice**: the fitting rows are untouched and the population is a mask on the *scored*
+rows, so a difference between the columns is the same head reading differently on a subset
+rather than a head refitted for one.
+
+**The controls reproduce, which is what licenses the rest.** `mixture` pooled reads
+`boundary_tail_error` **0.01085** against §7c's 0.0109; on the draft pool it reads
+**0.01998**, which is `docs/preseason-plan.md` P2's figure to five decimals; `betabinom`
+pooled reads **0.02013** against §7's 0.0201.
+
+| draftable, 772 rows | `mixture` (ships) | `betabinom` | margin, `betabinom` − `mixture` |
+|---|---|---|---|
+| **`boundary_tail_error`** | 0.01998 | **0.01721** | **−0.00308 [−0.00733, −0.00210]** |
+| `val_crps` | **8.97296** | 9.01576 | **+0.04280 [+0.00406, +0.08235]** |
+| `val_pit_ks` | **0.09275** | 0.11311 | — |
+| `body_error` | **0.03861** | 0.05426 | — |
+| `shoulder_error` | 0.02006 | **0.00797** | — |
+
+| pooled, 883 rows | `mixture` | `betabinom` | margin |
+|---|---|---|---|
+| `boundary_tail_error` | **0.01085** | 0.02013 | **+0.00891 [+0.00420, +0.00994]** |
+| `val_crps` | 9.82370 | **9.81253** | −0.01117 [−0.05109, +0.02804] |
+
+**§7 selected `mixture` on the boundary and tied on CRPS. On the draft pool that is exactly
+reversed** — the boundary margin flips sign with an interval clear of zero, and the CRPS tie
+becomes a decisive win. So the head still ships, and it ships **on a criterion it was not
+selected on**. That is the finding: not that the selection was wrong, but that the *reason*
+recorded for it is a pooled statement, and the population it is applied to prefers the same
+head for the opposite reason.
+
+The mechanism is P2's sign flip, one level down. Pooled, the head under-predicts the dead
+season and the mixture's second component is what corrects it; on the draft pool it
+**over**-predicts it, and a second component that exists to put mass in the low tail is
+adding mass where there is already too much. `betabinom` wins the shoulder for the same
+reason (0.00797 against 0.02006) and loses the body badly (0.05426 against 0.03861), which
+is where the CRPS goes.
+
+✅ **It replicates on §4b's rolling harness — the sign does, and the size does not.** A sign
+flip on a shipped head's selection criterion is what §10e's replicate-or-fail rule exists
+for, so the same fitted-once-scored-twice split was taken across 7 origins of the fitting
+half (`availability_absence_population_rolling.csv`, 2,871 rows pooled / 2,537 draftable):
+
+| `betabinom` − `mixture`, draftable | validation (772) | rolling (2,537, 7 origins) |
+|---|---|---|
+| **`boundary_tail_error`** | **−0.00308 [−0.00733, −0.00210]** | **−0.00049 [−0.00086, −0.00012]** |
+| the same, pooled | +0.00891 [+0.00420, +0.00994] | **+0.00786 [+0.00752, +0.00821]** |
+| `val_crps` | +0.04280 [+0.00406, +0.08235] | **+0.02864 [+0.00257, +0.05156]**, 2 of 7 origins |
+| `mixture`'s own P(GP < 10) error, pooled → draftable | −0.0132 → +0.0323 | **−0.01483 → +0.01843** |
+
+**Every statement 15a makes survives, and one number in it does not.** The boundary margin
+clears zero in *opposite directions* on the two populations at **both** readings, the CRPS
+guard clears zero on the draft pool at both, and the low-tail error changes sign at both. But
+the draftable boundary margin shrinks **6.3×** between the readings, −0.00308 to −0.00049,
+and the boundary *level* ratio between populations goes 1.84× on validation to **1.09×**
+rolling (0.02007 against 0.01842).
+
+That is item 9's own warning firing on item 9: it was written saying *"the sign flip is the
+robust half and the 1.84× is not — any round that quotes 1.84× as a constant is quoting a
+validation reading"*, and the round it licensed reproduces exactly that pattern one level
+down. **So the finding is the ordering, not the size.** A future round that treats −0.003 as
+the effect size will be quoting 772 rows.
+
+**What this does *not* license is re-opening the head**, and the reason is D1 rather than
+taste. §7's rule was tail calibration improving **and** a CRPS non-inferiority guard; on the
+draft pool `betabinom` improves the boundary and fails the guard with an interval clear of
+zero — at **both** readings — so the conjunction selects `mixture` on both populations by
+different routes. The correction owed is to the *documentation*: every boundary figure in §7,
+§12 and §14 is quoted on a frame 14.4% larger than the draft pool, and on the draft pool the
+ordering of the two likelihoods on that metric is the other way round.
+
+### 15b. The no-design rate's pool: the population fix is right and a recency cut is not — item 11
+
+`make availability-no-prior` (`run_recency`) → `availability_no_prior_recency.csv`. P4(a)
+found `sim/season.no_design_availability` pooling its rate over **every** no-design
+player-season before the target while being applied to October rosters alone — two
+populations realizing **0.5447** and **0.1571** — and found the roster-pooled fix winning 13
+of 19 rolling origins while failing validation, losing exactly the last three origins, two of
+which *are* the validation seasons. The hypothesis it left was a **cancellation**: the
+all-rows estimator's near-zero validation bias is a population error meeting an era drift,
+not accuracy. This crosses the pool's population with its **depth** to separate them, on the
+shipped `tenure_draft` key, and its falsifier was written first.
+
+| draftable | rolling CRPS vs what ships | origins | rolling bias | validation CRPS | validation bias | `graded_share` |
+|---|---|---|---|---|---|---|
+| `all` / all *(ships)* | — | — | −5.3904 | — | **−0.3646** | 0.8310 |
+| `all` / 10 | +0.2596 [+0.1135, +0.4170] | 2/9 | −6.2972 | +1.0688 | −3.7285 | 0.8138 |
+| `all` / 5 | +1.4855 [+1.1271, +1.8301] | 0/14 | −9.7380 | +3.3675 | −10.0796 | 0.6980 |
+| **`roster` / all** | **−0.3486 [−0.6860, −0.0183]** | **13/19** | +1.7935 | +0.7354 | +6.4056 | 0.7926 |
+| `roster` / 10 | −0.1661 [−0.5288, +0.1764] | 10/19 | +0.9940 | +1.3732 | +3.1228 | 0.7653 |
+| `roster` / 5 | +0.2753 [−0.1923, +0.7279] | 7/19 | +0.1523 | +1.5399 | **+0.0642** | 0.5524 |
+
+**The cancellation is confirmed as a diagnosis and refuted as a fix, and both halves are the
+result.**
+
+**Confirmed, and this is a direct measurement rather than an inference.** At depth 5 the two
+estimators' validation biases are **+0.0642** (roster) and **−10.0796** (all). Cutting the
+pool's depth removes the era drift from both; what is left is the population error, which
+the roster estimator does not have and the all-rows one does — at ten games of season. At
+full depth the all-rows estimator reads **−0.3646**, which is those two errors of opposite
+sign meeting. The bias moves monotonically toward zero for `roster` (+1.79 → +0.99 → +0.15
+rolling, +6.41 → +3.12 → +0.06 on validation) and monotonically *away* from zero for `all`
+(−5.39 → −6.30 → −9.74, −0.36 → −3.73 → −10.08). Two estimators, opposite directions, one
+knob.
+
+**Refuted as a fix, by its own falsifier.** CRPS gets monotonically **worse** under the cut
+on both estimators and both splits, and the roster arm's rolling win — the one real result
+P4 had on this axis — degrades from −0.3486 at 13 of 19 origins to a loss at 7 of 19. The
+mechanism is in the last column: a five-season pool holds 379 roster rows at its widest
+against 1,263, so the cells starve, `MIN_CELL` sends more rows to a coarser rung, and
+`graded_share` falls **0.7926 → 0.5524** rolling and **1.0000 → 0.6621** on validation. The
+cut buys bias and pays in grading, and a proper score sees both.
+
+**So the fix is one change, not two — and the second change it needs is an estimator class
+rather than a shallower pool.** That converges with what P4 left open on the *other* axis:
+its primary graded only 54% of its rolling rows and the settling instrument named there was
+a **shrunk cell estimator rather than a hard `MIN_CELL` fallback**. Both axes now point at
+the same missing piece, which is a stronger reason to build it than either had alone.
+
+**Nothing ships.** `sim.availability.no_design_level` stays `tenure_draft` on the all-rows
+estimator. The roster pool still fails the validation half of P4's gate at every depth, and
+a recency cut does not rescue it; `potential-to-dos.md` item 11 is updated with the
+measurement rather than closed, because the estimator-class question it now points at is
+unbuilt.
+
+### What §15 decides
+
+1. **Neither item changes the shipped head or the shipped simulator input.** Both were
+   opened as "nobody has looked", and looking is what they were worth.
+2. **§7's boundary selection stands on D1 and its stated reason does not transfer.** On the
+   draft pool the two likelihoods swap places on the boundary with an interval clear of zero
+   at both readings, and `mixture` is selected there by the CRPS guard instead. Every
+   boundary figure in §7, §12 and §14 is a pooled figure.
+2b. **The sign is the finding and the size is a validation reading.** The draftable boundary
+   margin shrinks 6.3× from validation to the rolling harness and the between-population
+   level ratio goes 1.84× to 1.09×, while every ordering holds. Item 9 predicted exactly this
+   about its own 1.84× before the round ran, which is the argument for having written the
+   caveat down rather than the figure alone.
+3. **A fitted-once-scored-twice split is now the house pattern on this head**, in
+   `availability_absence.fit_arms` and `absence_rolling(populations=...)` as well as in
+   `availability_preseason`. A population is a scoring restriction; refitting for it would be
+   a different model and a different question.
+4. **The era drift on the no-design population is real and separable**, and correcting it by
+   truncating the pool costs more in grading than it buys in bias.

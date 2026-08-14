@@ -263,8 +263,8 @@ def attach_preseason_keys(rows: pd.DataFrame, panel: pd.DataFrame) -> pd.DataFra
         tenure_draft_pre=[f"{t}__{p}" for t, p in zip(out["tenure_draft"], pre)])
 
 
-def level_tables(history: pd.DataFrame, season: str, allowed: list[str],
-                 arm: str) -> list[tuple[str, pd.DataFrame]]:
+def level_tables(history: pd.DataFrame, season: str, allowed: list[str], arm: str,
+                 recency: int | None = None) -> list[tuple[str, pd.DataFrame]]:
     """One `(key column, rate per key)` rung per level of `arm`'s ladder.
 
     Pooled over no-design rows in the seasons **strictly before** the target and inside the
@@ -272,6 +272,14 @@ def level_tables(history: pd.DataFrame, season: str, allowed: list[str],
     column. Nothing is fitted: each cell's rate is its own realized `gp / team_games`, which
     is the estimator `stan_composition.rookie_share_priors` uses for the same population's
     minutes share.
+
+    `recency` keeps only the last `recency` eligible seasons, and `None` keeps every one of
+    them, which is what ships. It is `potential-to-dos.md` item 11's second axis: P4(a) found
+    the roster-pooled estimator winning 13 of 19 rolling origins and *losing* the last three,
+    two of which are the validation seasons — the hypothesis being that the all-rows
+    estimator's near-zero bias there is a **cancellation** between a population error and an
+    era drift rather than accuracy. If that is right, removing the population error should
+    expose the drift, and a recency cut is what separates them.
     """
     if arm not in KEY_LADDERS:
         raise ValueError(f"unknown level arm {arm!r}; expected one of {sorted(KEY_LADDERS)}")
@@ -280,6 +288,8 @@ def level_tables(history: pd.DataFrame, season: str, allowed: list[str],
         raise KeyError(f"the {arm!r} arm needs {missing}, which these rows do not carry — "
                        f"run `attach_preseason_keys` for the P4 arms")
     earlier = [s for s in allowed if s < season]
+    if recency is not None:
+        earlier = earlier[-recency:]
     past = history[history["season"].isin(earlier)]
     if past.empty:
         raise ValueError(f"no seasons before {season} to estimate a no-design "
@@ -557,7 +567,9 @@ def _pool(history: pd.DataFrame, estimator: str) -> pd.DataFrame:
 
 
 def accumulate_arm(history: pd.DataFrame, covered: list[str], arm: str,
-                   estimator: str, rho: float) -> tuple[dict[str, np.ndarray], list[dict]]:
+                   estimator: str, rho: float, recency: int | None = None,
+                   analysis: str = "preseason_level_by_season"
+                   ) -> tuple[dict[str, np.ndarray], list[dict]]:
     """One `(arm, estimator)` walked over every scorable target season in `covered`.
 
     Returns the stacked per-row pieces the summary needs and a per-origin row per season.
@@ -572,10 +584,13 @@ def accumulate_arm(history: pd.DataFrame, covered: list[str], arm: str,
     pool = _pool(history, estimator)
     for season in covered:
         rows = history[history["season"] == season]
-        past = pool[pool["season"].isin([s for s in covered if s < season])]
+        earlier = [s for s in covered if s < season]
+        if recency is not None:
+            earlier = earlier[-recency:]
+        past = pool[pool["season"].isin(earlier)]
         if rows.empty or len(past) < MIN_CELL:
             continue
-        mu, rung = level_rates(rows, level_tables(pool, season, covered, arm))
+        mu, rung = level_rates(rows, level_tables(pool, season, covered, arm, recency))
         y = rows["gp"].to_numpy(float)
         n = rows["team_games"].to_numpy(float)
         roster = rows["on_season_start_roster"].to_numpy(float)
@@ -585,13 +600,144 @@ def accumulate_arm(history: pd.DataFrame, covered: list[str], arm: str,
             parts[key].append(value)
         draft = roster > 0
         per_season.append({
-            "analysis": "preseason_level_by_season", "arm": arm, "estimator": estimator,
+            "analysis": analysis, "arm": arm, "estimator": estimator,
+            "recency": "all" if recency is None else str(recency),
             "season": season, "rows": len(rows), "draftable_rows": int(draft.sum()),
-            "n_pool": len(past),
+            "n_pool": len(past), "n_pool_seasons": len(earlier),
             "crps": float(crps(predictive_pmf(n[draft], mu[draft], rho), y[draft]).mean()),
             "crps_pooled": float(crps(predictive_pmf(n, mu, rho), y).mean()),
             "graded_share": float((rung[draft] == 0).mean())})
     return ({key: np.concatenate(value) for key, value in parts.items()}, per_season)
+
+
+#: Item 11's second axis — how many seasons of history the pool may reach back over.
+#: `None` is every eligible season, which is what ships. 10 and 5 bracket the era drift the
+#: cancellation hypothesis needs: this population's realized rate has risen over the window,
+#: so a pool reaching to 2004-05 is estimating a rate that no longer obtains.
+RECENCY_WINDOWS: tuple[int | None, ...] = (None, 10, 5)
+
+#: The reference every recency margin is taken against — what ships today, on both axes.
+RECENCY_SHIPPED = (SHIPPED_LEVEL_ARM, "all", "all")
+
+
+def score_recency_arms(history: pd.DataFrame, covered: list[str], validation: list[str],
+                       rho: float = FITTED_ROLE_RHO[0],
+                       arm: str = SHIPPED_LEVEL_ARM
+                       ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Item 11 — the estimator's population crossed with a recency window on its pool.
+
+    **The defect, which predates the preseason work entirely.**
+    `sim/season.no_design_availability` is applied to players on an October roster and to
+    nobody else, and the rate it hands them is pooled over *every* no-design player-season
+    before the target — including everyone who signed in January. Over the covered window the
+    two populations realize **0.5447** and **0.1571**, so a third of the estimator's rows
+    describe a population it is never applied to. §8b inherited it without noticing, because
+    that round varied the *key* and held the pool fixed.
+
+    **Why this is a 2x3 and not the one-axis fix P4 measured.** P4(a) scored the roster pool
+    on the shipped key and it won 13 of 19 rolling origins while repairing a seven-game bias
+    swing — and failed the validation half, losing exactly the last three origins, two of
+    which *are* the validation seasons. The hypothesis it left behind is that the all-rows
+    estimator's near-zero validation bias is a **cancellation** between a population error
+    and an era drift rather than accuracy: pooling in January signings pulls the rate down,
+    this population's realized rate has risen, and the two errors happen to meet. Removing
+    one exposes the other. A recency cut is what tests that, and it makes the fix two changes
+    rather than one — which is a thing to know before shipping either.
+
+    The key is held at the shipped arm throughout, so the only things varying are the pool's
+    population and its depth. Both splits and both scored populations come off one pass, and
+    the scored rows are identical across every cell — `accumulate_arm` masks at summary time.
+    """
+    from src.models.availability_window import paired_bootstrap
+
+    kept: dict[tuple[str, str, str], dict[str, np.ndarray]] = {}
+    per_season: list[dict] = []
+    for estimator in ESTIMATOR_POPULATIONS:
+        for recency in RECENCY_WINDOWS:
+            label = "all" if recency is None else str(recency)
+            parts, seasons_rows = accumulate_arm(history, covered, arm, estimator, rho,
+                                                 recency, analysis="recency_by_season")
+            kept[(arm, estimator, label)] = parts
+            per_season += seasons_rows
+
+    val_index = {i for i, s in enumerate(covered) if s in set(validation)}
+    by_season = pd.DataFrame(per_season)
+    rows: list[dict] = []
+    for split in ("validation", "rolling"):
+        for population, column in (("draftable", "crps"), ("pooled", "crps_pooled")):
+            def mask_of(k, split=split, population=population):
+                keep = (np.isin(k["season"], list(val_index)) if split == "validation"
+                        else np.ones(len(k["y"]), bool))
+                return keep & (k["roster"] > 0) if population == "draftable" else keep
+
+            scores = {key: crps(predictive_pmf(k["n"][mask_of(k)], k["mu"][mask_of(k)], rho),
+                                k["y"][mask_of(k)])
+                      for key, k in kept.items()}
+            origins = (by_season[by_season["season"].isin(validation)]
+                       if split == "validation" else by_season)
+            wins = origins.pivot(index="season", columns=["arm", "estimator", "recency"],
+                                 values=column)
+            for key, k in kept.items():
+                _, estimator, recency = key
+                m = mask_of(k)
+                mu, y, n = k["mu"][m], k["y"][m], k["n"][m]
+                share = y / n
+                ss_tot = float(np.sum((share - share.mean()) ** 2))
+                delta, lo, hi = paired_bootstrap(scores[key], scores[RECENCY_SHIPPED])
+                rows.append({
+                    "analysis": "recency_arm", "arm": arm, "estimator": estimator,
+                    "recency": recency, "split": split, "population": population,
+                    "rows": int(m.sum()),
+                    "n_seasons": int(pd.Series(k["season"][m]).nunique()),
+                    "crps": float(scores[key].mean()),
+                    "mae": float(np.abs(mu * n - y).mean()),
+                    "bias": float((mu * n - y).mean()),
+                    "r2_gp_share": (1.0 - float(np.sum((share - mu) ** 2)) / ss_tot
+                                    if ss_tot > 0 else np.nan),
+                    "mu_min": float(mu.min()), "mu_max": float(mu.max()),
+                    "graded_share": float((k["rung"][m] == 0).mean()),
+                    "crps_vs_shipped": delta, "crps_vs_shipped_lo": lo,
+                    "crps_vs_shipped_hi": hi,
+                    "origins_won_vs_shipped": int(
+                        (wins[key] < wins[RECENCY_SHIPPED]).sum()),
+                    "origins_compared_vs_shipped": int(
+                        (~np.isclose(wins[key], wins[RECENCY_SHIPPED])).sum()),
+                    "origins": int(len(wins)),
+                    "rho_scored_at": rho})
+    return pd.DataFrame(rows), by_season
+
+
+def recency_verdict(table: pd.DataFrame) -> dict:
+    """Does the cancellation story hold? Stated as code, before the numbers are read.
+
+    Item 11's own falsifier: *"the roster estimator losing the recent origins under a recency
+    window too"*. So the test is whether the roster pool's **rolling** margin improves under
+    a recency cut and whether its **validation** margin — the half P4 failed — closes.
+    """
+    def cell(estimator: str, recency: str, split: str) -> pd.Series:
+        part = table[(table["estimator"] == estimator) & (table["recency"] == recency)
+                     & (table["split"] == split) & (table["population"] == "draftable")]
+        return part.iloc[0] if len(part) else None
+
+    out: dict = {}
+    for recency in ("all", "10", "5"):
+        roll, val = cell("roster", recency, "rolling"), cell("roster", recency, "validation")
+        if roll is None or val is None:
+            continue
+        out[recency] = {
+            "rolling_delta": float(roll["crps_vs_shipped"]),
+            "rolling_lo": float(roll["crps_vs_shipped_lo"]),
+            "rolling_hi": float(roll["crps_vs_shipped_hi"]),
+            "rolling_origins": f"{int(roll['origins_won_vs_shipped'])}"
+                               f"/{int(roll['origins_compared_vs_shipped'])}",
+            "validation_delta": float(val["crps_vs_shipped"]),
+            "validation_hi": float(val["crps_vs_shipped_hi"]),
+            "rolling_bias": float(roll["bias"]),
+            "validation_bias": float(val["bias"]),
+            # P4's gate, unchanged: both halves clear of zero or the arm does not ship.
+            "passes": bool(roll["crps_vs_shipped_hi"] < 0.0
+                           and val["crps_vs_shipped_hi"] < 0.0)}
+    return out
 
 
 def score_preseason_arms(history: pd.DataFrame, covered: list[str], validation: list[str],
@@ -823,6 +969,58 @@ def run_preseason(cfg: dict, history: pd.DataFrame, allowed: list[str],
     print(census[census["analysis"] == "preseason_census"][
         ["key", "cell", "rows", "realized_rate"]].round(4).to_string(index=False))
     print(f"\nWrote {len(arms) + len(by_season) + len(census):,} rows → {dest}")
+
+    run_recency(scoped, covered, validation, out_dir)
+    return dest
+
+
+def run_recency(scoped: pd.DataFrame, covered: list[str], validation: list[str],
+                out_dir: Path) -> Path:
+    """Item 11 — the estimator's population crossed with a recency window on its pool.
+
+    Rides on `run_preseason`'s frame for the same reason that rides on `run`'s: the rows are
+    already built, already carry `on_season_start_roster`, and are already cut to the covered
+    window. A separate target would rebuild the panel, the design and the classification to
+    ask a question zero merges away.
+    """
+    print(f"\n  ITEM 11 — the estimator's POPULATION crossed with a RECENCY window on its "
+          f"pool.\n    `sim/season.no_design_availability` is applied to October rosters "
+          f"only and pools its\n    rate over every no-design row before the target, "
+          f"January signings included. P4(a)\n    measured the population fix alone: 13 of "
+          f"19 rolling origins and a seven-game bias\n    repair, failing validation on the "
+          f"last three origins — two of which ARE the validation\n    seasons. The "
+          f"hypothesis is a CANCELLATION between a population error and an era drift;\n"
+          f"    a recency cut is what separates them. Windows: "
+          f"{', '.join('all' if r is None else str(r) for r in RECENCY_WINDOWS)}.")
+
+    arms, by_season = score_recency_arms(scoped, covered, validation)
+    dest = out_dir / "availability_no_prior_recency.csv"
+    pd.concat([arms, by_season], ignore_index=True).to_csv(dest, index=False)
+
+    for split in ("validation", "rolling"):
+        shown = arms[(arms["analysis"] == "recency_arm") & (arms["split"] == split)
+                     & (arms["population"] == "draftable")]
+        print(f"\n  {split} · draftable — {int(shown['rows'].iloc[0]):,} rows over "
+              f"{int(shown['n_seasons'].iloc[0])} target seasons "
+              f"(margins against `{RECENCY_SHIPPED[1]}`/`{RECENCY_SHIPPED[2]}`, "
+              f"what ships):")
+        print(shown[["estimator", "recency", "crps", "crps_vs_shipped",
+                     "crps_vs_shipped_lo", "crps_vs_shipped_hi",
+                     "origins_won_vs_shipped", "origins_compared_vs_shipped",
+                     "mae", "bias", "r2_gp_share", "graded_share"]]
+              .round(4).to_string(index=False))
+
+    print("\n  Item 11's own falsifier, as code — the roster pool losing the recent origins "
+          "UNDER a\n  recency window too. P4's gate is unchanged: BOTH halves clear of zero "
+          "or nothing ships.")
+    for recency, v in recency_verdict(arms).items():
+        print(f"    roster/{recency:<4} rolling {v['rolling_delta']:+.4f} "
+              f"[{v['rolling_lo']:+.4f}, {v['rolling_hi']:+.4f}] "
+              f"({v['rolling_origins']} origins, bias {v['rolling_bias']:+.3f})  |  "
+              f"validation {v['validation_delta']:+.4f} "
+              f"(hi {v['validation_hi']:+.4f}, bias {v['validation_bias']:+.3f})  → "
+              f"{'PASSES' if v['passes'] else 'fails'}")
+    print(f"\nWrote {len(arms) + len(by_season):,} rows → {dest}")
     return dest
 
 

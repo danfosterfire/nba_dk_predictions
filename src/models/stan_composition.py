@@ -225,6 +225,47 @@ def choose_metric(n_params: int, warmup: int = 1000,
     return "dense_e" if warmup >= draws_per_param * n_params else "diag_e"
 
 
+def announce_metric(n_features: int, n_rho: int, warmup: int, n_units: int = 0) -> str:
+    """The metric an arm will get, printed **before** the sampler starts.
+
+    ⚠️ **A cost cliff, not a preference, and it is invisible in the artifact until the fit
+    is over.** `choose_metric` grants `dense_e` only when `warmup >= 20 x parameters`, and
+    this head's own probe measured NUTS held at treedepth 8-9 under `diag_e` against
+    treedepth 4 under `dense_e` — roughly 10x the wall clock. A `composition_preseason_fit`
+    attempt at `warmup: 500`, copied from the `effects` block, ran **32 minutes without
+    completing its 500 warmup draws**, against `composition_effects`' **880 s** for the same
+    arm at the same window for a whole 500+500 fit under `dense_e`.
+
+    Nothing said so until it was killed: CmdStan writes no draw until warmup ends and its
+    progress lines are buffered away, so the *only* early signal is the metric itself. This
+    prints it in the first second.
+
+    **A `diag_e` warning is not always actionable, which is why this warns rather than
+    raises.** An arm carrying the per-(player, season) effect has `U_n` parameters — 2,204
+    at the pilot window — and cannot reach `dense_e` at any warmup this project would run;
+    for it `diag_e` is the correct metric and the long comment above `DENSE_METRIC_MAX_MB`
+    is why. The warning is for the arms that could have had it and were configured out of
+    it by a number nobody re-read.
+
+    Lives here rather than in a caller because `choose_metric` is here: the two were in
+    different modules for one day and the copy in `composition_preseason_fit` had no `U_n`
+    term, so it would have promised `dense_e` to an arm that structurally cannot get it.
+    """
+    n_params = n_features + 1 + n_rho + n_units
+    metric = choose_metric(n_params, warmup)
+    print(f"    {n_params:,} parameters, {warmup} warmup draws → {metric}")
+    if metric != "dense_e":
+        needed = DENSE_DRAWS_PER_PARAM * n_params
+        if n_units:
+            print(f"    (expected: {n_units:,} player-season effects put `dense_e` out of "
+                  f"reach at any warmup here, and `diag_e` is the right metric for it)")
+        else:
+            print(f"    /!\\  `diag_e` on this head is ~10x the wall clock of `dense_e` "
+                  f"(treedepth 8-9 against 4 on its own probe). `dense_e` needs warmup >= "
+                  f"{needed:.0f} and this run has {warmup}.")
+    return metric
+
+
 def unit_codes(frame: pd.DataFrame) -> np.ndarray:
     """0-based (player, season) index per row, for an effect shared across a unit's games."""
     return frame.groupby(UNIT_KEYS, sort=True).ngroup().to_numpy()

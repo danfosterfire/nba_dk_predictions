@@ -225,6 +225,7 @@ COMP_PRE = "outputs/predictions/composition_preseason.csv"
 # different reference: 4b quotes `crps_vs_incumbent` and 4c quotes a same-window control, and
 # folding them together would make "the increment" ambiguous on the column name alone.
 COMP_PRE_FIT = "outputs/predictions/composition_preseason_fit.csv"
+COMP_PRE_FIT_C = "outputs/predictions/composition_preseason_fit_covered.csv"
 AABS = "outputs/predictions/availability_absence.csv"
 AABS_I = "outputs/predictions/availability_absence_interaction.csv"
 AABS_L = "outputs/predictions/availability_absence_lambda.csv"
@@ -238,6 +239,9 @@ AABS_R = "outputs/predictions/availability_absence_rolling.csv"
 AABS_M = "outputs/predictions/availability_absence_mixture.csv"
 AABS_MI = "outputs/predictions/availability_absence_mixture_interaction.csv"
 AABS_MR = "outputs/predictions/availability_absence_mixture_rolling.csv"
+AABS_P = "outputs/predictions/availability_absence_population.csv"
+AABS_PR = "outputs/predictions/availability_absence_population_rolling.csv"
+ANP_REC = "outputs/predictions/availability_no_prior_recency.csv"
 #: §5b's block-window arm, rebuilt inside `make availability-regime` as the
 #: control the whole shrinkage comparison is read against.
 SPLICE = "splice8__intercept_workload"
@@ -7997,6 +8001,151 @@ def _preseason_no_prior() -> list[Claim]:
     return C
 
 
+def _availability_population() -> list[Claim]:
+    """`docs/availability-window-plan.md` §15 — two population defects, neither shipping.
+
+    Three families, and the first is what licenses the other two.
+
+    **The controls.** §15a's whole argument is that a figure read pooled is not the figure
+    the head is applied to, and that argument is only readable if the pooled column
+    reproduces the rounds it is being compared against. `mixture` pooled has to match §7c's
+    0.0109 and `betabinom` pooled §7's 0.0201, both from a NEW artifact written by a new
+    round — so a refactor that moved either would fail here rather than quietly rebase the
+    comparison.
+
+    **The sign flip, with both bounds.** The finding is that one interval is clear of zero
+    on each side, so a claim on the point estimates alone would let either half drift into
+    saying the two populations merely differ in level. The CRPS margin is claimed with
+    bounds for the same reason — it is what keeps `mixture` shipped under D1, and if it
+    stopped clearing zero the round's conclusion would change.
+
+    **§15b's two directions.** The bias columns are the measurement, not the CRPS ones: the
+    result is that the roster estimator's bias goes to zero under a recency cut while the
+    all-rows estimator's runs away from it, and that pair is the whole evidence for the
+    cancellation. `graded_share` is claimed because it is the mechanism for the CRPS loss
+    and the prose leans on it.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, artifact: str, actual, label: str, **kw) -> None:
+        C.append(_c(quoted, artifact, actual, label, doc=AWIN, **kw))
+
+    def pop(name: str, population: str, column: str) -> float:
+        return cell(AABS_P, column, arm=name, population=population)
+
+    def rec(estimator: str, recency: str, split: str, column: str) -> float:
+        return cell(ANP_REC, column, analysis="recency_arm", estimator=estimator,
+                    recency=recency, split=split, population="draftable")
+
+    # ── §15a: the controls that license the round ─────────────────────────────
+    for name, population, quoted in (("mixture", "all", "0.01085"),
+                                     ("mixture", "draftable", "0.01998"),
+                                     ("betabinom", "all", "0.02013"),
+                                     ("betabinom", "draftable", "0.01721")):
+        add(quoted, AABS_P,
+            lambda n=name, p=population: pop(n, p, "boundary_tail_error"),
+            f"15a {name} {population} boundary")
+
+    # ── §15a: the sign flip, both populations, both bounds ────────────────────
+    for population, (point, lo, hi) in (("all", ("+0.00891", "+0.00420", "+0.00994")),
+                                        ("draftable", ("−0.00308", "−0.00733",
+                                                       "−0.00210"))):
+        for quoted, column in ((point, "boundary_vs_mixture"),
+                               (lo, "boundary_vs_mixture_lo"),
+                               (hi, "boundary_vs_mixture_hi")):
+            add(quoted, AABS_P,
+                lambda p=population, c=column: pop("betabinom", p, c),
+                f"15a betabinom boundary margin {population} {column}")
+
+    # The CRPS margin is what keeps `mixture` shipped under D1 on the draft pool.
+    for quoted, column in (("+0.04280", "crps_vs_mixture"),
+                           ("+0.00406", "crps_vs_mixture_lo"),
+                           ("+0.08235", "crps_vs_mixture_hi")):
+        add(quoted, AABS_P, lambda c=column: pop("betabinom", "draftable", c),
+            f"15a betabinom CRPS margin draftable {column}")
+    for name, quoted in (("mixture", "8.97296"), ("betabinom", "9.01576")):
+        add(quoted, AABS_P, lambda n=name: pop(n, "draftable", "val_crps"),
+            f"15a {name} draftable CRPS")
+    for name, quoted in (("mixture", "0.09275"), ("betabinom", "0.11311")):
+        add(quoted, AABS_P, lambda n=name: pop(n, "draftable", "val_pit_ks"),
+            f"15a {name} draftable PIT KS")
+    for name, body, shoulder in (("mixture", "0.03861", "0.02006"),
+                                 ("betabinom", "0.05426", "0.00797")):
+        for quoted, column in ((body, "body_error"), (shoulder, "shoulder_error")):
+            add(quoted, AABS_P, lambda n=name, c=column: pop(n, "draftable", c),
+                f"15a {name} draftable {column}")
+
+    # ── §15a: the ROLLING half — the sign replicates, the size does not ───────
+    # Claimed with both bounds on both populations, because the round's whole verdict is
+    # that two intervals clear zero in opposite directions and that this holds at a second
+    # reading. The draftable margin is also the number the prose says NOT to treat as an
+    # effect size, so it is pinned at both readings to keep the 6.3x shrink visible.
+    def roll(name: str, population: str, column: str) -> float:
+        return cell(AABS_PR, column, arm=name, population=population)
+
+    for population, (point, lo, hi) in (("all", ("+0.00786", "+0.00752", "+0.00821")),
+                                        ("draftable", ("−0.00049", "−0.00086",
+                                                       "−0.00012"))):
+        for quoted, column in ((point, "boundary_vs_mixture"),
+                               (lo, "boundary_vs_mixture_lo"),
+                               (hi, "boundary_vs_mixture_hi")):
+            add(quoted, AABS_PR,
+                lambda p=population, c=column: roll("betabinom", p, c),
+                f"15a rolling betabinom boundary margin {population} {column}")
+    for quoted, column in (("+0.02864", "crps_vs_mixture"),
+                           ("+0.00257", "crps_vs_mixture_lo"),
+                           ("+0.05156", "crps_vs_mixture_hi")):
+        add(quoted, AABS_PR, lambda c=column: roll("betabinom", "draftable", c),
+            f"15a rolling betabinom CRPS margin draftable {column}")
+    # The low-tail sign flip, which is the mechanism, at the second reading.
+    for population, quoted in (("all", "−0.01483"), ("draftable", "+0.01843")):
+        add(quoted, AABS_PR, lambda p=population: roll("mixture", p, "err_below_10"),
+            f"15a rolling mixture P(GP<10) error {population}")
+    # The level ratio the prose contrasts against validation's 1.84x.
+    for population, quoted in (("draftable", "0.02007"), ("all", "0.01842")):
+        add(quoted, AABS_PR,
+            lambda p=population: roll("mixture", p, "boundary_tail_error"),
+            f"15a rolling mixture boundary {population}")
+    add("1.09", AABS_PR,
+        lambda: roll("mixture", "draftable", "boundary_tail_error")
+        / roll("mixture", "all", "boundary_tail_error"),
+        "15a rolling boundary level ratio draftable/pooled", tol=0.005)
+    add("2,871", AABS_PR, lambda: roll("mixture", "all", "n_scored"),
+        "15a rolling pooled rows")
+    add("2,537", AABS_PR, lambda: roll("mixture", "draftable", "n_scored"),
+        "15a rolling draftable rows")
+
+    # ── §15b: the two biases running in opposite directions ───────────────────
+    for estimator, recency, split, quoted in (
+            ("roster", "5", "validation", "+0.0642"),
+            ("all", "5", "validation", "−10.0796"),
+            ("all", "all", "validation", "−0.3646"),
+            ("roster", "all", "validation", "+6.4056"),
+            ("roster", "10", "validation", "+3.1228"),
+            ("roster", "all", "rolling", "+1.7935"),
+            ("roster", "10", "rolling", "+0.9940"),
+            ("roster", "5", "rolling", "+0.1523"),
+            ("all", "10", "validation", "−3.7285")):
+        add(quoted, ANP_REC,
+            lambda e=estimator, r=recency, s=split: rec(e, r, s, "bias"),
+            f"15b {estimator}/{recency} {split} bias")
+
+    # The roster arm's rolling margin degrading is the falsifier firing.
+    for recency, (point, lo, hi) in (("all", ("−0.3486", "−0.6860", "−0.0183")),
+                                     ("5", ("+0.2753", "−0.1923", "+0.7279"))):
+        for quoted, column in ((point, "crps_vs_shipped"), (lo, "crps_vs_shipped_lo"),
+                               (hi, "crps_vs_shipped_hi")):
+            add(quoted, ANP_REC,
+                lambda r=recency, c=column: rec("roster", r, "rolling", c),
+                f"15b roster/{recency} rolling {column}")
+    # `graded_share` is the mechanism the CRPS loss runs through.
+    for recency, quoted in (("all", "0.7926"), ("5", "0.5524")):
+        add(quoted, ANP_REC,
+            lambda r=recency: rec("roster", r, "rolling", "graded_share"),
+            f"15b roster/{recency} rolling graded_share")
+    return C
+
+
 def _composition_preseason() -> list[Claim]:
     """`docs/preseason-plan.md` session 4b — the composition's prior share.
 
@@ -8189,6 +8338,105 @@ def _composition_preseason_fit() -> list[Claim]:
     return C
 
 
+def _composition_preseason_fit_covered() -> list[Claim]:
+    """`docs/preseason-plan.md` session 4d — the same arm at the window the head fits.
+
+    Claimed separately from 4c rather than replacing it, because the two rounds are
+    different windows and the doc keeps both: 4c is the pilot and its ~45 figures stay
+    audited from the unlabelled artifact, which is the whole reason this round's stem is
+    namespaced.
+
+    Four families. **The gate**, with both bounds, since the round's verdict is an interval.
+    **The retention at both units**, which is the number the pilot→full-window comparison
+    turns on and which nothing else derives. **`window_cost` and `ship_margin`**, because
+    they are what the third arm was fitted for and they are the only figures a ship decision
+    reads — and `ship_margin` is quoted at both units where the gate is quoted at one.
+    **The arm cells** the prose contrasts directly: the un-fitted blended floor against the
+    fitted shipped head, and the two directions rho moves.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, actual, label: str, **kw) -> None:
+        C.append(_c(quoted, COMP_PRE_FIT_C, actual, label, doc=PRESEASON, **kw))
+
+    def arm(name: str, unit: str, population: str, column: str) -> float:
+        return cell(COMP_PRE_FIT_C, column, analysis="arm", arm=name, unit=unit,
+                    population=population)
+
+    def margin(comparison: str, unit: str, column: str,
+               population: str = "draftable") -> float:
+        return cell(COMP_PRE_FIT_C, column, analysis="margin", comparison=comparison,
+                    unit=unit, population=population)
+
+    # ── The gate, and the increment that grew ─────────────────────────────────
+    for comparison, unit, (point, lo, hi) in (
+            ("fitted_increment", "player_game",
+             ("−0.23418", "−0.24551", "−0.22314")),
+            ("fitted_increment", "player_season",
+             ("−17.13948", "−22.06742", "−11.97281")),
+            ("floor_increment", "player_season",
+             ("−6.36419", "−15.31395", "+2.68556")),
+            ("window_cost", "player_game", ("−0.01991", "−0.02515", "−0.01498")),
+            ("window_cost", "player_season", ("−0.13348", "−1.15660", "+0.84972")),
+            ("ship_margin", "player_game", ("−0.25409", "−0.26520", "−0.24315")),
+            ("ship_margin", "player_season",
+             ("−17.27296", "−22.32569", "−11.92164"))):
+        for quoted, column in ((point, "crps_delta"), (lo, "ci_lo"), (hi, "ci_hi")):
+            add(quoted, lambda c=comparison, u=unit, col=column: margin(c, u, col),
+                f"4d {comparison} {unit} {column}")
+
+    # The per-game floor increment is quoted as a bare point estimate — the prose contrasts
+    # it against the pilot's in a table of point estimates, and its INTERVAL is only
+    # load-bearing at the season unit, where the round's finding is that it spans zero.
+    add("−0.21006", lambda: margin("floor_increment", "player_game", "crps_delta"),
+        "4d floor_increment player_game point estimate")
+
+    # ── The retention, at both units ──────────────────────────────────────────
+    for unit, quoted, tol in (("player_game", "1.11485", 0.0005),
+                              ("player_season", "2.69311", 0.005)):
+        add(quoted, lambda u=unit: cell(COMP_PRE_FIT_C, "retention", analysis="retention",
+                                        unit=u, population="draftable"),
+            f"4d retention at the {unit} unit", tol=tol)
+
+    # ── The ladder at the head's own selection unit, on the draft pool ────────
+    for name, crps, r2, mae, ks in (
+            ("floor_base_full_window", "4.66767", "0.43891", "6.37591", "0.04861"),
+            ("floor_base", "4.64212", "0.43922", "6.37499", "0.03831"),
+            ("base_full_window", "4.48615", "0.46821", "6.30560", "0.04713"),
+            ("base", "4.46624", "0.46923", "6.30314", "0.04391"),
+            ("floor_preseason", "4.43206", "0.48163", "6.32743", "0.05349"),
+            ("preseason", "4.23206", "0.51899", "5.97594", "0.04557")):
+        for quoted, column in ((crps, "crps"), (r2, "r2"), (mae, "mae"), (ks, "pit_ks")):
+            add(quoted, lambda n=name, c=column: arm(n, "player_game", "draftable", c),
+                f"4d {name} player_game draftable {column}")
+
+    # rho moves in OPPOSITE directions on the two axes, which is the round's third finding.
+    for name, quoted in (("base", "0.11479"), ("preseason", "0.10286"),
+                         ("base_full_window", "0.12592")):
+        add(quoted, lambda n=name: arm(n, "player_game", "draftable", "rho"),
+            f"4d fitted dispersion, {name}")
+
+    # ── The season unit: the mean moves and the spread does not ──────────────
+    for name, crps, mae, sd in (
+            ("base", "171.31431", "199.34833", "59.57738"),
+            ("base_full_window", "171.44780", "200.50048", "61.46343"),
+            ("floor_preseason", "175.06503", "203.64302", "60.14598"),
+            ("preseason", "154.17484", "181.64455", "57.63522")):
+        for quoted, column in ((crps, "crps"), (mae, "mae"), (sd, "predictive_sd")):
+            add(quoted, lambda n=name, c=column: arm(n, "player_season", "draftable", c),
+                f"4d {name} player_season draftable {column}")
+    add("17.70", lambda: (arm("base", "player_season", "draftable", "mae")
+                          - arm("preseason", "player_season", "draftable", "mae")),
+        "4d season-total MAE gain against the control", tol=0.02)
+
+    # The cut as a SHARE of the increment — the figure that separates this round from P3's,
+    # and a ratio nothing else derives.
+    add("8.5", lambda: 100.0 * margin("window_cost", "player_game", "crps_delta")
+        / margin("fitted_increment", "player_game", "crps_delta"),
+        "4d the coverage cut as a percentage of the increment", tol=0.1)
+    return C
+
+
 def _build() -> tuple[Claim, ...]:
     """Every claim, in doc order. One builder per doc — the registry is long enough that
     a single function made it hard to see which doc a section belonged to.
@@ -8202,9 +8450,11 @@ def _build() -> tuple[Claim, ...]:
                  + _minutes_window() + _availability_window()
                  + _availability_regime() + _availability_exchangeability()
                  + _availability_absence() + _availability_absence_mixture()
-                 + _availability_no_design_level() + _preseason()
+                 + _availability_no_design_level() + _availability_population()
+                 + _preseason()
                  + _preseason_no_prior() + _composition_preseason()
-                 + _composition_preseason_fit())
+                 + _composition_preseason_fit()
+                 + _composition_preseason_fit_covered())
 
 
 CLAIMS: tuple[Claim, ...] = _build()
