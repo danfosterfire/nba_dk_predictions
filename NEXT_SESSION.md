@@ -28,6 +28,14 @@ when written and wrong the moment the head gained a block. The rule now stated i
 docstring is the general one: *anything that scores the shipped head goes through
 `head_design`; anything that fits its own model on those rows keeps `build_design`.*
 
+**And one correction, because it is the kind that reads as true.** Session 4b was first
+written up saying the composition's `w_share` "is not a feature" and enters the head twice. It
+enters **three** ways — `OWN = logit_share_lag1` is `logit(w_share)` and is in every variant's
+feature list. The two a coefficient cannot reach are the **offset** (`logit_prior`) and the
+**allocation order**, and those are what the round measures. The floor gate is unaffected and
+is in fact cleaner than the original claim: `FloorComposition` sets `eta = 0`, so it switches
+the feature route off and isolates exactly the two unreachable ones. Fixed in `e017c7f`.
+
 ## Do NOT re-decide these
 
 1. **`sim.minutes.player_season_sigma` stays 0.450.** Its train grid is the composition scored
@@ -56,6 +64,29 @@ and it was at that scale before this round.
 
 ## The work
 
+**Start with item 1 unless you want the chain running in the background all session.** It is
+the only item whose result changes what the chain should be run *on*, and it is ~1 h against
+the chain's several.
+
+### 0. ⚙️ Fit the composition's 4b arm — the recommended start
+`make composition-preseason` established that blending a preseason minutes share into
+`w_share` is worth **−0.19972 [−0.21661, −0.18225]** CRPS minutes per player-game with nothing
+fitted. What is missing is the fit: a **pilot-window** `stan-composition` run of the
+blended-offset arm at `k = 80`, against a same-window control, on the pattern
+`composition_effects` already uses (a `base` arm at the same window, never the full-window
+incumbent).
+
+The floor is a screen and not a substitute — `beta` can correct an offset the floor cannot, so
+the increment could shrink under the posterior, or grow as P3's own did. That is the open
+question and it is one fit.
+
+Three things not to re-derive:
+- the route that pays is the **offset**, not the ordering (103% against 3.75%);
+- **nothing here needs centring** — `logit_prior` is a within-team ratio `w_k / tail_k`, so the
+  common multiplicative compression that forced P3's centring cancels exactly;
+- `k = 80` comes from an inner carve of the fitting half. Validation prefers 160; using it
+  would be selecting on the split the arm is scored against.
+
 ### 1. The chain is stale — P5, and it is the only large item left
 `make simulate-season`, `weekly-scores`, `bracket`, `draft-sim`, `strategy-sweep`. Hours of
 compute. This is what would price the availability block **in the contest**, which P2
@@ -65,30 +96,19 @@ change reaching the draw as shape rather than order can be a measured null there
 Note the chain now has *two* pending head changes rather than one — the availability and
 minutes blocks — plus a re-read σ that did not move.
 
-### 2. ✅ Session 4b — done, and it earned the composition a Stan fit
-`make composition-preseason` passes at the head's own selection unit: **−0.19972 [−0.21661,
-−0.18225]** CRPS minutes per player-game on the draft pool, with **nothing fitted**. What is
-left is the fit itself — a pilot-window `stan-composition` run of the blended-offset arm, at
-`k = 80`. The floor is a screen and not a substitute: `beta` can correct an offset the floor
-cannot, so the increment could shrink under the posterior (P3's own increment *grew*).
-
-Two things not to re-derive: the route that pays is the **offset**, not the ordering (103%
-against 3.75%), and **nothing here needs centring** — `logit_prior` is a within-team ratio, so
-the compression that forced P3's centring cancels exactly.
-
-### 3. Session 6b — the five surviving rate heads' arms
+### 2. Session 6b — the five surviving rate heads' arms
 `ast`, `fga`, `stl`, `tov`, `reb`, plus `ftm|fta`. A session P1 *added*. P4(b) is weak
 corroboration from a disjoint population: the same five-plus-the-mix shape showed up there on
 players with no prior season at all.
 
-### 4. Two open items on the availability head, both in `potential-to-dos.md`
+### 3. Two open items on the availability head, both in `potential-to-dos.md`
 - **Item 9** — the head's boundary defect on the draft pool, still unmeasured. It asks whether
   §7's mixture selection survives being read on the population the head serves.
 - **Item 11** — new. The no-design availability rate is pooled over a population it is never
   applied to (0.5447 realized against 0.1571). Worth −0.3486 CRPS at 13 of 19 rolling origins
   and it fails validation for a reason the item states as a checkable hypothesis.
 
-### 5. Small, un-scheduled
+### 4. Small, un-scheduled
 The `make stan-*` metric artifacts still carry no record of which code version wrote them,
 which is what let the wrong availability arm reach the docs on 2026-08-13. `posteriors.py`
 persists `n_features` and `preseason_columns` for exactly this.
