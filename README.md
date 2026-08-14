@@ -427,6 +427,19 @@ the composition does not, and it is worth 7.75 CRPS minutes at the unit the two 
 at. Giving the composition its own preseason arm is `docs/preseason-plan.md`'s session 4b, and
 this is now the strongest argument for running it.
 
+✅ **That arm has now been measured and fitted, at the pilot window, and it is worth more than
+the gap.** The preseason enters this head as a blend into `w_share` rather than as a column on
+`beta`, because `w_share` also reaches the **offset** and the **allocation order**, which no
+coefficient touches. `make composition-preseason` scored it on the head's own no-fit floor
+(**−0.19972 [−0.21661, −0.18225]** CRPS minutes per player-game, nothing fitted) and `make
+composition-preseason-fit` then fitted it against a same-window control: **−0.20883 [−0.22129,
+−0.19693]**, retention **1.040**, so the increment *grows* under the posterior. At the season
+unit — the unit this whole comparison lives at — the floor's tie becomes **−14.62649 [−19.48503,
+−9.54922]** once the head is fitted, through the **mean** rather than the spread. It is not
+shipped: everything is 2018-19 onward and the full window needs P3's coverage cut, since the
+panel starts at 2004-05 and this head fits from 1996-97. `docs/preseason-plan.md` sessions 4b
+and 4c.
+
 **So the injection ships**, as `sim.minutes.player_season_sigma = 0.450`, applied by
 `minutes_unification.rehydrate_composition` — a consumer gets the effect by loading the head
 rather than by remembering to apply it, and 0.0 recovers the un-injected head exactly.

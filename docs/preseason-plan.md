@@ -1159,19 +1159,25 @@ different mechanism than the one it named.
    3.75% and is the expensive half; it is recorded as a near-null rather than adopted.
 3. **`k = 80`, from the fitting half.** Validation prefers 160 and reading that would be
    selecting on the split the arm is scored against.
-4. **The season unit is a tie and that is expected.** A better offset cannot manufacture
-   season-level heterogeneity; `sim.minutes.player_season_sigma` is the parameter for that,
-   and it is unaffected by anything here.
+4. ~~**The season unit is a tie and that is expected.**~~ ⚠️ **Half-withdrawn 2026-08-13 by
+   session 4c.** A better offset cannot manufacture season-level heterogeneity —
+   `sim.minutes.player_season_sigma` is the parameter for that, and it is unaffected by
+   anything here. That reason stands and 4c confirms it from the other side, since the
+   fitted arm's season predictive sd *narrows* (56.25 → 55.31). But the tie does not: once
+   the head is **fitted** the same contrast reads **−14.62649 [−19.48503, −9.54922]**, 2.75×
+   the floor's estimate, entirely through the **mean**. The floor could not see it because
+   `eta = 0` switches off the feature route, and that gap compounds over ~82 games.
 5. **The compression that forced P3's centring does not apply to this head**, because the
    offset is a within-team ratio. Recorded so that a future round does not reach for centring
    here by analogy.
 
 ### What session 4b does not settle
 
-**The fit itself.** The floor is a screen, not a substitute: `beta` can correct an offset the
-floor cannot, so the increment could shrink under a fitted head — the mirror of P3's finding
-that its own increment *grew* when integrated over `beta`. That fit is a pilot-window
-`stan-composition` run and is the natural next step.
+~~**The fit itself.**~~ ✅ **Closed 2026-08-13 by session 4c, and the increment grew.** The
+floor is a screen, not a substitute: `beta` can correct an offset the floor cannot, so the
+increment could have shrunk under a fitted head. It did the mirror of that instead, as P3's
+own did — retention **1.040** per player-game, and **2.75×** at the season unit, where the
+floor's tie does not survive the fit at all.
 
 **Whether it survives the full window.** Everything here is at 2018-19 onward. The pilot is
 what P3 specified and what `potential-to-dos.md` item 1 measured as ~6× cheaper, but the
@@ -1179,6 +1185,151 @@ shipped head fits from 1996-97 and the preseason panel starts at 2004-05, so a f
 version needs the coverage cut P3's head needed.
 
 **What it is worth in the contest**, which is P5 and costs the chain.
+
+## Session 4c — the composition's arm under the posterior
+
+`make composition-preseason-fit` (`src/models/composition_preseason_fit.py`) →
+`composition_preseason_fit.csv`, plus a per-arm checkpoint and a diagnostics log. Two
+pilot-window `stan-composition` fits of the **shipped** variant, ~15 min each, closing the
+one thing 4b named as unsettled: *"the floor is a screen, not a substitute — `beta` can
+correct an offset the floor cannot, so the increment could shrink under a fitted head."*
+
+### The bar, stated before the run
+
+Frozen in `composition_preseason_fit.report` as code rather than as prose, for the reason P2
+records: a bar re-read after seeing which side an arm landed on is not a bar.
+
+> The blended arm beats the **same-window control** at the **per-player-game** unit on the
+> **draftable** population, with a paired-bootstrap interval clear of zero, **and** the team
+> constraint stays exact (`team_sum_abs_error == 0` on every arm).
+
+That is the screen's own bar read one layer up — the unit `stan_composition` selects on and
+the population P1 decision 5 fixed. Two things are reported beside it and deliberately **not**
+barred: the season unit, where 4b found a tie and where a better offset *cannot* manufacture
+season-level spread, and the **retention** — the fitted increment as a fraction of the floor
+increment. No prior for the retention was stated, so no threshold on it is either.
+
+### The arms, and the two routes a fit opens that the floor could not
+
+| arm | `w_share` on the offset | allocation order | variant |
+|---|---|---|---|
+| `base` | incumbent | incumbent | `betabinom_ot_graded` |
+| `preseason` | blended at `k = 80` | **incumbent** | `betabinom_ot_graded` |
+
+`base` is a **same-window control** and never the full-window incumbent —
+`composition_effects`' rule, because a pilot-window arm ordering read against a full-window
+baseline is uninterpretable. `route = offset_only` is 4b decision 2 and `k = 80` is decision
+3; neither is re-derived here, and validation's own preference for `k = 160` stays unread
+because it is the split the arm is scored against.
+
+**Both frames' own no-fit floors are refitted in the same run at the same 200 predictive
+draws.** 4b scored at 120, so quoting a retention across the two artifacts would put the draw
+budget inside the ratio. Here it is a within-artifact quantity.
+
+⚠️ **A fitted arm gives the blend two routes the floor switched off**, and they are why the
+retention has somewhere to go on either side of 1.0. `FloorComposition` sets `eta = 0`, so
+4b's screen isolated the offset and the ordering alone. Under a fit, `OWN = logit_share_lag1`
+is the logit of the *blended* share and a coefficient does modulate it; and `RHO_BIN_COL` is
+`w_share`, so the graded dispersion's bin edges are quantiles of the blended column too —
+measured at **25.5%** of validation rows changing bin. Both are the right behaviour, since
+the bins grade on whatever column orders the sequence and sets the offset. The consequence
+is that the fitted increment is not the floor increment plus a coefficient.
+
+### The gate passes, and the increment *grows* under the posterior
+
+Two fits, 41 minutes, both clean: max R̂ **1.0047**, **0** divergences, **0** treedepth
+saturation, ESS bulk 4,206 and 4,980. On the draftable population:
+
+| arm | kind | per player-game CRPS | R² | MAE | PIT KS | ρ |
+|---|---|---|---|---|---|---|
+| `floor_base` | floor | 4.62079 | 0.43980 | 6.37115 | 0.02649 | — |
+| `base` **(control)** | fitted | 4.44188 | 0.47096 | 6.28675 | 0.03874 | 0.10144 |
+| `floor_preseason` | floor | **4.41998** | 0.48201 | 6.32305 | 0.04969 | — |
+| **`preseason`** | fitted | **4.23305** | **0.51619** | **6.03748** | 0.04647 | 0.09129 |
+
+**The bar clears.** The fitted increment is **−0.20883 [−0.22129, −0.19693]** CRPS minutes
+per player-game on the draft pool, the team constraint holds exactly, and the floor
+increment measured on the same frames at the same 200 draws is **−0.20081 [−0.21697,
+−0.18411]**. **Retention 1.040** — so `beta` did not absorb the better offset, it kept it and
+added a little, which is P3's direction (its own increment went −4.789 → −5.911 under the
+posterior) rather than the shrink the section above was written to allow for.
+
+**The control replicates an independent run.** Pooled, `base` reads **4.45596** against
+`composition_effects`' separately-run pilot `base` at **4.45614** — four decimals, across a
+doubled iteration count and a different driver. That is what makes the rest of the table
+readable as a block effect rather than as run-to-run noise.
+
+**And 4b's "suggestive" cross-artifact comparison is now a within-artifact one, and it
+holds.** The *un-fitted* blended floor (**4.41998**) beats the *fitted* incumbent-offset arm
+(**4.44188**) on the same rows at the same draw budget. A preseason reading of a player's
+minutes share, with no sampler involved, is worth more on this head than fitting 25
+coefficients to the prior-season one.
+
+### The season unit reverses 4b decision 4 — and the reason it gave was right
+
+| arm | season CRPS | MAE | bias | predictive sd |
+|---|---|---|---|---|
+| `floor_base` | 182.06350 | 208.66527 | −6.20158 | 57.47894 |
+| `base` | 172.02457 | 198.60990 | −6.65162 | 56.24912 |
+| `floor_preseason` | 176.74770 | 203.86927 | −10.65625 | 56.62615 |
+| **`preseason`** | **157.39808** | **183.55718** | −7.85660 | 55.30525 |
+
+4b found the season unit a **tie** (−5.31580 [−14.44243, **+3.83015**] here, reproducing its
+screen) and said so was expected, *"a better offset cannot manufacture season-level
+heterogeneity."* Under a fit the same contrast is **−14.62649 [−19.48503, −9.54922]** —
+decisive, at **2.75×** the floor's point estimate.
+
+**The stated reason survives; the conclusion drawn from it does not.** The predictive spread
+does not widen — it *narrows*, 56.25 → 55.31 — so no season-level heterogeneity was
+manufactured and `sim.minutes.player_season_sigma` is still the only parameter for that. What
+moves is the **mean**: season-total MAE falls **15.05** minutes against the fitted control.
+The floor could not show it because `FloorComposition` sets `eta = 0`, which switches off
+precisely the route that carries it — `OWN = logit_share_lag1` is the logit of the *blended*
+share, and a per-game offset improvement that a coefficient re-weights compounds over ~82
+games in a way an un-fitted one does not. **This is the round's main finding: the floor is a
+conservative screen at the per-game unit and a badly misleading one at the season unit.**
+
+### What it costs, and what else moved
+
+- **Calibration, slightly.** PIT KS **0.03874 → 0.04647** draftable and 0.03084 → 0.03484
+  pooled — better-fitting and slightly worse-calibrated, the same shape P3's own centred arm
+  showed on the marginal head.
+- **The fitted dispersion falls**, ρ **0.10144 → 0.09129** (~10%). A better offset leaves
+  less residual overdispersion for the beta-binomial to carry, which is the mechanism
+  working as specified rather than a separate result.
+- **Fitting is still worth something on top of the better offset**, which is the control the
+  screen could not run: `fit_value_preseason` is **−0.18693 [−0.19713, −0.17651]** per
+  player-game, against `fit_value_base`'s −0.17891. The arm has not improved the floor by
+  making the head redundant.
+- The `beta_binomial_lpmf: First prior sample size parameter[k] is 0` warmup rejections fire
+  in both arms. They are **pre-existing** and belong to the shipped head, not to the blend —
+  `minutes-composition-plan.md`, "Two warmup rejection classes", measured them at 28 per fit
+  and equal between arms.
+
+### What session 4c decides
+
+1. **The blended offset survives the posterior and the arm earns the full window.** The bar
+   was stated in code before the run and clears on both halves.
+2. **The retention is 1.040 per player-game**, so the screen was neither optimistic nor a
+   substitute — it was accurate at the unit it was read at.
+3. **4b decision 4 is half-withdrawn.** The season unit is *not* a tie once the head is
+   fitted; the argument that a better offset cannot manufacture spread stands and is
+   confirmed by the predictive sd going the other way.
+4. **`FloorComposition` is a conservative screen per game and an unreliable one per season.**
+   Recorded for the next round that reaches for it: a floor whose mean is the offset alone
+   cannot see anything a coefficient re-weights, and that gap compounds with aggregation.
+
+### What session 4c does not settle
+
+**The full window.** Everything here is 2018-19 onward. The shipped head fits from 1996-97
+and the preseason panel starts at 2004-05, so a full-window version needs the coverage cut
+P3's head needed — and P3 priced that cut at 1.19 CRPS minutes *before any preseason column
+existed*, which is a quarter of its increment. That is the next fit, at 9.92 h.
+
+**What it is worth in the contest**, which is P5 and costs the chain. Note this arm reaches
+the draw as a change to the *allocation mean*, which is `order` rather than pure `shape` —
+so §7l's standing precedent for a measured null there applies less cleanly than it does to
+the availability block.
 
 ## Why preseason data should help — and where it plausibly won't
 
@@ -1376,6 +1527,7 @@ decision registry entries, and register this doc's built artifacts in `make docs
 | 6 (2026-08-13) 📝 | model cards, the documentation pass, and the two production docs P5 owed | — |
 | 7 (2026-08-14) ⚙️ | no-prior ladder + rookie rate prior — **(a) fails, (b) clears on 5 of 8 rate targets**, and neither ships | P4 |
 | 4b (2026-08-14) ✅ | the composition's preseason arm at the pilot window — **passes at the head's own unit**, and it is the OFFSET rather than the ordering | P3 |
+| 4c (2026-08-13) ✅ | 4b's arm **fitted** — the increment survives the posterior and grows (retention 1.040), and the season unit's tie does not | P3 |
 | 6b | the five surviving rate heads' arms — a session P1 *added* | P1→P2 |
 | 8 | simulator gates, strategy sweep — the σ re-read and the other windows landed early, 2026-08-14 | P5 |
 

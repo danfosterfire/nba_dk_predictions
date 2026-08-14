@@ -453,6 +453,49 @@ stan:
       # run that is worse than that, not to refuse the one the plan specifies.
       max_extrapolated_hours: 24
 
+    # ── Session 4b's FIT — `make composition-preseason-fit`,
+    #    src/models/composition_preseason_fit.py ──
+    # `make composition-preseason` measured a preseason-blended `w_share` on this head's
+    # own NO-FIT floor and it passed decisively (-0.19972 [-0.21661, -0.18225] CRPS minutes
+    # per player-game on the draft pool). The floor is a screen and not a substitute —
+    # `beta` can correct an offset the floor cannot — so this is the fit that says whether
+    # the increment survives the posterior. Its own target for the same two reasons
+    # `effects` has one: `stan_composition_*.csv` is the incumbent's record and
+    # `make docs-audit` re-derives eleven figures from it, and `composition_preseason`
+    # itself is 48 s of numpy with no CmdStan, which is the property that makes the screen
+    # worth re-running.
+    preseason:
+      # The PILOT window, per P3 decision 3, and it starts well inside the preseason
+      # panel's coverage (2004-05) so the two constraints agree here. `base` is a
+      # SAME-WINDOW control, never the full-window incumbent.
+      first_season: "2018-19"
+      # `w' = omega*pre + (1 - omega)*w_share` with `omega = m / (m + blend_k)` over
+      # preseason minutes. Selected on an inner carve of the FITTING half (interior at
+      # 4.44562 against 4.49481 at 40 and 4.46834 at 160); validation's own optimum is 160,
+      # one grid step away, and reading it would be selecting on the split the arm is
+      # scored against. `blend_k -> inf` is the incumbent exactly.
+      blend_k: 80
+      # `w_share` reaches the head as the offset AND as the allocation order, and the
+      # attribution found the offset carrying 103% of the screen's margin against the
+      # ordering's 3.75%. The ordering is also the expensive half to change — it permutes
+      # the sequential decomposition and therefore the whole likelihood's block structure —
+      # so only the offset is fitted. `both` and `order_only` are the other two settings.
+      route: offset_only
+      arms: [base, preseason]
+      # ⚠️ FULL LENGTH, and 500 IS NOT A CHEAPER VERSION OF IT — it is a MORE expensive one.
+      # `choose_metric` grants `dense_e` only when warmup >= 20 x parameters, and this arm
+      # has 25 features + intercept + 4 dispersion bins = 30, so the threshold is exactly
+      # 600 warmup draws. At 500 the head silently falls back to `diag_e`, where this
+      # module's own probe measured NUTS held at treedepth 8-9 (645s) against treedepth 4
+      # under `dense_e` (65s). Measured here: a first attempt at 500 ran 32 minutes without
+      # completing its 500 warmup draws, against `composition_effects`' 880s for this same
+      # arm at this same window for the WHOLE 500+500 fit under `dense_e`. The `effects`
+      # block above sits under the same cliff and is the reason this comment is here rather
+      # than a bare number. Matches `stan.warmup`/`stan.samples`, which is what
+      # `stan_composition.sweep` itself runs the shipped ladder at.
+      warmup: 1000
+      samples: 1000
+
 # ── The simulation and drafting layer (src/models/posteriors.py, src/sim/) ────
 # `docs/simulations-plan.md` specifies the whole block. Only the keys a built module
 # actually reads live here — config nothing reads is config that drifts. The rest

@@ -159,6 +159,27 @@ def frame_at(cfg: dict, pre: pd.DataFrame, k: float, first_season: str,
     return frame[frame["season"] >= first_season].reset_index(drop=True)
 
 
+def season_start_roster(cfg: dict) -> set[tuple[str, int]]:
+    """`{(season, player_id)}` for the draft pool — P1 decision 5's population.
+
+    One definition, shared with `composition_preseason_fit`: every preseason figure in this
+    round is quoted on the season-start rosters, and two modules deriving that set from the
+    same three inputs by hand is how the two rounds would come to disagree about which rows
+    they are quoting.
+    """
+    from src.eda.preseason_value import attach_season_start_roster
+
+    features_dir = Path(cfg["data"]["features_dir"])
+    window_games = int(cfg.get("features", {}).get("team_context", {})
+                       .get("roster_window_games", 10))
+    rows = attach_season_start_roster(
+        pd.read_parquet(features_dir / "preseason.parquet",
+                        columns=["season", "player_id"]),
+        list(cfg["data"]["seasons"]), cfg["data"]["raw_dir"], window_games)
+    return {(s, p) for s, p, on in zip(rows["season"], rows["player_id"],
+                                       rows["on_season_start_roster"]) if on > 0}
+
+
 def season_totals(samples: np.ndarray, frame: pd.DataFrame
                   ) -> tuple[np.ndarray, pd.DataFrame]:
     """Player-season totals per draw, and the unit keys they belong to.
@@ -251,8 +272,7 @@ def score_arm(train: pd.DataFrame, val: pd.DataFrame, k: float, roster: set,
     return rows
 
 
-def per_row_crps(train: pd.DataFrame, val: pd.DataFrame, seed: int = SEED
-                 ) -> tuple[pd.Series, pd.Series]:
+def crps_series(samples: np.ndarray, val: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
     """`(player-game CRPS, player-season CRPS)` for one arm, **indexed by row identity**.
 
     Returned rather than folded into `score_arm` because a paired interval needs the rows
@@ -264,9 +284,12 @@ def per_row_crps(train: pd.DataFrame, val: pd.DataFrame, seed: int = SEED
     Subtracting them positionally would pair each player-game against a different one and
     return a plausible interval around a meaningless difference. `paired` aligns on the
     index and asserts the two arms cover the same rows.
+
+    Takes the draws rather than a `(train, val)` pair so that `composition_preseason_fit`
+    can hand it a **fitted** head's predictive on the same footing as the floor's. The two
+    rounds must measure the same functional of whatever draws they are given, or "the
+    increment shrank under the posterior" compares two estimators rather than two heads.
     """
-    floor = FloorComposition(PREDICTIVE_SAMPLES).fit(train)
-    samples = floor.predict_samples(val, seed)
     totals, units = season_totals(samples, val)
     realized = (val.groupby(["player_id", "season"], as_index=False)["y"].sum()
                 .rename(columns={"y": "realized"}))
@@ -281,6 +304,13 @@ def per_row_crps(train: pd.DataFrame, val: pd.DataFrame, seed: int = SEED
         index=pd.MultiIndex.from_arrays([units["player_id"], units["season"]],
                                         names=["player_id", "season"]))
     return game.sort_index(), season.sort_index()
+
+
+def per_row_crps(train: pd.DataFrame, val: pd.DataFrame, seed: int = SEED
+                 ) -> tuple[pd.Series, pd.Series]:
+    """`crps_series` for the FLOOR fitted on `train` — this round's only estimator."""
+    floor = FloorComposition(PREDICTIVE_SAMPLES).fit(train)
+    return crps_series(floor.predict_samples(val, seed), val)
 
 
 def paired(arm: pd.Series, reference: pd.Series, mask: pd.Index | None = None,
@@ -301,13 +331,12 @@ def paired(arm: pd.Series, reference: pd.Series, mask: pd.Index | None = None,
 
 
 def run(cfg: dict) -> dict[str, Path]:
-    from src.eda.preseason_value import attach_season_start_roster, covered_seasons
+    from src.eda.preseason_value import covered_seasons
 
     features_dir = Path(cfg["data"]["features_dir"])
     eda_dir = Path(cfg["evaluation"].get("eda_dir", "outputs/eda"))
     out_dir = Path(cfg["evaluation"]["predictions_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
-    seasons = list(cfg["data"]["seasons"])
     comp_cfg = cfg.get("stan", {}).get("composition", {})
     # **Not the head's own `first_season`, deliberately.** The shipped composition fits from
     # 1996-97 and the preseason panel begins at 2004-05, so inheriting that window would put
@@ -318,8 +347,6 @@ def run(cfg: dict) -> dict[str, Path]:
     first_season = str(comp_cfg.get("preseason_first_season", PILOT_FIRST_SEASON))
     test_seasons = int(cfg.get("features", {}).get("availability", {})
                        .get("test_seasons", 2))
-    window_games = int(cfg.get("features", {}).get("team_context", {})
-                       .get("roster_window_games", 10))
 
     print("Composition preseason — does a preseason reading improve the PRIOR SHARE?")
     print(f"  the head's own no-fit floor, so no CmdStan and no fit of the head.")
@@ -330,13 +357,7 @@ def run(cfg: dict) -> dict[str, Path]:
                          f"preseason panel's first covered season {min(covered)} — every "
                          f"arm would carry a structural zero on the early rows")
     pre = preseason_share(pd.read_parquet(features_dir / "preseason.parquet"))
-
-    roster_rows = attach_season_start_roster(
-        pd.read_parquet(features_dir / "preseason.parquet",
-                        columns=["season", "player_id"]),
-        seasons, cfg["data"]["raw_dir"], window_games)
-    roster = {(s, p) for s, p, on in zip(roster_rows["season"], roster_rows["player_id"],
-                                         roster_rows["on_season_start_roster"]) if on > 0}
+    roster = season_start_roster(cfg)
 
     rows: list[dict] = []
     crps_by_arm: dict[tuple[float, str], tuple[pd.Series, pd.Series]] = {}

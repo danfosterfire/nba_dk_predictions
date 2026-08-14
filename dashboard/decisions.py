@@ -8587,12 +8587,61 @@ REGISTRY: tuple[Decision, ...] = (
                 "better offset cannot manufacture season-level heterogeneity, which is what "
                 "[[injected-sigma-estimated-on-train-is-0.45]] exists for.",
         status="measured",
-        unblocks="a pilot-window `stan-composition` fit of the blended-offset arm",
+        unblocks="a pilot-window `stan-composition` fit of the blended-offset arm — ✅ run, "
+                 "see [[the-composition-preseason-increment-grows-under-the-posterior]]",
         reproduce="make composition-preseason → "
                   "outputs/predictions/composition_preseason.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-14",
+        reviewed="2026-08-13",
         date="2026-08-14",
+        tags=("head", "next"),
+    ),
+    Decision(
+        id="the-composition-preseason-increment-grows-under-the-posterior",
+        topic="minutes",
+        claim="**The blended offset survives being fitted, and it grows: retention "
+              "1.040.** Against a same-window control the fitted arm reads **-0.20883 "
+              "[-0.22129, -0.19693]** CRPS minutes per player-game on the draft pool "
+              "against the floor's -0.20081 [-0.21697, -0.18411] on the same frames at the "
+              "same draw budget. `docs/preseason-plan.md` session 4c passes and the arm "
+              "earns the full window.",
+        because="4b measured the blend on `FloorComposition`, whose mean is the offset "
+                "alone, and stated its own limit: `beta` can correct an offset the floor "
+                "cannot, so the increment could shrink. It did the opposite, which is the "
+                "direction [[the-preseason-block-ships-on-the-marginal-minutes-head]] also "
+                "went (-4.789 at the point MLE, -5.911 under the posterior). **The season "
+                "unit is where the floor turns out to be unreliable, and it reverses half "
+                "of 4b's decision 4.** 4b found a tie there (-5.31580 [-14.44243, "
+                "**+3.83015**]) and said a better offset cannot manufacture season-level "
+                "heterogeneity; fitted, the same contrast is **-14.62649 [-19.48503, "
+                "-9.54922]**, 2.75x the floor's estimate. The stated REASON survives — the "
+                "season predictive sd *narrows*, 56.25 to 55.31, so nothing was "
+                "manufactured and [[injected-sigma-estimated-on-train-is-0.45]] is still "
+                "the only parameter for spread — but the conclusion does not: what moves is "
+                "the MEAN, season-total MAE falling **15.05** minutes. The floor could not "
+                "see it because `eta = 0` switches off the feature route, and a per-game "
+                "improvement a coefficient re-weights compounds over ~82 games. **So the "
+                "floor is a conservative screen per game and a misleading one per season**, "
+                "which is the lesson for the next round that reaches for it. Two controls "
+                "make the table readable: `base` reproduces `composition_effects`' "
+                "independently-run pilot arm at **4.45596** against **4.45614** across a "
+                "doubled iteration count, and fitting is still worth something on top of "
+                "the better offset (-0.18693 [-0.19713, -0.17651]) rather than having been "
+                "made redundant by it. **And 4b's suggestive cross-artifact comparison is "
+                "now within-artifact and holds**: the UN-FITTED blended floor (4.41998) "
+                "beats the FITTED incumbent-offset arm (4.44188). The cost is calibration, "
+                "PIT KS 0.03874 to 0.04647. Two fits, 41 min, max R-hat 1.0047, 0 "
+                "divergences.",
+        status="measured",
+        unblocks="the full-window fit, which needs P3's coverage cut — the panel starts "
+                 "2004-05 and the shipped head fits from 1996-97",
+        reproduce="make composition-preseason-fit → "
+                  "outputs/predictions/composition_preseason_fit.csv, "
+                  "outputs/predictions/composition_preseason_fit_arms.csv, "
+                  "outputs/predictions/composition_preseason_fit_diagnostics.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-13",
+        date="2026-08-13",
         tags=("head", "next"),
     ),
     Decision(

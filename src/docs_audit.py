@@ -219,6 +219,12 @@ ROOKIE_P = "outputs/predictions/rookie_priors.csv"
 # attribution) and `unit`, because this head's verdict has belonged to a unit since
 # `make minutes-unification` and the two disagree here too.
 COMP_PRE = "outputs/predictions/composition_preseason.csv"
+# Session 4c — the same arm FITTED. Lookup keys are `arm` (base / preseason / their two
+# floors), `unit` and `population` for the arm rows, and `comparison` for the margins.
+# Separate from COMP_PRE rather than more rows on it, because every margin here is against a
+# different reference: 4b quotes `crps_vs_incumbent` and 4c quotes a same-window control, and
+# folding them together would make "the increment" ambiguous on the column name alone.
+COMP_PRE_FIT = "outputs/predictions/composition_preseason_fit.csv"
 AABS = "outputs/predictions/availability_absence.csv"
 AABS_I = "outputs/predictions/availability_absence_interaction.csv"
 AABS_L = "outputs/predictions/availability_absence_lambda.csv"
@@ -4761,6 +4767,33 @@ def _readme() -> list[Claim]:
                      metric="p_dead_period"),
         "pooled share of the exchangeability gap the shipped layout recovers")
 
+    # ── The composition's own preseason arm (sessions 4b and 4c) ─────────────
+    # Both rounds' headline margins, because the README is where the two get read side by
+    # side and the whole point of quoting them together is that the second is LARGER.
+    for quoted, column in (("−0.19972", "crps_vs_incumbent"),
+                           ("−0.21661", "crps_vs_incumbent_lo"),
+                           ("−0.18225", "crps_vs_incumbent_hi")):
+        add(quoted, COMP_PRE,
+            lambda c=column: cell(COMP_PRE, c, analysis="floor_margin", k=80.0,
+                                  route="both", unit="player_game",
+                                  population="draftable"),
+            f"README 4b floor margin {column}")
+    for comparison, unit, values in (
+            ("fitted_increment", "player_game",
+             ("−0.20883", "−0.22129", "−0.19693")),
+            ("fitted_increment", "player_season",
+             ("−14.62649", "−19.48503", "−9.54922"))):
+        for quoted, column in zip(values, ("crps_delta", "ci_lo", "ci_hi")):
+            add(quoted, COMP_PRE_FIT,
+                lambda c=comparison, u=unit, col=column: cell(
+                    COMP_PRE_FIT, col, analysis="margin", comparison=c, unit=u,
+                    population="draftable"),
+                f"README 4c {comparison} {unit} {column}")
+    add("1.040", COMP_PRE_FIT,
+        lambda: cell(COMP_PRE_FIT, "retention", analysis="retention", unit="player_game",
+                     population="draftable"),
+        "README 4c retention at the per-player-game unit", tol=0.002)
+
     return C
 
 
@@ -8061,6 +8094,101 @@ def _composition_preseason() -> list[Claim]:
     return C
 
 
+def _composition_preseason_fit() -> list[Claim]:
+    """`docs/preseason-plan.md` session 4c — 4b's arm under the posterior.
+
+    Three families, and the middle one is the round's finding. **The arms**, because the
+    prose's sharpest sentence is that an un-fitted blended floor (4.41998) beats the fitted
+    incumbent-offset arm (4.44188) and both ends of it go stale independently. **The
+    margins and the retention**, since "the increment grew rather than shrank" is a ratio of
+    two intervals in the same artifact. **The season unit**, which reverses half of 4b
+    decision 4 and is the claim most likely to be softened by a later edit.
+
+    The control — that `base` reproduces `composition_effects`' independently-run pilot arm —
+    is claimed from BOTH artifacts rather than as an equality between them, for the reason
+    `_composition_preseason` gives about its own control: the two differ by iteration count,
+    and an audit asserting they matched would assert something the round does not claim.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, actual, label: str, **kw) -> None:
+        C.append(_c(quoted, COMP_PRE_FIT, actual, label, doc=PRESEASON, **kw))
+
+    def arm(name: str, unit: str, population: str, column: str) -> float:
+        return cell(COMP_PRE_FIT, column, analysis="arm", arm=name, unit=unit,
+                    population=population)
+
+    def margin(comparison: str, unit: str, population: str, column: str) -> float:
+        return cell(COMP_PRE_FIT, column, analysis="margin", comparison=comparison,
+                    unit=unit, population=population)
+
+    # ── The ladder at the head's own selection unit, on the draft pool ─────────
+    for name, crps, r2, mae, ks in (
+            ("floor_base", "4.62079", "0.43980", "6.37115", "0.02649"),
+            ("base", "4.44188", "0.47096", "6.28675", "0.03874"),
+            ("floor_preseason", "4.41998", "0.48201", "6.32305", "0.04969"),
+            ("preseason", "4.23305", "0.51619", "6.03748", "0.04647")):
+        for quoted, column in ((crps, "crps"), (r2, "r2"), (mae, "mae"), (ks, "pit_ks")):
+            add(quoted, lambda n=name, c=column: arm(n, "player_game", "draftable", c),
+                f"4c {name} player_game draftable {column}")
+    # The control, pooled — the figure that makes the table a block effect rather than noise.
+    add("4.45596", lambda: arm("base", "player_game", "pooled", "crps"),
+        "4c the same-window control, pooled")
+    add("4.45614", lambda: cell("outputs/predictions/composition_effects_metrics.csv",
+                                "crps_minutes", variant="base"),
+        "4c the independently-run pilot base it reproduces")
+    for name, quoted in (("base", "0.10144"), ("preseason", "0.09129")):
+        add(quoted, lambda n=name: arm(n, "player_game", "draftable", "rho"),
+            f"4c fitted dispersion, {name}")
+
+    # ── The season unit, which reverses half of 4b decision 4 ─────────────────
+    for name, crps, mae, sd in (
+            ("floor_base", "182.06350", "208.66527", "57.47894"),
+            ("base", "172.02457", "198.60990", "56.24912"),
+            ("floor_preseason", "176.74770", "203.86927", "56.62615"),
+            ("preseason", "157.39808", "183.55718", "55.30525")):
+        for quoted, column in ((crps, "crps"), (mae, "mae"), (sd, "predictive_sd")):
+            add(quoted, lambda n=name, c=column: arm(n, "player_season", "draftable", c),
+                f"4c {name} player_season draftable {column}")
+
+    # ── The margins the round turns on ────────────────────────────────────────
+    for comparison, unit, (point, lo, hi) in (
+            ("fitted_increment", "player_game",
+             ("−0.20883", "−0.22129", "−0.19693")),
+            ("floor_increment", "player_game",
+             ("−0.20081", "−0.21697", "−0.18411")),
+            ("fitted_increment", "player_season",
+             ("−14.62649", "−19.48503", "−9.54922")),
+            ("floor_increment", "player_season",
+             ("−5.31580", "−14.44243", "+3.83015")),
+            ("fit_value_preseason", "player_game",
+             ("−0.18693", "−0.19713", "−0.17651"))):
+        for quoted, column in ((point, "crps_delta"), (lo, "ci_lo"), (hi, "ci_hi")):
+            add(quoted,
+                lambda c=comparison, u=unit, col=column: margin(c, u, "draftable", col),
+                f"4c {comparison} {unit} {column}")
+    # `fit_value_base` is quoted as a bare point estimate — the prose contrasts it against
+    # `fit_value_preseason`'s interval rather than carrying its own, so claiming the interval
+    # would be claiming text that is deliberately not there.
+    add("−0.17891", lambda: margin("fit_value_base", "player_game", "draftable",
+                                   "crps_delta"),
+        "4c fit_value_base player_game point estimate")
+
+    # ── The retention, which is the number the round exists to produce ────────
+    # A ratio nothing else derives, so it survives its own numerator moving — the same
+    # reason 4b claims the attribution as a share.
+    for unit, quoted, tol in (("player_game", "1.040", 0.002),
+                              ("player_season", "2.75", 0.02)):
+        add(quoted, lambda u=unit: cell(COMP_PRE_FIT, "retention", analysis="retention",
+                                        unit=u, population="draftable"),
+            f"4c retention at the {unit} unit", tol=tol)
+    # The season-unit MAE gain, quoted in the prose as a level rather than a ratio.
+    add("15.05", lambda: (arm("base", "player_season", "draftable", "mae")
+                          - arm("preseason", "player_season", "draftable", "mae")),
+        "4c season-total MAE gain against the control", tol=0.02)
+    return C
+
+
 def _build() -> tuple[Claim, ...]:
     """Every claim, in doc order. One builder per doc — the registry is long enough that
     a single function made it hard to see which doc a section belonged to.
@@ -8075,7 +8203,8 @@ def _build() -> tuple[Claim, ...]:
                  + _availability_regime() + _availability_exchangeability()
                  + _availability_absence() + _availability_absence_mixture()
                  + _availability_no_design_level() + _preseason()
-                 + _preseason_no_prior() + _composition_preseason())
+                 + _preseason_no_prior() + _composition_preseason()
+                 + _composition_preseason_fit())
 
 
 CLAIMS: tuple[Claim, ...] = _build()

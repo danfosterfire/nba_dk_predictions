@@ -328,6 +328,18 @@ make composition-preseason
                        #   The attribution says it is the OFFSET: `order_only` is worth
                        #   3.75% of the margin, which reverses half of what P3 predicted.
 
+make composition-preseason-fit
+                       # Session 4c: the half the screen above explicitly does not settle →
+                       #   outputs/predictions/composition_preseason_fit.csv. `beta` can
+                       #   correct an offset the floor cannot, so the increment could shrink
+                       #   under a fit — or grow, as P3's own did. Two PILOT-window fits of
+                       #   the shipped variant (a same-window `base` control and the
+                       #   blended-offset arm at k = 80), plus BOTH frames' no-fit floors at
+                       #   the same 200 predictive draws, which makes the retention —
+                       #   fitted increment / floor increment — a within-artifact ratio.
+                       #   The bar is frozen in `report()` before the run. ~30 min. NOT part
+                       #   of `make stan`, and it does not write stan_composition_*.csv.
+
 make rookie-priors     # P4(b): does a no-prior player's own preseason beat his draft
                        #   bucket? → outputs/predictions/rookie_priors.csv. The incumbent
                        #   is stan_composition.rookie_share_priors, the bio_draft_number

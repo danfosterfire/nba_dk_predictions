@@ -22,6 +22,7 @@ PIP    := .venv/bin/pip
         stan-substitution season-terms games-played stan-games-played \
         stan-game-length posteriors model-cards minutes-unification minutes-window \
         minutes-preseason composition-effects composition-preseason \
+        composition-preseason-fit \
         scoring-periods draft-pool simulate-season weekly-scores bracket draft-sim \
         draft-sim-need draft-room draft-room-prep strategy-sweep strategy-sweep-need \
         pick-log-stake mixture-value final-evaluation
@@ -514,6 +515,23 @@ composition-effects:
 # this head's verdict belongs to a unit. Needs `make preseason`. ~6 min.
 composition-preseason:
 	$(PYTHON) -m src.models.composition_preseason
+
+# Session 4b's FIT — the half the screen above explicitly does not settle. `FloorComposition`
+# sets eta = 0, so it can say a better offset helps but not whether `beta` would have
+# absorbed the help; P3's own increment GREW when integrated over `beta` and this head's
+# per-team-game level is exactly what a fitted intercept is good at soaking up, so both
+# directions have a precedent.
+#
+# Two pilot-window fits of the SHIPPED variant — a same-window `base` control and the
+# blended-offset arm at k = 80 — plus both frames' own no-fit floors at the same 200
+# predictive draws, so the retention (fitted increment / floor increment) is a
+# within-artifact ratio rather than a comparison across two rounds' draw budgets.
+#
+# Deliberately NOT part of `make stan`, and deliberately not writing
+# outputs/predictions/stan_composition_*.csv: that artifact is the incumbent's record and
+# `make docs-audit` re-derives eleven quoted figures from it. Needs `make preseason`. ~30 min.
+composition-preseason-fit:
+	$(PYTHON) -m src.models.composition_preseason_fit
 
 # One row per (season, game_id): its scoring period and its DK tournament round. A
 # best-ball lineup is scored weekly, so every weekly max, round total and advancement
