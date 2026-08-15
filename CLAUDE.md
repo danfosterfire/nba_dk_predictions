@@ -78,8 +78,10 @@ The docs are:
   statistics that feed into the *dk_pts* figure. Work completed and mostly 
   archival.
   - preseason-plan.md: The post-preseason problem-statement change — current-season 
-  preseason games as additional features on the existing heads, the gates, and the 
-  October production runbook. Read before touching preseason fetch, panel, or features.
+  preseason games entering the existing heads (as feature columns on two of them and as 
+  the composition's prior share on the third), the gates, and the October production 
+  runbook. Read before touching preseason fetch, panel, features, or any head's 
+  preseason flag.
   - provenance-plan.md: Plan for keeping documentation, dashboard, and 
   context up-to-date with latest findings and ensuring reproducibility of 
   context.

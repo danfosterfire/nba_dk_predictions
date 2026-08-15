@@ -762,12 +762,18 @@ def composition_frames(cfg: dict, artifacts: dict) -> dict[str, HeadFrames]:
     artifact is the record of what was fitted and the config is a knob that can move under
     it. The full frame is built over every season regardless — the lags and the expanding
     rookie prior need the history — and the cut only decides which rows were fitted.
+
+    **The preseason blend is checked against the artifact rather than merely read from
+    config**, for the same reason and one step harder: `w_share` sets the offset, the
+    allocation order and the dispersion bins, so carding a blended posterior against an
+    un-blended frame would misreport every one of them without anything raising. The card
+    refuses rather than guesses.
     """
     art = artifacts.get("composition")
     if art is None:
         return {}
-    from src.models.stan_composition import (PILOT_FIRST_SEASON, RHO_BINS,
-                                             composition_frame, variants)
+    from src.models.stan_composition import (PILOT_FIRST_SEASON, RHO_BINS, head_frame,
+                                             preseason_blend, variants)
 
     test_seasons = _test_seasons(cfg)
     variant = art.recipe.variant
@@ -782,7 +788,20 @@ def composition_frames(cfg: dict, artifacts: dict) -> dict[str, HeadFrames]:
     first_season = str(art.extras.get("first_season")
                        or cfg.get("stan", {}).get("composition", {})
                        .get("first_season", PILOT_FIRST_SEASON))
-    frame = composition_frame(cfg)
+    # `None` on both sides is an artifact written before the blend existed, which is a
+    # legitimate un-blended head rather than a mismatch.
+    fitted_k = art.extras.get("preseason_blend_k")
+    configured = preseason_blend(cfg)
+    current_k = None if configured is None else configured[0]
+    if (fitted_k is None) != (current_k is None) or (
+            fitted_k is not None and not np.isclose(float(fitted_k), float(current_k))):
+        raise ValueError(
+            f"the persisted composition was fitted with preseason_blend_k={fitted_k!r} and "
+            f"the config now says {current_k!r}. `w_share` sets the offset, the allocation "
+            f"order and the dispersion bins, so the card would describe a frame the "
+            f"posterior was never fitted on — re-run `make posteriors --groups "
+            f"composition`, or restore `stan.composition.preseason.adopt`.")
+    frame = head_frame(cfg)
     pilot = frame[frame["season"] >= first_season].reset_index(drop=True)
     train, val = _split_pair(pilot, test_seasons)
     ladder = variants(train, val, RHO_BINS)

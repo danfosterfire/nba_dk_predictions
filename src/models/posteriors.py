@@ -1111,14 +1111,17 @@ def composition_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorAr
     artifact carries — `sigma_u_draws`, and the predictive that consumes it — and because
     the arm that ships is decided by `make composition-effects`, not by this module.
     """
-    from src.models.stan_composition import (OWN, PILOT_FIRST_SEASON, RHO_BIN_COL,
-                                             RHO_BINS, TEAM_COLS, StanComposition,
-                                             composition_frame, effect_variants,
-                                             team_context, variants)
+    from src.models.stan_composition import (OWN, RHO_BIN_COL, RHO_BINS, TEAM_COLS,
+                                             StanComposition, effect_variants,
+                                             head_first_season, head_frame,
+                                             preseason_blend, team_context, variants)
 
     cfg_stan = cfg.get("stan", {})
     comp_cfg = cfg_stan.get("composition", {})
-    first_season = str(comp_cfg.get("first_season", PILOT_FIRST_SEASON))
+    # `head_first_season`, not the raw config key: the preseason blend cuts this head's
+    # window to the panel's first covered season, and a persisted posterior fitted on a
+    # window the artifact does not record is the 2026-08-13 failure one head over.
+    first_season = head_first_season(cfg)
     keep = int(comp_cfg.get("predictive_samples", 200))
     ps_effect = bool(comp_cfg.get("player_season_effect", False))
     team_block = bool(comp_cfg.get("team_context", False))
@@ -1126,8 +1129,9 @@ def composition_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorAr
                        .get("test_seasons", 2))
     variant = selected_variant(cfg, "stan_composition_metrics.csv",
                                "betabinom_ot_graded")
+    blend = preseason_blend(cfg)
 
-    frame = composition_frame(cfg)
+    frame = head_frame(cfg)
     pilot = frame[frame["season"] >= first_season].reset_index(drop=True)
     fit_frame, val = windowed(pilot, window, test_seasons)
     # Whole team-game blocks, because the composition's design is per-row but its
@@ -1167,12 +1171,19 @@ def composition_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorAr
         head="composition", head_label="minutes composition", family="composition",
         response="eta", variant=variant, features=features, model=model,
         fit_frame=fit_frame, probe_transformed=probe, probe_raw=probe_raw, steps=steps,
-        builder="src.models.stan_composition.composition_frame",
+        builder="src.models.stan_composition.head_frame",
         extras={"dispersed": int(dispersed), "n_rho": int(n_rho),
                 "rho_bin_column": RHO_BIN_COL, "dispersion": "rho_draws",
                 "first_season": first_season, "group_keys": ["game_id", "team_id"],
                 "team_context": team_block, "team_cols": list(TEAM_COLS),
-                "predictive_samples": keep},
+                "predictive_samples": keep,
+                # What the offset was built from. `preseason_blend` is the only thing that
+                # changes `w_share` between two otherwise identical artifacts, and an
+                # artifact that does not record it cannot be told apart from one fitted
+                # without it — which is exactly how the availability head was documented
+                # against the wrong arm on 2026-08-13.
+                "preseason_blend_k": None if blend is None else float(blend[0]),
+                "preseason_route": None if blend is None else str(blend[1])},
         window=window, cfg_stan=cfg_stan, draws_kept=draws_kept, seconds=seconds)
 
 

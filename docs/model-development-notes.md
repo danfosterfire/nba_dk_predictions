@@ -938,12 +938,20 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
 
   | variant | val CRPS | val PIT KS |
   |---|---|---|
-  | `carry_forward` (floor) | 4.6776 | 0.0496 |
-  | `binomial` | **4.9388** — *fails the floor* | **0.1919** |
-  | `betabinom` | 4.5417 | 0.0496 |
-  | `betabinom_ot` | 4.5431 | 0.0494 |
-  | **`betabinom_ot_graded`** (selected) | **4.4945** | 0.0428 |
-  | `independent_comparator` | 4.7842 | 0.0483 |
+  | `carry_forward` (floor) | 4.47013 | 0.0447901 |
+  | `binomial` | **4.65567** — *fails the floor* | **0.182451** |
+  | `betabinom` | 4.29017 | 0.0403882 |
+  | `betabinom_ot` | 4.28824 | 0.0409074 |
+  | **`betabinom_ot_graded`** (selected) | **4.26174** | 0.0400851 |
+  | `independent_comparator` | 4.68034 | 0.0469127 |
+
+  ⚠️ **Refreshed 2026-08-14 for the preseason-blended offset at the covered window**
+  (`docs/preseason-plan.md` P5). The pre-adoption table read, as `val CRPS / val PIT KS`:
+  floor **4.6776** / **0.0496**, `binomial` **4.9388** / **0.1919**, `betabinom` **4.5417** /
+  0.0496, `betabinom_ot` **4.5431** / **0.0494**, selected **4.4945** / **0.0428**,
+  comparator **4.7842** / **0.0483**. Every arm improved and **`betabinom_ot_graded` is
+  selected again**, which the changed offset did not oblige — the one substantive re-ordering
+  is that `betabinom_ot` now edges `betabinom` where it trailed before, on a margin of 0.002.
 
   ⚠️ **This table was a TEST evaluation until 2026-08-08**, when the artifact was
   regenerated to match code that had been validation-only since 2026-08-05. It read, as
@@ -962,8 +970,11 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     their selected arm under a change that should not have touched them.
   - **`binomial`'s calibration failure now has a validation twin**, which it did not before:
     the old schema wrote `test_pit_ks` and no `val_pit_ks`, so the sharpest statement of the
-    arm's failure was a held-out number. It reads **0.1919** on validation against the
-    floor's 0.0496, reproducing the retired 0.1948 almost exactly.
+    arm's failure was a held-out number. It reads **0.182451** on validation against the
+    floor's **0.0447901** — and it read **0.1919** against 0.0496 before the preseason blend,
+    reproducing the retired 0.1948 almost exactly. The failure is a property of the
+    likelihood rather than of the offset: a better offset moved both numbers and left the
+    4.1× ratio between them intact.
   - **⚠️ Gate A under-predicts, but the multiplier is NOT a constant — do not treat 1.63× as
     one.** The one-pass sweep extrapolated **8.3 h** and took **9.78 h**, a **1.17×** miss,
     against the two-pass run's 12.8 h → **20.9 h** and **1.63×**. Per-row cost is
@@ -986,16 +997,19 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     individual at `game_length`, and "**neither form gets both**". The sequential
     decomposition **does**: trials-as-remaining-capacity gives the cap, the deterministic
     last step gives the total. Both are asserted on every simulated draw.
-  - **−0.2898 minutes of CRPS against the incumbent** (4.4945 vs 4.7842, **−6.06%**) — the
-    plan predicted a wash and budgeted for arguing on capability instead. It won outright.
-    And the capability gap is there too: the independent draw misses the team total by
-    **33.89 minutes per team-game** where the composition is exact, and carries a **−0.5521**
-    minute bias against the composition's exact zero. (The pilot read −0.406 and the retired
-    test column −0.3548, i.e. **−7.2%**, at 36.87 minutes and a −1.2856 bias; the win shrinks
-    as the frame changes and is nowhere near a wash on any of them.)
+  - **−0.418598 minutes of CRPS against the incumbent** (4.26174 vs 4.68034, **−8.94%**) —
+    the plan predicted a wash and budgeted for arguing on capability instead. It won
+    outright. And the capability gap is there too: the independent draw misses the team total
+    by **33.6451 minutes per team-game** where the composition is exact, and carries a
+    **−0.366744** minute bias against the composition's exact zero. (Before the preseason
+    blend this read **−0.2898**, i.e. 4.4945 vs 4.7842 and **−6.06%**, at **33.89** minutes
+    and a **−0.5521** bias; the pilot read −0.406 and the retired test column −0.3548, i.e.
+    **−7.2%**, at 36.87 minutes and a −1.2856 bias. The win shrinks as the frame changes,
+    grows with the better offset, and is nowhere near a wash on any of them.)
   - **The pure decomposition is worse than the no-fit floor**, and this is the sharpest
-    result: the `binomial` arm reads 4.9388 against 4.6776 with PIT KS 0.1919 against
-    0.0496 — far too tight, exactly as the measured game-level ρ (4.65× binomial)
+    result: the `binomial` arm reads **4.65567** against **4.47013** with PIT KS
+    **0.182451** against **0.0447901** — far too tight, exactly as the measured game-level
+    ρ (4.65× binomial)
     predicted. The dispersion is not a refinement, it is the difference between a model
     and a failure. Same shape as the NB-vs-Poisson finding on the count heads.
   - **The offset IS the floor**, so both share one code path: `logit(w_k / Σ_{j≥k} w_j ×
@@ -1004,8 +1018,9 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     renormalizer and scales everyone else up — so `β` fits *deviations* from proportional
     redistribution, which is the "who absorbs the minutes" question as a fitted quantity.
   - **✅ ρ is graded by prior-share quartile, and role grading is real** — fitted
-    **0.1768 / 0.1300 / 0.1115 / 0.0855** from fringe to star, a **2.07×** spread against
-    a single shared **0.1211**. A 34-mpg starter's allocation step is genuinely steadier
+    **0.14019 / 0.106907 / 0.0908324 / 0.0735171** from fringe to star, a **1.91×** spread
+    against a single shared **0.0990163**. A 34-mpg starter's allocation step is genuinely
+    steadier
     than a reserve's. `betabinom_ot_graded` differs from its twin in the **dispersion
     alone** — same features, same mean function — so the contrast is clean.
     **⚠️ Every ρ is larger at full window and the spread is narrower** (the pilot read
@@ -1014,17 +1029,28 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     ratio. The grading is still real and still monotone; it is less extreme. (The two-pass
     run read 0.1751 / 0.1285 / 0.1099 / 0.0839 against 0.1195 at 2.09× — every value rose by
     ~0.0016 at full chain length and the ordering is untouched.)
+    **⚠️ And the preseason blend moves every ρ DOWN**, which is the same axis arriving from
+    the opposite direction. Before it the fitted values were **0.1768 / 0.1300 / 0.1115 /
+    0.0855** against a shared **0.1211** at a **2.07×** spread; the blended offset takes them
+    to 0.14019 / 0.106907 / 0.0908324 / 0.0735171 at 1.91×. That is the mechanism 4c and 4d
+    both predicted working as specified rather than a separate finding — a better offset
+    leaves less residual overdispersion for the beta-binomial to carry — and it is worth
+    keeping beside the window reading, because the two effects point opposite ways on the
+    same parameter and a future round reading only one of them would draw the wrong
+    conclusion about what drives ρ here.
     - **The calibration fix is the point, not the CRPS.** Realized/simulated variance
-      ratio by tier goes **1.2224 / 0.8430 / 0.6589 / 0.6285** shared →
-      **1.0465 / 0.8132 / 0.7071 / 0.8136** graded: mean |ratio − 1| falls **0.2730 →
-      0.1782**, a **35%** cut, with the extremes improving most.
+      ratio by tier goes **1.24296 / 0.948497 / 0.769356 / 0.638016** shared →
+      **1.00591 / 0.890576 / 0.806373 / 0.784878** graded: mean |ratio − 1| falls
+      **0.221772 → 0.13102**, a **40.9%** cut, with the extremes improving most.
       **⚠️ The pilot's 0.1055 and its near-exact 0.988 star tier oversold this** — at full
-      window the star tier lands at 0.814 and the cut is 35% rather than 59%. And **three of
-      four tiers sit below 1**, so the head is mildly over-dispersed in aggregate, which
-      is a better-posed target than chasing q2. (Retired test reading: 0.2928 → 0.1796, a
-      39% cut, with tiers 1.3466 / 0.8089 / 0.7691 / 0.5973 → 1.0845 / 0.7687 / 0.8217 /
-      0.7757.)
-    - **⚠️ q2 still gets *worse* (0.843 → 0.813), and it is structural.** The fitted ρ is the
+      window the star tier lands at 0.785 and the cut is 40.9% rather than 59%. And **three
+      of four tiers sit below 1**, so the head is mildly over-dispersed in aggregate, which
+      is a better-posed target than chasing q2. (Before the preseason blend the same rows
+      read **1.2224 / 0.8430 / 0.6589 / 0.6285** → **1.0465 / 0.8132 / 0.7071 / 0.8136**,
+      mean |ratio − 1| **0.2730 → 0.1782** for a **35%** cut. Retired test reading: 0.2928 →
+      0.1796, a 39% cut, with tiers 1.3466 / 0.8089 / 0.7691 / 0.5973 → 1.0845 / 0.7687 /
+      0.8217 / 0.7757.)
+    - **⚠️ q2 still gets *worse* (0.948 → 0.891), and it is structural.** The fitted ρ is the
       dispersion of a **sequential step**; the ratio is measured on a player's
       **marginal** minutes. Because the order is prior-share *descending*, a low-share
       player breaks his stick last and inherits the accumulated remainder variation from
@@ -1034,13 +1060,19 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
       graded arm strictly generalizes. A test pins the identity at the simulator level.
       **Bin edges come from train quantiles only** — leakage here would be especially
       quiet, since ρ never touches the mean.
-  - **The OT interaction is real but tiny, and it LOSES validation** to plain `betabinom`
-    by 0.0014 CRPS. It survives only because the graded arm is built on it. Starters take
-    **0.6013** of team minutes in regulation and **0.6423** in OT; the head simulates
-    **0.5912** → **0.6415**, reproducing the +4.1 pp shift as +5.0 pp with a −1.0 pp level
-    *undershoot*. (The retired test reading had the level going the other way — observed
-    0.5882 → 0.6314 against a simulated 0.5998 → 0.6464, a +1.2 pp overshoot — so the sign
-    of the level error is a property of the scored seasons, not a standing bias.)
+  - **The OT interaction is real but tiny, and ⚠️ it now WINS validation** by 0.00193 CRPS
+    (4.28824 against plain `betabinom`'s 4.29017) — **a reversal of the pre-blend reading**,
+    where it *lost* by 0.0014 and survived only because the graded arm is built on it. The
+    margin is two parts in ten thousand in both directions, so the honest statement is that
+    the two arms are indistinguishable and the blend flipped a coin that was already on its
+    edge; nothing rests on it, because `betabinom_ot_graded` is selected either way.
+    Starters take **0.6013** of team minutes in regulation and **0.6423** in OT; the head
+    simulates **0.600961** → **0.649921**, reproducing the +4.10 pp shift as +4.90 pp with a
+    level error of **−0.03 pp** — against −1.0 pp before the blend, so the better offset very
+    nearly removed the level miss while leaving the shift intact. (The retired test reading
+    had the level going the other way — observed 0.5882 → 0.6314 against a simulated 0.5998 →
+    0.6464, a +1.2 pp overshoot — so the sign of the level error is a property of the scored
+    seasons, not a standing bias. The pre-blend simulated pair was **0.5912** → **0.6415**.)
   - **Game length itself is a two-parameter geometric tail**: p_any = 0.0608, p_more =
     0.1408, which covers 3OT/4OT for free. It predicts 128.4 single-OT games
     against 120 observed — the form holds, but it overpredicts OT by ~7% on recent

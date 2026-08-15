@@ -4604,7 +4604,12 @@ REGISTRY: tuple[Decision, ...] = (
               "[[player-season-effect-is-fitted-not-injected]] is therefore shippable today. "
               "⚠️ Its second half — 'and ties the marginal head at the season unit' — was "
               "true until 2026-08-13 and is not now; see "
-              "[[preseason-block-breaks-the-injection-tie]]. **Sigma itself does not move.**",
+              "[[preseason-block-breaks-the-injection-tie]]. ⚠️ **WITHDRAWN 2026-08-14**: "
+              "sigma moved to 0.375 when the composition took its own preseason block and "
+              "the grid this number is read off became a grid over a different head — see "
+              "[[the-injected-sigma-moves-to-0.375-with-the-blended-head]]. The entry stays "
+              "because the reasoning in it still governs: two grids on disjoint rows, and a "
+              "constant that owes the evaluation split nothing.",
         because="The injection's load-bearing caveat was that sigma is tuned on the split it "
                 "is scored against. `minutes_unification.estimate_sigma_on_train` runs the "
                 "identical grid — same arithmetic, same metric, same code path — over the "
@@ -4630,11 +4635,160 @@ REGISTRY: tuple[Decision, ...] = (
                 "and 0.0 recovers the un-injected head exactly, which is the control every "
                 "claim here is measured against. The fitted version did not converge in the "
                 "budget available; see docs/potential-to-dos.md.",
-        status="settled",
+        status="withdrawn",
+        replaced_by="the-injected-sigma-moves-to-0.375-with-the-blended-head",
+        caught_by="`make minutes-unification` re-run after the composition adopted its "
+                  "own preseason block — both CRPS grids moved their optimum to 0.375",
         reproduce="make minutes-unification → outputs/predictions/minutes_unification.csv",
         source="docs/simulations-plan.md",
         reviewed="2026-08-09",
         date="2026-08-09",
+        tags=("architecture",),
+    ),
+    Decision(
+        id="the-injected-sigma-moves-to-0.375-with-the-blended-head",
+        topic="minutes",
+        claim="**`sim.minutes.player_season_sigma` moves 0.450 → 0.375 on 2026-08-14**, "
+              "because its INPUT changed rather than because the constant was re-decided: "
+              "the composition adopted the preseason-blended offset, so the CRPS grid this "
+              "number is read off is a grid over a different head. **Both grids now put the "
+              "optimum at 0.375** — train 108.4687 against 0.450's 108.834 on 1,145 "
+              "player-seasons, validation 130.692 against 132.437 on 742 — where before the "
+              "blend they sat one step apart at 0.450 and 0.375.",
+        because="[[injected-sigma-estimated-on-train-is-0.45]] rested on 'two grids on "
+                "disjoint rows agree to a step'; on the blended head they agree EXACTLY, "
+                "which is the stronger form of the same evidence. The shipped value is still "
+                "read off TRAIN, so it owes the evaluation split nothing — the injection's "
+                "one load-bearing caveat is unchanged. **And the stake double-reverses.** "
+                "[[preseason-block-breaks-the-injection-tie]] recorded the injected "
+                "composition LOSING to the marginal head at +6.26 [+0.92, +11.49] once the "
+                "marginal head took its preseason block; with the composition's own block it "
+                "now WINS at **-5.91125 [-10.3858, -1.50137]** at sigma 0.375, and merely "
+                "ties at the old 0.450 (-4.16592 [-8.4861, +0.0114191]). 0.375 is also the "
+                "best-calibrated rung on the grid, PIT KS **0.0665499** against the marginal "
+                "head's 0.0668 — indistinguishable — where 0.450 reads 0.0952291 and used to "
+                "be the better of the two. MAE barely moves across the grid, so this still "
+                "buys spread and not fit, and the team constraint still holds exactly. "
+                "Applied by `minutes_unification.rehydrate_composition`, so a consumer gets "
+                "it by loading the head; 0.0 still recovers the un-injected head exactly and "
+                "a fitted `sigma_u` still takes precedence if one is ever persisted.",
+        status="settled",
+        unblocks="the P5 chain, which draws minutes through this constant",
+        reproduce="make minutes-unification → outputs/predictions/minutes_unification.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-14",
+        date="2026-08-14",
+        tags=("architecture", "head"),
+    ),
+    Decision(
+        id="the-p5-chain-re-run-reads-higher-and-cannot-attribute-it",
+        topic="drafting",
+        claim="**The P5 chain was re-run end to end on 2026-08-14 and every readout improved.** "
+              "Gate A season-total MAE 397.36 → **363.234** (2022-23) and 398.45 → **377.510** "
+              "(2023-24), bias −26.50 → **−15.4388** and −71.15 → **−66.6411**; the 600k "
+              "Shootaround's shipped arm lifts Round-1 advance probability **0.1890 → 0.2358** "
+              "simulated and **0.1713 → 0.204098** realized. **Gate D still fails at 0 of 6.** "
+              "⚠️ **None of it is attributable to the preseason block.**",
+        because="`docs/preseason-plan.md` P5. The chain is the only instrument that prices a "
+                "head change in the unit the contest cares about, and it had been stale since "
+                "items 6-7 shipped without re-running it. What it says is that the chain under "
+                "the new heads reads better at every unit measured — the season total, the "
+                "weekly period, and Round-1 advance probability. **What it cannot say is why**, "
+                "and that is a property of how the round was run rather than of the result: the "
+                "composition's blend, `sim.minutes.player_season_sigma` 0.450 → 0.375, the ADP "
+                "field and the error injection were all re-fitted in the same pass, and the "
+                "previous `strategy_*.csv` was overwritten rather than kept. Isolating the "
+                "block needs the pre-block tensors retained and a paired re-run. **One thing the "
+                "re-run did settle**: the large negative season-total bias is PRE-EXISTING, not "
+                "introduced here — it read −26.50 and −71.15 before and improved by 11.06 and "
+                "4.51 dk_pts. Its bar (−3.06) is quoted on 873 pooled rows against the check's "
+                "386/387 AND on full-season totals against the simulator's 91% tournament "
+                "window, so the headline gap overstates the discrepancy; "
+                "[[the-availability-layout-fits-a-full-season]] carries the one mechanism "
+                "measured for it. Cost: 63 minutes for the whole chain against 7.4 h for the "
+                "ladder and 2.0 h for the posteriors — but the sweep alone took 53 minutes "
+                "against the 4.8 the docs quote, at unchanged scale, which is a cost figure "
+                "owed a re-measurement.",
+        status="measured",
+        unblocks="a paired re-run that isolates the block's own contest value, and a "
+                 "re-measurement of the sweep's wall clock",
+        reproduce="make simulate-season && make weekly-scores && make bracket && "
+                  "make draft-sim && make strategy-sweep → "
+                  "outputs/predictions/strategy_shipped.csv, "
+                  "outputs/predictions/sim_season_gate_a.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-14",
+        date="2026-08-14",
+        tags=("next",),
+    ),
+    Decision(
+        id="the-availability-layout-fits-a-full-season",
+        topic="availability",
+        claim="**The availability head fits `gp_share` over the whole season and the simulator "
+              "scores a 91% sub-window of it — the FRONT 91%, where players are measurably "
+              "healthier.** On the draft pool with team games as the denominator the realized "
+              "played-rate is **0.5865** inside the tournament window against **0.5509** "
+              "outside (2022-23) and **0.5722** against **0.5309** (2023-24). A uniform "
+              "`allocate_spells` layout therefore hands the scored window too many absences.",
+        because="Measured 2026-08-14 while reading Gate A's season-total bias. Worth "
+                "**−5.92** and **−7.29** dk_pts of season total, which is **38.4%** and "
+                "**10.9%** of the observed bias — real, and not the explanation. It is the only "
+                "channel tested that points the right way: per-game production is FLAT across "
+                "the window boundary (minutes 23.027 against 22.995, and dk per game higher "
+                "OUTSIDE in one season), and games played in aggregate does not track the bias "
+                "at all (2021-22 over-draws by +1.938 games and still under-predicts by 48.96 "
+                "dk_pts). ⚠️ **The naive version of this measurement gives the OPPOSITE sign** "
+                "— read over `in_appearance_window` rows it returns −9.2 pp, because a "
+                "season-ending injury removes a player from the late denominator. That is the "
+                "tenure-edge effect §13 sizes at 44.17% of missed games, firing on a new "
+                "measurement, and anyone re-running this must use team games as the denominator "
+                "or conclude the reverse. Scratch figures from a transcript probe, not a `make` "
+                "target — `docs/potential-to-dos.md` item 12, which is deliberately outside "
+                "`make docs-audit`. The proposed fix is a LAYOUT change and needs no refit: "
+                "permuting a played/missed vector leaves `gp` exactly where it was.",
+        status="open",
+        unblocks="a window-aware `allocate_spells`, scored at Gate A's own season-total bias row",
+        source="docs/potential-to-dos.md",
+        reviewed="2026-08-14",
+        date="2026-08-14",
+        tags=("next",),
+    ),
+    Decision(
+        id="the-marginal-minutes-head-was-never-in-the-chain",
+        topic="minutes",
+        claim="**The simulator has never drawn minutes from the marginal head.** `src/sim/` "
+              "imports neither `StanMinutes` nor `rehydrate_minutes`, and `sim/season.py` "
+              "never looks up the `minutes` artifact — it consumes `availability`, "
+              "`composition`, `game_length_ot`, `game_length_depth`, `gp_duration` and the "
+              "eleven component heads. Minutes come from the composition plus the injected "
+              "sigma. So 'should the marginal head be retired' was never a question about "
+              "the chain, and `README.md` said otherwise until 2026-08-14.",
+        because="Investigated on 2026-08-14 after the blended composition started beating the "
+                "marginal head at the season unit, which appeared to re-open retirement. It "
+                "does not, and the reason is that the question was mis-framed. What "
+                "`sim/season.py` takes from the `stan_minutes` MODULE is not the fitted "
+                "head: `beta_shapes` is arithmetic that four other modules also import, "
+                "`game_level_dispersion` is a data measurement in which the `StanMinutes` "
+                "object never appears, and two Gate bars are read from ARTIFACTS rather than "
+                "from a posterior. **Retiring the head therefore means ceasing to FIT it, "
+                "and the case for keeping it does not depend on which head predicts "
+                "better.** It is the `independent_comparator` in `stan_composition`'s own "
+                "ladder — the control that never trains on the composition window, and the "
+                "thing the -0.4186 headline is measured against — and it is the season-unit "
+                "reference the injected sigma is calibrated against, which matters more now "
+                "that sigma has moved "
+                "([[the-injected-sigma-moves-to-0.375-with-the-blended-head]]). It costs "
+                "**514 s** to persist against the composition's **7,357 s**, so there is no "
+                "compute argument either. **A head that loses is still the instrument the "
+                "winner is measured with.** The development that would genuinely retire it "
+                "is a FITTED `sigma_u`, which removes the need for a plugged-in sigma and "
+                "hence for a reference to plug it in against — "
+                "[[player-season-effect-is-fitted-not-injected]].",
+        status="settled",
+        reproduce="make minutes-unification → outputs/predictions/minutes_unification.csv",
+        source="docs/minutes-window-plan.md",
+        reviewed="2026-08-14",
+        date="2026-08-14",
         tags=("architecture",),
     ),
     Decision(
@@ -4644,7 +4798,14 @@ REGISTRY: tuple[Decision, ...] = (
               "injected composition no longer ties it.** At `sim.minutes.player_season_sigma "
               "= 0.450` the season-unit gap goes **-1.49 [-6.14, +3.22]** (a tie) to "
               "**+6.26 [+0.92, +11.49]** (a loss). **Sigma is unchanged at 0.450**, and "
-              "retiring `stan_minutes` moves from a live prospect to a closed one.",
+              "retiring `stan_minutes` moves from a live prospect to a closed one. "
+              "⚠️ **WITHDRAWN 2026-08-14, both halves.** The composition took its own "
+              "preseason block, which reverses the gap again — it now WINS at "
+              "-5.91125 [-10.3858, -1.50137] at the re-estimated sigma 0.375 "
+              "([[the-injected-sigma-moves-to-0.375-with-the-blended-head]]) — and "
+              "sigma DID move, for the reason that its grid is now a grid over a "
+              "different head. The retirement half was mis-framed in the first place: "
+              "[[the-marginal-minutes-head-was-never-in-the-chain]].",
         because="`make minutes-unification` was re-run on 2026-08-14 against the posteriors "
                 "the preseason ports wrote, and every figure that moved moved on ONE side: "
                 "the composition carries no preseason block and reproduced bit-for-bit "
@@ -4678,7 +4839,10 @@ REGISTRY: tuple[Decision, ...] = (
                 "goes through `head_design` now, and the module docstring records that "
                 "anything SCORING the shipped head takes that path while anything fitting "
                 "its own model on these rows keeps `build_design`.",
-        status="measured",
+        status="withdrawn",
+        replaced_by="the-injected-sigma-moves-to-0.375-with-the-blended-head",
+        caught_by="the composition's own preseason arm (docs/preseason-plan.md P5), "
+                  "which reversed the gap a second time and moved sigma with it",
         reproduce="make minutes-unification → outputs/predictions/minutes_unification.csv",
         source="docs/minutes-window-plan.md",
         reviewed="2026-08-14",
@@ -8689,6 +8853,63 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/composition_preseason_fit_covered.csv, "
                   "outputs/predictions/composition_preseason_fit_covered_arms.csv, "
                   "outputs/predictions/composition_preseason_fit_covered_diagnostics.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-14",
+        date="2026-08-14",
+        tags=("head", "next"),
+    ),
+    Decision(
+        id="the-compositions-preseason-blend-ships-and-the-chain-is-re-run-behind-it",
+        topic="minutes",
+        claim="**The composition head adopts session 4d's preseason-blended `w_share`** — "
+              "`stan.composition.preseason.adopt: true`, `k = 80` on the `offset_only` "
+              "route, fitting window cutting itself to **2004-05**. It ships on the "
+              "comparison a ship turns on: **−0.25409 [−0.26520, −0.24315]** CRPS minutes "
+              "per player-game on the draft pool against the head that was shipping, and "
+              "**−17.27296 [−22.32569, −11.92164]** per player-season.",
+        because="`docs/preseason-plan.md` P5. Unlike "
+                "[[preseason-availability-arm-fails-its-crps-bar]] this is "
+                "**not** a decision against a failing bar — 4d's gate cleared and so did the "
+                "production comparison. What made it an owner decision is SEQUENCING: this "
+                "head is the simulator's minutes source (`sim/season.py` draws through "
+                "`simulate_minutes`), so the arm reaches the tensor, the board and the "
+                "sweep, and adopting after the chain would have meant sweeping twice. "
+                "**The adoption is a separate DOOR, and that is the whole design.** The "
+                "other two preseason blocks are columns on `beta`; this one enters through "
+                "`w_share`, which reaches the model as a feature, as the OFFSET and as the "
+                "ALLOCATION ORDER — no coefficient reaches the last two — so adopting it "
+                "changes the frame BUILDER, and eleven modules share that. "
+                "`stan_composition.head_frame` is `stan_minutes.head_design`'s rule one head "
+                "over: `run`, `posteriors`, `sim/season`, `minutes_unification` and "
+                "`model_cards` go through it; `composition_preseason`, "
+                "`composition_effects`, `minutes_window` and `rookie_priors` keep building "
+                "on the untouched `composition_frame`. **That second list is why the door "
+                "exists** — every gate arm in 4b–4d is measured against a `base` control "
+                "built with no hook, and a blend reaching it from config would have turned "
+                "those controls into blended arms silently, collapsing three sessions of "
+                "margins with nothing raising. A test pins it. The window cuts itself off "
+                "`preseason_coverage.csv` rather than a typed year, and `max`-es with the "
+                "configured floor; 4d priced that cut at −0.01991 [−0.02515, −0.01498] per "
+                "player-game IN THE ARM'S FAVOUR, 8.5% of the increment against the quarter "
+                "P3's cut cost. The artifact now records `preseason_blend_k` and "
+                "`preseason_route`, and `model_cards` RAISES rather than carding a blended "
+                "posterior against an un-blended frame — the direct descendant of the "
+                "2026-08-13 double-port, where nothing recorded which arm wrote an "
+                "artifact. Verified before any sampler time: `offset_only` leaves the "
+                "allocation order bit-identical over all 736,410 rows while moving "
+                "`w_share` on 538,685 of them; 1,828 tests pass. ⚠️ **`make "
+                "stan-composition` is being re-run behind the adoption**, on the owner's "
+                "call — not as bookkeeping but because the sweep re-decides the VARIANT "
+                "against an offset that moved on 73% of rows, so `betabinom_ot_graded` "
+                "being selected again is a result rather than an assumption. Until it "
+                "lands, every figure quoted from `stan_composition_metrics.csv` describes "
+                "the pre-adoption head.",
+        status="built",
+        unblocks="`make posteriors --groups composition` at all three windows, then the P5 "
+                 "chain — and the σ grid, which has never been read against a blended "
+                 "composition",
+        reproduce="make stan-composition → outputs/predictions/stan_composition_metrics.csv, "
+                  "outputs/predictions/stan_composition_diagnostics.csv",
         source="docs/preseason-plan.md",
         reviewed="2026-08-14",
         date="2026-08-14",

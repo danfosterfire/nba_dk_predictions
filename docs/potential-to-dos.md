@@ -1001,3 +1001,105 @@ Bounded by §8b's own simulator readout, which is the template: that change move
 dk_pts MAE by **3.18** and the per-team no-design minutes share error by **17.2%**. This one
 is a smaller move on the same channel — no scored unit's `μ` changes, and the whole effect
 arrives through the team's fixed minutes pot.
+
+---
+
+## 12. The availability layout fits a full season and is applied to a 91% sub-window
+
+**Measured 2026-08-14**, in the course of reading Gate A after the P5 chain re-run. Scratch
+figures from a transcript probe, not a `make` target — which is why this is an entry rather
+than a result, and why nothing here is in `make docs-audit`.
+
+### The defect, stated once
+
+The availability head fits `gp_share` over the **whole regular season**, and
+`allocate_spells` (`sim.availability.layout = tenure_merge`) then places a player's missed
+games across that whole season. But `make simulate-season` only scores the **tournament
+window** — DK's Round 4 closes before the NBA regular season does, so `realized_frame` sums
+`dk_total` over games carrying a scoring slot and nothing else.
+
+That window is **91.1%** (2022-23) and **90.7%** (2023-24) of the schedule, and it is not a
+random 91%: it is the *front* of the season. Availability is measurably higher there, so a
+layout that spreads a full-season absence budget evenly hands the scored window too many
+absences.
+
+### The evidence
+
+Realized played-rate, **on the draft pool with every team game as the denominator** — P1
+decision 5's population and the availability head's own denominator:
+
+| season | inside the window | outside | difference |
+|---|---|---|---|
+| 2022-23 | **0.5865** | 0.5509 | **+3.6 pp** |
+| 2023-24 | **0.5722** | 0.5309 | **+4.1 pp** |
+
+⚠️ **The population and the denominator are both load-bearing, and the naive version of this
+measurement gives the OPPOSITE sign.** Read over `in_appearance_window` rows instead, the
+same comparison returns −9.2 pp and −9.0 pp — players look *more* available late. That
+reading is an artifact: the appearance window is bounded by a player's first and last game,
+so a season-ending injury in March removes him from the April denominator entirely. It is the
+tenure-edge effect `availability-window-plan.md` §13 already sizes at **44.17%** of missed
+games, firing on a new measurement. Anyone re-running this must use team games as the
+denominator or they will conclude the reverse.
+
+### What it is worth — real, and an order of magnitude short
+
+The head fits the full-season rate (0.5834 / 0.5683) and the window realizes a higher one, so
+a uniform layout under-plays the scored window by **0.27** (2022-23) and **0.33** (2023-24)
+games per player. At the realized **22.03** / **22.06** dk_pts per played game that is
+**−5.92** and **−7.29** dk_pts of season total.
+
+Against Gate A's measured season-total bias of **−15.44** and **−66.64**, this explains
+**38.4%** and **10.9%**. So it is a genuine contributor and it is not the explanation.
+
+### Why this is worth measuring anyway
+
+It is the only channel tested so far that points the right way. Two others were falsified in
+the same sitting:
+
+- **Per-game production does not change across the boundary.** Minutes per game read 23.027
+  inside against 22.995 outside (2022-23) and 22.602 against 22.600 (2023-24); dk per game is
+  flat in one season and slightly *higher outside* in the other. Whatever the late-season
+  rest dynamic does to individual stars, it does not move the league-level per-game rate, so
+  the rate heads are not where this bias lives.
+- **Games played in aggregate does not track the bias.** 2021-22 draws **+1.938** games per
+  player *more* than realized and still under-predicts season totals by **48.96** dk_pts. The
+  two columns do not move together across the four Gate A seasons at all.
+
+### What to compare, and how
+
+1. **The cheap arm first, because it needs no refit.** Give `allocate_spells` a
+   window-aware placement — weight the hazard of an absence landing in period `t` by the
+   realized late-season gradient, estimated on the **fitting half** only. `gp` is unchanged
+   by construction (a permutation of the played/missed vector leaves the season total
+   exactly where it was, which is `availability-window-plan.md` §11's whole point), so this
+   cannot move any head's likelihood and is a pure layout change.
+2. **Score it at the unit that exposed it**: Gate A's `season_total_dk` bias row, per season,
+   against the same four seasons. The bar to beat is the current −15.44 / −66.64, and the
+   prediction is a **+5.9 / +7.3** dk_pts improvement — which is falsifiable, and small
+   enough that it needs the paired form rather than two point estimates.
+3. **Then the contest unit**, `make strategy-sweep`, where §7l is the standing precedent that
+   a change arriving as *shape* rather than as *order* can be a measured null.
+
+### What would settle it
+
+The season-total bias moving by the predicted amount and no more. If it moves by
+substantially more, the layout was carrying something else too and the decomposition above is
+wrong. If it does not move at all, the arithmetic linking played games to dk_pts through a
+league-average 22 dk/game multiplier is too crude — that conversion is applied to a per-player
+mean and is the weakest step in the estimate.
+
+### What would falsify it
+
+The late-season availability gradient failing to replicate on the training seasons. Both
+readings here are validation seasons, measured while investigating something else, and two
+seasons agreeing is the weakest form of replication this project accepts.
+
+### The larger question it does not answer
+
+**What the other 60–90% of the bias is.** It varies 4× between two adjacent seasons (−15.44
+against −66.64) on identical knobs, which a structural window effect cannot do. Gate A's own
+framing — "a miss here is a **wiring fault** rather than a modelling one" — argues for
+decomposing the level miss across the eleven component heads before assuming it is a
+modelling problem. That decomposition is an artifact read rather than a refit, and it should
+come before anything here is built.

@@ -294,17 +294,30 @@ audited by `make docs-audit`.
 > head's whole verdict was once quoted from it. **Nothing reversed.** The selected arm, the
 > ordering of all six rows, and every gate outcome are unchanged.
 
-Full window 1996-97 →: train 631,158 rows / 61,252 team-games (1996-97 → 2021-22),
-val 52,295 / 4,920 (2022-23 + 2023-24). The test seasons are not fitted or scored.
+⚠️ **Refreshed 2026-08-14: the head adopted the preseason-blended offset and its window cut
+itself to 2004-05** (`docs/preseason-plan.md` P5). Covered window 2004-05 →: train 448,464
+rows (1996-97 → 2021-22 became 2004-05 → 2021-22), val 52,295 / 4,920 (2022-23 + 2023-24) —
+**the same validation rows**, which is what keeps every margin below comparable to the
+pre-adoption ones. The test seasons are not fitted or scored.
 
 | variant | val CRPS | val R² | val PIT KS | selected |
 |---|---|---|---|---|
-| `carry_forward` (floor) | 4.6776 | 0.4442 | 0.0496 | |
-| `binomial` | 4.9388 | 0.4752 | **0.1919** | fails the floor |
-| `betabinom` | 4.5417 | 0.4699 | 0.0496 | |
-| `betabinom_ot` | 4.5431 | 0.4697 | 0.0494 | |
-| **`betabinom_ot_graded`** | **4.4945** | 0.4741 | 0.0428 | **✓** |
-| `independent_comparator` | 4.7842 | 0.4024 | 0.0483 | (incumbent) |
+| `carry_forward` (floor) | 4.4701 | 0.4807 | 0.0448 | |
+| `binomial` | 4.6557 | 0.5224 | **0.1825** | fails the floor |
+| `betabinom` | 4.2902 | 0.5197 | 0.0404 | |
+| `betabinom_ot` | 4.2882 | 0.5197 | 0.0409 | |
+| **`betabinom_ot_graded`** | **4.2617** | 0.5199 | 0.0401 | **✓** |
+| `independent_comparator` | 4.6803 | 0.4286 | 0.0469 | (incumbent) |
+
+**The pre-adoption ladder, for the record** — same six arms, un-blended offset, 1996-97 on:
+floor **4.6776** / 0.4442 / **0.0496**, `binomial` **4.9388** / 0.4752 / **0.1919**,
+`betabinom` **4.5417** / 0.4699 / 0.0496, `betabinom_ot` **4.5431** / **0.4697** / **0.0494**,
+selected **4.4945** / **0.4741** / **0.0428**, comparator **4.7842** / **0.4024** / **0.0483**.
+Every arm improved on every column and **the selected arm is unchanged**, which the blend did
+not oblige — the offset moved on 73% of rows, so the ladder was genuinely re-decided rather
+than re-printed. The one ordering change is `betabinom_ot` edging `betabinom` where it
+trailed, by 0.0019 CRPS against 0.0014 the other way: two parts in ten thousand in both
+directions, so the pair is indistinguishable and nothing rests on it.
 
 **The selection replicated across a doubling of chain length, which is what makes it
 readable.** The validation side used to run at `select_warmup`/`select_samples` and now runs
@@ -318,8 +331,10 @@ the sampler is merely run longer is measuring noise, and this one does not move.
 
 **`binomial`'s calibration failure now has a validation twin, which it did not before.** The
 old schema wrote `test_pit_ks` and no `val_pit_ks`, so the sharpest statement of the arm's
-failure was a held-out number; it now reads **0.1919** on validation against the floor's
-0.0496, reproducing the retired 0.1948 almost exactly.
+failure was a held-out number; it now reads **0.1825** on validation against the floor's
+**0.0448**. Before the blend it read 0.1919 against 0.0496, reproducing the retired 0.1948
+almost exactly — and the 4.1× ratio between arm and floor survives the better offset intact,
+which is the sign that the failure belongs to the likelihood rather than to the mean.
 
 - **Gate A — timing, and it is the gate that behaves worst.** The probe fit 26,039 rows in
   155 s and extrapolated the sweep to **8.3 h**; the sweep took **9.78 h** of sampler time
@@ -330,66 +345,82 @@ failure was a held-out number; it now reads **0.1919** on validation against the
   linear. **Treat Gate A as a lower bound, not an estimate.** The two-pass sweep missed by
   1.63×, so the miss is smaller here but the direction is invariant, and the honest reading
   is that the multiplier is not a constant — see the retired block.
-- **Gate B — convergence, and it is now clean.** Max R̂ **1.00935**, **0** divergences over
+- **Gate B — convergence, and it is now clean.** Max R̂ **1.00804**, **0** divergences over
   6 fits, and **every fit converged**. The one fit that failed the 1.01 bar in the two-pass
   run was `binomial/val` at R̂ 1.0113 with ESS 421 — a *selection* fit running at half
   length. At full length the same fit reads R̂ 1.00649 with ESS 917. Raising selection to
   full-length chains removed the only diagnostic failure this head had.
-- **Gate C — the floor.** The selected variant beats `carry_forward` by **−0.1832** minutes
-  of validation CRPS (**−3.92%**). And the `binomial` arm is **worse than the floor**
-  (4.9388 against 4.6776) with PIT KS 0.1919 against 0.0496: the pure stick-breaking
+- **Gate C — the floor.** The selected variant beats `carry_forward` by **−0.2084** minutes
+  of validation CRPS (**−4.66%**). And the `binomial` arm is **worse than the floor**
+  (4.6557 against 4.4701) with PIT KS 0.1825 against 0.0448: the pure stick-breaking
   decomposition is far too tight, exactly as ρ_game = 4.65× binomial predicted. The
   dispersion is not an optional refinement — it is the difference between a model and a
   failure, the NB-vs-Poisson lesson again.
-- **Gate D — the incumbent.** **−0.2898** minutes of validation CRPS against the incumbent
-  (4.4945 vs 4.7842, **−6.06%**) — not the expected wash — plus the capability gap: the
-  comparator's mean absolute team-sum error is **33.89** minutes per team-game against the
-  composition's exact **0** on every draw of every game. The comparator also carries a
-  **−0.5521** minute bias where the composition's is 0 by construction.
+- **Gate D — the incumbent.** **−0.4186** minutes of validation CRPS against the incumbent
+  (4.2617 vs 4.6803, **−8.94%**) — not the expected wash, and now half again the margin it
+  was — plus the capability gap: the comparator's mean absolute team-sum error is
+  **33.6451** minutes per team-game against the composition's exact **0** on every draw of
+  every game. The comparator also carries a **−0.3667** minute bias where the composition's
+  is 0 by construction. (Pre-adoption: −0.2898, i.e. 4.4945 vs 4.7842 at −6.06%, a 33.89
+  team miss and a −0.5521 bias.)
 - **Gate E — the full window itself.** Taken. `stan-composition` joins `make stan`, after
   `stan-minutes`, which it imports from and measures itself against.
-- The OT interaction remains real but tiny: `betabinom_ot` **loses** to plain `betabinom`
-  by 0.0014 CRPS on validation. Treat it as a refinement, not a driver; it survives in the
-  shipped arm because the graded variant is built on it.
+- The OT interaction remains real but tiny, and ⚠️ **it now wins where it used to lose**:
+  `betabinom_ot` beats plain `betabinom` by 0.0019 CRPS on validation, against losing by
+  0.0014 before the blend. Treat it as a refinement, not a driver — the margin is two parts
+  in ten thousand either way — and note it survives in the shipped arm regardless, because
+  the graded variant is built on it.
 
 ### What the full window changed against the pilot
 
 The ordering is unchanged and every gate still passes, but three things moved enough to
 restate rather than carry forward.
 
-| | pilot (2018-19 →) | full window (1996-97 →) |
-|---|---|---|
-| vs the floor | −0.312 | **−0.1832** |
-| vs the incumbent | −0.406 | **−0.2898** |
-| graded ρ, fringe → star | 0.1480 / 0.1125 / 0.0874 / 0.0613 | **0.1768 / 0.1300 / 0.1115 / 0.0855** |
-| shared ρ | 0.0970 | **0.1211** |
-| ρ spread | 2.41× | **2.07×** |
-| mean \|variance ratio − 1\|, graded | 0.1055 | **0.1782** |
+| | pilot (2018-19 →) | full window (1996-97 →) | **covered + blend (2004-05 →)** |
+|---|---|---|---|
+| vs the floor | −0.312 | −0.1832 | **−0.2084** |
+| vs the incumbent | −0.406 | −0.2898 | **−0.4186** |
+| graded ρ, fringe → star | 0.1480 / 0.1125 / 0.0874 / 0.0613 | 0.1768 / 0.1300 / 0.1115 / 0.0855 | **0.14019 / 0.106907 / 0.0908324 / 0.0735171** |
+| shared ρ | 0.0970 | 0.1211 | **0.0990163** |
+| ρ spread | 2.41× | 2.07× | **1.91×** |
+| mean \|variance ratio − 1\|, graded | 0.1055 | 0.1782 | **0.13102** |
 
-The pilot column is a test-split measurement and the full-window column is validation, so
-the two are not a controlled contrast — different rows and different training data. What
-they are good for is direction and magnitude, and on both the story is unchanged.
+The pilot column is a test-split measurement and the other two are validation, so the pilot
+is not a controlled contrast against either — different rows and different training data.
+The **second and third columns are** controlled: same validation rows, same code, and the
+only differences are the window cut and the blended offset, which
+`docs/preseason-plan.md` session 4d priced separately at −0.01991 and −0.23418 per
+player-game.
 
-- **Every ρ is larger and the spread is smaller.** Fitting 26 seasons instead of four raises
-  the fitted dispersion at every tier (fringe 0.148 → 0.177, star 0.061 → 0.085) and
-  compresses the fringe-to-star ratio from 2.41× to **2.07×**. Role grading is still real
-  and still monotone; it is less extreme once the model has to cover three decades of
-  rotation practice rather than one.
-- **The absolute win is smaller and still decisive.** −0.2898 against the incumbent instead
-  of −0.406, and −0.1832 against the floor instead of −0.312. Neither is close to a wash.
-- **⚠️ The graded arm's calibration gain is real but weaker, and the pilot oversold it.**
-  Mean |variance ratio − 1| falls **0.2730 → 0.1782**, a **35%** cut rather than the pilot's
-  59%, and the star tier lands at **0.8136** rather than the pilot's near-exact 0.988.
+- **⚠️ The two later columns move ρ in opposite directions, and that is the most useful thing
+  in this table.** Fitting 26 seasons instead of four *raises* the fitted dispersion at every
+  tier (fringe 0.148 → 0.177, star 0.061 → 0.085) and compresses the spread from 2.41× to
+  2.07×; the preseason blend then *lowers* every tier again (fringe → 0.140, star → 0.0735)
+  and compresses the spread further to **1.91×**. The mechanisms are different and neither
+  cancels the other: more seasons mean more heterogeneity to absorb, while a better offset
+  leaves less residual overdispersion for the beta-binomial to carry. A future round reading
+  only one of these columns would draw the wrong conclusion about what drives ρ here. Role
+  grading survives both, still real and still monotone.
+- **The absolute win is now the largest it has been at any window.** −0.4186 against the
+  incumbent, against −0.2898 un-blended and the pilot's −0.406; and −0.2084 against the
+  floor, against −0.1832 and −0.312. Note the floor moved too (4.6776 → 4.4701), so the
+  blend improves the un-fitted carry-forward as well as the fitted head — which is 4b's
+  finding arriving here, since the floor's mean function *is* the offset.
+- **⚠️ The graded arm's calibration gain is real, and the covered+blend column recovers most
+  of what the full window gave back.** Mean |variance ratio − 1| falls **0.221772 →
+  0.13102**, a **40.9%** cut, against 35% un-blended and the pilot's 59%; the star tier lands
+  at **0.784878** against 0.8136 un-blended and the pilot's near-exact 0.988. The pilot still
+  oversold it, but less than the un-blended full window suggested.
 
 **Posterior predictive checks** (validation split, selected variant):
 
-| tier | shared ρ | graded ρ |
-|---|---|---|
-| q1 fringe | **1.2224** | **1.0465** |
-| q2 | 0.8430 | 0.8132 |
-| q3 | 0.6589 | 0.7071 |
-| q4 star | **0.6285** | **0.8136** |
-| mean \|ratio − 1\| | **0.2730** | **0.1782** |
+| tier | shared ρ | graded ρ | *(pre-blend: shared → graded)* |
+|---|---|---|---|
+| q1 fringe | **1.24296** | **1.00591** | *1.2224 → 1.0465* |
+| q2 | 0.948497 | 0.890576 | *0.8430 → 0.8132* |
+| q3 | 0.769356 | 0.806373 | *0.6589 → 0.7071* |
+| q4 star | **0.638016** | **0.784878** | *0.6285 → 0.8136* |
+| mean \|ratio − 1\| | **0.221772** | **0.13102** | *0.2730 → 0.1782* |
 
 - Three of the four tiers improve — fringe 1.22 → 1.05, q3 0.66 → 0.71 and star 0.63 → 0.81
   — and **q2 still gets slightly worse** (0.843 → 0.813), which is the same structural point
@@ -402,11 +433,16 @@ they are good for is direction and magnitude, and on both the story is unchanged
   a little over-dispersed in aggregate at full window — worth a look before the simulator
   consumes it, and a better-posed target than chasing q2 specifically.
 - **Starter share in OT** — observed: top-5 ordered players take **0.6013** of team minutes
-  in regulation and **0.6423** in OT (+4.1 pp). The composition simulates **0.5912** →
-  **0.6415**, reproducing the shift as +5.0 pp with a −1.0 pp level undershoot; the
-  independent comparator compresses it (**0.5923** → **0.6280**).
-- **Joint per-team-game NLL** (plug-in, non-bijection caveat) — composition **32.862**
-  against independent **37.984** on validation. Contrast, not a headline.
+  in regulation and **0.6423** in OT (+4.10 pp). The composition simulates **0.600961** →
+  **0.649921**, reproducing the shift as +4.90 pp with a level error of just **−0.03 pp**;
+  the independent comparator compresses it (**0.584992** → **0.621484**). ⚠️ Before the
+  preseason blend the composition simulated **0.5912** → **0.6415** — the same +5.0 pp shift
+  with a **−1.0 pp** level undershoot — so the better offset very nearly removed the level
+  miss while leaving the OT shift intact, and the comparator (which never trains on this
+  window) moved only because its own inputs did.
+- **Joint per-team-game NLL** (plug-in, non-bijection caveat) — composition **32.209**
+  against independent **37.6194** on validation, a gap of 5.41 against the pre-blend
+  **32.862** / **37.984** and 5.12. Contrast, not a headline.
 
 **OT tail** — ⚠️ **moved out of this head on 2026-08-09.** `fit_ot_tail`,
 `sample_game_length` and `ot_tail_check` are deleted from `stan_composition.py`, and

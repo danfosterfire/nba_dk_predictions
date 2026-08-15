@@ -116,16 +116,26 @@ def units_block(cards: dict, row: pd.Series, th: dict) -> None:
     floors = " and ".join(
         f"{part['floor_crps']:,.4g} per {part['unit_label']}"
         for _, part in board.drop_duplicates("unit").iterrows())
+    # ⚠️ DERIVED, not asserted. This caption used to state the season-unit reversal in prose
+    # while the tiles above it read `clears` from the artifact. On 2026-08-14 the
+    # preseason-blended composition started clearing the season floor and the caption went on
+    # denying it — the same failure `make docs-audit` guards in the docs, inside a page the
+    # audit cannot reach. The verdict now comes from the same frame the panels are drawn from.
+    comp_season = board[(board["head"] == mc.HEAD_COMPOSITION)
+                        & (board["unit"] == "season")]
+    season_clears = bool(comp_season["clears"].iloc[0]) if not comp_season.empty else False
+    season_line = (
+        "per season it now clears that floor too, and what still separates the two heads "
+        "there is the **spread** rather than the floor — see the panels below"
+        if season_clears else
+        "per season the composition fails the carry-forward floor the marginal head clears")
     st.caption(
         f"**The zero line is the floor, and the axis is a ratio to it** — a floor of "
         f"{floors} cannot share an axis, and the floor is what "
         "every head in this project is quoted against anyway, so the two units are made "
-        "commensurable by the reference they already had. The finding is the reversal: the "
-        "same posterior is on opposite sides of the line in the two panels, and so is the "
-        "head it is drawn against. Per-game the composition beats its floor and the "
-        "independent draw does not; per season the composition fails the carry-forward "
-        "floor the marginal head clears. **A head is only a model at the unit it was "
-        "scored at.**")
+        "commensurable by the reference they already had. Per-game the composition beats "
+        f"its floor and the independent draw does not; {season_line}. **A head is only a "
+        "model at the unit it was scored at.**")
 
     spread = mc.spread_panel(unification, cards["index"])
     if not spread.empty:

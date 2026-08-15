@@ -371,28 +371,33 @@ explicit lagged-observation term, **not** a free latent per game.
 > binomial trials** with the per-player cap carried in the **trials** (`m_k = min(U, R_k)`,
 > the remaining capacity) rather than as a truncation. That gets **both** constraints:
 > the individual cap by construction, the team total by the deterministic last step.
-> Fitted on all 30 seasons and scored on validation (2022-23/2023-24), the selected variant
-> scores **4.4945** minutes of CRPS against the no-fit floor's 4.6776 and the independent
-> per-player draw's **4.7842** —
+> Fitted from 2004-05 with the preseason-blended offset and scored on validation
+> (2022-23/2023-24), the selected variant scores **4.26174** minutes of CRPS against the
+> no-fit floor's **4.47013** and the independent per-player draw's **4.68034** —
 > so it beats the incumbent on the incumbent's own marginal metric, which this plan
-> expected to be a wash, *and* the independent draw's mean team-sum error is **33.89**
+> expected to be a wash, *and* the independent draw's mean team-sum error is **33.6451**
 > minutes per team-game against the composition's exact zero.
 >
 > Two results worth carrying back here. **The pure decomposition fails**: the plain
-> binomial arm scores 4.9388 with PIT KS 0.1919, below the floor — the measured 4.65×
-> game-level dispersion is not optional, exactly as the NB-vs-Poisson result on the count
-> heads. And **the offset is the floor**, so proportional redistribution comes for free
+> binomial arm scores **4.65567** with PIT KS **0.182451**, below the floor — the measured
+> 4.65× game-level dispersion is not optional, exactly as the NB-vs-Poisson result on the
+> count heads. And **the offset is the floor**, so proportional redistribution comes for free
 > and `β` fits deviations from it — which makes "who absorbs the minutes when a starter
 > sits" a fitted quantity, the thing the redistribution section below wants.
 >
-> The dispersion is **graded by prior-share quartile** (fitted 0.1768 fringe to 0.0855
-> star, a 2.07× spread against one shared 0.1211), which cuts mean |variance ratio − 1|
-> by 35% and lands the star tier at **0.81**. Still open: the fringe tier reads **1.05**
-> and q2 0.81 — grading a *step* dispersion does not map one-to-one onto *marginal*
+> The dispersion is **graded by prior-share quartile** (fitted **0.14019** fringe to
+> **0.0735171** star, a **1.91×** spread against one shared **0.0990163**), which cuts mean
+> |variance ratio − 1| by **40.9%** and lands the star tier at **0.78**. Still open: the
+> fringe tier reads **1.01**
+> and q2 0.89 — grading a *step* dispersion does not map one-to-one onto *marginal*
 > variance, because a low-share player breaks his stick last and inherits the remainder
 > variation ahead of him. **Gate E was taken at the full window on 2026-08-04 and the head
-> ships in `make stan`**; the figures here are from the 2026-08-08 validation refit, and
-> the retired test column is preserved in `docs/minutes-composition-plan.md`. This is
+> ships in `make stan`**; the figures here are from the **2026-08-14** refit that adopted the
+> preseason blend (`docs/preseason-plan.md` P5), which moved every figure in this block in
+> the same direction — before it they read CRPS **4.4945** against a **4.6776** floor and a
+> **4.7842** comparator, a **33.89** team miss, binomial **4.9388** at PIT KS **0.1919**, and
+> dispersion 0.1768/0.0855 for a 2.07× spread cutting the ratio error by 35%. The retired
+> test column is preserved in `docs/minutes-composition-plan.md`. This is
 > **iid across games** and therefore does *not* address the 2.43× block inflation — the
 > residual serial process below is unaffected by it.
 
@@ -1315,9 +1320,9 @@ before shipping; given this repo's record on ceilings, a settled null is the lik
 - ~~**Whether minutes should be fitted per-game at all is open and deliberately deferred**~~
   — **partly answered 2026-07-31.** Of the three options costed under "Fitting strategy",
   the **team-game composition model is built and wins** (`make stan-composition`,
-  `docs/minutes-composition-plan.md`): **−0.2898** minutes of validation CRPS against the
-  independent per-player draw, and both the individual cap and the team total exact by
-  construction. It was an afternoon rather than days, because the season collapse was never
+  `docs/minutes-composition-plan.md`): **−0.418598** minutes of validation CRPS against the
+  independent per-player draw (**−0.2898** before the preseason blend was adopted), and both
+  the individual cap and the team total exact by construction. It was an afternoon rather than days, because the season collapse was never
   what made it expensive — the numerics were.
   - Still open, and **unaffected by this**: the composition is iid across games, so it does
     nothing about the 2.43× ten-game block inflation. **The residual serial process remains

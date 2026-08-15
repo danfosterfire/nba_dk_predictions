@@ -157,7 +157,7 @@ from src.models.minutes_unification import rehydrate_composition, shipped_sigma
 from src.models.posteriors import load_all, posteriors_dir, require_window
 from src.models.stan_availability import (FIRST_SEASON, head_design,
                                           restrict_window, role_bins)
-from src.models.stan_composition import (OFFSET_CLIP, composition_frame, draft_numbers,
+from src.models.stan_composition import (OFFSET_CLIP, draft_numbers, head_frame,
                                          simulate_minutes)
 from src.models.stan_game_length import (forward_cells, posterior_inputs,
                                          sample_game_length)
@@ -940,7 +940,7 @@ def build_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
 
     slots = scoring_slots(features_dir, season)
     grid = roster_grid(features_dir, season, slots)
-    frame = composition_frame(cfg) if composition is None else composition
+    frame = head_frame(cfg) if composition is None else composition
     players = composition_players(frame, season)
 
     # A scorable unit needs a component-head design row AND a place in the allocation, so
@@ -1579,7 +1579,7 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
           f"({ROUND_1_WEEKS} Round-1 weeks + 3 double weeks), {n_sims:,} sims, "
           f"seed {seed}")
 
-    composition = composition_frame(cfg)
+    composition = head_frame(cfg)
     paths: dict[str, Path] = {}
     gates = []
     for season in seasons:

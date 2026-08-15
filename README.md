@@ -377,24 +377,35 @@ This file used to say they "compose rather than compete", with the marginal head
 season-level mean and the game-level dispersion. Two of those three claims were wrong. The
 game-level dispersion is a *data measurement* that happens to live in `stan_minutes` — the
 fitted object never appears in it — and the composition fits its own, role-graded from
-**0.1768** for fringe players to **0.0855** for stars. And the composition matches the
+**0.14019** for fringe players to **0.0735171** for stars. And the composition now *beats* the
 marginal head on the season-level **mean**: scored at the season unit on the 742 validation
-player-seasons both cover, MAE **200.28** against **190.21** and R² **0.8848** against
-**0.8947**, with a bias of **+2.41** against **−11.91**, so it is the less biased of the two.
-(Against the pre-preseason marginal head those read 200.12, 0.8829 and −14.09, and the
-composition led on MAE rather than trailing it — every figure in this section that moved on
-2026-08-14 moved because the *marginal* head improved. The composition carries no preseason
-block and its numbers are bit-identical.)
+player-seasons both cover, MAE **184.541** against **190.21** and R² **0.902836** against
+**0.8947**. Its bias is **7.9673** against **−11.91** — the two miss in opposite directions
+and the composition's is now the larger of the two in absolute terms, where before the blend
+it was the smaller (+2.41 against −14.09). (Pre-blend the same row read MAE 200.28 and R²
+0.8848, so the composition trailed on both.)
+
+⚠️ **The season-unit figures in this section and the next are the last reading against an
+un-blended composition, and they are being re-measured.** The composition adopted its own
+preseason block on 2026-08-14 (`docs/preseason-plan.md` P5), so the earlier note that "the
+composition carries no preseason block and its numbers are bit-identical" is withdrawn — it
+was true only of the 2026-08-14 morning reading, when every figure that moved moved because
+the *marginal* head improved. Against the pre-preseason marginal head the MAE/R²/bias row
+read 200.12, 0.8829 and −14.09, with the composition leading on MAE rather than trailing it.
 
 What survives is the season-level **spread**. Summed composition draws give a season-total
-predictive sd of **64.65** minutes against the marginal head's **277.23** — **4.29×** too
-narrow, CRPS **170.06** against **136.60** with a paired-bootstrap interval of
-**[+26.15, +41.335]** — because draws that are iid across games cannot manufacture
-season-level heterogeneity. The sharpest form of it is that at the season unit the
-composition does not clear the no-fit carry-forward floor (170.06 against **161.29**) on the
-same draws that clear its own per-team-game floor decisively (**4.4945** against 4.6776).
-Same head, same posterior, opposite verdicts at two units. (The gap was **+25.70**
-**[+18.96, +33.25]** at 4.68× before the preseason block.)
+predictive sd of **60.5757** minutes against the marginal head's **277.23** — **4.58×** too
+narrow, CRPS **155.941** against **136.60** — a paired-bootstrap gap of **+19.3382**,
+interval **[+13.0465, +25.8738]** — because draws that are iid across games cannot manufacture
+season-level heterogeneity. ⚠️ **The sharpest form of that no longer holds**: the composition
+now *clears* the season-unit no-fit carry-forward floor (**155.941** against **161.29**),
+where before the preseason blend it did not (170.06 against the same 161.29) — on the same
+draws that clear its own per-team-game floor decisively (**4.26174** against **4.47013**). Beating a
+no-fit floor on CRPS and carrying 4.6× too little spread are compatible, and PIT KS
+**0.331968** against the floor's 0.1242 is what separates them — so the "same head, two
+units, opposite verdicts" line survives as a statement about *spread* and not about the
+floor. (The gap was +33.45 [+26.15, +41.335] at 4.29× before the blend, and +25.70
+[+18.96, +33.25] at 4.68× before the marginal head's own block.)
 
 **That gap is a missing parameter, not a ceiling — measured, and it matters for what gets
 built next.** A *shared* effect cannot fix it: a season term is a league-wide shift, and
@@ -402,30 +413,26 @@ against a head that allocates every minute in the league it has **0.000000%** of
 variance to reach. But a **per-(player, season)** effect is not shared, and injecting one
 into the existing posterior — `σ·z` per player-season per draw, shared across that player's
 games, re-run through the head's own allocation — moves the season-total predictive sd from
-64.65 to **239.45** at σ = **0.375** and the CRPS to **142.17**, which is the closest it comes
-to the marginal head (**+5.57**, interval **[−0.07, +11.06]**) while keeping the team
-constraint exact — and at σ = 0.45 the season-unit calibration passes it outright, PIT KS
-**0.0659** against 0.0668. MAE barely moves, so it buys spread and not fit.
+60.58 to **237.911** at σ = **0.375** and the CRPS to **130.692**, which now **beats** the
+marginal head (**−5.91125**, interval **[−10.3858, −1.50137]**) while keeping the team
+constraint exact, at a season-unit calibration that is effectively identical to it: PIT KS
+**0.0665499** against 0.0668. MAE barely moves, so it buys spread and not fit.
 
-**The caveat that made that a bound rather than a score is now closed.** σ was read off
-validation, which is the split it is scored against — so the same grid was re-run on the last
-two *training* seasons (1,145 player-seasons) and its optimum is interior at **σ = 0.450**
-(CRPS **117.07** on those rows), one grid step from validation's 0.375 and worth 0.4 CRPS
-minutes between them. Two grids on disjoint rows agreeing to a step is the evidence that the
-figure was never moved by the evaluation data. **σ therefore stands at 0.450 after the
-preseason block**, because that grid is the composition scored against realized minutes and
-the marginal head is not in it — nothing about the block could move it, and nothing did.
+**The caveat that made that a bound rather than a score is closed, and the two grids now
+agree exactly.** σ was read off validation, which is the split it is scored against — so the
+same grid was re-run on the last two *training* seasons (1,145 player-seasons). On the
+pre-blend head its optimum was 0.450 against validation's 0.375, one step apart; on the
+blended head **both grids put the optimum at 0.375** (train CRPS **108.834** at 0.450 against
+its own optimum, validation **132.437** at 0.450 against **130.692** at 0.375). Two grids on
+disjoint rows agreeing exactly is stronger evidence than the step-apart version it replaces,
+and it is why **σ moved to 0.375 on 2026-08-14** — its *input* changed, rather than the
+constant being re-decided.
 
-⚠️ **What the block did move is the stake, and it is a reversal.** At σ = 0.450 the validation
-reading is CRPS **142.87** against the marginal head's **136.60** — gap **+6.26**, interval
-**[+0.92, +11.49]**, so the injected composition now **loses** with an interval clear of zero
-where it used to tie (142.87 against 144.35, **−1.49 [−6.14, +3.22]**). σ = 0.375 is the
-nearest thing to a tie left, at **+5.57 [−0.07, +11.06]**. So the injection is still shippable
-with a σ that owes the evaluation rows nothing, and **retiring the marginal head is closed for
-now rather than live** — the preseason block is the second thing the marginal head has that
-the composition does not, and it is worth 7.75 CRPS minutes at the unit the two are compared
-at. Giving the composition its own preseason arm is `docs/preseason-plan.md`'s session 4b, and
-this is now the strongest argument for running it.
+✅ **And the injection stake reverses back, decisively.** Before the composition's own
+preseason block, σ = 0.450 **lost** to the marginal head at +6.26 [+0.92, +11.49]. It now
+**ties** (**−4.16592**, interval **[−8.4861, +0.0114191]**, PIT KS **0.0952291**) and the
+shipped σ = 0.375 **wins** with an interval clear of zero. **On whether that retires the marginal head, see below — the
+answer turns out not to depend on which head predicts better.**
 
 ✅ **That arm has now been measured and fitted, at the pilot window, and it is worth more than
 the gap.** The preseason enters this head as a blend into `w_share` rather than as a column on
@@ -476,7 +483,7 @@ with the others.
 team's season minutes are a fixed pot, so teammates' season totals are negatively correlated:
 a fixed sum over K players forces mean pairwise **r = −1/(K−1)**, which at the measured
 **16.05**-player roster size is **−0.0664**. Over **963** single-team validation
-player-seasons the composition sits on it at **−0.0509**. The marginal head reads
+player-seasons the composition sits on it at **−0.0503828**. The marginal head reads
 **+0.0007** (−0.0001 before the preseason block — a null either way) and puts a **946.1**-minute
 predictive sd on a team season total that is physically fixed. That is invisible in every marginal metric and lands on two strategy axes
 directly: a same-team stack's minutes are *anti*-correlated rather than independent, and
@@ -485,9 +492,31 @@ sign.
 
 The composition also covers **1,111** validation player-seasons against the marginal head's
 742 — the **369** rookies and low-minute players the `≥ 200 prior minutes` filter drops, who
-are draftable. So `stan_minutes` ships today because it is the only head with the right
-season-level spread today, and the simulator's minutes draw is the open design question
-rather than a settled blend.
+are draftable.
+
+⚠️ **"Which head supplies the simulator's minutes" was never actually open, and this file
+said otherwise until 2026-08-14.** It used to read: *"`stan_minutes` ships today because it is
+the only head with the right season-level spread today, and the simulator's minutes draw is
+the open design question rather than a settled blend."* That is wrong about the code.
+`src/sim/` imports neither `StanMinutes` nor `rehydrate_minutes`, and `sim/season.py` never
+looks up `artifacts["minutes"]` — it consumes `availability`, `composition`,
+`game_length_ot`, `game_length_depth`, `gp_duration` and the eleven component heads. **The
+simulator's minutes have come from the composition plus the injected σ all along.**
+
+What `sim/season.py` takes from the `stan_minutes` *module* is not the fitted head: `beta_shapes`
+is arithmetic four other modules also use, `game_level_dispersion` is a **data measurement**
+in which the `StanMinutes` object never appears, and two Gate bars are read from *artifacts*.
+
+**So retiring the marginal head would mean ceasing to fit it, and the case for keeping it does
+not depend on which head predicts better.** It is the `independent_comparator` in
+`stan_composition`'s own ladder — the control that never trains on the composition window,
+and the thing today's **−0.4186** headline is measured against — and it is the season-unit
+reference the injected σ is calibrated against, which matters more now that σ has moved. It
+costs **514 s** to persist against the composition's **7,357 s**, so there is no compute
+argument either. A composition that beats it makes the comparator *more* valuable, not less.
+The one development that would genuinely retire it is a **fitted** `sigma_u`, which removes
+the need for a plugged-in σ and hence for a reference to plug it in against —
+`docs/potential-to-dos.md`.
 
 **Components** ([stan_components.py](src/models/stan_components.py)) fits the seven negative
 binomial counts and four beta-binomial conversions, each against a mandatory no-fit floor.
@@ -630,16 +659,25 @@ the fourth of its kind since the held-out split was locked, and all four turned 
 margins under 1%.
 
 **The minutes composition beats the independent draw on the independent draw's own metric.**
-`make stan-composition`, fitted on all 30 seasons. On validation, CRPS **4.4945** against the
-independent comparator's 4.7842 (**−6.06%**), while also hitting the team total exactly where
-the independent draw misses by **33.89** minutes per team-game. The plan predicted a wash and
-budgeted for arguing on capability instead. Two sub-results: the pure binomial decomposition
-is *worse* than the no-fit floor (PIT KS **0.192**) — dispersion is the difference between a
-model and a failure again — and dispersion is genuinely role-graded, fitted at **0.177** for
-fringe players against **0.085** for stars, a **2.07×** spread that cuts calibration error by
-**35%**. The comparator row is the control: it never trains on the composition window and
+`make stan-composition`, **re-run 2026-08-14 with the preseason-blended offset, fitting
+2004-05 on**. On validation, CRPS **4.26174** against the independent comparator's
+**4.68034** (**−8.94%**), while also hitting the team total exactly where the independent
+draw misses by **33.6451** minutes per team-game. The plan predicted a wash and budgeted for
+arguing on capability instead. Two sub-results: the pure binomial decomposition is *worse*
+than the no-fit floor (PIT KS **0.182**) — dispersion is the difference between a model and a
+failure again — and dispersion is genuinely role-graded, fitted at **0.140** for fringe
+players against **0.074** for stars, a **1.91×** spread that cuts calibration error by
+**40.9%**. The comparator row is the control: it never trains on the composition window and
 reproduced to six decimals when the head moved off the held-out split on 2026-08-08, as did
 the selected arm's rank — nothing about the verdict reversed.
+
+*(Before the blend was adopted this table read CRPS 4.4945 against 4.7842, **−6.06%**, a
+33.89-minute team miss, binomial PIT KS 0.192, and dispersion 0.1768 against 0.0855 for a
+2.07× spread cutting calibration error by 35%. Every figure improved, and **the dispersion
+fell across every bucket**, which is the mechanism working as specified rather than a
+separate result — a better offset leaves less residual overdispersion for the beta-binomial
+to carry, so the graded spread narrows even as calibration improves. `betabinom_ot_graded`
+is selected again, which the changed offset did not oblige.)*
 
 **And the same head loses to the same comparator at the season unit, which is why both
 minutes heads ship.** `make minutes-unification`. Summed to season totals on the 742
@@ -694,9 +732,14 @@ season-total sd, against +0.6% from shared coefficient uncertainty.
 
 **The drafting edge is large in the simulated world and the realized readout cannot confirm
 it — which is the result, not a caveat.** `make strategy-sweep`. Against a symmetric-field
-null, the arm that ships lifts its Round-1 advance probability by **0.1890** in the 600k
-Shootaround's simulated worlds and by **0.1713** on the two validation seasons replayed
-against realized box scores. The second number is not a smaller version of the first: the
+null, the arm that ships lifts its Round-1 advance probability by **0.2358** in the 600k
+Shootaround's simulated worlds and by **0.204098** on the two validation seasons replayed
+against realized box scores. (Before the composition took its preseason block those read
+0.1890 and 0.1713, so the chain re-run moved both up by about a fifth. ⚠️ That is **not**
+attributable to the block: the composition, the injected σ, the field and the error
+injection were all re-fitted in the same run, and the previous `strategy_*.csv` was
+overwritten rather than kept, so what is measured is the chain under the new heads and not
+the block's own contribution.) The second number is not a smaller version of the first: the
 simulated side pools 500 drawn worlds per season and the realized side has exactly one, so
 its intervals cover most of the table and it selected nothing. **Gate D fails, and that is
 also a result** — the two buy-in tiers do not select materially different rosters in **0**
@@ -712,7 +755,7 @@ curve carries none, degrading fastest in the elite region), and against a *stipu
 value for shape, so the fitted pure-ADP field is the harder opponent and stays shipped.
 On the execution axis, submitting our best feasible ranking to DK's own autodraft is
 identical to clicking it under DK's 8G/8F/3C caps — and beats the uncapped click by
-**+0.0144** (600k, resolved) — while giving up **0.0975** of simulated lift against the
+**+0.00841967** (600k, resolved) — while giving up **0.105298** of simulated lift against the
 shipped per-pick objective, which no static board can express. The 30-second-clock
 fallback is safe; the objective is the half worth defending. See
 [docs/simulations-plan.md](docs/simulations-plan.md), "The field with lineup reasoning,

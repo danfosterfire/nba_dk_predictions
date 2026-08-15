@@ -13,9 +13,11 @@ It exists because `docs/availability-window-plan.md` §9 item 1 called it **the 
 stake in that line of work** — the only item on the list that could revise a *shipped*
 decision rather than add one. `make minutes-unification` ships the marginal minutes head
 **solely** for its season-level spread (season-total predictive sd **302.75** minutes against
-the composition's **64.65** when this round ran; **277.23** since the preseason block, §4),
-so if that spread turned out to be an average over a contracted window,
-`sim.minutes.player_season_sigma = 0.450` would move.
+the composition's 64.65 when this round ran; **277.23** against **60.5757** since both heads
+took preseason blocks, §4), so if that spread turned out to be an average over a contracted
+window, `sim.minutes.player_season_sigma` would move. It has since moved for a different
+reason — **0.450 → 0.375 on 2026-08-14**, because the composition's own blend shifted the
+grid the constant is read off.
 
 **It does not move.** The stake is a null, and the mechanism is the opposite of the one that
 was hypothesized. What the round *does* find is a different and larger win on the axis it was
@@ -290,11 +292,30 @@ head in the chain. **The constant still does not move**, for the reason finding 
 **3. The round moves the retirement question in the opposite direction from the one it was
 opened for.** §9 item 1 was written in the hope of weakening the marginal head's one
 remaining claim. Instead the head gets materially better — CRPS 144.23 → 138.91 and PIT KS
-0.0737 → 0.0392 — and its PIT is now better than **every** injected composition arm's,
-including the shipped σ's 0.0659 and the grid optimum's 0.0808. Retiring `stan_minutes` is a
-*less* live prospect after this round than before it. ✅ **Confirmed twice over by the
-preseason block**, which is a second thing the marginal head carries and the composition does
-not, worth 7.75 CRPS minutes at the unit the two are compared at.
+0.0737 → 0.0392 — and its PIT was then better than **every** injected composition arm's,
+including the shipped σ's and the grid optimum's. Retiring `stan_minutes` looked a *less*
+live prospect after this round than before it. ✅ **Confirmed twice over by the preseason
+block**, which was a second thing the marginal head carried and the composition did not,
+worth 7.75 CRPS minutes at the unit the two are compared at.
+
+⚠️ **Both halves of that expired on 2026-08-14, and the question turned out to be
+mis-framed.** The composition took its own preseason block (`docs/preseason-plan.md` P5), so
+the second claim is gone; and at the re-estimated σ = 0.375 the injected composition now
+*beats* the marginal head (CRPS 130.692 against 136.60) at a PIT KS of **0.0665499** against
+**0.0668** — indistinguishable, where this finding's whole point was that the marginal head
+owned calibration. At the previously shipped σ = 0.450 the injected arm's PIT is
+**0.0952291** and the un-injected composition's predictive sd is **60.5757**.
+
+**But none of that decides the retirement, because the premise underneath it is false.**
+`src/sim/` imports neither `StanMinutes` nor `rehydrate_minutes` and never looks up
+`artifacts["minutes"]` — the simulator's minutes have come from the composition plus the
+injected σ all along, and what it takes from this module is `beta_shapes` (arithmetic),
+`game_level_dispersion` (a data measurement in which the fitted object never appears) and two
+Gate bars read from artifacts. Retiring the head therefore means ceasing to **fit** it, and
+the reason to keep doing so is that it is the `independent_comparator` in
+`stan_composition`'s ladder and the season-unit reference σ is calibrated against — at 514 s
+against the composition's 7,357 s. **A head that loses is still the instrument the winner is
+measured with.** The development that would genuinely retire it is a *fitted* `sigma_u`.
 
 ---
 

@@ -1816,6 +1816,23 @@ every player drawn after him, so a single-seed comparison of two arms is not a p
 Each arm was therefore run at three seeds and the last column is the largest within-arm range
 across them.
 
+⚠️ **Both tables below are the 2026-08-12 chain, and they stay that way deliberately.** The
+`tenure_draft` column is the shipped arm, so `make simulate-season` re-runs move it; the
+`pooled` column is a counterfactual that only a config flip and a re-run regenerates. Since
+only one side would move, re-pointing this table at a later chain would leave a *gap* that
+compares two different chains — so every cell here is `historical=True` in `make docs-audit`:
+presence-checked, value-exempt, and read as that round's paired readout rather than as
+current figures.
+
+For the record, the 2026-08-14 chain — the composition's preseason blend plus σ = 0.375 —
+moves the `tenure_draft` column to season-total MAE **363.234** / **377.510**, CRPS
+**252.524** / **260.387**, R² **0.709385** / **0.704896** and bias **−15.4388** / **−66.6411**
+across the two seasons, and the no-design share rows to per-team MAE **0.0305478** /
+**0.0461832** at a simulated league share of **0.0978465** / **0.10116**. Every season-total
+metric improved in both seasons, and the bias — which §8b flagged as "wrong for some other
+reason" — moved toward zero by 11.06 and 4.51 dk_pts without this arm changing at all. The
+current values are audited from `sim_season_gate_a.csv` in `docs/simulations-plan.md`.
+
 | | 2022-23 `pooled` | 2022-23 `tenure_draft` | gap | seed range |
 |---|---|---|---|---|
 | season-total dk_pts MAE | 400.55 | **397.36** | **−3.18** | 1.44 |

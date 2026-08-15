@@ -1615,9 +1615,9 @@ whole four-round structure: 2020-21 has **no Round 4 at all** (0 games in slot 1
 | facet | split | n | observed | predicted | MAE | bias | R² | CRPS |
 |---|---|---|---|---|---|---|---|---|
 | one week | train | 13,022 | 52.74 | 50.02 | 29.93 | **−2.72** | 0.3985 | 20.34 |
-| one week | validation | 13,141 | 53.40 | 51.05 | 28.72 | **−2.35** | 0.4658 | 19.40 |
+| one week | validation | 13,141 | 53.40 | 51.4301 | 27.6893 | **−1.96909** | 0.494243 | 18.6603 |
 | double week | train | 2,298 | 93.24 | 88.43 | 50.85 | −4.81 | 0.4542 | 34.41 |
-| double week | validation | 2,319 | 98.51 | 95.52 | 53.10 | −2.99 | 0.4225 | 36.03 |
+| double week | validation | 2,319 | 98.51 | 95.8012 | 52.1965 | −2.71173 | 0.430198 | 35.4979 |
 
 > **Re-measured 2026-08-12 against the graded no-design availability level**
 > (`sim.availability.no_design_level = tenure_draft`,
@@ -1625,8 +1625,8 @@ whole four-round structure: 2020-21 has **no Round 4 at all** (0 games in slot 1
 > moves within a third of a point on MAE and CRPS and under 0.005 on R²; the largest move is
 > the double-week *train* bias, −5.11 → **−4.81**, on the smallest facet in the table. The
 > zero share moves the other way from the layout round — 17.95% → **17.95%** on one-week
-> train and 19.00% → **19.07%** on one-week validation, against observed 20.66% and 19.90%
-> — and the spread ratio widens slightly to **0.927–0.969×**. **Nothing here was aimed at
+> train and 19.00% → **19.7954%** on one-week validation, against observed 20.66% and 19.90%
+> — and the spread ratio widens slightly to **0.927–0.978824×**. **Nothing here was aimed at
 > this gate**: the change moves minutes between rostered players, and these facets pool over
 > the players the tensor scores, so a small uniform drift is the expected signature and is
 > what appeared. The pre-grading column read bias −2.87 / −2.14 / −5.11 / −2.64, CRPS 20.35 /
@@ -1653,11 +1653,13 @@ whole four-round structure: 2020-21 has **no Round 4 at all** (0 games in slot 1
 > visible in the mean.
 
 **The season-total bias is a weekly bias, and it used to be front-loaded.** Gate A reads
-**−26.5** to **−73.4** dk_pts on a season and this says where it comes from: about −2 a week, now
-spread evenly across them. Pooled over the two validation seasons the per-period bias runs
-**−2.31** in week 1, −3.38 in week 2, −2.55 in week 3, −1.78 by week 13 and **−1.31** by
-week 17, with every one of the seventeen weeks between −1.31 and −3.38. (Before the
-no-design level was graded the same five read −1.88, −3.03, −2.28, −1.60 and −1.19.)
+**−15.4388** to **−73.4** dk_pts on a season and this says where it comes from: about −2 a week,
+now spread evenly across them. Pooled over the two validation seasons the per-period bias runs
+**−1.87224** in week 1, **−2.94136** in week 2, **−2.23589** in week 3, **−1.35151** by week 13
+and **−1.05349** by week 17. (Before the composition took its preseason block and σ moved to
+0.375 the same five read −2.31, −3.38, −2.55, −1.78 and −1.31; before the no-design level was
+graded, −1.88, −3.03, −2.28, −1.60 and −1.19. **Every week improved on 2026-08-14** and the
+season-total bias improved with them — see `docs/preseason-plan.md` P5.)
 
 > **This is the `tenure_merge` layout's second downstream result, and it was not the one it
 > was aimed at.** Under the previous layout the same profile read **−5.28** in week 1, −4.99
@@ -1673,7 +1675,7 @@ no-design level was graded the same five read −1.88, −3.03, −2.28, −1.60
 
 **The spread is the good news, and it is the statistic that matters most here.** A best-ball
 week is a max over sixteen players, so the weekly *spread* decides more of a lineup's score
-than the weekly mean does. Pooled over every row and draw the simulated sd is **0.927–0.969×**
+than the weekly mean does. Pooled over every row and draw the simulated sd is **0.927–0.978824×**
 the observed on all four facets (0.923–0.971× before the no-design level was graded, and
 0.920–0.954× before the layout change). Three
 spreads are emitted and only one of them is comparable: the spread of the per-row posterior
@@ -1682,16 +1684,16 @@ because a mean over draws has averaged its own noise away, and reporting that on
 a defect that was never measured.
 
 **About a fifth of player-weeks score nothing at all** — 20.7% / 19.9% observed on the
-one-week facets against **17.95% / 19.07%** simulated — and a season total averages that away
+one-week facets against **17.95% / 19.7954%** simulated — and a season total averages that away
 completely. It is the clearest argument for scoring this unit: a zero week is survivable
 under a best-7-of-16 rule and a *cluster* of them is not, which is exactly what the spell
 process exists to produce. It is also the row the `tenure_merge` layout was aimed at, and the
 one it moved: those two figures read 16.9% and 18.2% under the previous layout.
 
 Calibration is read as a distance and never as a verdict, the rule the model pages already
-carry. KS distances span **0.0208–0.0582** (0.0171–0.0600 before the no-design level was
+carry. KS distances span **0.0178266–0.0582** (0.0171–0.0600 before the no-design level was
 graded, 0.0265–0.0639 before the layout change); the QQ
-curve is S-shaped away from the diagonal and the binned quartile lines sit **0.1150–0.1607**
+curve is S-shaped away from the diagonal and the binned quartile lines sit **0.099968–0.1607**
 off their own levels (0.1066–0.1417 before the no-design level was graded), both of which say the predictive is slightly *too narrow* — the same
 finding the 0.92× spread ratio gives from the other direction. The rank-transformed panel adds what a single KS cannot see: all three
 quartile lines slide **upward** across the predicted range, i.e. the simulator over-predicts
@@ -1699,8 +1701,8 @@ the player-weeks it ranks lowest and under-predicts the ones it ranks highest.
 
 The only bars in the target are on the **budget** rather than on the model: the 95% ribbon
 and the KS distance are each re-read on two interleaved halves of the 500 simulated seasons
-behind a panel, at `ECDF_BAND_TOL` / `KS_MC_TOL` = 0.02. Worst shipped readings are **0.0079**
-and **0.0022** (0.0074 and 0.0056 before the no-design level was graded — still an order of magnitude
+behind a panel, at `ECDF_BAND_TOL` / `KS_MC_TOL` = 0.02. Worst shipped readings are **0.00670548**
+and **0.00394135** (0.0074 and 0.0056 before the no-design level was graded — still an order of magnitude
 inside the bar). That budget was measured rather than assumed — at 250 / 500 / 1,000 / 2,000
 simulated seasons the ribbon statistic falls as 1/√D (0.0057 → 0.0044 → 0.0020 → 0.0014 on
 one-week train) while the KS distance itself moves by **≤ 0.0016**, so 500 buys the picture

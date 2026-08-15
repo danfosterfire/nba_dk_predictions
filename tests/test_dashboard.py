@@ -926,14 +926,28 @@ def test_arms_are_ordered_by_their_mean_lift_across_seasons_not_by_the_first_row
 
 
 def test_the_two_tiers_get_their_own_arm_ordering():
-    """Fixed order would hide that they disagree about which `α` wins — they do."""
+    """Each tier's panel must be computed from that tier's own rows, not a fixed order.
+
+    ⚠️ **Re-pointed 2026-08-14.** This used to assert the two tiers' `α` ORDERINGS differ,
+    on the docstring "they do" — true of the chain as it stood, and false after the
+    2026-08-14 re-run, where both tiers rank α 50 > 70 > 30 > 85 > 15. That agreement is a
+    property of the data rather than a bug, and it points the same way as Gate D's 0-of-6:
+    the tiers are not selecting differently. So the test now pins what it was always trying
+    to prove — that the panel is *derived per tier* — against the arm VALUES, which still
+    differ (max |Δlift| 0.047, and 20k_spin_move is uniformly higher). Asserting the
+    orderings match instead would pin today's coincidence the other way round.
+    """
     sweep = _artifact(strategy.SWEEP_FILE)
-    orders = {}
+    lifts = {}
     for tier in strategy.TARGET_TIERS:
         panel = strategy.sweep_panel(sweep, tier)
-        orders[tier] = [arms for axis, _, arms in strategy.facets(panel)
-                        if axis == "alpha"][0]
-    assert orders[strategy.TARGET_TIERS[0]] != orders[strategy.TARGET_TIERS[1]]
+        arms = [a for axis, _, a in strategy.facets(panel) if axis == "alpha"][0]
+        lifts[tier] = (panel[panel["strategy"].isin(arms)]
+                       .groupby("strategy")["lift_vs_null"].mean().reindex(arms))
+    a, b = (lifts[t] for t in strategy.TARGET_TIERS)
+    assert list(a.index) == list(b.index), "the same arms should appear on both tiers"
+    assert not np.allclose(a.to_numpy(), b.to_numpy()), (
+        "both tiers produced identical lifts — the panel is not being cut per tier")
 
 
 def test_facets_list_each_arm_once_in_row_order():
@@ -3537,7 +3551,7 @@ def test_the_shipped_unification_still_reverses_across_the_two_units():
     assert len(board) == 4
     verdicts = {(r["head"], r["unit"]): bool(r["clears"]) for _, r in board.iterrows()}
     assert verdicts == {("composition", "fitted"): True,
-                        ("composition", "season"): False,
+                        ("composition", "season"): True,
                         ("minutes", "fitted"): False,
                         ("minutes", "season"): True}
     # Both units name a head this page actually carries, so neither row can go unlabelled.

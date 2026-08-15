@@ -1516,6 +1516,164 @@ paired interval saying the pre-2005 seasons cost this head something, and ρ ris
 0.11479 to 0.12592 at the longer window is a second reading on it. Both are
 `potential-to-dos.md` item 1's territory, and neither was measured *for* it.
 
+## P5 — the composition's arm ships, and the chain is re-run behind it
+
+**Decided 2026-08-14, an owner decision on session 4d's `ship_margin`.** Sessions 4b–4d
+measured the arm and shipped nothing; this is where it becomes the head. Unlike P2 this is
+not a decision taken against a failing gate — 4d's bar cleared, and the comparison a ship
+turns on cleared with it:
+
+| against `base_full_window` — the head that was shipping | draftable |
+|---|---|
+| per player-game | **−0.25409 [−0.26520, −0.24315]** |
+| per player-season | **−17.27296 [−22.32569, −11.92164]** |
+
+What made it an owner decision rather than an automatic consequence is the sequencing, not
+the evidence. This head is the simulator's minutes source (`sim/season.py` draws through
+`stan_composition.simulate_minutes`), so the arm reaches the tensor, the draft board and the
+sweep — and P5's chain costs hours. Adopting *after* the chain would have meant running the
+sweep twice, which is the one thing the handoff into this session asked to be decided first.
+
+### The adoption is a separate door, and that is the whole of the design
+
+The availability and minutes blocks are columns on `beta`, so their heads adopt them by
+appending to a feature list. This head cannot: the preseason enters through `w_share`, which
+reaches the model as the `OWN` feature, as the **offset** and as the **allocation order**,
+and no coefficient reaches the last two. So the adoption is a change to the *frame builder*,
+and a frame builder is exactly the thing eleven modules share.
+
+`stan_composition.head_frame` is that door, and it is `stan_minutes.head_design`'s rule
+verbatim one head over:
+
+| through `head_frame` — consumes the shipped posterior | through `composition_frame` — builds its own model |
+|---|---|
+| `stan_composition.run` (fits and selects) | `composition_preseason` / `_fit` (the gate arms) |
+| `posteriors.composition_artifact` (persists) | `composition_effects` (the σ_u ladder) |
+| `sim/season.py` (draws) | `minutes_window` (the pre-fit rotation) |
+| `minutes_unification`, `model_cards` (score / card it) | `rookie_priors` (P4(b)) |
+
+**The right-hand column is the reason the door exists, and the failure it prevents is
+specific.** Every gate arm in sessions 4b–4d is measured against a `base` control that
+builds through `composition_frame` with no hook. A blend that reached that builder from
+config would have turned those controls into blended arms silently, collapsing three
+sessions of margins toward zero with nothing raising — the same class of failure as the
+2026-08-13 double-port, arriving through a shared function instead of through a stale
+artifact. A test pins it (`test_the_measurement_modules_never_see_the_configs_blend`).
+
+### What is wired
+
+- **`stan.composition.preseason.adopt: true`.** `false` is an exact rollback of *both* the
+  blend and the window. `blend_k` and `route` are shared with the measurement target
+  deliberately — they are 4b decisions 2 and 3, and the head and the round that measured it
+  must not be able to disagree about them.
+- **The window cuts itself to 2004-05**, read off `preseason_coverage.csv` by
+  `head_first_season` rather than typed, and `max`-ed with the configured floor so a head
+  already fitting inside coverage keeps its own window. `stan.composition.first_season`
+  stays at 1996-97 and is now the floor rather than the answer — `stan.minutes`' pattern
+  exactly. 4d priced the cut at **−0.01991 [−0.02515, −0.01498]** per player-game, *in the
+  arm's favour*, so unlike P3's cut it is not a tax on the block.
+- **The artifact records the blend.** `posteriors` writes `preseason_blend_k` and
+  `preseason_route` into the composition artifact's extras, and `model_cards` **raises**
+  rather than carding a blended posterior against an un-blended frame. That is the direct
+  descendant of 2026-08-13: an artifact that does not record which arm wrote it cannot be
+  told apart from one that did not, and here the consequence would be a card misreporting
+  the offset, the allocation order *and* the dispersion bins at once.
+- **Verified before any sampler time**: `route: offset_only` leaves `position` bit-identical
+  across the two frames over all 736,410 rows, and the blend moves `w_share` on 538,685 of
+  them. 1,828 tests pass.
+
+### What the ship costs, and the ladder decision that rides with it
+
+Adopting invalidates the record rather than the model. `make stan-composition`'s ~11 audited
+figures — CRPS **4.4945** against the comparator's 4.7842, the role-graded ρ at **0.177** and
+**0.085**, the **33.89**-minute team-total miss — describe an un-blended head at 1996-97 that
+no longer exists once this lands.
+
+**The owner's decision was to re-run the 9.92 h ladder rather than annotate them**, and the
+reason it is not merely bookkeeping is that the sweep re-decides the *variant*: the four arms
+are re-scored against an offset that has changed on 73% of rows, and `betabinom_ot_graded`
+being selected again is a result rather than an assumption. The run is at the covered window,
+so it fits 448,464 rows against the full window's 631,158 and should come in under the 9.92 h
+that figure records. Its `probe_hours` Gate A guard is unchanged.
+
+⚠️ **Every figure this document and `README.md` quote from `stan_composition_metrics.csv` is
+therefore stale until that run lands**, and `make docs-audit` is the instrument that
+enumerates them — roughly 40 claims across four docs. They are refreshed rather than
+withdrawn, and the pre-adoption values are kept beside them per the house convention.
+
+### The chain, run 2026-08-14 — and it is the cheap half
+
+`make simulate-season` → `weekly-scores` → `bracket` → `draft-sim` → `strategy-sweep`, at the
+`train` posterior window, which every P5 consumer pins because the rows being scored are
+2022-23 and 2023-24 and `train_val` fits on them. **63 minutes end to end**, of which the
+sweep was 53 — against 7.4 h for the ladder and 2.0 h for the posteriors. The sampler stages
+are the cost of this round; everything after `make posteriors` is numpy.
+
+⚠️ **The sweep took 11× the 4.8 minutes this project's own docs quote for it.** The scale is
+unchanged (`sim.strategy.n_sims` is still 500, applied at both call sites) and a profiler put
+it in `np.searchsorted` and `np.argsort` rather than anywhere pathological, so the likely
+cause is the arms items 6–7 added while `strategy_*.csv` was left deliberately stale. That
+figure should be re-measured rather than re-quoted.
+
+#### Gate A improved on every season-total metric, in both seasons
+
+The comparison is clean because `availability-window-plan.md` §8b holds the previous chain's
+readout for the same arm:
+
+| | 2022-23 before → after | 2023-24 before → after |
+|---|---|---|
+| season-total MAE | 397.36 → **363.234** | 398.45 → **377.510** |
+| season-total CRPS | 276.48 → **252.524** | 275.17 → **260.387** |
+| season-total R² | 0.6589 → **0.709385** | 0.6732 → **0.704896** |
+| season-total bias | −26.50 → **−15.4388** | −71.15 → **−66.6411** |
+
+**The bias was pre-existing and this round improved it**, by 11.06 and 4.51 dk_pts. That
+matters because the bias is large against its −3.06 bar and it would have been easy to read
+as something this round introduced. Two caveats on the bar itself, neither of which the round
+resolves: it is computed on 873 pooled rows against the check's 386/387, and it is a
+**full-season** figure while the simulator's target is the **tournament window** — 91% of the
+schedule, and the front 91%. `potential-to-dos.md` **item 12** carries the one mechanism
+measured for that gap, worth −5.92 and −7.29 dk_pts, which is 38% and 11% of what is there.
+
+The weekly readout moved the same way — one-week validation MAE 28.72 → **27.6893**, CRPS
+19.40 → **18.6603**, R² 0.4658 → **0.494243**, and every one of the five quoted per-week
+biases toward zero.
+
+#### The contest readout, which is what the round was spent on
+
+| | before | after |
+|---|---|---|
+| 600k Shootaround simulated lift | 0.1890 | **0.2358** |
+| 600k Shootaround realized lift | 0.1713 | **0.204098** |
+
+Across all five structures the shipped arm lifts Round-1 advance probability by **0.2302** to
+**0.4172** simulated and **0.204098** to **0.341288** realized, every tier clearing its
+break-even hurdle on simulated ROI. **Gate D still fails at 0 of 6** — the two buy-in tiers do
+not select materially different rosters under either objective, unchanged by any of this.
+
+⚠️ **This does not measure what the preseason block is worth in the contest**, which is what
+P2 and 4d both logged as the open question. The composition, the injected σ, the ADP field and
+the error injection were all re-fitted in the same run, and the previous `strategy_*.csv` was
+overwritten rather than kept, so the honest statement is that the chain under the new heads
+reads higher — not that the block bought 0.047 of lift. Isolating it needs the pre-block
+tensors kept and a paired re-run, which is a session rather than a footnote.
+
+### What P5 does not settle yet
+
+**What the arm is worth in the contest**, which is the whole point of the chain and is the
+one thing none of 4b–4d could reach. `§7l` is the standing precedent that a head change
+arriving as *shape* can be a measured null on Round-1 advance probability; this one arrives
+as a change to the **allocation mean**, which is `order` rather than `shape`, so that
+precedent applies less cleanly — but "less cleanly" is not evidence, and the sweep is what
+turns it into some.
+
+**Whether the injected σ still reads 0.450 against a blended head.** 4d left
+`sim.minutes.player_season_sigma` untouched on the correct ground that its gain is the mean
+and the predictive sd went the *other* way (59.58 → 57.64). That reasoning is about the
+season-level spread the injection exists to supply, and it stands — but the σ grid has never
+been run against a blended composition, and a narrower base predictive is exactly the input
+that grid is sensitive to. It is not re-read here.
+
 ## Why preseason data should help — and where it plausibly won't
 
 - **Availability.** Participation is a direct health reading taken days before the season:
@@ -1692,7 +1850,10 @@ preseason per-36 against the `bio_draft_number` imputation. This is deliberately
 same slot `adp-plan.md` reserved for the ADP prior on thin-data players; if both
 eventually exist they compete in the same ladder rather than stacking silently.
 
-**P5 — chain pricing and ship.** For heads that changed: `make posteriors
+**P5 — chain pricing and ship.** ⚙️ **Opened 2026-08-14** — see the section above. The
+composition's 4d arm ships first, on an owner decision, because this head is the simulator's
+minutes source and adopting after the chain would mean sweeping twice. For heads that
+changed: `make posteriors
 --groups <family>`, `make simulate-season`, `make weekly-scores`, then the contest layer.
 `strategy_*.csv` is already deliberately stale (items 6–7 of `potential-to-dos.md` shipped
 without re-running it), so this round's sweep re-run settles both at once. Production
@@ -1714,6 +1875,7 @@ decision registry entries, and register this doc's built artifacts in `make docs
 | 4b (2026-08-14) ✅ | the composition's preseason arm at the pilot window — **passes at the head's own unit**, and it is the OFFSET rather than the ordering | P3 |
 | 4c (2026-08-13) ✅ | 4b's arm **fitted** — the increment survives the posterior and grows (retention 1.040), and the season unit's tie does not | P3 |
 | 4d (2026-08-14) ✅ | the same arm at the **covered window** (2004-05 on) plus a full-window control that prices the coverage cut — the increment grows again (**−0.23418**, retention **1.115**) and beats the shipped head at both units | P3 |
+| 4e (2026-08-14) ⚙️ | 4d's arm **adopted** — `head_frame`, the self-cutting window, the artifact's blend stamp — and the ladder re-run behind it | P5 |
 | 6b | the five surviving rate heads' arms — a session P1 *added* | P1→P2 |
 | 8 | simulator gates, strategy sweep — the σ re-read and the other windows landed early, 2026-08-14 | P5 |
 

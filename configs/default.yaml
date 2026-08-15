@@ -391,6 +391,11 @@ stan:
     # the history); fitting starts here. This was "2018-19" for the pilot; Gate E —
     # the full-window refit — was taken on 2026-08-03 after Gates A-D passed, so the
     # head now fits every season the frame covers.
+    #
+    # ⚠️ This is the window the head fits WITHOUT the preseason blend. With
+    # `preseason.adopt: true` below, `stan_composition.head_first_season` raises it to the
+    # preseason panel's first intact-tail season (2004-05) — so this value is the floor
+    # rather than the answer, exactly as `stan.minutes` leaves its own 1997-98 in place.
     first_season: "1996-97"
     # Joint draws kept per predictive. Each is a full sequential allocation of every
     # team-game, so this is the wall-clock knob for scoring, not for fitting.
@@ -483,6 +488,43 @@ stan:
     # itself is 48 s of numpy with no CmdStan, which is the property that makes the screen
     # worth re-running.
     preseason:
+      # ⚠️ THIS BLOCK IS READ BY TWO THINGS AND THEY WANT DIFFERENT KEYS FROM IT.
+      # `adopt`, `blend_k` and `route` describe the blend THE HEAD SHIPS, and
+      # `stan_composition.preseason_blend` is the one function that reads them. Everything
+      # else here — `first_season`, `label`, `arms`, `warmup`, `samples` — belongs to
+      # `make composition-preseason-fit`, the MEASUREMENT target, and no head reads any of
+      # it. They share `blend_k` and `route` deliberately: those are session 4b's decisions
+      # 2 and 3, and the head and the round that measured it must not be able to disagree
+      # about them.
+      #
+      # ── Adopted 2026-08-14 (docs/preseason-plan.md P5) ──
+      # Session 4d fitted this arm at the covered window against `base_full_window` — the
+      # head that was shipping — and it wins at both units on the draft pool: -0.25409
+      # [-0.26520, -0.24315] CRPS minutes per player-game and -17.27296 [-22.32569,
+      # -11.92164] per player-season, with `team_sum_abs_error` exactly 0 on all six arms.
+      # The increment has now grown three times as evidence was added to it (floor -0.19972
+      # -> fitted -0.20883 -> covered window -0.23418, retention 1.040 -> 1.115).
+      #
+      # ⚠️ Unlike the availability and minutes blocks this is NOT a column on `beta`. It
+      # blends `w_share`, which reaches the model as the `OWN` feature, as the offset and as
+      # the allocation ORDER — and no coefficient reaches the last two, which is why the arm
+      # had to be built this way at all. `route: offset_only` means only the offset is
+      # blended; 4b's attribution put 103% of the margin there and 3.75% on the ordering.
+      #
+      # ⚠️ Turning this on also cuts the FITTING rows to the preseason panel's first
+      # intact-tail season (2004-05), the same way `stan.minutes.preseason` cuts its head's
+      # window — and the season is READ OFF `preseason_coverage.csv` by
+      # `stan_composition.head_first_season`, never typed. Session 4d priced that cut at
+      # -0.01991 [-0.02515, -0.01498] per player-game, IN THE ARM'S FAVOUR and 8.5% of the
+      # increment, so unlike P3's cut it is not a tax on the block.
+      #
+      # `false` restores the pre-2026-08-14 head exactly — full 1996-97 window, incumbent
+      # `w_share` — and it reaches the head ONLY through `stan_composition.head_frame`.
+      # `composition_frame` itself is untouched, because `composition_effects`,
+      # `minutes_window`, `rookie_priors` and both `composition_preseason` modules build
+      # controls on it and a blend arriving under those would delete the contrast they exist
+      # to draw.
+      adopt: true
       # ── Session 4d: the covered window, promoted from the pilot on 2026-08-13 ──
       # 4c ran this at "2018-19" (P3 decision 3) and passed at both units, so the open
       # question is whether the arm survives the window the head actually fits. This is
@@ -573,17 +615,29 @@ sim:
   # ── The minutes draw ──────────────────────────────────────────────────────
   # THE SHIPPED per-(player, season) effect size, injected into the composition's linear
   # predictor at draw time. `make minutes-unification` measured the composition's season
-  # totals 4.68x too narrow and traced it to this missing parameter; injecting `sigma * z`
+  # totals 4.58x too narrow and traced it to this missing parameter; injecting `sigma * z`
   # per unit per posterior draw and re-running the head's OWN sequential allocation moves
-  # the season-total predictive sd from 64.65 to 280.87 and TIES the marginal head
-  # (CRPS 142.87 against 144.35, gap -1.49 [-6.14, +3.22]), with better calibration
-  # (PIT KS 0.0659 against 0.0735) and the team constraint still exact.
+  # the season-total predictive sd from 60.58 to 237.91 and BEATS the marginal head
+  # (CRPS 130.69 against 136.60, gap -5.91 [-10.39, -1.50]), with calibration that is
+  # effectively identical (PIT KS 0.0665 against 0.0668) and the team constraint still exact.
   #
-  # **0.450 is estimated on TRAIN**, by running the identical grid over the last two
+  # ⚠️ MOVED 0.450 -> 0.375 ON 2026-08-14, and the reason is that its INPUT changed rather
+  # than that the constant was re-decided. The composition adopted the preseason-blended
+  # offset that day (`docs/preseason-plan.md` P5), so the grid this number is read off is a
+  # grid over a different head. On the pre-blend head the train optimum was 0.450 and
+  # validation's was 0.375 — one step apart, which is the "two grids on disjoint rows agree
+  # to a step" evidence the constant rested on. On the blended head BOTH grids put the
+  # optimum at 0.375 (train 108.4687 against 0.450's 108.8337 on 1,145 player-seasons;
+  # validation 130.6918 against 132.4371 on 742), so the agreement is now exact.
+  #
+  # **0.375 is estimated on TRAIN**, by running the identical grid over the last two
   # training seasons — so it owes the evaluation split nothing, which was the injection's
-  # one load-bearing caveat. Five independent routes agree: 0.375 (validation CRPS grid),
-  # ~0.41 (calibration target — the ratio of the head's residual sd to its predictive sd),
-  # 0.450 (train CRPS grid), 0.4776 and 0.4809 (fitted in Stan, non-centred and centred).
+  # one load-bearing caveat. It is also the best-calibrated rung on the grid by some margin
+  # (PIT KS 0.0665 against 0.450's 0.0952), where before the blend 0.450 was the better
+  # calibrated of the two. Other routes to the same quantity, measured on the PRE-BLEND head
+  # and kept for scale rather than as current readings: ~0.41 (calibration target — the ratio
+  # of the head's residual sd to its predictive sd), 0.4776 and 0.4809 (fitted in Stan,
+  # non-centred and centred).
   #
   # A FITTED `sigma_u` is strictly better in two respects — beta estimated jointly with it,
   # and the predictive integrating over sigma's posterior rather than plugging one in — and
@@ -591,7 +645,7 @@ sim:
   # per arm even at a 4-season window and did not converge in the budget available; see
   # docs/potential-to-dos.md. Set to 0.0 to recover the un-injected head exactly.
   minutes:
-    player_season_sigma: 0.450
+    player_season_sigma: 0.375
 
   # ── The availability layout ───────────────────────────────────────────────
   # WHERE the missed games fall, given how many there are. The availability head cannot
