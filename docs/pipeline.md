@@ -408,6 +408,28 @@ make mixture-value     # what the availability mixture is worth in the CONTEST, 
                        #   the simulated lift is SELF-SCORED — each arm is measured in a
                        #   world it generated, which is why the `adp` control row (a
                        #   board identical across arms) is what the null rests on.
+
+make preseason-contest # what the PRESEASON BLOCK is worth in the contest, as a paired
+                       #   counterfactual — the same device one round over
+                       #   → outputs/predictions/preseason_block_contest.csv.
+                       #   REPORTS two arms; it does not run them. Running them is two
+                       #   passes over five targets differing in the THREE keys that ARE
+                       #   the block (`stan.availability.preseason`,
+                       #   `stan.minutes.preseason`,
+                       #   `stan.composition.preseason.adopt`), ~4.5 h each because all
+                       #   three head groups are refitted and the composition is 2-3 h of
+                       #   it. `--capture {base,preseason}` freezes each pass into
+                       #   outputs/predictions/preseason_arms/. Run the COUNTERFACTUAL
+                       #   first, so the shipped arm is what disk ends on. `--capture`
+                       #   REFUSES unless ALL THREE keys agree with the arm name — a pass
+                       #   with the block half on is neither arm.
+                       #   ⚠️ ONLY TWO OF THE THREE HEADS CAN REACH THIS. `src/sim/`
+                       #   never loads the marginal minutes head, so P3's block — the
+                       #   largest of the three by its own gate — is structurally
+                       #   invisible here; a test pins the import fact and the `reach`
+                       #   block reports which windows moved. Read `resolution` before
+                       #   `contest`, then `board`: this block arrives as the allocation
+                       #   MEAN rather than as shape, so a ranking is what it can move.
 ```
 
 **After `make posteriors`, nothing else in the simulation layer needs CmdStan.** That is the

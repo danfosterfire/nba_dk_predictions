@@ -25,7 +25,7 @@ PIP    := .venv/bin/pip
         composition-preseason-fit \
         scoring-periods draft-pool simulate-season weekly-scores bracket draft-sim \
         draft-sim-need draft-room draft-room-prep strategy-sweep strategy-sweep-need \
-        pick-log-stake mixture-value final-evaluation
+        pick-log-stake mixture-value preseason-contest final-evaluation
 
 venv:
 	/opt/homebrew/bin/python3.14 -m venv .venv
@@ -762,6 +762,42 @@ pick-log-stake:
 # generated, so only the realized rows share a truth across arms.
 mixture-value:
 	$(PYTHON) -m src.sim.mixture_value
+
+# What the PRESEASON BLOCK is worth in the contest — `mixture-value`'s device one round
+# over, and the measurement `docs/preseason-plan.md` P5 could not take. That run moved the
+# composition's posterior, `sim.minutes.player_season_sigma`, the ADP field and Gate C's
+# injection in one pass and overwrote the previous `strategy_*.csv`, so its 0.1890 -> 0.2358
+# lift is the chain under the new heads and not the block's own contribution. This target
+# reports two arms captured under the same code; it does not run them.
+#
+# Running them is two passes over five targets, differing in the THREE keys that are the
+# block. All three head groups are refitted, which is what makes a pass ~3.5 h — the
+# composition alone is 2 h:
+#
+#   # in configs/default.yaml: stan.availability.preseason: false,
+#   #   stan.minutes.preseason: false, stan.composition.preseason.adopt: false
+#   $(PYTHON) -m src.models.posteriors --window train \
+#       --groups availability,minutes,composition
+#   make simulate-season bracket draft-sim strategy-sweep
+#   $(PYTHON) -m src.sim.preseason_contest --capture base
+#   # then the same five with all three back to true and `--capture preseason`
+#   make preseason-contest
+#
+# Run the COUNTERFACTUAL first so the shipped arm is what disk ends on. `--capture` refuses
+# unless all three keys agree with the arm name: a pass with the block half on is neither
+# arm, and it is the one mistake that leaves every number in the artifact plausible.
+#
+# ONLY TWO OF THE THREE HEADS CAN REACH THIS READOUT. `src/sim/` never loads the marginal
+# minutes head — it takes `beta_shapes` (arithmetic) from that module and nothing else — so
+# P3's block, the largest of the three by its own gate, is structurally invisible here. Its
+# key is flipped and its posterior refitted anyway so the arm name means what it says; the
+# `reach` block reports which windows actually moved, and a test pins the import fact.
+#
+# READ `resolution` BEFORE the contest block: 500 worlds per season resolves a lift gap of
+# ~0.09, and the simulated lift is SELF-SCORED. Then read `board` — this block arrives as
+# the allocation MEAN rather than as shape, so a ranking is the thing it can move.
+preseason-contest:
+	$(PYTHON) -m src.sim.preseason_contest
 
 # Does any head need a season term, and which kind? A trend covariate and a year-level
 # random effect for every head, plus the season x role interaction the availability era

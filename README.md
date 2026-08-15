@@ -734,12 +734,17 @@ season-total sd, against +0.6% from shared coefficient uncertainty.
 it — which is the result, not a caveat.** `make strategy-sweep`. Against a symmetric-field
 null, the arm that ships lifts its Round-1 advance probability by **0.2358** in the 600k
 Shootaround's simulated worlds and by **0.204098** on the two validation seasons replayed
-against realized box scores. (Before the composition took its preseason block those read
-0.1890 and 0.1713, so the chain re-run moved both up by about a fifth. ⚠️ That is **not**
-attributable to the block: the composition, the injected σ, the field and the error
-injection were all re-fitted in the same run, and the previous `strategy_*.csv` was
-overwritten rather than kept, so what is measured is the chain under the new heads and not
-the block's own contribution.) The second number is not a smaller version of the first: the
+against realized box scores. ~~⚠️ That is **not** attributable to the preseason block, because
+four things moved in one pass and the previous `strategy_*.csv` was overwritten.~~ ✅ **Closed
+2026-08-15 by a paired counterfactual** (`make preseason-contest`), which refits all three
+head groups with the block off and freezes σ at 0.375 in both arms. Essentially **all** of the
+chain's Gate A gain is the block — the counterfactual lands within **0.11** and **0.49**
+dk_pts of the recorded pre-block season-total MAE — and the realized lift is higher with the
+block in **10 of 10** season × tournament cells, **+0.102767** at the 600k. The *simulated*
+side resolves nothing at a bar of **0.074835**, but its `adp` control — a board identical
+across arms — moved **−0.006490** against the 24-strategy mean of **+0.034429**, so unlike the
+availability mixture's null the gain is not the world getting easier.
+The second number is not a smaller version of the first: the
 simulated side pools 500 drawn worlds per season and the realized side has exactly one, so
 its intervals cover most of the table and it selected nothing. **Gate D fails, and that is
 also a result** — the two buy-in tiers do not select materially different rosters in **0**

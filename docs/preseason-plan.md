@@ -1657,15 +1657,148 @@ the error injection were all re-fitted in the same run, and the previous `strate
 overwritten rather than kept, so the honest statement is that the chain under the new heads
 reads higher — not that the block bought 0.047 of lift. Isolating it needs the pre-block
 tensors kept and a paired re-run, which is a session rather than a footnote.
+✅ **That re-run happened on 2026-08-15 and the section below is it. The paragraph above
+stands as written — it was the correct reading of what P5's own run could support — and it is
+now superseded rather than withdrawn.**
 
-### What P5 does not settle yet
+## P5 closes — the paired counterfactual, 2026-08-15
 
-**What the arm is worth in the contest**, which is the whole point of the chain and is the
-one thing none of 4b–4d could reach. `§7l` is the standing precedent that a head change
-arriving as *shape* can be a measured null on Round-1 advance probability; this one arrives
-as a change to the **allocation mean**, which is `order` rather than `shape`, so that
-precedent applies less cleanly — but "less cleanly" is not evidence, and the sweep is what
-turns it into some.
+**`make preseason-contest`, `src/sim/preseason_contest.py` →
+`outputs/predictions/preseason_block_contest.csv`.** The instrument is
+`src/sim/mixture_value.py` one round over: two arms of the same chain, captured under the
+same code, reported side by side, so a claim reads one row rather than differencing two
+artifacts of unreconstructable vintage.
+
+### What the two arms are, and the one thing held fixed
+
+`base` flips the three keys that **are** the block — `stan.availability.preseason`,
+`stan.minutes.preseason`, `stan.composition.preseason.adopt` — and refits all three head
+groups. It is not an ablation to zero: each key is a documented exact rollback, so `base` is
+the fully-fitted chain that was shipping before the round.
+
+| head | `base` | `preseason` |
+|---|---|---|
+| availability | **19** features, 2012-13 | 29 features, 2012-13 |
+| minutes | **24** features, **1997-98**, 8,306 rows | 29 features, 2004-05, 6,152 rows |
+| composition | 25 features, **1996-97**, **631,158** rows | 25 features, 2004-05, 448,464 rows |
+
+All three refit clean: R̂ 1.0073 / 1.0052 / 1.0044, **0 divergences**, round-trip PASS, 185.7
+sampler minutes of which the composition is 165.8.
+
+⚠️ **`sim.minutes.player_season_sigma` is held at 0.375 in BOTH arms, deliberately.** σ is not
+part of the block — it is a downstream constant whose *input* moved at P5 — so freezing it is
+what makes the delta attributable to the block rather than to the block plus a re-tuned
+injection. **`base` is therefore "today's chain with the block removed", not "the chain as of
+2026-08-13".**
+
+⚠️ **Only two of the three heads can reach this readout, and that scopes every figure below.**
+`src/sim/` imports neither `StanMinutes` nor `rehydrate_minutes` and never looks up
+`artifacts["minutes"]`; what it takes from that module is `beta_shapes`, which is arithmetic.
+So **P3's block — the largest of the three by its own gate, at −4.789 validation CRPS
+minutes — is structurally invisible here.** Its key is flipped and its posterior refitted
+anyway so the arm name means what it says, and
+`test_the_simulator_never_loads_the_marginal_minutes_head` pins the import fact by parsing
+rather than by docstring, because `README.md` carried the opposite claim until 2026-08-14.
+
+### The attribution P5 could not make, and it is near-total
+
+| season-total MAE | P5's recorded "before" | `base` | `preseason` | the block |
+|---|---|---|---|---|
+| 2022-23 | 397.36 | **397.24747** | **363.23449** | **−34.01297** |
+| 2023-24 | 398.45 | **397.95546** | **377.50963** | **−20.44583** |
+
+**The counterfactual lands within 0.11 and 0.49 dk_pts of P5's pre-block figures**, and it
+differs from them only by σ. So σ, the ADP field and the error injection are together worth
+about half a dk_pt, and essentially the whole of P5's Gate A improvement **is** the block.
+CRPS moves −23.81954 and −15.19750, R² +0.05006 and +0.03100, bias 11.28673 and 4.06281
+toward zero, and the games-played pmf total variation falls at both seasons.
+
+### The board moves — and that is the reversal against the mixture round
+
+| | preseason block | availability mixture (§7k) |
+|---|---|---|
+| rank correlation | **0.962988 / 0.971150** | 0.9990 |
+| top-100 overlap | **88% / 91%** | 98% |
+| mean \|Δrank\| over the 192 drafted picks | **16.411458 / 14.666667** | 3.1979 |
+| max \|Δrank\| | **139 / 98** | — |
+| drafted picks moving ≥ 12 ranks | **96 / 89** of 192 | — |
+
+`§7l`'s precedent was that a head change arriving as **shape** is a measured null on the
+board. This one arrives as the **allocation mean**, and the board says so: half the drafted
+picks move by a full round or more, and 12 of the top 100 change identity. The `draw` block
+gives the mechanism — stars (30+ mpg) gain **+81.317731** and **+53.867108** of mean season
+total with q10 up **+98.983750** and **+52.586364**, while `mean_gp` *falls* slightly
+(−0.180050, −0.252000). **The gain is minutes and production, not availability.**
+
+### The contest — the simulated side cannot resolve it, and the control inverts
+
+Every simulated tournament is a null against the instrument's own bar of **0.074835**:
++0.054249, +0.036241, +0.070857, +0.064491, −0.020059. **But the control moves the other way**,
+which is the opposite of what the mixture round found:
+
+| | preseason block | availability mixture |
+|---|---|---|
+| `adp_only_lift` delta — a board identical across arms | **−0.006490** | +0.0093 |
+| mean lift delta over 24 strategies | **+0.034429** | +0.0097 |
+| strategies moving positive | **22** of 24 | 20 of 24 |
+| `lineup_value_blend30`'s delta, in sds of the spread | **+1.053226** | — |
+
+In the mixture round `adp` captured essentially the entire shift, which is what made that
+null a *world* effect. Here the pure-market board — which cannot move between arms — went
+**down** while the model-reading boards went up, so the simulated gain is not the world
+getting easier. `ordering_spearman` is **0.814702**, so the sweep's ordering did shift, though
+`lineup_value_blend30` is top in both arms.
+
+### The realized side is priced by PAIRING, not by the simulated bar
+
+⚠️ **A correction to the instrument, made in this session.** The `RESOLVED` flag was being
+stamped on realized rows using `resolution.min_detectable_lift_gap` — a bootstrap over **500
+simulated worlds**. The realized readout has **one world per season and two seasons**, so that
+bar never measured its uncertainty and applying it would overclaim exactly where the evidence
+is thinnest. `mixture_value` has the same shape and it never surfaced there only because its
+realized delta was small. The realized rows now read `paired/2sn` and get their own block.
+
+What the realized side does have is **pairing**: both arms are scored against identical box
+scores with an identical field, so the season-to-season swing in the *level* cancels out of
+the *delta*. `88k_alley_oop` is the demonstration — the base arm's lift moves **+0.8273 →
+−0.1313** across the two seasons, a swing of 0.96, while the arm-to-arm delta holds at
+**+0.0037** and **+0.1016**.
+
+| tournament | `base` | `preseason` | delta | season spread |
+|---|---|---|---|---|
+| 600k_shootaround | 0.101331 | 0.204098 | **+0.102767** | 0.018611 |
+| 20k_spin_move | 0.039989 | 0.307681 | **+0.267691** | 0.092439 |
+| 50k_four_pt_play | 0.093927 | 0.273454 | **+0.179527** | 0.033076 |
+| 15k_and_one | 0.076103 | 0.237339 | **+0.161236** | 0.013214 |
+| 88k_alley_oop | 0.347996 | 0.400663 | **+0.052667** | 0.097935 |
+
+**10 of 10** season × tournament cells are positive, of **10**, weakest cell **0.003700**.
+
+### What P5 decides
+
+1. **The gate closes, and the block was worth shipping.** Not on any single row: on the
+   coherence of a decisive board move, a control that went the wrong way for a world effect,
+   and realized sign agreement in 10 of 10 cells.
+2. **P5's Gate A improvement is the block**, to within half a dk_pt. The sentence "none of
+   this is attributable to the preseason block" is superseded.
+3. **The realized readout is the arm-comparable one**, and it is priced by pairing.
+   `simulated-lift-is-not-a-cross-model-value-metric` stands and is *strengthened* — the
+   simulated side resolved nothing here either, at a bar of 0.074835.
+4. **`make preseason-contest` is the standing instrument** for this question.
+
+### What P5 does not settle
+
+- **The five tournaments are ONE test**, not five: same worlds, same portfolios, differing
+  only in pod size and payout. And the realized side is **two seasons deep**, so 10 cells are
+  not 10 independent observations.
+- **The two arms' simulated worlds are not the same world.** Gate C solves `rho` per arm and
+  it *fell* — 0.399071 → 0.347987 and 0.395650 → 0.302934 — because the rotation is fitted
+  from the model-versus-market skill gap and a better model needs less of it. That is
+  independent corroboration that the block improved the model, and it is also why `sim_lift`
+  is not arm-comparable. It is carried as a `verdict` row rather than as prose.
+- **Gate D still fails 0 of 6 in both arms**, unchanged by any of this.
+- **What the availability and composition blocks are worth SEPARATELY.** This arm moves both;
+  splitting them is another paired pass.
 
 **Whether the injected σ still reads 0.450 against a blended head.** 4d left
 `sim.minutes.player_season_sigma` untouched on the correct ground that its gain is the mean
@@ -1850,9 +1983,18 @@ preseason per-36 against the `bio_draft_number` imputation. This is deliberately
 same slot `adp-plan.md` reserved for the ADP prior on thin-data players; if both
 eventually exist they compete in the same ladder rather than stacking silently.
 
-**P5 — chain pricing and ship.** ⚙️ **Opened 2026-08-14** — see the section above. The
-composition's 4d arm ships first, on an owner decision, because this head is the simulator's
-minutes source and adopting after the chain would mean sweeping twice. For heads that
+**P5 — chain pricing and ship.** ✅ **Opened and run 2026-08-14; CLOSED 2026-08-15 by the
+paired counterfactual** — see both sections above. The
+composition's 4d arm shipped first, on an owner decision, because this head is the simulator's
+minutes source and adopting after the chain would mean sweeping twice. The chain then ran end
+to end in 63 minutes and every readout improved, and **that run could attribute none of it**,
+because the composition, `sim.minutes.player_season_sigma`, the ADP field and the error
+injection all moved in the same pass and the previous `strategy_*.csv` was overwritten rather
+than kept. `make preseason-contest` took the measurement the gate had specified and skipped:
+essentially **all** of P5's Gate A gain is the block (`base` lands within 0.11 / 0.49 dk_pts
+of P5's own pre-block figures), the board moves decisively where the mixture's did not, and
+the realized readout is positive in **10 of 10** cells while the simulated side resolves
+nothing at a bar of 0.074835. For heads that
 changed: `make posteriors
 --groups <family>`, `make simulate-season`, `make weekly-scores`, then the contest layer.
 `strategy_*.csv` is already deliberately stale (items 6–7 of `potential-to-dos.md` shipped
@@ -1877,7 +2019,8 @@ decision registry entries, and register this doc's built artifacts in `make docs
 | 4d (2026-08-14) ✅ | the same arm at the **covered window** (2004-05 on) plus a full-window control that prices the coverage cut — the increment grows again (**−0.23418**, retention **1.115**) and beats the shipped head at both units | P3 |
 | 4e (2026-08-14) ⚙️ | 4d's arm **adopted** — `head_frame`, the self-cutting window, the artifact's blend stamp — and the ladder re-run behind it | P5 |
 | 6b | the five surviving rate heads' arms — a session P1 *added* | P1→P2 |
-| 8 | simulator gates, strategy sweep — the σ re-read and the other windows landed early, 2026-08-14 | P5 |
+| 8 (2026-08-14) ⚙️ | the **chain**, end to end: tensors, weekly scores, bracket, draft-sim and the sweep, behind the adopted blend and σ = 0.375. Every readout improved and **none of it was attributable to the block** — four things moved in one pass. P5 stayed OPEN on its own question | P5 |
+| 9 (2026-08-15) ✅ | the **paired counterfactual** — `make preseason-contest`, both arms on one code, σ frozen at 0.375 in both. Closes P5: the Gate A gain **is** the block, the board moves (mean \|Δrank\| **16.41**), realized lift is positive in **10 of 10** cells, and the simulated side is a null whose `adp` control went the *wrong way* for a world effect | P5 ✅ |
 
 Sessions reorder freely as findings land, and P1 exercised that: **minutes moved ahead of
 availability** because the measurement inverted the plan's a-priori ordering. Anything that

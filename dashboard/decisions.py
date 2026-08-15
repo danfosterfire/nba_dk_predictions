@@ -9326,4 +9326,49 @@ REGISTRY: tuple[Decision, ...] = (
         date="2026-08-13",
         tags=("simulator", "null", "population"),
     ),
+    Decision(
+        id="preseason-block-contest-value-is-attributable-and-positive",
+        topic="drafting",
+        claim="**The preseason block reaches the contest, and unlike the availability "
+              "mixture the reason is that it moves the ORDER of the board** — mean "
+              "|Δrank| **16.411458** over the 192 drafted picks against the mixture's "
+              "3.1979. Realized Round-1 lift is higher with the block in **10 of 10** "
+              "season × tournament cells; the simulated side resolves nothing.",
+        because="P5 ran the whole chain behind the adopted composition blend and could "
+                "attribute none of it — the composition, `sim.minutes.player_season_sigma`, "
+                "the ADP field and Gate C's injection all moved in one pass and the "
+                "previous `strategy_*.csv` was overwritten. `make preseason-contest` is the "
+                "paired re-run, built as `mixture_value` one round over: both arms captured "
+                "under one code, and **σ frozen at 0.375 in BOTH** so the delta is the block "
+                "rather than the block plus a re-tuned injection. **The attribution is "
+                "near-total.** The counterfactual's season-total MAE lands within "
+                "**0.11** and **0.49** dk_pts of P5's own recorded pre-block figures, so σ, "
+                "the field and the injection are together worth about half a dk_pt and the "
+                "block is worth **−34.012974** and **−20.445830**. **The board moves**: rank "
+                "correlation **0.962988**, top-100 overlap **88%**, and **96** of 192 "
+                "drafted picks shift by a full round — driven by stars, whose mean season "
+                "total gains **+81.317731** while `mean_gp` FALLS, so it is minutes and "
+                "production rather than availability. **The contest evidence is coherence, "
+                "not one row.** Every simulated tournament is a null at a bar of "
+                "**0.074835** — but `adp`, whose board is identical across arms, moved "
+                "**−0.006490** against the 24-strategy mean of **+0.034429**, which INVERTS "
+                "[[availability-mixture-contest-value-is-a-null]]'s finding that the shift "
+                "was a world effect. The realized side is positive in 10 of 10 cells "
+                "(**+0.102749** at the 600k, weakest cell +0.0037) and is priced by PAIRING "
+                "rather than by the simulated bar — a correction made in this session, since "
+                "that bar bootstraps 500 simulated worlds and the realized rows have one per "
+                "season. Gate C's `rho` fell in both seasons (0.399118 → 0.348022), "
+                "independent corroboration that the model improved. **Limits**: the five "
+                "tournaments are ONE test, the realized side is two seasons deep, Gate D "
+                "still fails 0 of 6, and the availability and composition blocks are not "
+                "separated. `stan.minutes.preseason` reaches NOTHING here — `src/sim/` never "
+                "loads that head, and a test pins it.",
+        status="measured",
+        reproduce="make preseason-contest → "
+                  "outputs/predictions/preseason_block_contest.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-15",
+        date="2026-08-15",
+        tags=("preseason", "drafting", "simulator"),
+    ),
 )

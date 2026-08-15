@@ -226,6 +226,14 @@ COMP_PRE = "outputs/predictions/composition_preseason.csv"
 # folding them together would make "the increment" ambiguous on the column name alone.
 COMP_PRE_FIT = "outputs/predictions/composition_preseason_fit.csv"
 COMP_PRE_FIT_C = "outputs/predictions/composition_preseason_fit_covered.csv"
+# P5's closing measurement — the preseason block's paired contest counterfactual, and
+# `MIXVAL`'s twin one round over. Same long shape over (block, measure, key), carrying BOTH
+# arms in the `base` and `preseason` columns, so a delta claim reads ONE row rather than
+# differencing two artifacts — which is what stops a half-refreshed pair passing. The `block`
+# key is load bearing in the lookup: `contest.realized_lift` and `realized.season_spread`
+# describe the same tournament and are not interchangeable, because only the second is priced
+# by pairing and the first explicitly does not carry the simulated bar.
+PRE_CONTEST = "outputs/predictions/preseason_block_contest.csv"
 AABS = "outputs/predictions/availability_absence.csv"
 AABS_I = "outputs/predictions/availability_absence_interaction.csv"
 AABS_L = "outputs/predictions/availability_absence_lambda.csv"
@@ -4833,6 +4841,33 @@ def _readme() -> list[Claim]:
                      population="draftable"),
         "README 4c retention at the per-player-game unit", tol=0.002)
 
+    # ── P5's closing counterfactual, the figures the overview repeats ─────────
+    # Claimed here as well as in the plan doc because the README states the CONCLUSION
+    # ("the gain is not the world getting easier"), and that sentence is carried entirely by
+    # two numbers with opposite signs. Either one drifting would leave the prose intact and
+    # the argument gone — which is this builder's whole reason for existing.
+    def pc5(block: str, measure: str, key: str, column: str = "preseason") -> float:
+        return cell(PRE_CONTEST, column, block=block, measure=measure, key=key)
+
+    add("+0.102767", PRE_CONTEST,
+        lambda: pc5("contest", "realized_lift", "600k_shootaround", "delta"),
+        "README P5 realized lift delta, 600k")
+    add("10", PRE_CONTEST,
+        lambda: pc5("realized", "delta_positive_cells", "all tournaments"),
+        "README P5 realized cells moving the block's way")
+    add("10", PRE_CONTEST,
+        lambda: pc5("realized", "delta_positive_cells", "all tournaments", "base"),
+        "README P5 the denominator behind that count")
+    add("0.074835", PRE_CONTEST,
+        lambda: pc5("resolution", "min_detectable_lift_gap", "base"),
+        "README P5 the simulated resolution bar")
+    add("−0.006490", PRE_CONTEST,
+        lambda: pc5("strategy", "adp_only_lift", "600k_shootaround", "delta"),
+        "README P5 the adp control — the sign that carries the conclusion")
+    add("+0.034429", PRE_CONTEST,
+        lambda: pc5("strategy", "lift_delta_mean", "600k_shootaround"),
+        "README P5 mean simulated lift delta over 24 strategies")
+
     return C
 
 
@@ -8479,6 +8514,121 @@ def _composition_preseason_fit_covered() -> list[Claim]:
     return C
 
 
+def _preseason_contest() -> list[Claim]:
+    """`docs/preseason-plan.md` P5's closing section — the paired contest counterfactual.
+
+    Four families, and the split is by what each one protects.
+
+    **The attribution**, which is the whole reason the session ran: the block's Gate A delta,
+    and — separately — the counterfactual's own MAE beside P5's recorded pre-block figure.
+    The second is what turns "the block improved Gate A" into "the block is essentially ALL
+    of P5's Gate A improvement", and it decays silently if only the delta is claimed.
+
+    **The board**, because it is the mechanism and it is the reversal against
+    `availability_mixture_contest.csv`. Both the correlation and the rank movement, since a
+    correlation near 1 is compatible with either reading on its own.
+
+    **The contest**, at BOTH arms rather than as a delta. A gain quoted alone would survive
+    both arms drifting together, and the `adp` control is the row the interpretation rests
+    on — it is what separates a drafting gain from a world effect, and it points the
+    opposite way from the mixture round's.
+
+    **The instrument's own limits**: the resolution bar the simulated nulls are read
+    against, and the realized block's consistency count. Those are claims about what the
+    measurement CANNOT say, and a doc that keeps the result while losing them would be
+    overclaiming rather than merely stale.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, actual, label: str, **kw) -> None:
+        C.append(_c(quoted, PRE_CONTEST, actual, label, doc=PRESEASON, **kw))
+
+    def pc(block: str, measure: str, key: str, column: str = "preseason") -> float:
+        return cell(PRE_CONTEST, column, block=block, measure=measure, key=key)
+
+    # ── the attribution ───────────────────────────────────────────────────────
+    for season, base, ship, delta in (
+            ("2022-23", "397.24747", "363.23449", "−34.01297"),
+            ("2023-24", "397.95546", "377.50963", "−20.44583")):
+        add(base, lambda s=season: pc("gate_a", "season_total_dk.mae", s, "base"),
+            f"counterfactual season-total MAE, {season}")
+        add(ship, lambda s=season: pc("gate_a", "season_total_dk.mae", s),
+            f"shipped season-total MAE, {season}")
+        add(delta, lambda s=season: pc("gate_a", "season_total_dk.mae", s, "delta"),
+            f"the block's season-total MAE delta, {season}")
+    for season, crps, r2, bias in (("2022-23", "−23.81954", "+0.05006", "11.28673"),
+                                   ("2023-24", "−15.19750", "+0.03100", "4.06281")):
+        add(crps, lambda s=season: pc("gate_a", "season_total_dk.crps", s, "delta"),
+            f"the block's season-total CRPS delta, {season}")
+        add(r2, lambda s=season: pc("gate_a", "season_total_dk.r2", s, "delta"),
+            f"the block's season-total R2 delta, {season}")
+        add(bias, lambda s=season: pc("gate_a", "season_total_dk.bias", s, "delta"),
+            f"the block's season-total bias delta, {season}")
+
+    # ── the board, and the mechanism under it ─────────────────────────────────
+    for season, spearman, moved, picks in (("2022-23", "0.962988", "16.411458", "96"),
+                                           ("2023-24", "0.971150", "14.666667", "89")):
+        add(spearman, lambda s=season: pc("board", "spearman_mean_total", s),
+            f"board rank correlation between the arms, {season}")
+        add(moved, lambda s=season: pc("board", "mean_abs_rank_move_drafted", s),
+            f"mean |rank move| over the drafted picks, {season}")
+        add(picks, lambda s=season: pc("board", "picks_moving_12plus", s),
+            f"drafted picks moving a full round, {season}")
+    add("88%", lambda: pc("board", "top100_overlap", "2022-23"),
+        "top-100 overlap between the arms, 2022-23")
+    add("91%", lambda: pc("board", "top100_overlap", "2023-24"),
+        "top-100 overlap between the arms, 2023-24")
+    # The mechanism: stars gain LEVEL while games played does not move.
+    add("+81.317731", lambda: pc("draw", "mean_total", "2022-23 30+ mpg", "delta"),
+        "star mean season total, the block's delta")
+    add("+53.867108", lambda: pc("draw", "mean_total", "2023-24 30+ mpg", "delta"),
+        "star mean season total, the block's delta, 2023-24")
+
+    # ── the contest, both arms, plus the control the reading rests on ─────────
+    for tour, base, ship, delta in (
+            ("600k_shootaround", "0.101331", "0.204098", "+0.102767"),
+            ("20k_spin_move", "0.039989", "0.307681", "+0.267691"),
+            ("50k_four_pt_play", "0.093927", "0.273454", "+0.179527"),
+            ("15k_and_one", "0.076103", "0.237339", "+0.161236"),
+            ("88k_alley_oop", "0.347996", "0.400663", "+0.052667")):
+        add(base, lambda t=tour: pc("contest", "realized_lift", t, "base"),
+            f"counterfactual realized lift, {tour}")
+        add(ship, lambda t=tour: pc("contest", "realized_lift", t),
+            f"shipped realized lift, {tour}")
+        add(delta, lambda t=tour: pc("contest", "realized_lift", t, "delta"),
+            f"the block's realized lift delta, {tour}")
+    add("−0.006490", lambda: pc("strategy", "adp_only_lift", "600k_shootaround", "delta"),
+        "THE CONTROL: the `adp` board is identical across arms, so its delta is world only")
+    add("+0.034429", lambda: pc("strategy", "lift_delta_mean", "600k_shootaround"),
+        "mean simulated lift delta over the 24 swept strategies")
+    add("22", lambda: pc("strategy", "lift_delta_positive", "600k_shootaround"),
+        "swept strategies whose simulated lift moved positive")
+    add("+1.053226", lambda: pc("strategy", "reference_lift_z", "600k_shootaround"),
+        "the reference strategy's delta in sds of the across-strategy spread")
+    add("0.814702", lambda: pc("strategy", "ordering_spearman", "600k_shootaround"),
+        "the sweep's ordering between the arms")
+
+    # ── what the instrument CANNOT say ───────────────────────────────────────
+    add("0.074835", lambda: pc("resolution", "min_detectable_lift_gap", "base"),
+        "the 95% resolvable simulated lift gap; every simulated row is under it")
+    # "10 of 10" is TWO claims, per the house idiom: a count that stays true while its
+    # denominator moves underneath it is the same silent staleness one level down, and this
+    # denominator moves if a tournament or a season is added.
+    add("10", lambda: pc("realized", "delta_positive_cells", "all tournaments"),
+        "realized season x tournament cells moving the block's way")
+    add("10", lambda: pc("realized", "delta_positive_cells", "all tournaments", "base"),
+        "the denominator behind that count")
+    add("0.003700", lambda: pc("realized", "min_abs_delta", "all tournaments"),
+        "the weakest realized cell — the claim is only as strong as this")
+    for season, base, ship in (("2022-23", "0.399071", "0.347987"),
+                               ("2023-24", "0.395650", "0.302934")):
+        add(base, lambda s=season: pc("verdict", "injection_rho", s, "base"),
+            f"Gate C's fitted rotation, counterfactual arm, {season}")
+        add(ship, lambda s=season: pc("verdict", "injection_rho", s),
+            f"Gate C's fitted rotation, shipped arm, {season}")
+    return C
+
+
 def _build() -> tuple[Claim, ...]:
     """Every claim, in doc order. One builder per doc — the registry is long enough that
     a single function made it hard to see which doc a section belonged to.
@@ -8496,7 +8646,8 @@ def _build() -> tuple[Claim, ...]:
                  + _preseason()
                  + _preseason_no_prior() + _composition_preseason()
                  + _composition_preseason_fit()
-                 + _composition_preseason_fit_covered())
+                 + _composition_preseason_fit_covered()
+                 + _preseason_contest())
 
 
 CLAIMS: tuple[Claim, ...] = _build()
