@@ -523,6 +523,14 @@ binomial counts and four beta-binomial conversions, each against a mandatory no-
 Its head lists come from [component_rates.py](src/models/component_rates.py), which models
 total attempts as a count and the three-point mix as a share — see the output contract above.
 
+**No component head carries a preseason block today**, and that is now a decision with a
+measurement under it rather than a gap. `make components-preseason`
+([components_preseason.py](src/models/components_preseason.py)) arms the six heads the EDA
+gate short-listed and holds them to the same two-reading bar the other heads were held to;
+three clear it, four on the fitting-half-promoted arm, and the conversion family is a null in
+all four of its heads. A cleared gate earns a Stan port, which is a separate door — see
+Results and `docs/preseason-plan.md` session 6b.
+
 **Game length** ([stan_game_length.py](src/models/stan_game_length.py), `make
 stan-game-length`) is the one input a *forward* simulation cannot look up. Both minutes heads
 need a length, and every backtest so far read it from `game_length.parquet` because the games
@@ -643,6 +651,18 @@ minutes, no fitting — scores validation R² **0.81–0.95**, and the best fitt
 +0.0013 to +0.0334. Every head is quoted against that floor; `ftm|fta` does not clear it at
 all. (These moved from the held-out seasons to validation on 2026-08-05, where they read
 0.82–0.94 and +0.0019 to +0.0203.)
+
+⚠️ **Saturated against *prior-season* information, which is not the same as saturated — and
+`make components-preseason` is where that distinction became a number.** Six preseason games
+are not prior-season information. Measured at each head's own distributional unit rather than
+by R², the preseason block is worth **more than the entire fitted head is worth over
+arithmetic** on two of the seven counts: on `reb` fitting buys **0.1507** CRPS rebounds over
+the floor and the block buys **0.8213** more (**5.45×**), and on `fga` the ratio is **1.07×**.
+**Three of six armed heads clear a two-reading gate** (`fga`, `ast`, `reb`) and a fourth
+(`tov`) clears it on the fitting-half-promoted arm. Nothing ships — a cleared gate earns a
+Stan port, which is a separate door. The reverse also holds: `ftm|fta` was the **largest**
+increment the R² screen measured and is a tie at both readings, so the conversion family is
+now a null on preseason data in all four of its heads. `docs/preseason-plan.md` session 6b.
 
 **The specification that matters is scale, not curvature — except where the likelihood
 changes the answer.** Putting the player's own prior rate in on the log scale is worth

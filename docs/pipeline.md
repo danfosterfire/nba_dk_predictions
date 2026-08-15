@@ -80,6 +80,30 @@ make season-total      # composes gp × rate → outputs/predictions/season_tota
                        #   what the availability head is worth on the actual deliverable
 make component-rates   # → component_rate_metrics.csv
                        #   the 11 component heads vs the mandatory no-fit floor
+
+make components-preseason
+                       # preseason-plan session 6b: the preseason block as NESTED arms on
+                       #   the six rate heads P1's gate short-listed →
+                       #   outputs/predictions/components_preseason{,_rolling,_shrinkage}
+                       #   .csv. Point MLE on each head's SHIPPED variant (read from
+                       #   stan_component_metrics.csv), so no CmdStan; under five minutes.
+                       #   Needs `make preseason`, `make preseason-value` and
+                       #   `make stan-components`.
+                       #   THREE OF SIX CLEAR the conjunction — `fga`, `ast`, `reb` — and
+                       #   FOUR on the fitting-half-promoted shrunk arm, which adds `tov`.
+                       #   `stl` misses validation by +0.0026 with 12 of 13 rolling
+                       #   origins; `ftm|fta` — P1's TOP-RANKED head — fails both halves
+                       #   and never clears its own floor.
+                       #   THREE THINGS TO KNOW. Read against the no-fit floor rather than
+                       #   zero, the block is worth MORE than the whole fitted head on
+                       #   `reb` (5.45x) and `fga` (1.07x). The volume term wants an
+                       #   empirical-Bayes shrink here, not P1's additive one, with `k`
+                       #   fitted per head (20 to 320 pseudo-minutes). And SEASON-CENTRING
+                       #   LOSES on this family — it is a device for levels, and a per-36
+                       #   rate has already divided the exposure out.
+                       #   NOTHING SHIPS: a cleared gate earns a Stan port, which is a
+                       #   separate door, and these heads sit in the simulator's draw path
+                       #   so a port is priceable with `make preseason-contest`.
 ```
 
 

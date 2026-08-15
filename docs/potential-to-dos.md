@@ -1103,3 +1103,66 @@ framing — "a miss here is a **wiring fault** rather than a modelling one" — 
 decomposing the level miss across the eleven component heads before assuming it is a
 modelling problem. That decomposition is an artifact read rather than a refit, and it should
 come before anything here is built.
+
+---
+
+## 13. Port the three cleared rate heads' preseason arms to Stan, and price them in the contest
+
+**Opened 2026-08-15 by session 6b** (`docs/preseason-plan.md`). `make components-preseason`
+measured the preseason block as a nested arm on the six rate heads P1 short-listed, at the
+same two-reading bar the availability and minutes heads were held to. **Three cleared it** —
+`fga` (validation **−2.7502 [−3.9831, −1.5961]**, rolling **−3.0663 [−3.4993, −2.6236]** at
+13 of 13 origins), `ast` (−0.8503 / −0.9492 at 12 of 13) and `reb` (−0.8213 / −0.8138 at 12
+of 13) — and a fourth, `tov`, clears on the fitting-half-promoted shrunk arm. **Nothing
+shipped**, because a cleared gate earns a port and a port is a separate door.
+
+### Why this is worth doing
+
+Read against the mandatory no-fit floor rather than against zero, this is the largest
+unexploited increment measured in the project. On `reb` the entire fitted head is worth
+**0.1507** CRPS rebounds over arithmetic and the block is worth **0.8213** more — **5.45×** —
+and on `fga` the block is worth **1.07×** what fitting is worth. The standing README line
+that the rate side is "nearly saturated" is true of *prior-season* information and these six
+games are not that.
+
+And unlike the marginal minutes head, **these heads are in the simulator's own draw path**, so
+the whole pricing chain already exists: `make posteriors --groups components` then
+`make preseason-contest`, one paired pass, `--groups components` the only refit.
+
+### What to compare, and how
+
+1. **Port the arm, not the ladder.** Each head's shipped variant plus `pre_d_<head>` shrunk at
+   its own fitted `k` plus the four age-split indicators, entering through a `head_design`
+   path the way `stan_minutes` and `stan_availability` do — `build_design` must stay reachable
+   by the eleven other consumers with no preseason column in it, and a `stan.components.
+   preseason: false` flag must be an exact rollback. The nesting test is the one that matters.
+2. **Score it against a same-window control**, exactly as P3's `logit_own_spline__no_preseason`
+   and 4d's third arm did: the shipped variant on the same covered rows with the columns
+   removed. Three of the four rounds that measured a preseason block found the increment
+   *grew* under the posterior (P3 −4.789 → −5.911, 4c retention 1.040, 4d 1.115), so a
+   retention below 1.0 here would be the first and is the thing to watch.
+3. **Then the contest**, on the standing instrument. `make preseason-contest` freezes σ across
+   arms by design, so the delta is the block's.
+
+### What would settle it
+
+The ported arms' validation CRPS beating their same-window controls with intervals clear of
+zero, and the contest pass showing a realized lift with consistent sign across the ten season
+× tournament cells. §7l is the standing precedent that a head change arriving as *shape*
+rather than as *order* can be a measured null on the board, and these arrive as component
+rates rather than as the allocation mean the composition's block moved — so a board null is
+the outcome to expect, and the season-total readout is where the gain should be visible.
+
+### What would falsify it
+
+The increment failing to survive the posterior on any of the three. The point MLE here is a
+**plug-in** predictive with no parameter uncertainty, which narrows every arm alike but does
+not tell you how a five-column block behaves once its own coefficients are integrated over.
+The three favourable precedents are on two other heads and two other likelihoods.
+
+### The decision it does not take
+
+**Whether `stl` and `tov` should ship on the rolling half alone.** Both pass the rolling
+harness at 12 of 13 origins with intervals clear of zero and fail validation — `stl` by
+**+0.0026** — which is the open decision P2 registered and did not take, now standing on two
+more heads. It is a decision about the bar, and the bar's owner is not this entry.

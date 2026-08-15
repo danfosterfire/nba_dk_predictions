@@ -4605,6 +4605,25 @@ def _readme() -> list[Claim]:
         lambda: max(max(rate(h, v) for v in fitted) - rate(h, "carry_forward")
                     for h in count_heads),
         "largest gain over the no-fit floor")
+
+    # Session 6b's qualification of the saturation line. The two RATIOS are claimed rather
+    # than only their inputs, because the ratio is the sentence — "the block is worth more
+    # than the fitted head is" goes stale if either end moves, and a reader checking one
+    # column would not catch it.
+    def block_over_fit(head: str) -> float:
+        floor = _pc(head, "carry_forward", "val_crps")
+        incumbent = _pc(head, "incumbent", "val_crps")
+        return (incumbent - _pc(head, "own_delta", "val_crps")) / (floor - incumbent)
+
+    add("0.1507", PRE_CMP,
+        lambda: _pc("reb", "carry_forward", "val_crps") - _pc("reb", "incumbent",
+                                                              "val_crps"),
+        "reb: what fitting buys over the no-fit floor")
+    add("0.8213", PRE_CMP,
+        lambda: _pc("reb", "incumbent", "val_crps") - _pc("reb", "own_delta", "val_crps"),
+        "reb: what the preseason block buys on top")
+    add("5.45", PRE_CMP, lambda: block_over_fit("reb"), "reb: block over fit")
+    add("1.07", PRE_CMP, lambda: block_over_fit("fga"), "fga: block over fit")
     add("−19.00", STAN_C_M, lambda: stan_c("fg3a", "linear", "val_r2"),
         "fg3a under a linear predictor", historical=True)
     # Rounded to 3dp here on purpose — this is the overview, and `implied_tolerance`
@@ -7437,7 +7456,8 @@ def _preseason_value() -> list[Claim]:
         "in-scope panel rows")
     add("29.7%", lambda: _pv("no_prior", "panel_rows", "reach",
                              "share_without_design_row"), "P4's share of the panel")
-    return C + _preseason_minutes() + _preseason_availability()
+    return (C + _preseason_minutes() + _preseason_availability()
+            + _preseason_components())
 
 
 PRE_MIN = "outputs/predictions/minutes_preseason.csv"
@@ -7554,6 +7574,171 @@ def _preseason_minutes() -> list[Claim]:
         "shrinkage inner fit rows", artifact=PRE_MIN_SHRINK)
     add("736", lambda: _one(table(PRE_MIN_SHRINK), "n_score", k=0.0),
         "shrinkage inner score rows", artifact=PRE_MIN_SHRINK)
+    return C
+
+
+PRE_CMP = "outputs/predictions/components_preseason.csv"
+PRE_CMP_ROLL = "outputs/predictions/components_preseason_rolling.csv"
+PRE_CMP_SHRINK = "outputs/predictions/components_preseason_shrinkage.csv"
+
+
+def _pc(head: str, arm: str, column: str, population: str = "draftable") -> float:
+    """One reading off the 6b ladder, on the population every verdict is quoted on."""
+    return _one(table(PRE_CMP), column, head=head, arm=arm, population=population)
+
+
+def _pcr(head: str, arm: str, column: str, population: str = "draftable") -> float:
+    return _one(table(PRE_CMP_ROLL), column, head=head, arm=arm, population=population)
+
+
+def _preseason_components() -> list[Claim]:
+    """`docs/preseason-plan.md` session 6b — the rate heads' arms.
+
+    Claimed densely for the reason `_preseason_minutes` gives: the section's output is a
+    **six-headed conjunction**, so a doc that kept the validation column fresh and let the
+    rolling one rot would read as three passes on evidence that no longer exists.
+
+    Two families beyond the gate itself. **The floor comparison**, because the round's
+    headline — "on `reb` the block is worth 5.45× what fitting is worth" — is a ratio of two
+    artifact cells and goes stale from either end. And **the losing arms**: `missing_only`
+    and the centred arms carry the attribution, and "the gain is the delta and nothing else"
+    is a claim about the rows that lost.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, actual, label: str, artifact: str = PRE_CMP, **kw) -> None:
+        C.append(_c(quoted, artifact, actual, label, doc=PRESEASON, **kw))
+
+    # ── the gate, both halves, all six heads ─────────────────────────────────
+    gate = [("fga", "−2.7502", "−3.9831", "−1.5961", "−3.0663", "−3.4993", "−2.6236", "13"),
+            ("ast", "−0.8503", "−1.3175", "−0.3491", "−0.9492", "−1.1447", "−0.7537", "12"),
+            ("reb", "−0.8213", "−1.3263", "−0.3384", "−0.8138", "−1.0001", "−0.6344", "12"),
+            ("tov", "−0.0480", "−0.2421", "+0.1619", "−0.2860", "−0.3641", "−0.2086", "12"),
+            ("stl", "−0.0850", "−0.1678", "+0.0026", "−0.0671", "−0.1016", "−0.0305", "12"),
+            ("ftm|fta", "−0.0129", "−0.0639", "+0.0391", "−0.0249", "−0.0493", "+0.0017",
+             "9")]
+    for head, v, vlo, vhi, r, rlo, rhi, won in gate:
+        add(v, lambda h=head: _pc(h, "own_delta", "crps_vs_incumbent"),
+            f"{head} primary arm, validation CRPS against the incumbent")
+        add(vlo, lambda h=head: _pc(h, "own_delta", "crps_vs_incumbent_lo"),
+            f"{head} primary arm, val lo")
+        add(vhi, lambda h=head: _pc(h, "own_delta", "crps_vs_incumbent_hi"),
+            f"{head} primary arm, val hi")
+        add(r, lambda h=head: _pcr(h, "own_delta", "crps_vs_incumbent"),
+            f"{head} primary arm, rolling CRPS", artifact=PRE_CMP_ROLL)
+        add(rlo, lambda h=head: _pcr(h, "own_delta", "crps_vs_incumbent_lo"),
+            f"{head} primary arm, rolling lo", artifact=PRE_CMP_ROLL)
+        add(rhi, lambda h=head: _pcr(h, "own_delta", "crps_vs_incumbent_hi"),
+            f"{head} primary arm, rolling hi", artifact=PRE_CMP_ROLL)
+        add(won, lambda h=head: _pcr(h, "own_delta", "origins_won"),
+            f"{head} origins won", artifact=PRE_CMP_ROLL)
+    add("13", lambda: _pcr("ast", "own_delta", "n_origins"), "origins in the harness",
+        artifact=PRE_CMP_ROLL)
+
+    # ── the floor comparison, which is the round's headline ──────────────────
+    floors = [("reb", "21.0404", "20.8897", "20.0684"),
+              ("fga", "43.1785", "40.6019", "37.8517"),
+              ("ast", "20.2724", "19.2283", "18.3780"),
+              ("stl", "5.9411", "5.3884", "5.3034"),
+              ("tov", "9.7352", "8.9483", "8.9004"),
+              ("ftm|fta", "3.8930", "3.9283", "3.9154")]
+    for head, floor, incumbent, primary in floors:
+        add(floor, lambda h=head: _pc(h, "carry_forward", "val_crps"), f"{head} no-fit floor")
+        add(incumbent, lambda h=head: _pc(h, "incumbent", "val_crps"),
+            f"{head} covered-window incumbent CRPS")
+        add(primary, lambda h=head: _pc(h, "own_delta", "val_crps"),
+            f"{head} primary arm CRPS")
+    # `ftm|fta` does not clear its floor in ANY arm, which is a claim about the best of them.
+    add("3.9131", lambda: _pc("ftm|fta", "own_delta_centered", "val_crps"),
+        "ftm|fta's best arm, still above its floor")
+
+    # ── the coverage cut, priced so it cannot be credited to the block ───────
+    for head, quoted in [("fga", "40.4692"), ("ast", "19.2082"), ("reb", "20.8875"),
+                         ("tov", "8.9748"), ("stl", "5.3912"), ("ftm|fta", "3.9393")]:
+        add(quoted, lambda h=head: _pc(h, "incumbent_full_window", "val_crps"),
+            f"{head} full-window incumbent CRPS")
+    add("6,382", lambda: _pc("ast", "incumbent", "n_train"), "covered-window training rows")
+    add("8,630", lambda: _pc("ast", "incumbent_full_window", "n_train"),
+        "full-window training rows")
+    add("706", lambda: _pc("ast", "incumbent", "n_val"), "draftable validation rows")
+    add("773", lambda: _pc("ast", "incumbent", "n_val", population="all"),
+        "validation rows")
+
+    # ── the promoted arm, and the shrinkage constant behind it ───────────────
+    shrunk = [("fga", "20", "0.640", "−0.5734", "−0.7553", "−0.4024", "13"),
+              ("reb", "160", "0.237", "−0.4484", "−0.5656", "−0.3309", "13"),
+              ("ast", "80", "0.367", "−0.1946", "−0.2864", "−0.1024", "12"),
+              ("tov", "320", "0.140", "−0.0691", "−0.1184", "−0.0248", "11"),
+              ("stl", "80", "0.367", "−0.0338", "−0.0532", "−0.0148", "11"),
+              ("ftm|fta", "160", "0.237", "−0.0098", "−0.0231", "+0.0032", "9")]
+    for head, k, weight, delta, lo, hi, won in shrunk:
+        add(k, lambda h=head: _one(table(PRE_CMP_SHRINK), "k", head=h, selected=True),
+            f"{head} selected shrinkage constant", artifact=PRE_CMP_SHRINK)
+        add(weight, lambda h=head: _one(table(PRE_CMP_SHRINK), "mean_weight", head=h,
+                                        selected=True),
+            f"{head} mean reliability weight at the selected k", artifact=PRE_CMP_SHRINK)
+        add(delta, lambda h=head: _pcr(h, "own_delta_shrunk", "crps_vs_primary"),
+            f"{head} shrunk arm against the primary, rolling", artifact=PRE_CMP_ROLL)
+        add(lo, lambda h=head: _pcr(h, "own_delta_shrunk", "crps_vs_primary_lo"),
+            f"{head} shrunk vs primary, rolling lo", artifact=PRE_CMP_ROLL)
+        add(hi, lambda h=head: _pcr(h, "own_delta_shrunk", "crps_vs_primary_hi"),
+            f"{head} shrunk vs primary, rolling hi", artifact=PRE_CMP_ROLL)
+        add(won, lambda h=head: _pcr(h, "own_delta_shrunk", "origins_won_vs_primary"),
+            f"{head} shrunk arm origins won against the primary", artifact=PRE_CMP_ROLL)
+    for head, delta, lo, hi in [("ast", "−0.1792", "−0.3322", "−0.0091"),
+                                ("reb", "−0.2716", "−0.4695", "−0.0914"),
+                                ("tov", "−0.1733", "−0.2669", "−0.0833")]:
+        add(delta, lambda h=head: _pc(h, "own_delta_shrunk", "crps_vs_primary"),
+            f"{head} shrunk arm against the primary, validation")
+        add(lo, lambda h=head: _pc(h, "own_delta_shrunk", "crps_vs_primary_lo"),
+            f"{head} shrunk vs primary, val lo")
+        add(hi, lambda h=head: _pc(h, "own_delta_shrunk", "crps_vs_primary_hi"),
+            f"{head} shrunk vs primary, val hi")
+    add("−0.2591", lambda: _pc("fga", "own_delta_shrunk", "crps_vs_primary"),
+        "fga shrunk against the primary, validation — the one tie")
+    add("+0.0070", lambda: _pc("fga", "own_delta_shrunk", "crps_vs_primary_hi"),
+        "fga shrunk vs primary, val hi")
+    # `tov` flips the gate when read on the promoted arm — the whole point of the promotion.
+    add("−0.2213", lambda: _pc("tov", "own_delta_shrunk", "crps_vs_incumbent"),
+        "tov shrunk arm against the incumbent, validation")
+    add("−0.4003", lambda: _pc("tov", "own_delta_shrunk", "crps_vs_incumbent_lo"),
+        "tov shrunk vs incumbent, val lo")
+    add("−0.0257", lambda: _pc("tov", "own_delta_shrunk", "crps_vs_incumbent_hi"),
+        "tov shrunk vs incumbent, val hi")
+    add("−0.0763", lambda: _pc("stl", "own_delta_shrunk", "crps_vs_incumbent"),
+        "stl shrunk arm against the incumbent — still fails validation")
+    add("−0.1706", lambda: _pc("stl", "own_delta_shrunk", "crps_vs_incumbent_lo"),
+        "stl shrunk vs incumbent, val lo")
+    add("+0.0170", lambda: _pc("stl", "own_delta_shrunk", "crps_vs_incumbent_hi"),
+        "stl shrunk vs incumbent, val hi")
+
+    # ── centring, the arm that replicated twice and loses here ───────────────
+    centred = [("fga", "+0.1160", "+0.0209", "+0.2081"),
+               ("reb", "+0.0627", "+0.0191", "+0.1068"),
+               ("tov", "+0.0334", "+0.0148", "+0.0514"),
+               ("ast", "+0.0342", "−0.0138", "+0.0755")]
+    for head, delta, lo, hi in centred:
+        add(delta, lambda h=head: _pcr(h, "own_delta_centered", "crps_vs_primary"),
+            f"{head} centred against the primary, rolling", artifact=PRE_CMP_ROLL)
+        add(lo, lambda h=head: _pcr(h, "own_delta_centered", "crps_vs_primary_lo"),
+            f"{head} centred vs primary, rolling lo", artifact=PRE_CMP_ROLL)
+        add(hi, lambda h=head: _pcr(h, "own_delta_centered", "crps_vs_primary_hi"),
+            f"{head} centred vs primary, rolling hi", artifact=PRE_CMP_ROLL)
+
+    # ── the attribution: the indicator alone is a null, and on `ast` a loss ──
+    add("+0.0488", lambda: _pcr("ast", "missing_only", "crps_vs_incumbent"),
+        "ast missing-only arm, rolling — the indicator LOSES", artifact=PRE_CMP_ROLL)
+    add("+0.0128", lambda: _pcr("ast", "missing_only", "crps_vs_incumbent_lo"),
+        "ast missing-only, rolling lo", artifact=PRE_CMP_ROLL)
+    add("+0.0888", lambda: _pcr("ast", "missing_only", "crps_vs_incumbent_hi"),
+        "ast missing-only, rolling hi", artifact=PRE_CMP_ROLL)
+
+    # ── the pooled/draftable ratio, which is P1 decision 5 measured to a null ─
+    for head, quoted in [("ast", "−0.7410"), ("fga", "−2.4302"), ("stl", "−0.0779"),
+                         ("tov", "−0.0483"), ("reb", "−0.8092"), ("ftm|fta", "−0.0167")]:
+        add(quoted, lambda h=head: _pc(h, "own_delta", "crps_vs_incumbent",
+                                       population="all"),
+            f"{head} primary arm, POOLED validation delta")
     return C
 
 

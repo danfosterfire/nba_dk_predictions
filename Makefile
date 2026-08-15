@@ -15,7 +15,7 @@ PIP    := .venv/bin/pip
         report-calibration \
         season-total adp adp-draftkings adp-fantasypros adp-panel adp-profile \
         adp-status game-length preseason preseason-value serial-correlation \
-        component-rates \
+        component-rates components-preseason \
         variance-budget residual-correlation season-effects \
         stan stan-availability stan-availability-mixture stan-minutes \
         stan-components stan-composition \
@@ -187,6 +187,23 @@ season-total:
 
 component-rates:
 	$(PYTHON) -m src.models.component_rates
+
+# Session 6b of docs/preseason-plan.md: the preseason block as NESTED arms on the five count
+# heads P1's gate cleared (`ast`, `fga`, `stl`, `tov`, `reb`) plus `ftm|fta`. P1's own text
+# says its bar was an R^2 screen on a point estimate and is a filter for what is worth
+# fitting, never evidence that anything ships — so this re-asks it at the P2/P3 bar: a
+# validation CRPS interval clear of zero on the DRAFTABLE population AND the rolling-origin
+# harness agreeing.
+#
+# `blk`, `fta`, `fg2m|fg2a` and `fg3m|fg3a` are P1's recorded nulls and get no arm. Every
+# arm — the reference included — fits the COVERED window only (2004-05 onward), since this
+# design fits from 1997-98 and a missing-preseason indicator would read as an era dummy on
+# the pre-2005 rows; the full-window incumbent rides as a context row so the restriction's
+# own cost is visible. Point MLE on each head's SHIPPED variant (read from
+# stan_component_metrics.csv), so no CmdStan and an arm can be rejected before any sampler
+# time is spent. Needs `make preseason`, `make preseason-value` and `make stan-components`.
+components-preseason:
+	$(PYTHON) -m src.models.components_preseason
 
 availability-model:
 	$(PYTHON) -m src.models.availability

@@ -227,13 +227,130 @@ REGISTRY: tuple[Decision, ...] = (
                 "attribution split shows every count-head gain is that head's own "
                 "preseason rate rather than the `has_preseason` indicator — which is "
                 "what catches `fg3m|fg3a`, whose whole +0.0149 is the indicator and "
-                "whose own delta is −0.0024.",
+                "whose own delta is −0.0024. ⚠️ The rate half of this ranking did NOT "
+                "survive its own arms — see [[preseason-rate-arms-gate]], where three "
+                "of six clear a distributional bar and the head this gate ranked FIRST "
+                "is the only two-sided failure.",
         status="measured",
         reproduce="make preseason-value → outputs/eda/preseason_value.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-13",
+        reviewed="2026-08-15",
         date="2026-08-12",
         tags=("preseason", "eda"),
+    ),
+    Decision(
+        id="preseason-rate-arms-gate",
+        topic="components",
+        claim="Three of the six armed rate heads clear the preseason gate — `fga`, "
+              "`ast`, `reb` — and four on the fitting-half-promoted shrunk arm. Nothing "
+              "ships: a cleared gate earns a Stan port, which is a separate door.",
+        because="P1's screen was an R² on a point estimate and its own text says so. "
+                "Re-asked at the P2/P3 bar — a validation CRPS interval clear of zero on "
+                "the draftable population AND the rolling harness agreeing — `fga` reads "
+                "−2.7502 [−3.9831, −1.5961] and −3.0663 [−3.4993, −2.6236] at 13 of 13 "
+                "origins, `ast` −0.8503 and −0.9492 at 12 of 13, `reb` −0.8213 and "
+                "−0.8138 at 12 of 13. `stl` and `tov` pass the rolling half decisively "
+                "and cannot be resolved on 706 validation rows — `stl` misses by "
+                "+0.0026 — which is the same shape as "
+                "[[preseason-availability-arm-fails-its-crps-bar]]. Read against the "
+                "no-fit floor rather than against zero, the block is worth MORE than the "
+                "entire fitted head is worth over arithmetic on two heads: 5.45× on "
+                "`reb` (fitting buys 0.1507 CRPS, the block 0.8213) and 1.07× on `fga`. "
+                "The attribution holds at a distributional unit — `missing_only` is a "
+                "tie or worse everywhere and on `ast` it LOSES rolling at +0.0488 "
+                "[+0.0128, +0.0888] — so the gain is the preseason rate and not the fact "
+                "of a preseason row. The coverage cut costs almost nothing here (≤0.133 "
+                "CRPS, and on two heads it helps), unlike on the minutes head where it "
+                "was a quarter of the increment.",
+        status="measured",
+        reproduce="make components-preseason → "
+                  "outputs/predictions/components_preseason.csv, "
+                  "outputs/predictions/components_preseason_rolling.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-15",
+        date="2026-08-15",
+        tags=("preseason", "components"),
+    ),
+    Decision(
+        id="preseason-conversion-heads-null",
+        topic="components",
+        claim="The conversion family is a null on preseason data in all four of its "
+              "heads. `ftm|fta` was P1's LARGEST rate increment and fails both halves "
+              "of the bar.",
+        because="P1 nulled `fg2m|fg2a` and `fg3m|fg3a` (the latter's whole apparent gain "
+                "being `has_preseason`) and ranked `ftm|fta` first across the entire rate "
+                "family at +0.0176 R², z = 18.8. At the head's own unit it is a tie on "
+                "validation (−0.0129 [−0.0639, +0.0391]) and a tie rolling (−0.0249 "
+                "[−0.0493, +0.0017], 9 of 13 origins), and no arm gets it over its no-fit "
+                "floor — 3.8930 against the best arm's 3.9131 — so the block does not "
+                "rescue the project's known conversion null. The mechanism is in the "
+                "panel: a conversion delta is a logit of a percentage over ~10–40 "
+                "preseason free throws, sd 2.2023 on the logit scale against `ast`'s "
+                "0.3617, which is mostly sampling noise. A ΔR² screen cannot see that, "
+                "because a noisy regressor carrying real signal still raises R² on a "
+                "point estimate; a distributional bar can, because the noise has to be "
+                "paid for in the predictive. See [[preseason-rate-arms-gate]].",
+        status="null",
+        reproduce="make components-preseason → "
+                  "outputs/predictions/components_preseason.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-15",
+        date="2026-08-15",
+        tags=("preseason", "components"),
+    ),
+    Decision(
+        id="preseason-rate-delta-is-volume-shrunk",
+        topic="components",
+        claim="On the rate heads the preseason delta wants an empirical-Bayes volume "
+              "shrink `min_pre / (min_pre + k)`, with `k` fitted per head on the fitting "
+              "half — not P1's additive `pre_log_min` term.",
+        because="The plan left the volume question open between the two forms. On the "
+                "marginal minutes head P3 closed it at k = 20 and near-nil. On rates the "
+                "shrunk arm beats the declared primary on the fitting half on all five "
+                "count heads with intervals clear of zero — `fga` −0.5734 at 13 of 13 "
+                "origins, `reb` −0.4484 at 13 of 13, `ast` −0.1946 at 12 of 13 — and the "
+                "selected `k` runs 20 to 320 pseudo-minutes, mean weights 0.640 down to "
+                "0.140. Read on the promoted arm the gate count goes from 3 to 4: `tov` "
+                "flips to −0.2213 [−0.4003, −0.0257] on validation at 13 of 13 rolling. "
+                "The mechanism is why the two heads disagree — a minutes total over 60 "
+                "preseason minutes is measured ON those minutes, while a per-36 rate "
+                "DIVIDES by them, so the same exposure buys far less precision and there "
+                "is much more to shrink. P1's additive term is a tie on every head at "
+                "both readings.",
+        status="measured",
+        reproduce="make components-preseason → "
+                  "outputs/predictions/components_preseason_shrinkage.csv, "
+                  "outputs/predictions/components_preseason_rolling.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-15",
+        date="2026-08-15",
+        tags=("preseason", "components"),
+    ),
+    Decision(
+        id="preseason-centring-is-for-levels",
+        topic="components",
+        claim="Season-centring a preseason column is a device for LEVELS, not for "
+              "difference-coded deltas in general. It replicated on two heads and loses "
+              "on the rate family.",
+        because="P2 shipped the centred column on a level and P3 on a delta, and the "
+                "plan recorded centring as 'the arm to watch'. Against the uncentred "
+                "primary at the rolling reading it LOSES with intervals clear of zero on "
+                "`fga` (+0.1160 [+0.0209, +0.2081]), `reb` (+0.0627) and `tov` (+0.0334) "
+                "and ties on the other three — no rate head prefers it. The argument "
+                "centring was built on is about compression: preseason minutes are "
+                "compressed by a calendar-varying amount (2 games a team in the 2011-12 "
+                "lockout against 8 in an ordinary year) and a head with no season term "
+                "has nowhere to put it. A per-36 rate has already divided the exposure "
+                "out, so there is no season-level nuisance left to remove and removing a "
+                "season mean that is not a nuisance costs real cross-player signal. P3's "
+                "finding is not contradicted; its scope is now measured.",
+        status="measured",
+        reproduce="make components-preseason → "
+                  "outputs/predictions/components_preseason_rolling.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-15",
+        date="2026-08-15",
+        tags=("preseason", "components", "minutes"),
     ),
     Decision(
         id="preseason-draftable-population",

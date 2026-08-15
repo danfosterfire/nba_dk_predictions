@@ -1,126 +1,144 @@
-# Next session — after P5 closed
+# Next session — after 6b closed and the round merged
 
-Read `CLAUDE.md` and `docs/project-spec.md` first, then `docs/preseason-plan.md`'s two P5
-sections. **Check `git status` rather than trusting any line here about what is committed** —
-the last two handoffs both got that wrong in opposite directions.
+Read `CLAUDE.md` and `docs/project-spec.md` first, then `docs/preseason-plan.md`'s session 6b
+section. **Check `git status` rather than trusting any line here about what is committed** —
+three handoffs in a row got that wrong.
 
-## What happened on 2026-08-15
+## Branch
 
-**P5 closed.** `make preseason-contest` took the one measurement the gate specified and P5's
-own run could not: what the preseason block is worth in the contest, as a paired
-counterfactual rather than a re-read. **The preseason round is now complete — every gate P0
-through P5 is closed.**
+**The preseason round is complete and `incorporate-preseason-data` is merged into
+`tweaks-post-dashboard`** (fast-forward, 2026-08-15). ⚠️ **Nothing has been pushed.** The
+merge is local; `origin/tweaks-post-dashboard` is still at the pre-round commit. Pushing is
+the owner's call.
 
-### 1. The instrument — `src/sim/preseason_contest.py`, `make preseason-contest`
+## What happened on 2026-08-15 (second session)
 
-`src/sim/mixture_value.py` one round over: two arms of the same chain, captured under one
-code, both written into `outputs/predictions/preseason_block_contest.csv` with their
-`captured_at`, so a delta claim reads ONE row rather than differencing two artifacts of
-unreconstructable vintage.
+**Session 6b ran — the last unrun session in the round's map.** `make components-preseason`
+(`src/models/components_preseason.py`) arms the six rate heads P1 short-listed and holds them
+to the P2/P3 bar. **Every gate P0 through P5 plus 6b is now closed.**
 
-`base` flips the three keys that ARE the block and refits all three head groups (19/24/25
-features against 29/29/25; windows 2012-13 / 1997-98 / 1996-97). It is **not** an ablation to
-zero — each key is a documented exact rollback, so `base` is the chain that was shipping
-before the round. 185.7 sampler minutes, R̂ 1.0073 / 1.0052 / 1.0044, **0 divergences**.
+### 1. The instrument — point MLE, under five minutes, no CmdStan
 
-⚠️ **σ is frozen at 0.375 in BOTH arms.** It is not part of the block — it is a downstream
-constant whose input moved at P5 — so freezing it is what makes the delta the block's. `base`
-is "today's chain with the block removed", not "the chain as of 2026-08-13".
+Each arm is the head's **shipped variant** (read from `stan_component_metrics.csv`, never
+hard-coded — the six do not agree) plus preseason columns, fitted through
+`component_rates.fit_count_head` / `fit_conversion_head`. Six heads × seven arms × two
+populations, plus a 13-origin rolling harness. Same shape as `minutes_preseason`, one family
+over. 18 new tests.
 
-⚠️ **Only two of the three heads reach this readout.** `src/sim/` never loads the marginal
-minutes head, so P3's block — the largest of the three by its own gate — is structurally
-invisible to every contest figure. Its key is flipped and its posterior refitted anyway so
-the arm name means what it says, and a test pins the import fact by parsing.
+### 2. Three of six clear — and P1's top-ranked head is the null
 
-### 2. The attribution is near-total — the headline
+| head | validation | rolling | gate |
+|---|---|---|---|
+| `fga` | −2.7502 [−3.9831, −1.5961] | −3.0663, **13/13** | ✅ |
+| `ast` | −0.8503 [−1.3175, −0.3491] | −0.9492, 12/13 | ✅ |
+| `reb` | −0.8213 [−1.3263, −0.3384] | −0.8138, 12/13 | ✅ |
+| `tov` | −0.0480 [−0.2421, **+0.1619**] | −0.2860, 12/13 | ❌ validation |
+| `stl` | −0.0850 [−0.1678, **+0.0026**] | −0.0671, 12/13 | ❌ validation, by a whisker |
+| `ftm\|fta` | −0.0129 [−0.0639, +0.0391] | −0.0249, 9/13 | ❌ **both** |
 
-| season-total MAE | P5's recorded "before" | `base` | `preseason` | the block |
-|---|---|---|---|---|
-| 2022-23 | 397.36 | **397.24747** | **363.23449** | **−34.01297** |
-| 2023-24 | 398.45 | **397.95546** | **377.50963** | **−20.44583** |
+**`ftm|fta` was P1's LARGEST rate increment** (+0.0176 R², z = 18.8) and is the round's only
+two-sided failure — and no arm gets it over its own floor. The mechanism is that a conversion
+delta is a logit of a percentage over ~10–40 preseason free throws (sd **2.2023** on the logit
+scale against `ast`'s 0.3617). A ΔR² screen cannot see that; a distributional bar can. **P1's
+own "what it does not settle" fired, on the head P1 ranked first.**
 
-The counterfactual lands within **0.11** and **0.49** dk_pts of P5's own pre-block figures, so
-σ + the ADP field + the injection are worth about half a dk_pt between them and **essentially
-all of P5's Gate A gain is the block**. "None of this is attributable to the preseason block"
-is superseded in both `README.md` and the plan doc.
+### 3. The headline: on two heads the block beats the whole fitted head
 
-### 3. The board moves — the reversal against the mixture round
+Read against the no-fit floor rather than zero: on `reb` fitting buys **0.1507** CRPS and the
+block buys **0.8213** more (**5.45×**); on `fga` the ratio is **1.07×**. The README's "the rate
+side is nearly saturated" line is now qualified in place — it is saturated against
+*prior-season* information, and six preseason games are not that.
 
-Mean |Δrank| **16.411458** over the 192 drafted picks against the mixture's 3.1979; rank
-correlation 0.962988, top-100 overlap 88%, **96 of 192** picks moving a full round. §7l's
-precedent was that a head change arriving as SHAPE is a board null; this one arrives as the
-allocation MEAN and the board says so. Stars gain **+81.317731** of mean season total while
-`mean_gp` *falls* — minutes and production, not availability.
+### 4. Two method findings that generalize
 
-### 4. The contest — coherence, not one row
+- **The volume term wants an empirical-Bayes shrink on rates**, not P1's additive
+  `pre_log_min`. `own_delta_shrunk` beats the declared primary on the fitting half on all five
+  count heads with intervals clear of zero, and read on that promoted arm the gate count goes
+  **3 → 4** (`tov` flips). Selected `k` runs 20 to **320** pseudo-minutes. Mechanism: a minutes
+  total over 60 preseason minutes is measured *on* those minutes; a per-36 rate *divides* by
+  them.
+- **Season-centring is a device for LEVELS, not for deltas in general.** It shipped on P2 and
+  P3 and **loses here** with intervals clear of zero on `fga`, `reb` and `tov`. A per-36 rate
+  has already divided the exposure out, so there is no season-level nuisance left to remove.
 
-Every simulated tournament is a null at a bar of **0.074835**. But `adp`, whose board is
-identical across arms, moved **−0.006490** against the 24-strategy mean of **+0.034429** —
-which **inverts** the mixture round, where `adp` captured essentially the whole shift and made
-the null a world effect. Realized lift is positive in **10 of 10** cells, **+0.102767** at the
-600k, weakest cell 0.003700. Gate C's `rho` fell in both seasons, independent corroboration.
+### 5. Three risk entries updated, all in the same direction
 
-⚠️ **An instrument correction rode with this.** `RESOLVED` was being stamped on realized rows
-using a bar bootstrapped from 500 *simulated* worlds; the realized side has one world per
-season. Those rows now read `paired/2sn` and get their own `realized` block reporting sign
-agreement and season spread. **`mixture_value.py` has the same latent flaw** — it never
-surfaced there only because its realized delta was small. Worth fixing next time that target
-is touched.
+The rolling-shrinkage pattern inverted a **third** time (validation ÷ rolling: 0.90, 0.90,
+1.27, 0.17, 1.01, 0.52 — not one head shows the §12e/§14f shape). The coverage cut costs
+**≤0.133** CRPS here against a quarter of the increment on P3. And P1 decision 5's
+pooled/draftable restriction is **nearly a no-op** on this family (ratios 0.87–1.29, draftable
+*larger* on five of six), because the `≥ 200 prior minutes` filter already removes 91.4% of the
+population it corrects for.
 
 ## Do NOT re-decide these
 
 1. Everything the previous handoffs list under this heading still holds.
-2. **σ = 0.375**, and it is now frozen across counterfactual arms by design.
+2. **σ = 0.375**, frozen across counterfactual arms by design.
 3. **The realized side is priced by pairing, not by the simulated bar.** A test pins it.
-4. **The block shipped**, and P5's closing measurement supports it. The ship itself was 4d's
-   prediction-unit decision and was never under review here.
+4. **Nothing from 6b ships.** A cleared gate earns a Stan port and a port is a separate door —
+   the same structure as P3 earning the composition a pricing session rather than an adoption.
+5. **`blk`, `fta`, `fg2m|fg2a`, `fg3m|fg3a` get no arm** (P1 decision 2), and `ftm|fta` is now
+   a recorded null too. The conversion family is a null on preseason data in all four heads.
 
 ## Verified green
 
 ```
-make docs-audit        # 0 disagreements, 0 stale claims, 3,566 figures
-make dashboard-audit   # 0 orphaned artifacts, 0 pending constants, 285 findings
-pytest tests/          # 1,840 passed (1,828 + this session's 12)
+make docs-audit        # 0 disagreements, 0 stale claims, 3,716 figures
+make dashboard-audit   # 0 orphaned artifacts, 0 pending constants, 292 findings
+pytest tests/          # 1,858 passed (1,840 + 18)
 ```
 
-`make docs-audit` caught a real error during this session: a realized-lift figure typed from a
-rounded print rather than read from the artifact. That is the gate working.
+All 292 dashboard-audit findings are the `reviewed`-date drift carried for several sessions —
+0 missing artifacts, 0 orphans.
 
 ## The work
 
-### 1. Session 6b — the five surviving rate heads' arms
-`ast`, `fga`, `stl`, `tov`, `reb`, plus `ftm|fta`. Untouched, still. **This is now the only
-unrun session in the preseason round's map.**
+### 1. 🔥 `potential-to-dos.md` item 13 — port the three cleared arms and price them
+The direct continuation, and the largest unexploited increment measured in the project. Unlike
+the marginal minutes head these six are **in the simulator's draw path**, so the whole pricing
+chain exists: a `head_design` port behind a `stan.components.preseason` flag, scored against a
+same-window control, then `make posteriors --groups components` and one `make
+preseason-contest` pass. The entry names the bar, the falsifier, and the retention figure to
+watch (three rounds found the increment *grew* under the posterior; a retention below 1.0
+would be the first).
 
-### 2. The season-total bias — `potential-to-dos.md` item 12
-Gate A's bias is **−15.44 / −66.64** against a −3.06 bar, pre-existing rather than introduced.
-The counterfactual moved it *toward* zero (+11.29 / +4.06), so the block helps but does not
-close it. Two caveats on the bar itself: 873 pooled rows against the check's 386/387, and a
-**full-season** figure against the simulator's **91% tournament window**. ⚠️ The naive version
-of item 12's measurement gives the **opposite sign** — read the entry before re-running it.
+### 2. The open decision that now stands on five heads
+**Whether a rolling-only win should ship.** P2 registered it and did not take it; `stl` and
+`tov` now stand in exactly that position, `stl` missing validation by **+0.0026** with 12 of 13
+origins. It is a decision about the bar, and three rounds have now failed it in the direction
+the bar was not written for. What would settle it without widening anything is more scored
+validation seasons — and those are the test split.
 
-### 3. Split the block's two reaching heads
-This round moves availability and the composition together. Which one buys the contest gain is
-unmeasured, and it is another paired pass on the same instrument — `--groups availability`
-alone is ~6 minutes, so the cheap half is cheap.
+### 3. The season-total bias — `potential-to-dos.md` item 12
+Unchanged from the last handoff. Gate A's bias is −15.44 / −66.64 against a −3.06 bar,
+pre-existing rather than introduced. ⚠️ The naive version of the measurement gives the
+**opposite sign** — read the entry before re-running it.
 
-### 4. Small, un-scheduled
-- ✅ **`make strategy-sweep` re-measured at 49.2 min** (2,954 s), confirming P5's 53 and
-  settling that the docs' 4.8 min is stale rather than a regression. The other stages:
-  simulate-season 2.4 min, bracket 6.4 min, draft-sim 19 s.
-- `PYTHONUNBUFFERED=1` on long `make` targets — used throughout this session and it worked;
-  worth making the default.
+### 4. Split the block's two reaching heads
+Also unchanged. Which of availability / composition buys the contest gain is unmeasured;
+`--groups availability` alone is ~6 minutes.
+
+### 5. Small, un-scheduled
+- `PYTHONUNBUFFERED=1` on long `make` targets — used again this session and it worked; worth
+  making the default.
 - The `make stan-*` **metric** artifacts still carry no provenance stamp.
-- `dashboard-audit`'s `reviewed`-date drift, carried for several sessions.
+- `dashboard-audit`'s `reviewed`-date drift, carried for several sessions and now at 292.
+- `mixture_value.py` has the same latent `RESOLVED`-bar flaw `preseason_contest.py` fixed;
+  worth fixing next time that target is touched.
 
 ## Lessons worth carrying forward
 
-**A bar borrowed from the wrong instrument reads as rigour.** The realized `RESOLVED` flag was
-inherited from a module where it happened to be harmless. It is the `make docs-audit` failure
-mode one level in — inside the code that *computes the verdict*, where no doc guard reaches —
-and the same shape as the two prose examples the previous handoff recorded.
+**A screen ranks by signal; a bar ranks by signal net of the noise carrying it.** P1's ΔR²
+put `ftm|fta` first across the whole rate family and `reb` last among the clearing heads. At a
+distributional unit `ftm|fta` is the only two-sided failure and `reb` has the largest
+block-to-fit ratio in the round. Both reversals have the same cause — a noisy regressor with
+real signal in it still raises R² on a point estimate, and only a predictive has to pay for
+the noise. This is the third instance of the general rule the repo already records as "a head
+is only a model at the unit it was scored at".
 
-**Two traces are needed to prove a refit landed.** The `reach` block first checked
-`first_season` alone, which would have reported the availability head as never having
-refitted: its block is columns at a fixed window, while the composition's is a blend that adds
-no columns at a moving one. Each head is invisible in the other's trace.
+**A device is not a finding until its scope is measured.** Season-centring won on two heads
+and was recorded as "the arm to watch". It loses on the third family, and the reason was
+predictable from the mechanism — the compression it corrects is a property of *levels*, and a
+per-36 rate has already divided the exposure out. The arm was written to test exactly that and
+came out the other way, which is the argument for carrying an attribution arm you expect to
+lose.
