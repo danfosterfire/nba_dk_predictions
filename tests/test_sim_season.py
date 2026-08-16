@@ -16,6 +16,7 @@ import pandas as pd
 import pytest
 
 from src.models import held_out
+from src.models import posteriors as P
 from src.models.component_rates import CONVERSION_HEADS, COUNT_HEADS, DERIVED_COUNTS
 from src.models.held_out import HeldOutLocked, unlocked
 from src.sim import season as S
@@ -187,6 +188,172 @@ def test_feasibility_repair_is_a_no_op_when_every_block_is_deep_enough():
     assert repaired is available or np.array_equal(repaired, available)
 
 
+# ── The availability draw's dispersion axis ───────────────────────────────────
+
+def _availability_artifact(n_rho: int = 4, edges=(0.0, 12.0, 24.0, 30.0, 60.0)):
+    """An availability posterior in the shape `make posteriors` writes.
+
+    `n_rho = 1` is the shared-dispersion arm, which persists a `(draws,)` `rho_draws` and an
+    empty recipe — the shape the `train_val` artifact on disk still carries.
+    """
+    graded = n_rho > 1
+    rho = (np.tile(np.array([0.32, 0.27, 0.25, 0.21])[:n_rho], (5, 1))
+           if graded else np.full(5, 0.28))
+    steps = ({"kind": "cut", "column": "minutes_per_game_lag1",
+              "edges": list(edges), "name": "rho_bin"},) if graded else ()
+    return P.PosteriorArtifact(
+        head="availability", head_label="availability", family="betabinomial",
+        response="mean_mu",
+        recipe=P.DesignRecipe("base", [], None, steps=steps, builder="test"),
+        draws={"alpha_draws": np.zeros(5), "beta_draws": np.zeros((5, 0)),
+               "rho_draws": rho},
+        extras={"n_rho": n_rho, "rho_bin_column": "rho_bin",
+                "rho_bin_source": "minutes_per_game_lag1", "role_rho": graded},
+        provenance={"fit_window": "train"})
+
+
+def test_availability_rho_bin_is_zero_based_against_a_one_based_recipe():
+    """`rho_bin` is 1-based and `rho_draws` is 0-based, and the gap is silent if missed.
+
+    An off-by-one here hands every player his *neighbour's* dispersion at a perfectly legal
+    index — no exception, no shape error, just the wrong model. So the buckets are pinned
+    against the edges rather than against each other: 5 mpg is the fringe bucket, which is
+    column 0, and 45 mpg is the star bucket, which is the last column.
+    """
+    art = _availability_artifact()
+    frame = pd.DataFrame({"minutes_per_game_lag1": [5.0, 18.0, 27.0, 45.0]})
+    bins = S.availability_rho_bin(art, frame)
+    assert list(bins) == [0, 1, 2, 3]
+    # The head's own 1-based assignment, one subtraction away — the invariant, not the values.
+    one_based = art.recipe.transform(frame)["rho_bin"].to_numpy(int)
+    assert list(one_based) == [1, 2, 3, 4]
+    np.testing.assert_array_equal(bins, one_based - 1)
+    # And the gathered dispersion is monotone in role, which is the fitted direction.
+    gathered = np.asarray(art.draws["rho_draws"])[0][bins]
+    assert (np.diff(gathered) < 0).all()
+
+
+def test_availability_rho_bin_gives_a_player_with_no_design_row_the_widest_bucket():
+    """A rostered player the head has no row for still needs a bucket, and it is bucket 1.
+
+    `build_context` reindexes the design onto the roster, so a no-design player arrives with
+    a NaN prior MPG and an empirical mean. `role_bins` sends him to the **lowest** bucket —
+    the widest dispersion, the conservative direction — and the persisted `cut` step has to
+    reproduce that rather than raise or produce a NaN index.
+    """
+    art = _availability_artifact()
+    frame = pd.DataFrame({"minutes_per_game_lag1": [np.nan, 90.0, 33.0]})
+    bins = S.availability_rho_bin(art, frame)
+    assert bins[0] == 0 and bins[1] == 0        # NaN and above the top edge both fall in
+    assert bins[2] == 3
+    assert np.asarray(art.draws["rho_draws"])[0][bins[0]] == max(
+        np.asarray(art.draws["rho_draws"])[0])
+
+
+def test_availability_rho_bin_reads_a_shared_dispersion_artifact_as_one_column():
+    """The `train_val` artifact predates the graded head: `(draws,)` and no recipe step.
+
+    Handling only the graded shape would trade one broken window for the other, so the
+    absence of the step is read as the shared arm rather than as a broken recipe.
+    """
+    art = _availability_artifact(n_rho=1)
+    frame = pd.DataFrame({"minutes_per_game_lag1": [5.0, 45.0, np.nan]})
+    assert list(S.availability_rho_bin(art, frame)) == [0, 0, 0]
+
+
+def test_availability_rho_bin_refuses_a_graded_artifact_whose_recipe_lost_the_cut():
+    """Four dispersion columns and no way to address them is unrecoverable, not a default.
+
+    Defaulting to column 0 would silently apply the fringe bucket's dispersion to every star
+    in the league, which is the failure this whole path exists to stop.
+    """
+    art = _availability_artifact()
+    art.recipe.steps = ()
+    with pytest.raises(KeyError, match="which column applies"):
+        S.availability_rho_bin(art, pd.DataFrame({"minutes_per_game_lag1": [5.0]}))
+
+
+def test_availability_rates_gather_each_player_his_own_bucket_dispersion():
+    """The regression test. The scalar broadcast this replaced *raises* on this input.
+
+    `np.full(n_players, rho_draws[draw])` with a `(4,)` row is
+    `ValueError: could not broadcast input array from shape (4,) into shape (n,)`, which is
+    what `make simulate-season` did against the shipped `train` posterior. Beyond not
+    raising, the draw has to be *graded*: the fringe bucket's rates must be more dispersed
+    than the star bucket's at the same mean, or the vector is being gathered wrongly.
+    """
+    n = 40_000
+    rho_by_bin = np.array([0.32, 0.27, 0.25, 0.21])
+    bins = np.repeat(np.arange(4), n)
+    mu = np.full(4 * n, 0.75)
+
+    rates = S.availability_rates(np.random.default_rng(0), mu, rho_by_bin, bins)
+    assert rates.shape == (4 * n,)
+    spread = np.array([rates[bins == j].std() for j in range(4)])
+    # Monotone in the fitted dispersion, and matching the beta's own sd = sqrt(mu(1-mu)rho).
+    assert (np.diff(spread) < 0).all()
+    np.testing.assert_allclose(spread, np.sqrt(0.75 * 0.25 * rho_by_bin), rtol=0.02)
+
+
+def test_availability_rates_reproduce_the_scalar_form_under_a_shared_dispersion():
+    """`n_rho = 1` must be the old behaviour exactly, not merely close to it.
+
+    That is the rollback path: a shared-dispersion artifact has to give bit-identical draws
+    to the scalar broadcast it replaced, or the fix has changed a shipped window's numbers
+    while claiming to repair the other one.
+    """
+    mu = np.linspace(0.2, 0.95, 500)
+    bins = np.zeros(500, dtype=np.int64)
+    graded = S.availability_rates(np.random.default_rng(7), mu, np.array([0.28]), bins)
+    a, b = S.beta_shapes(mu, np.full(500, 0.28))
+    scalar = np.random.default_rng(7).beta(a, b)
+    np.testing.assert_array_equal(graded, scalar)
+
+
+def test_pi_zero_is_the_single_component_draw_bit_for_bit():
+    """The mixture's rollback path in the simulator, and it has to cost no rng draws.
+
+    `pi = 0` must not merely give the same *distribution* — it must give the same numbers,
+    or the shipped single-component window's tensors would move the moment the mixture
+    became expressible. Which means the low component's `rng.random` / `rng.beta` calls have
+    to be skipped rather than drawn and discarded.
+    """
+    mu = np.linspace(0.2, 0.95, 400)
+    bins = np.zeros(400, dtype=np.int64)
+    rho = np.array([0.28])
+    plain = S.availability_rates(np.random.default_rng(11), mu, rho, bins)
+    nested = S.availability_rates(np.random.default_rng(11), mu, rho, bins,
+                                  pi=np.zeros(400), mu_low=0.10, rho_low=0.05)
+    np.testing.assert_array_equal(plain, nested)
+
+
+def test_the_mixture_draws_the_component_first_rather_than_blending_the_rates():
+    """`pi = 1` must land on the low component, not somewhere between the two.
+
+    Averaging the two rates would produce a season between healthy and disrupted, which is
+    precisely the season the arm exists to say does not happen — and it would look right in
+    every mean-based check. So the test is on the whole distribution: at `pi = 1` the draws
+    have the low component's mean AND its spread, and at an intermediate `pi` the sample is
+    bimodal rather than shifted.
+    """
+    n = 40_000
+    mu = np.full(n, 0.90)
+    bins = np.zeros(n, dtype=np.int64)
+    rho = np.array([0.05])
+
+    low = S.availability_rates(np.random.default_rng(3), mu, rho, bins,
+                               pi=np.ones(n), mu_low=0.10, rho_low=0.05)
+    assert abs(low.mean() - 0.10) < 0.01
+    np.testing.assert_allclose(low.std(), np.sqrt(0.10 * 0.90 * 0.05), rtol=0.05)
+
+    mixed = S.availability_rates(np.random.default_rng(4), mu, rho, bins,
+                                 pi=np.full(n, 0.25), mu_low=0.10, rho_low=0.05)
+    # A quarter of the mass sits at the low component and three quarters at the main one,
+    # with the midpoint nearly empty — the signature a blended rate cannot produce.
+    assert abs(((mixed < 0.5).mean()) - 0.25) < 0.02
+    assert ((mixed > 0.4) & (mixed < 0.6)).mean() < 0.02
+
+
 # ── The copula ────────────────────────────────────────────────────────────────
 
 def test_count_copula_inflates_the_residual_matrix_rather_than_using_it_raw():
@@ -293,3 +460,79 @@ def test_scoring_slots_partition_the_tournament_into_twenty_periods(tmp_path):
 def test_artifact_name_round_trips_the_head_naming():
     assert S.artifact_name("fg3a|fga") == "fg3a_given_fga"
     assert S.artifact_name("reb") == "reb"
+
+
+def test_no_design_level_arm_defaults_to_the_shipped_key_and_refuses_an_unknown_one():
+    """A typo in `sim.availability.no_design_level` must not fall back to the incumbent.
+
+    Silently reading a misspelled arm as `pooled` would run a whole sweep against the
+    behaviour the arm was configured to replace, and every artifact it wrote would carry a
+    provenance field saying otherwise.
+    """
+    assert S.no_design_level_arm({}) == S.SHIPPED_LEVEL_ARM
+    assert S.no_design_level_arm(
+        {"sim": {"availability": {"no_design_level": "pooled"}}}) == "pooled"
+    with pytest.raises(ValueError, match="no_design_level"):
+        S.no_design_level_arm({"sim": {"availability": {"no_design_level": "draftt"}}})
+
+
+def test_no_design_team_minutes_reads_a_share_of_a_fixed_pot(tmp_path):
+    """The team-level check the zero-sum argument asks for, on arithmetic rather than draws.
+
+    Two teams, one no-design player each, and simulated minutes that are right on the league
+    total while being wrong on both teams in opposite directions — the exact failure a
+    league-wide share cannot see and the reason this row is per team.
+    """
+    grid = pd.DataFrame({"player_id": [1, 2, 3, 4], "team_id": [10, 10, 20, 20],
+                         "game_id": [900, 900, 900, 900]})
+    targets = pd.DataFrame({
+        "player_id": [1, 2, 3, 4], "season": "2022-23", "season_type": "regular",
+        "game_id": 900, "played": 1, "min": [20.0, 80.0, 20.0, 80.0]})
+    targets.to_parquet(tmp_path / "component_targets.parquet")
+    cfg = {"data": {"features_dir": str(tmp_path)}}
+    ctx = {"season": "2022-23", "grid": grid, "player_ids": np.array([1, 2, 3, 4]),
+           # Players 1 and 3 are the no-design ones; the Series index is the membership.
+           "no_design_availability": pd.Series([0.4, 0.4], index=[1, 3])}
+    sim = {"player_minutes": np.array([40.0, 60.0, 0.0, 100.0])}
+
+    out = S.no_design_team_minutes(cfg, ctx, sim)
+    assert out["n"] == 2
+    # League-wide the simulator is exactly right — 40 of 200 against a realized 40 of 200.
+    assert np.isclose(out["value"], 0.2) and np.isclose(out["bar_value"], 0.2)
+    # Per team it is wrong by 0.2 in each direction, which nets to zero and does not cancel.
+    assert np.isclose(out["mae"], 0.2) and np.isclose(out["bias"], 0.0)
+
+
+def test_the_simulator_builds_component_rows_through_the_head_design():
+    """The simulator's frame must satisfy the persisted RECIPE, not just the plain design.
+
+    Since 2026-08-15 ten of the eleven rate heads carry preseason feature columns, so a
+    frame from `component_rates.build_design` is missing exactly those columns and
+    `PosteriorRecipe._block` raises rather than predicting from a short design. That guard
+    is what caught this — but the guard only fires at run time, deep in `build_context`,
+    after the availability and composition work is already done.
+
+    This is the third place the same wiring was needed (`stan_components.run`,
+    `posteriors.component_artifacts`, and here) and the only one where the plain builder
+    would have produced a *runnable* frame if the recipe had not demanded its columns. So
+    the import is pinned by parsing: `season.py` must reach the component design through
+    the head's own path and must not import the plain builder under any alias.
+    """
+    import ast
+    import pathlib
+
+    source = pathlib.Path("src/sim/season.py").read_text()
+    tree = ast.parse(source)
+    imported = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            for alias in node.names:
+                imported[alias.asname or alias.name] = node.module
+
+    assert imported.get("component_head_design") == "src.models.stan_components", \
+        "the simulator must build component rows through `stan_components.head_design`"
+    # And the plain builder must not be reachable here under any name.
+    plain = [name for name, mod in imported.items()
+             if mod == "src.models.component_rates" and name.endswith("build_design")]
+    assert not plain, f"`component_rates.build_design` is imported as {plain}"
+    assert "component_build_design" not in source

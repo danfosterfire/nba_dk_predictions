@@ -107,6 +107,13 @@ features:
     # dropping anyone injured in October.
     roster_window_games: 10
 
+  preseason:
+    # How many of a team's FINAL preseason games count as "late". Early preseason games
+    # are experiments; the last one or two approximate the rotation the season opens with,
+    # and are the only part of a preseason rotation that forecasts anything. Two rather
+    # than one because a single game is one rest decision away from uninformative.
+    late_games: 2
+
   opponent:
     # Deliberately small. Effective support is 892 team-seasons and the matchup
     # interaction is worth ~1% of within-player residual variance, so rank 2 over
@@ -140,6 +147,15 @@ features:
     # Refits of the GBM against a permuted target, for its chance level.
     n_shuffles: 5
     seed: 42
+
+    # ── src/models/availability_absence.py ──
+    absence:
+      # Which rounds `make availability-absence` runs. §12's `crossed` is the block x
+      # compound 2x2 with its lambda profile; §14's `mixture` crosses the same block against
+      # the head that actually ships. The two write DISJOINT artifacts, so `rounds:
+      # [mixture]` re-runs §14 alone and cannot overwrite §12's five files — which matters
+      # because `make docs-audit` re-derives ~60 quoted figures from them.
+      rounds: [crossed, mixture]
 
 model:
   type: lstm          # lstm | transformer | baseline
@@ -183,7 +199,104 @@ stan:
   select_warmup: 500
   select_samples: 500
 
+  availability:
+    # First season kept in the head's FITTING rows — the games-played head only.
+    # `make availability-window` laddered window x season term x dispersion and this arm
+    # won on CRPS, PIT and boundary coverage at once: validation CRPS 9.8247 against the
+    # full window's 10.0057, a paired gap of -0.181 [-0.257, -0.103]. Deliberately not
+    # 2017-18, where the sup-F break scan points: the break's LOCATION and the best
+    # fitting WINDOW are different questions, and five target seasons is too few rows.
+    # `null` restores the full 1996-97 window exactly. docs/availability-window-plan.md §4.
+    #
+    # ⚠️ This cuts the rows `stan_availability.StanAvailability.fit` fits on, and nothing
+    # else. It must never be pushed up into `availability_design`, which the minutes,
+    # composition and games-played heads, the model cards and the simulator all import —
+    # they would be silently re-scoped and nothing would raise.
+    first_season: 2012-13
+    # One beta-binomial dispersion per prior-season MPG role bucket
+    # (`src/eda/season_effects.ROLE_EDGES`) rather than one for every player. Fringe
+    # players are genuinely more variable than stars — 0.3084 against 0.2456 at the point
+    # MLE — and grading it never hurt a metric in the ladder. `false` is the shared scalar,
+    # which is `n_rho = 1` in `src/stan/betabinomial_glm.stan` and nests exactly.
+    role_rho: true
+    # The low-availability MIXTURE — a second component for the disrupted season, with
+    # covariates on its weight. `make availability-window` laddered five likelihoods and
+    # this one halved the selector: boundary_tail_error 0.0109 against 0.0201, shoulder
+    # error -0.0021 [-0.0086, -0.0010], and a TIE on CRPS (+0.011, interval spanning
+    # zero). It ships because this head is selected on tail calibration with a CRPS
+    # non-inferiority guard — a rule stated as D1 in docs/availability-window-plan.md §8
+    # BEFORE the arm was measured, not inferred from the arm that won.
+    #
+    # `false` recovers the single-component head EXACTLY: `P = 0` in
+    # `src/stan/betabinomial_glm.stan`, whose mixture parameters are then zero-length.
+    # Asserted on Stan's own `log_prob`, the same discipline `n_rho = 1` carries.
+    #
+    # Wired all the way through on 2026-08-12 (docs/availability-window-plan.md §7i):
+    # `DesignRecipe` carries a SECOND design block for pi's covariates and its own scaler,
+    # so `make posteriors`, `rehydrate_availability`, `make model-cards` and the simulator
+    # all read the mixture rather than raising or, worse, silently reading the
+    # single-component head. `make stan-availability-mixture` remains the port check and
+    # needs none of that.
+    mixture: true
+    # ── The preseason block, adopted 2026-08-13 (docs/preseason-plan.md P2) ──
+    # P1's full TEN columns on `beta` — see `stan_availability.PRESEASON_COLS`: preseason
+    # minutes volume, three participation levels, two difference-coded deltas, and the
+    # missing-preseason indicator split on the age cells P1's census decided. Zero across
+    # the block recovers the head that shipped before this date exactly, so `false` is a
+    # real rollback rather than a different model.
+    #
+    # ⚠️ It is the arm the FITTING HALF selected, not the five-column arm declared before
+    # the run: on the rolling harness it beats that primary at CRPS -0.0977
+    # [-0.1569, -0.0408] and boundary -0.0014 [-0.0019, -0.0010], 8 of 10 origins, which
+    # REVERSES P1 decision 4. Two of its columns are read over the preseason's TAIL, so a
+    # complete preseason is a production precondition and the runbook's Oct 17-20 window is
+    # load-bearing.
+    #
+    # Adopted against a gate that FAILED as written, deliberately and on the record. P2's
+    # bar was a conjunction — a validation CRPS interval clear of zero with the boundary
+    # held, AND the rolling harness agreeing — and validation could not resolve the arm
+    # (-0.102 [-0.322, +0.121] on the draftable population) while the rolling harness
+    # passed both halves at 10 of 10 origins (-0.254 [-0.344, -0.162]). The readings do
+    # not conflict: validation's interval contains the rolling estimate and is 2.4x wider
+    # on 4.6x fewer rows. The bar was written against the opposite failure and had no
+    # clause for this one.
+    #
+    # ⚠️ Reaches the head through `stan_availability.head_design` and NEVER through
+    # `availability_design`, which the minutes, composition, games-played,
+    # exchangeability, no-prior and season-term consumers all import. A column that is
+    # structurally zero before 2004-05 must not enter any of them by accident.
+    preseason: true
+    # Normal scale on pi's coefficients. Weakly informative on standardized columns —
+    # the point MLE leaves them unpenalized inside a +/-5 box, which has no Bayesian
+    # analogue, so this is the one number in the port that is a choice rather than the
+    # `1/sqrt(2*l2)` identity.
+    pi_gamma_scale: 2.5
+    # A "disrupted season" is one where the player misses more than half the schedule.
+    # The bound is what stops the two components from label-switching — structural rather
+    # than hopeful, and the point MLE fitted mu_low = 0.0999, well clear of it.
+    mu_low_max: 0.5
+
   minutes:
+    # ── The preseason block, adopted 2026-08-13 (docs/preseason-plan.md P3) ──
+    # Five columns appended to every variant: the SEASON-CENTRED preseason minutes delta
+    # plus the missing-preseason indicator split on P1's age cells. This head's gate
+    # cleared BOTH halves outright — validation CRPS -4.789 [-8.08, -1.59] minutes and the
+    # rolling harness -7.940 [-9.41, -6.44] at 12 of 13 origins, the first block in the
+    # project whose rolling reading is the LARGER one. Centred rather than raw because
+    # preseason minutes are compressed by an amount that varies with the calendar and this
+    # head has no year term to absorb it; centring wins on both readings and takes the
+    # season-total bias from -36.68 to -10.95, better than the incumbent's own -19.24.
+    #
+    # ⚠️ Turning this on also cuts the FITTING rows to 2004-05 onward, because the panel
+    # begins there and this head fits from 1997-98 — otherwise the missing indicator is an
+    # era dummy on 25.9% of them. That cut is worth 1.19 CRPS minutes on its own, priced
+    # separately by P3 so it cannot be credited to the block. `false` restores the
+    # pre-2026-08-13 head — full window, no block — exactly.
+    #
+    # ⚠️ Reaches the head through `stan_minutes.head_design` and NEVER through
+    # `build_design`, which stan_composition, minutes_window, minutes_unification and
+    # minutes_preseason all import.
+    preseason: true
     # Prior-season total minutes required before a row is fitted. Matches the component
     # heads' qualification threshold, where reliability is already ~0.75.
     min_prior_minutes: 200
@@ -193,6 +306,29 @@ stan:
     spline_knots: 5
 
   components:
+    # ── The preseason block, adopted 2026-08-15 (docs/preseason-plan.md session 6b) ──
+    # Five columns appended to every variant of every head: that head's OWN preseason delta
+    # on its own link scale — log1p of a per-36 rate for a count, logit of a percentage for
+    # a conversion — volume-shrunk by min_pre / (min_pre + k) at the k session 6b fitted on
+    # the fitting half, plus the missing-preseason indicator split on P1's age cells.
+    #
+    # ALL ELEVEN heads clear the rolling-origin half of the bar (11-13 of 13 origins,
+    # intervals clear of zero on 4,300 fitting-half rows) and SEVEN also clear validation:
+    # fga, fg3a|fga, reb, ast, fta, tov and fg2m|fg2a. The other four have favourable point
+    # estimates at both readings and validation intervals that reach across zero on 706
+    # rows. No head in the round has an interval clear of zero on the WRONG side.
+    #
+    # The shrink is the form the fitting half chose over P1's additive `pre_log_min`, and k
+    # is READ from components_preseason_shrinkage.csv rather than pinned here, because it is
+    # a fitted quantity. Season-centring is deliberately NOT used, unlike stan.minutes: it
+    # loses on this family, because the compression it corrects is a property of levels and
+    # a per-36 rate has already divided the exposure out.
+    #
+    # `false` is an EXACT rollback to the pre-2026-08-15 heads — it also restores the full
+    # 1997-98 fitting window, which the block cuts to 2004-05 (the panel's first covered
+    # season) so the missing indicator cannot read as an era dummy.
+    preseason: true
+
     # Every head gets a spline variant and the winner is picked on a VALIDATION split,
     # rather than hard-coding "splines on fg3a and blk only". `make component-rates`
     # measured that pattern (+0.030 R^2 on fg3a, +0.041 on blk, <= +0.003 elsewhere) under
@@ -278,6 +414,11 @@ stan:
     # the history); fitting starts here. This was "2018-19" for the pilot; Gate E —
     # the full-window refit — was taken on 2026-08-03 after Gates A-D passed, so the
     # head now fits every season the frame covers.
+    #
+    # ⚠️ This is the window the head fits WITHOUT the preseason blend. With
+    # `preseason.adopt: true` below, `stan_composition.head_first_season` raises it to the
+    # preseason panel's first intact-tail season (2004-05) — so this value is the floor
+    # rather than the answer, exactly as `stan.minutes` leaves its own 1997-98 in place.
     first_season: "1996-97"
     # Joint draws kept per predictive. Each is a full sequential allocation of every
     # team-game, so this is the wall-clock knob for scoring, not for fitting.
@@ -328,8 +469,26 @@ stan:
       # per-team-game unit, which the deviation regression does not reach. Put `ps_team`
       # back if `ps` passes P2 and the team block is wanted in the shipped arm.
       arms: [base, ps, team]
-      warmup: 500
-      samples: 500
+      # ⚠️ RAISED FROM 500 ON 2026-08-13, and 500 was NOT the cheaper setting.
+      # `choose_metric` grants `dense_e` only when warmup >= 20 x parameters. `base` is 25
+      # features + intercept + 4 dispersion bins = 30 and `team` is 36, so both needed 600
+      # and both were silently getting `diag_e` — which this head's own probe measures at
+      # treedepth 8-9 against 4, roughly 10x the wall clock. That cliff cost
+      # `composition_preseason_fit` a 32-minute false start that produced no draw.
+      #
+      # The third arm is the honest complication and it points the same way. `ps` carries
+      # 2,204 player-season effects, so it cannot reach `dense_e` at any warmup this project
+      # would run and `diag_e` is correct for it — doubling the draws doubles its cost. It
+      # is worth paying anyway: at 500 it posted max R-hat 1.13173, which is not a converged
+      # fit, and warmup is the thing it was short of. So `base` and `team` get ~10x cheaper
+      # and `ps` gets 2x dearer for draws it needed.
+      #
+      # ⚠️ The metric recorded in `composition_effects_metrics.csv` predates this rule and
+      # says `dense_e` for a `base` arm that today's `choose_metric` puts on `diag_e`. The
+      # artifact carries no record of which code version wrote it, which is the general
+      # defect; `announce_metric` now prints the metric in the first second either way.
+      warmup: 1000
+      samples: 1000
       # Half-normal scale on sigma_u. Weakly informative by ~2x against the injection's
       # measured 0.375-0.45, so Gate P5 is a replication rather than a foregone conclusion.
       u_sd_scale: 1.0
@@ -339,6 +498,109 @@ stan:
       # this head (`make stan-composition` itself is 9.92 h), so the gate exists to catch a
       # run that is worse than that, not to refuse the one the plan specifies.
       max_extrapolated_hours: 24
+
+    # ── Session 4b's FIT — `make composition-preseason-fit`,
+    #    src/models/composition_preseason_fit.py ──
+    # `make composition-preseason` measured a preseason-blended `w_share` on this head's
+    # own NO-FIT floor and it passed decisively (-0.19972 [-0.21661, -0.18225] CRPS minutes
+    # per player-game on the draft pool). The floor is a screen and not a substitute —
+    # `beta` can correct an offset the floor cannot — so this is the fit that says whether
+    # the increment survives the posterior. Its own target for the same two reasons
+    # `effects` has one: `stan_composition_*.csv` is the incumbent's record and
+    # `make docs-audit` re-derives eleven figures from it, and `composition_preseason`
+    # itself is 48 s of numpy with no CmdStan, which is the property that makes the screen
+    # worth re-running.
+    preseason:
+      # ⚠️ THIS BLOCK IS READ BY TWO THINGS AND THEY WANT DIFFERENT KEYS FROM IT.
+      # `adopt`, `blend_k` and `route` describe the blend THE HEAD SHIPS, and
+      # `stan_composition.preseason_blend` is the one function that reads them. Everything
+      # else here — `first_season`, `label`, `arms`, `warmup`, `samples` — belongs to
+      # `make composition-preseason-fit`, the MEASUREMENT target, and no head reads any of
+      # it. They share `blend_k` and `route` deliberately: those are session 4b's decisions
+      # 2 and 3, and the head and the round that measured it must not be able to disagree
+      # about them.
+      #
+      # ── Adopted 2026-08-14 (docs/preseason-plan.md P5) ──
+      # Session 4d fitted this arm at the covered window against `base_full_window` — the
+      # head that was shipping — and it wins at both units on the draft pool: -0.25409
+      # [-0.26520, -0.24315] CRPS minutes per player-game and -17.27296 [-22.32569,
+      # -11.92164] per player-season, with `team_sum_abs_error` exactly 0 on all six arms.
+      # The increment has now grown three times as evidence was added to it (floor -0.19972
+      # -> fitted -0.20883 -> covered window -0.23418, retention 1.040 -> 1.115).
+      #
+      # ⚠️ Unlike the availability and minutes blocks this is NOT a column on `beta`. It
+      # blends `w_share`, which reaches the model as the `OWN` feature, as the offset and as
+      # the allocation ORDER — and no coefficient reaches the last two, which is why the arm
+      # had to be built this way at all. `route: offset_only` means only the offset is
+      # blended; 4b's attribution put 103% of the margin there and 3.75% on the ordering.
+      #
+      # ⚠️ Turning this on also cuts the FITTING rows to the preseason panel's first
+      # intact-tail season (2004-05), the same way `stan.minutes.preseason` cuts its head's
+      # window — and the season is READ OFF `preseason_coverage.csv` by
+      # `stan_composition.head_first_season`, never typed. Session 4d priced that cut at
+      # -0.01991 [-0.02515, -0.01498] per player-game, IN THE ARM'S FAVOUR and 8.5% of the
+      # increment, so unlike P3's cut it is not a tax on the block.
+      #
+      # `false` restores the pre-2026-08-14 head exactly — full 1996-97 window, incumbent
+      # `w_share` — and it reaches the head ONLY through `stan_composition.head_frame`.
+      # `composition_frame` itself is untouched, because `composition_effects`,
+      # `minutes_window`, `rookie_priors` and both `composition_preseason` modules build
+      # controls on it and a blend arriving under those would delete the contrast they exist
+      # to draw.
+      adopt: true
+      # ── Session 4d: the covered window, promoted from the pilot on 2026-08-13 ──
+      # 4c ran this at "2018-19" (P3 decision 3) and passed at both units, so the open
+      # question is whether the arm survives the window the head actually fits. This is
+      # now THE HEAD'S OWN `first_season` above, and the module cuts it:
+      #
+      #   * the two GATE arms fit `max(this, first covered season)` = 2004-05, because the
+      #     preseason panel starts there and a missing-preseason indicator on a pre-2005 row
+      #     is an era dummy rather than a feature. That is P3's rule verbatim, one head over,
+      #     and the covered season is READ OFF `preseason_coverage.csv`, never typed here —
+      #     2003-04 is excluded as `tail_missing` and a hard-coded year would not know it.
+      #   * `base_full_window` fits this window as written, and it can, because it carries
+      #     no preseason column at all. It is the shipped head, and it is what prices the
+      #     cut on its own — P3 measured the same cut at 1.19 CRPS minutes BEFORE any
+      #     preseason column existed, a quarter of that round's increment.
+      #
+      # Set this back to "2018-19" with `label: ""` to reproduce 4c exactly.
+      first_season: "1996-97"
+      # Artifact stem suffix, and it is a BUILD GATE rather than tidiness. `make docs-audit`
+      # re-derives ~45 of session 4c's figures from `composition_preseason_fit.csv`, and
+      # that run is the pilot. A covered-window run writing there would answer a different
+      # question under those claims' names — the same failure `stan_composition_*.csv` has
+      # its own target to avoid, one level up. Empty restores the pilot's paths.
+      label: covered
+      # `w' = omega*pre + (1 - omega)*w_share` with `omega = m / (m + blend_k)` over
+      # preseason minutes. Selected on an inner carve of the FITTING half (interior at
+      # 4.44562 against 4.49481 at 40 and 4.46834 at 160); validation's own optimum is 160,
+      # one grid step away, and reading it would be selecting on the split the arm is
+      # scored against. `blend_k -> inf` is the incumbent exactly.
+      blend_k: 80
+      # `w_share` reaches the head as the offset AND as the allocation order, and the
+      # attribution found the offset carrying 103% of the screen's margin against the
+      # ordering's 3.75%. The ordering is also the expensive half to change — it permutes
+      # the sequential decomposition and therefore the whole likelihood's block structure —
+      # so only the offset is fitted. `both` and `order_only` are the other two settings.
+      route: offset_only
+      # ORDERED BY DECISION VALUE, not by cost — `effects`' rule, and each arm checkpoints
+      # as it lands, so a run cut short still leaves the gate evaluable. `base` and
+      # `preseason` decide the bar at the covered window; `base_full_window` is context and
+      # runs last because it is also the most expensive (~8 more fitting seasons).
+      arms: [base, preseason, base_full_window]
+      # ⚠️ FULL LENGTH, and 500 IS NOT A CHEAPER VERSION OF IT — it is a MORE expensive one.
+      # `choose_metric` grants `dense_e` only when warmup >= 20 x parameters, and this arm
+      # has 25 features + intercept + 4 dispersion bins = 30, so the threshold is exactly
+      # 600 warmup draws. At 500 the head silently falls back to `diag_e`, where this
+      # module's own probe measured NUTS held at treedepth 8-9 (645s) against treedepth 4
+      # under `dense_e` (65s). Measured here: a first attempt at 500 ran 32 minutes without
+      # completing its 500 warmup draws, against `composition_effects`' 880s for this same
+      # arm at this same window for the WHOLE 500+500 fit under `dense_e`. The `effects`
+      # block above sits under the same cliff and is the reason this comment is here rather
+      # than a bare number. Matches `stan.warmup`/`stan.samples`, which is what
+      # `stan_composition.sweep` itself runs the shipped ladder at.
+      warmup: 1000
+      samples: 1000
 
 # ── The simulation and drafting layer (src/models/posteriors.py, src/sim/) ────
 # `docs/simulations-plan.md` specifies the whole block. Only the keys a built module
@@ -376,17 +638,29 @@ sim:
   # ── The minutes draw ──────────────────────────────────────────────────────
   # THE SHIPPED per-(player, season) effect size, injected into the composition's linear
   # predictor at draw time. `make minutes-unification` measured the composition's season
-  # totals 4.68x too narrow and traced it to this missing parameter; injecting `sigma * z`
+  # totals 4.58x too narrow and traced it to this missing parameter; injecting `sigma * z`
   # per unit per posterior draw and re-running the head's OWN sequential allocation moves
-  # the season-total predictive sd from 64.65 to 280.87 and TIES the marginal head
-  # (CRPS 142.87 against 144.35, gap -1.49 [-6.14, +3.22]), with better calibration
-  # (PIT KS 0.0659 against 0.0735) and the team constraint still exact.
+  # the season-total predictive sd from 60.58 to 237.91 and BEATS the marginal head
+  # (CRPS 130.69 against 136.60, gap -5.91 [-10.39, -1.50]), with calibration that is
+  # effectively identical (PIT KS 0.0665 against 0.0668) and the team constraint still exact.
   #
-  # **0.450 is estimated on TRAIN**, by running the identical grid over the last two
+  # ⚠️ MOVED 0.450 -> 0.375 ON 2026-08-14, and the reason is that its INPUT changed rather
+  # than that the constant was re-decided. The composition adopted the preseason-blended
+  # offset that day (`docs/preseason-plan.md` P5), so the grid this number is read off is a
+  # grid over a different head. On the pre-blend head the train optimum was 0.450 and
+  # validation's was 0.375 — one step apart, which is the "two grids on disjoint rows agree
+  # to a step" evidence the constant rested on. On the blended head BOTH grids put the
+  # optimum at 0.375 (train 108.4687 against 0.450's 108.8337 on 1,145 player-seasons;
+  # validation 130.6918 against 132.4371 on 742), so the agreement is now exact.
+  #
+  # **0.375 is estimated on TRAIN**, by running the identical grid over the last two
   # training seasons — so it owes the evaluation split nothing, which was the injection's
-  # one load-bearing caveat. Five independent routes agree: 0.375 (validation CRPS grid),
-  # ~0.41 (calibration target — the ratio of the head's residual sd to its predictive sd),
-  # 0.450 (train CRPS grid), 0.4776 and 0.4809 (fitted in Stan, non-centred and centred).
+  # one load-bearing caveat. It is also the best-calibrated rung on the grid by some margin
+  # (PIT KS 0.0665 against 0.450's 0.0952), where before the blend 0.450 was the better
+  # calibrated of the two. Other routes to the same quantity, measured on the PRE-BLEND head
+  # and kept for scale rather than as current readings: ~0.41 (calibration target — the ratio
+  # of the head's residual sd to its predictive sd), 0.4776 and 0.4809 (fitted in Stan,
+  # non-centred and centred).
   #
   # A FITTED `sigma_u` is strictly better in two respects — beta estimated jointly with it,
   # and the predictive integrating over sigma's posterior rather than plugging one in — and
@@ -394,7 +668,62 @@ sim:
   # per arm even at a 4-season window and did not converge in the budget available; see
   # docs/potential-to-dos.md. Set to 0.0 to recover the un-injected head exactly.
   minutes:
-    player_season_sigma: 0.450
+    player_season_sigma: 0.375
+
+  # ── The availability layout ───────────────────────────────────────────────
+  # WHERE the missed games fall, given how many there are. The availability head cannot
+  # say — `gp` is invariant to the arrangement — so this is chosen at draw time, and it is
+  # the largest distributional error measured on that head at the unit DK actually seats a
+  # lineup in: `make availability-exchangeability` puts an exchangeable layout 9.1x short
+  # on a star's chance of three consecutive dead scoring periods.
+  #
+  # `tenure_merge` is the shipped corner of a measured 2x2. The tenure half lays the
+  # pre- and post-tenure edge blocks at the *ends* from `games_played.EdgeResampler`,
+  # because 44.17% of the head's missed games are edge blocks whose length and position
+  # an interior beta-geometric at a random start gets wrong in both directions. The
+  # overflow half stops `allocate_spells` collapsing a heavily-absent row to one giant
+  # block when the draw wants more spells than the schedule has gaps — it fires on 41.28%
+  # of fringe rows and 2.32% of star rows, so it is a role-shaped artifact.
+  #
+  # The two are not separable and neither ships alone: `merge` on its own strips out the
+  # accident that was doing the clumping (pooled longest-dead-run recovery 1.1162 ->
+  # 0.2707) and `tenure` on its own compounds with it (fringe 1.2389 -> 1.5370 on dead
+  # periods). Together they land the recovered share near 1.0 in every role bucket and
+  # reproduce the realized spell-length distribution they were never scored on.
+  #
+  #   clustered     the previous shipped layout — pooled beta-geometric spells at random
+  #                 starts, collapse on overflow. Recoverable exactly.
+  #   merge         overflow only
+  #   tenure        edge blocks only
+  #   tenure_merge  both — SHIPPED
+  availability:
+    layout: tenure_merge
+
+    # WHICH RATE a rostered player the availability head has no row for is handed. The head
+    # is lag-1, so a rookie or a returning veteran is not in its frame at all — 106 of 539
+    # rostered players in 2022-23 — and he reaches the simulator through
+    # `sim/season.no_design_availability` instead. That used to be ONE pooled scalar for a
+    # population whose realized level spans 3.33x, so an undrafted call-up and a first
+    # overall pick were given the same availability.
+    #
+    # `make availability-no-prior` (§8b of docs/availability-window-plan.md) laddered the
+    # pooling KEY, holding the estimator fixed — the realized `gp / team_games` of rows
+    # carrying that key over seasons strictly before the target, which is
+    # `rookie_share_priors`' construction one column over. `tenure_draft` wins both splits
+    # against the incumbent and against every other arm, with intervals clear of zero.
+    #
+    # The tenure split is the half that is not obvious, and it is the half that keeps the
+    # arm honest: a draft bucket is a strong signal for a FIRST appearance (rookies realize
+    # 0.2613 undrafted to 0.8294 lottery top-5) and a weak one for a RETURN (0.2200 to
+    # 0.3837 over the same buckets, on a player whose draft night was a decade ago). Keying
+    # both on the bucket alone averages a gradient with a flat, and hands a returning
+    # ex-lottery pick 0.73 where he realizes 0.34.
+    #
+    #   pooled        one scalar for everybody — the previous behaviour, recoverable exactly
+    #   draft         draft bucket alone
+    #   tenure        rookie / returning alone
+    #   tenure_draft  rookie x draft bucket, returning pooled — SHIPPED
+    no_design_level: tenure_draft
 
   # `make scoring-periods` — the NBA week grid and DK's rounds on top of it.
   scoring_periods:
@@ -406,22 +735,37 @@ sim:
     # so they drive the map and the calendar comparison is printed as drift.
     round_weeks: [17, 2, 2, 2]
 
-  # The two tournaments that go live this year, and how many entries each takes.
-  # Near-equal stake — $200 against $208 — across two structures whose objectives differ
-  # in shape rather than scale, which is why comparing them is itself a result
-  # (`two-strategies-two-tiers`). The NAMES are keys into
+  # Every captured tournament, and how many entries each takes — since 2026-08-11 the
+  # sweep drafts and scores all five structures, not only the original reference pair.
+  # These are SIMULATED stakes; no contest has been entered and which to enter is an
+  # open decision (the likely first real entries are cheap 15k_and_one teams, whose
+  # purpose would be pick-log capture rather than profit — see
+  # `real-pick-logs-are-the-missing-field-calibration`). The entry counts follow ONE
+  # rule: min(max_entries_per_player,
+  # ceil($200 / entry_fee)) — near-equal stake, capped by DK's own per-player limit —
+  # which reproduces the original hand-chosen 10 and 4 exactly and extends to the rest.
+  # Where the rule cannot reach $200 the stake diverges and that is stated rather than
+  # hidden: 15k_and_one tops out at $150 (fee $1, cap 150) and 88k_alley_oop's single
+  # entry is already $450. The FIRST TWO keys are the reference tiers — the pair the
+  # headline results are quoted at — and their order
+  # is load-bearing: Gate D compares exactly the first two. The NAMES are keys into
   # data/raw/dk_best_ball_tournament_metadata.csv, and every structural number behind
   # them — round count, pod size, advance count, cash table — is derived by
-  # dashboard/economics.py rather than repeated here. Adding a third tournament is a
-  # line here plus a row there; nothing in src/sim/ knows a tournament by name.
+  # dashboard/economics.py rather than repeated here; nothing in src/sim/ knows a
+  # tournament by name. 15k_and_one's 150 entries are the sweep's cost center: the
+  # objective arms call draft_room.evaluate once per pick, so this tier alone adds
+  # ~35 min to `make strategy-sweep`.
   tournaments:
     600k_shootaround: {entries: 10}
     20k_spin_move: {entries: 4}
+    50k_four_pt_play: {entries: 20}
+    15k_and_one: {entries: 150}
+    88k_alley_oop: {entries: 1}
 
   # `make bracket`. There is NO field-size knob: each contest is played at its own
   # `total_entries` from data/raw/dk_best_ball_tournament_metadata.csv — 35,280 down to
   # 216 — like every other structural number, and all five are simulated rather than only
-  # the two being entered. They cost one scoring pass between them: the field is drafted
+  # the reference pair. They cost one scoring pass between them: the field is drafted
   # once per season at the largest size and each contest takes the prefix it needs, which
   # is valid because entries are exchangeable and every field size is a multiple of the
   # 12-entry round-1 pod.
@@ -561,6 +905,13 @@ eda:
     k_max: 14
     # null → pick the k with the best silhouette from the sweep
     k: null
+
+  preseason_value:
+    # Permutations of the preseason block within season, for the ΔR² noise floor. A small
+    # ΔR² is unreadable without one — this is what a block of that shape earns by chance.
+    # The whole gate runs in seconds, so this is set for a stable sd rather than for cost.
+    n_shuffles: 20
+    seed: 42
 
   persistence:
     # Lag-k persistence, for the staleness decay team_context currently flat-rates

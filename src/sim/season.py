@@ -145,14 +145,20 @@ from src.data.preprocess import compute_dk_pts
 from src.eda.residual_correlation import MINUTES_CONDITIONED
 from src.eda.residual_correlation import to_matrix as residual_matrix
 from src.features.targets import BONUS_GAME_OVERDISPERSION, bonus_part
-from src.models.component_rates import (CONVERSION_HEADS, COUNT_HEADS, DERIVED_COUNTS,
-                                        build_design as component_build_design)
-from src.models.games_played import allocate_spells
+from src.models.availability_no_prior import (KEY_LADDERS, PRESEASON_KEY_ARMS,
+                                              SHIPPED_LEVEL_ARM, appearance_gap, level_keys,
+                                              level_rates, level_tables, primary_team_cells)
+from src.models.component_rates import CONVERSION_HEADS, COUNT_HEADS, DERIVED_COUNTS
+from src.models.games_played import (EdgeResampler, allocate_spells, edge_blocks,
+                                     layout_tenure)
 from src.models.held_out import TEST_SEASONS, assert_unlocked, selection_split
 from src.models.minutes_unification import rehydrate_composition, shipped_sigma
 from src.models.posteriors import load_all, posteriors_dir, require_window
-from src.models.stan_availability import availability_design
-from src.models.stan_composition import OFFSET_CLIP, composition_frame, simulate_minutes
+from src.models.stan_availability import (FIRST_SEASON, head_design,
+                                          restrict_window, role_bins)
+from src.models.stan_components import head_design as component_head_design
+from src.models.stan_composition import (OFFSET_CLIP, draft_numbers, head_frame,
+                                         simulate_minutes)
 from src.models.stan_game_length import (forward_cells, posterior_inputs,
                                          sample_game_length)
 from src.models.stan_minutes import beta_shapes
@@ -316,9 +322,38 @@ def roster_grid(features_dir: Path, season: str, slots: pd.DataFrame) -> pd.Data
     return grid.drop(columns=["played", "game_date"]).reset_index(drop=True)
 
 
+def no_design_level_arm(cfg: dict) -> str:
+    """The configured key ladder for the no-design availability level.
+
+    P4's preseason arms are refused here rather than allowed to fail deep inside
+    `level_tables`: this module's own key builder does not join the preseason panel, so
+    naming one would be a config that cannot work. They are measured by
+    `make availability-no-prior` and `docs/preseason-plan.md` P4 records that none of them
+    ships, so the refusal costs nothing today and is a clear message rather than a `KeyError`
+    if that ever changes.
+    """
+    name = str(cfg.get("sim", {}).get("availability", {})
+               .get("no_design_level", SHIPPED_LEVEL_ARM))
+    usable = [a for a in KEY_LADDERS if a not in PRESEASON_KEY_ARMS]
+    if name in PRESEASON_KEY_ARMS:
+        raise ValueError(f"sim.availability.no_design_level {name!r} needs a preseason key "
+                         f"this module does not build — see `docs/preseason-plan.md` P4, "
+                         f"where it is measured and not shipped")
+    if name not in usable:
+        raise ValueError(f"unknown sim.availability.no_design_level {name!r}; expected one "
+                         f"of {sorted(usable)}")
+    return name
+
+
 def no_design_availability(features_dir: Path, season: str, design: pd.DataFrame,
-                           allowed: list[str]) -> float:
+                           allowed: list[str], seasons: list[str],
+                           player_ids: np.ndarray, arm: str) -> pd.Series:
     """Availability rate for rostered players the availability head has no row for.
+
+    Returned for **every** id in `player_ids`, indexed by player, because the caller's own
+    `present` mask is what decides which of them are used — a player with a design row gets
+    his rate from the head and this one is overwritten. Returning the full vector rather than
+    the subset keeps that alignment positional and impossible to get subtly wrong.
 
     The head is a lag-1 design, so a player with no prior season is not in its frame at all
     — 106 of 539 rostered players in 2022-23. They still consume roster spots and, because
@@ -333,28 +368,95 @@ def no_design_availability(features_dir: Path, season: str, design: pd.DataFrame
     minutes share: the pooled `gp / team_games` of no-design player-seasons in the seasons
     strictly **before** the target, intersected with the seasons selection may read. Nothing
     is fitted and nothing from the target season enters.
+
+    **"Players like them" is a graded key rather than the whole population** — `arm` names
+    the ladder and `pooled` recovers the single scalar this used to return, exactly. The
+    grading is what `make availability-no-prior` §8b selected: an undrafted call-up and a
+    top-5 pick realize 0.2500 and 0.8316, and the draft bucket says which — but only for a
+    *first* appearance, since a returning veteran's bucket is a decade old and his realized
+    rate collapses toward 0.30 whatever it says.
+
+    **Two windows, deliberately different.** The *rate* may only be pooled from seasons
+    selection may read, because it is an estimate taken from outcomes. The *key* — has this
+    player appeared before, and where was he drafted — is read from the full panel strictly
+    before the target, because it is a roster fact knowable at draft time, and restricting it
+    to `allowed` would silently relabel a returning veteran as a rookie in production, where
+    the seasons in between are held-out ones.
     """
     panel = pd.read_parquet(
         features_dir / "availability_panel.parquet",
-        columns=["season", "player_id", "team_id", "game_id", "game_date", "played"])
-    earlier = [s for s in allowed if s < season]
-    panel = panel[panel["season"].isin(earlier)]
-    if panel.empty:
+        columns=["season", "player_id", "team_id", "game_id", "game_date", "played",
+                 "min"])
+    before = panel[panel["season"] < season]
+    pooled = before[before["season"].isin([s for s in allowed if s < season])]
+    if pooled.empty:
         raise ValueError(f"no seasons before {season} to estimate a no-design "
                          f"availability rate from")
-    last = (panel[panel["played"] == 1].sort_values(["game_date", "game_id"])
-            .groupby(["season", "player_id"], as_index=False)
-            .agg(team_id=("team_id", "last")))
-    primary = panel.merge(last, on=["season", "player_id", "team_id"], how="inner")
-    cells = (primary.groupby(["season", "player_id"], as_index=False)
-             .agg(gp=("played", "sum"), team_games=("played", "size")))
+    cells = primary_team_cells(pooled)
     covered = set(map(tuple, design[["season", "player_id"]].to_numpy()))
-    keys = list(map(tuple, cells[["season", "player_id"]].to_numpy()))
-    rows = cells[[k not in covered for k in keys]]
-    if rows.empty:
+    history = cells[[(s, p) not in covered for s, p
+                     in zip(cells["season"], cells["player_id"])]].copy()
+    if history.empty:
         raise ValueError("no uncovered player-seasons before "
                          f"{season}; the availability design cannot be that complete")
-    return float(rows["gp"].sum() / rows["team_games"].sum())
+
+    buckets = draft_numbers(features_dir)
+    appearances = before.loc[before["played"] == 1, ["season", "player_id"]]
+    history["gap"] = appearance_gap(history, appearances, seasons)
+    history = level_keys(history.merge(buckets, on=["player_id", "season"], how="left"))
+
+    rows = pd.DataFrame({"player_id": player_ids, "season": season})
+    rows["gap"] = appearance_gap(rows, appearances, seasons)
+    rows = level_keys(rows.merge(buckets, on=["player_id", "season"], how="left"))
+    rate, _ = level_rates(rows, level_tables(history, season, allowed, arm))
+    return pd.Series(rate, index=player_ids, name="no_design_availability")
+
+
+#: The layout arms `sim.availability.layout` may name, as `(tenure factor, overflow policy)`.
+#: `clustered` is the previously shipped corner and is recoverable exactly; `tenure_merge`
+#: ships. `make availability-exchangeability` is the ladder and
+#: `docs/availability-window-plan.md` §13 the readout.
+LAYOUT_ARMS = {"clustered": (False, "collapse"), "merge": (False, "merge"),
+               "tenure": (True, "collapse"), "tenure_merge": (True, "merge")}
+
+
+def layout_arm(cfg: dict) -> tuple[str, bool, str]:
+    """`(name, tenure, overflow)` for the configured availability layout."""
+    name = str(cfg.get("sim", {}).get("availability", {}).get("layout", "tenure_merge"))
+    if name not in LAYOUT_ARMS:
+        raise ValueError(f"unknown sim.availability.layout {name!r}; expected one of "
+                         f"{sorted(LAYOUT_ARMS)}")
+    tenure, overflow = LAYOUT_ARMS[name]
+    return name, tenure, overflow
+
+
+def tenure_edges(features_dir: Path, season: str, design: pd.DataFrame,
+                 allowed: list[str], first_season: str) -> EdgeResampler:
+    """Edge-block fractions for the layout, pooled from seasons strictly before the target.
+
+    The same point-in-time construction `no_design_availability` and
+    `stan_composition.rookie_share_priors` use, and for the same reason: this is an
+    empirical rate handed to the simulator, so it may see only seasons already played and
+    only seasons selection may read. Restricted to the availability head's own fitting
+    window as well, because that is the estimator `make availability-exchangeability`
+    measured and a shipped rule transfers from a ladder only if it is the ladder's rule.
+
+    Multi-team player-seasons drop out inside `edge_blocks`: a traded player's tenure with
+    one team ends without his season ending, so his trailing block is a roster fact rather
+    than an absence, and pooling it would teach the layout that stars vanish in February.
+    """
+    earlier = [s for s in allowed if s < season]
+    rows = design[design["season"].isin(earlier)]
+    rows = restrict_window(rows, first_season)
+    if rows.empty:
+        raise ValueError(f"no seasons before {season} in the availability head's "
+                         f"{first_season}+ window to pool edge blocks from")
+    rows = rows.assign(role_bin=role_bins(rows))
+    panel = pd.read_parquet(
+        features_dir / "availability_panel.parquet",
+        columns=["season", "player_id", "team_id", "game_id", "team_game_index",
+                 "played", "status"])
+    return EdgeResampler(edge_blocks(panel[panel["season"].isin(earlier)], rows))
 
 
 def composition_players(frame: pd.DataFrame, season: str) -> pd.DataFrame:
@@ -398,6 +500,82 @@ def component_rates(artifacts: dict, frame: pd.DataFrame) -> dict:
         out["conversion"][head] = art.mu_draws(frame)
         out["rho"][head] = np.asarray(art.draws["rho_draws"], dtype=float)
     return out
+
+
+def availability_rates(rng: np.random.Generator, mu: np.ndarray, rho_by_bin: np.ndarray,
+                       bins: np.ndarray, pi: np.ndarray | float = 0.0,
+                       mu_low: float = 0.0, rho_low: float = 0.0) -> np.ndarray:
+    """One beta-binomial availability rate per player, at that player's **own** `rho`.
+
+    Two vectors and a gather rather than a scalar broadcast, because the shipped head grades
+    dispersion by prior-MPG role bucket: `rho_by_bin` is this posterior draw's `(n_rho,)`
+    row and `bins` is the 0-based bucket per player from `availability_rho_bin`. Under a
+    shared dispersion `n_rho` is 1 and every player gathers the same entry, which reproduces
+    the scalar form exactly.
+
+    **The low-availability mixture enters by drawing the COMPONENT first**, per player, and
+    taking the rate from whichever one won — `StanAvailability.predict_samples`' rule, for
+    its reason: averaging the two rates would produce a season between healthy and disrupted,
+    which is precisely the season the arm exists to say does not happen. `pi = 0` is the
+    single-component head exactly, so both arms take one path.
+
+    Named rather than inlined because it is the one place the simulator touches this head's
+    likelihood, and it was inlined against a scalar for the whole window round without
+    anything raising until `rho` became a vector.
+    """
+    a, b = beta_shapes(mu, rho_by_bin[bins])
+    p = rng.beta(a, b)
+    pi = np.asarray(pi, dtype=float)
+    if not np.any(pi):
+        return p
+    a_low, b_low = beta_shapes(np.full_like(p, mu_low), np.full_like(p, rho_low))
+    return np.where(rng.random(p.shape) < pi, rng.beta(a_low, b_low), p)
+
+
+def availability_rho_bin(artifact, frame: pd.DataFrame) -> np.ndarray:
+    """0-based dispersion column per row, from the availability head's **own** recipe.
+
+    The head grades `rho` by prior-MPG role bucket, so `rho_draws` is `(draws x n_rho)` and
+    a consumer has to say which column applies to which player. The artifact already
+    carries that as a `cut` recipe step — the same door `build_context` opens on the
+    composition head — so the assignment is reconstructed rather than re-derived, and a
+    consumer never has to import `stan_availability.role_bins` or know the edges.
+
+    Three things this has to get right, each of which fails silently rather than loudly:
+
+    - **`rho_bin` is 1-based.** `recipe.transform` and `role_bins` both emit `[1..n_rho]`,
+      matching the Stan source's own gather. Indexing `rho_draws` needs `bin - 1`, and an
+      off-by-one hands a player the *wrong bucket's* dispersion at a legal index.
+    - **A shared-`rho` artifact has no such step.** `rho_draws` is then `(draws,)` with an
+      empty recipe, and every row belongs to the single column — so a missing step is the
+      shared-dispersion arm rather than a broken recipe, and returns all zeros.
+    - **A player with no design row still needs a bucket.** His `mu` is
+      `no_design_availability`'s empirical rate; his prior MPG is NaN, which the `cut` step
+      sends to the **lowest** bucket. That is the head's own rule (`role_bins`) and the
+      conservative direction, since the fringe bucket carries the widest dispersion.
+
+    Returned as an index rather than as `rho` itself because the dispersion is a per-draw
+    quantity: the caller gathers `rho_draws[draw][bin]` inside the sim loop, where the
+    posterior draw is the outer loop (rule 4).
+    """
+    n_rho = int(artifact.extras.get("n_rho", np.shape(artifact.draws["rho_draws"])[-1]
+                                    if np.ndim(artifact.draws["rho_draws"]) > 1 else 1))
+    column = artifact.extras.get("rho_bin_column", "rho_bin")
+    transformed = artifact.recipe.transform(frame)
+    if column not in transformed.columns:
+        if n_rho != 1:
+            raise KeyError(
+                f"the availability artifact carries {n_rho} dispersion columns but its "
+                f"recipe produces no {column!r}, so there is no way to say which column "
+                f"applies to which player. Re-run `make posteriors`.")
+        return np.zeros(len(frame), dtype=np.int64)
+
+    bins = transformed[column].to_numpy(np.int64) - 1
+    if bins.min(initial=0) < 0 or bins.max(initial=0) >= n_rho:
+        raise ValueError(
+            f"{column!r} produced buckets outside [1, {n_rho}] — the recipe's cut and the "
+            f"persisted `rho_draws` disagree about the head's dispersion axis")
+    return bins
 
 
 def composition_eta(artifact, model, players: pd.DataFrame) -> dict:
@@ -642,13 +820,24 @@ def _sim_one(s: int, ctx: dict) -> dict:
     row_overtimes = (row_length - 48.0) / 5.0
 
     # ── availability: one beta-binomial rate per player, a binomial per stint ─
-    a, b = beta_shapes(ctx["avail_mu"][draw],
-                       np.full(ctx["n_players"], ctx["avail_rho"][draw]))
-    p_available = rng.beta(a, b)
+    p_available = availability_rates(rng, ctx["avail_mu"][draw], ctx["avail_rho"][draw],
+                                     ctx["avail_rho_bin"], ctx["avail_pi"][draw],
+                                     float(ctx["avail_mu_low"][draw]),
+                                     float(ctx["avail_rho_low"][draw]))
     gp = rng.binomial(ctx["cell_games"], p_available[ctx["cell_player"]])
-    played = allocate_spells(gp, ctx["cell_games"], float(ctx["dur_mu"][draw]),
-                             float(ctx["dur_kappa"][draw]),
-                             seed=int(rng.integers(1 << 31)))
+    # WHERE those games fall is a separate draw from how many, because `gp` is invariant to
+    # the arrangement and the head therefore cannot carry it — `make availability-
+    # exchangeability`. The edge blocks go at the ends first when the shipped `tenure_merge`
+    # arm is configured, and `allocate_spells` gets only the interior remainder.
+    mu_dur, kappa_dur = float(ctx["dur_mu"][draw]), float(ctx["dur_kappa"][draw])
+    layout_seed = int(rng.integers(1 << 31))
+    if ctx["edges"] is None:
+        played = allocate_spells(gp, ctx["cell_games"], mu_dur, kappa_dur,
+                                 seed=layout_seed, overflow=ctx["layout_overflow"])
+    else:
+        pre, post = ctx["edges"].draw(gp, ctx["cell_games"], ctx["cell_role"], rng)
+        played = layout_tenure(gp, ctx["cell_games"], pre, post, mu_dur, kappa_dur,
+                               seed=layout_seed, overflow=ctx["layout_overflow"])
     available = played[ctx["row_cell"], ctx["row_index_in_cell"]] == 1
     available, short = feasibility_repair(available, ctx["row_block"], ctx["n_blocks"])
 
@@ -716,6 +905,12 @@ def _sim_one(s: int, ctx: dict) -> dict:
                               minlength=ctx["n_flat"]).astype(np.float32),
         "games": np.bincount(flat, minlength=ctx["n_flat"]).astype(np.uint8),
         "season_minutes": np.bincount(unit, weights=exposure, minlength=ctx["n_units"]),
+        # The same minutes over every ROSTERED player rather than every scorable unit. The
+        # two differ by exactly the population this simulator allocates minutes to but never
+        # scores — the players the availability head has no row for — so it is the only
+        # place their share of a team's fixed pot can be read at all.
+        "season_minutes_player": np.bincount(player, weights=minutes,
+                                             minlength=ctx["n_players"]),
         "season_gp": np.bincount(ctx["cell_player"], weights=gp,
                                  minlength=ctx["n_players"]),
         "bonus_total": float(bonus_part(box).sum()),
@@ -738,14 +933,16 @@ def build_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
     artifacts = load_all(posteriors_dir(cfg, window))
     require_window(artifacts, window)
 
-    targets = pd.read_parquet(features_dir / "component_targets.parquet")
-    design = component_build_design(targets, cfg["data"]["seasons"],
-                                    cfg["data"]["raw_dir"])
+    # `component_head_design`, not `component_rates.build_design` — since 2026-08-15 ten of
+    # the eleven rate heads carry preseason feature columns, and the persisted RECIPE demands
+    # them. The plain builder produces a frame the recipe cannot evaluate, which is what
+    # `PosteriorRecipe._block` raises on rather than silently predicting from a short design.
+    design = component_head_design(cfg)
     assert_season_allowed(season, design)
 
     slots = scoring_slots(features_dir, season)
     grid = roster_grid(features_dir, season, slots)
-    frame = composition_frame(cfg) if composition is None else composition
+    frame = head_frame(cfg) if composition is None else composition
     players = composition_players(frame, season)
 
     # A scorable unit needs a component-head design row AND a place in the allocation, so
@@ -795,7 +992,12 @@ def build_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
                         + np.maximum(row_slot, 0), 0)
 
     # ── the heads ────────────────────────────────────────────────────────────
-    full_avail = availability_design(cfg)
+    # `head_design`, not `availability_design`: the availability head ships a preseason
+    # block (docs/preseason-plan.md P2) and the persisted recipe names those columns, so a
+    # frame built from the shared builder would satisfy every other head here and be five
+    # columns short for this one. The flag lives with the head; `preseason: false` in config
+    # gives back the pre-2026-08-13 frame exactly.
+    full_avail = head_design(cfg)
     avail = full_avail[full_avail["season"] == season].drop_duplicates(
         subset=["player_id"]).set_index("player_id").reindex(player_ids).reset_index()
     present = avail["team_games"].notna().to_numpy()
@@ -803,12 +1005,35 @@ def build_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
     # A rostered player with no availability design row gets the empirical rate of players
     # like him, not the head's intercept — see `no_design_availability`. It is a constant
     # across posterior draws, which is the honest shape of a plugged-in empirical prior:
-    # no posterior on it, so the predictive does not integrate over its uncertainty.
+    # no posterior on it, so the predictive does not integrate over its uncertainty. It is
+    # a per-player constant rather than a league-wide one, because the population it covers
+    # spans 3.33x in realized level (`make availability-no-prior`, §8b).
+    level_arm = no_design_level_arm(cfg)
     no_design = no_design_availability(features_dir, season, full_avail,
-                                       allowed_seasons(design))
-    mu = np.full((avail_art.n_draws, len(player_ids)), no_design)
+                                       allowed_seasons(design), list(cfg["data"]["seasons"]),
+                                       player_ids, level_arm)
+    mu = np.tile(no_design.to_numpy(dtype=float), (avail_art.n_draws, 1))
     if present.any():
         mu[:, present] = avail_art.mu_draws(avail[present])
+    # `(draws x n_rho)` in both arms, so the gather below has one shape to handle. The
+    # shared-dispersion artifact persists `(draws,)`; `rehydrate` does the same promotion.
+    avail_rho = np.asarray(avail_art.draws["rho_draws"], dtype=float)
+    if avail_rho.ndim == 1:
+        avail_rho = avail_rho[:, None]
+    avail_rho_bin = availability_rho_bin(avail_art, avail)
+    # The low-availability mixture's weight, from the artifact's OWN second design block —
+    # `(draws x players)`, and all zeros when the persisted head carries no mixture, which
+    # is the single-component draw exactly. A player with no design row keeps `pi = 0`
+    # deliberately: his `mu` is `no_design_availability`'s empirical rate over players like
+    # him, which already contains their disrupted seasons, so a mixture on top of it would
+    # discount the same absences twice.
+    avail_pi = np.zeros_like(mu)
+    if present.any():
+        avail_pi[:, present] = avail_art.pi_draws(avail[present])
+    avail_mu_low = np.asarray(avail_art.draws.get("mu_low_draws",
+                                                  np.zeros(avail_art.n_draws)), dtype=float)
+    avail_rho_low = np.asarray(avail_art.draws.get("rho_low_draws",
+                                                   np.zeros(avail_art.n_draws)), dtype=float)
 
     comp_art = artifacts["composition"]
     comp_model = rehydrate_composition(comp_art, comp_art.n_draws,
@@ -819,6 +1044,11 @@ def build_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
     row_rho_bin = comp_art.recipe.transform(players)["rho_bin"].to_numpy(np.int64)[row_player]
 
     dur_mu, dur_kappa = spell_shape(artifacts["gp_duration"], avail[present])
+    layout_name, layout_tenure_on, layout_overflow = layout_arm(cfg)
+    edges = (tenure_edges(features_dir, season, full_avail, allowed_seasons(design),
+                          cfg.get("stan", {}).get("availability", {})
+                          .get("first_season", FIRST_SEASON))
+             if layout_tenure_on else None)
     rates = component_rates(artifacts, units)
 
     # The population mean per-game count the residual correlation was pooled at, built from
@@ -848,8 +1078,30 @@ def build_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
         "cell_player": cell_frame["player_id"].map(player_pos).to_numpy(np.int64),
         "cell_games": cell_frame["games"].to_numpy(np.int64),
         "component_row": component_row,
-        "avail_mu": mu, "avail_rho": np.asarray(avail_art.draws["rho_draws"], float),
+        "avail_mu": mu, "avail_rho": avail_rho, "avail_rho_bin": avail_rho_bin,
+        "avail_pi": avail_pi, "avail_mu_low": avail_mu_low,
+        "avail_rho_low": avail_rho_low,
+        "avail_mixture": bool(avail_art.extras.get("mixture", False)),
+        # One label per dispersion column, always — a legacy artifact carries none, and a
+        # progress line that silently printed three of four buckets would be worse than one
+        # that printed indices.
+        "avail_rho_labels": (list(avail_art.extras["rho_labels"])
+                             if len(avail_art.extras.get("rho_labels", ()))
+                             == avail_rho.shape[1]
+                             else [f"bucket {j + 1}" for j in range(avail_rho.shape[1])]),
         "dur_mu": dur_mu, "dur_kappa": dur_kappa,
+        # The layout's role key comes from `role_bins` directly rather than from the
+        # dispersion artifact's bucket, even though the two agree on every player of every
+        # simulated season today. They agree only while the head is role-graded: a
+        # shared-`rho` artifact makes `availability_rho_bin` return all zeros, which is
+        # correct for a dispersion gather and would silently key every player in the league
+        # to the fringe bucket here. `role_bins` is the function `EdgeResampler` pooled on,
+        # so it is the one that cannot drift from it — and it sends a player with no prior
+        # minutes to the lowest bucket, whose edge blocks are longest, which is the right
+        # direction for a call-up.
+        "edges": edges, "layout": layout_name, "layout_overflow": layout_overflow,
+        "cell_role": role_bins(avail)[cell_frame["player_id"].map(player_pos).to_numpy(
+            np.int64)],
         "eta_base": eta["base"], "eta_per_overtime": eta["per_overtime"],
         "eta_per_clip": eta["per_clip"], "affine_error": eta["affine_error"],
         "ps_sigma": ps_sigma, "sigma_source": comp_model.sigma_source,
@@ -860,7 +1112,8 @@ def build_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
                                          forward_cells(season, 1)),
         "chol": copula["chol"], "copula_target": copula["target"],
         "copula": copula, "frailty_sigma": copula["sigma"],
-        "no_design_availability": no_design,
+        "no_design_availability": no_design[~present],
+        "no_design_level": level_arm,
         "composition_variant": comp_art.recipe.variant,
     }
 
@@ -872,6 +1125,10 @@ def simulate(ctx: dict) -> dict:
     games = np.zeros((n_sims, ctx["n_flat"]), dtype=np.uint8)
     season_minutes = np.zeros((n_sims, n_units))
     season_gp = np.zeros((n_sims, ctx["n_players"]))
+    # Accumulated as a mean rather than kept per sim: the team-level allocation check below
+    # is a share of a pot that is fixed within every draw, so nothing is lost by averaging
+    # first, and a (sims x players) array is one the layer otherwise never materializes.
+    player_minutes = np.zeros(ctx["n_players"])
     bonus_total, played_rows, short = 0.0, 0, 0
     probe = None
 
@@ -882,6 +1139,7 @@ def simulate(ctx: dict) -> dict:
         games[s] = out["games"]
         season_minutes[s] = out["season_minutes"]
         season_gp[s] = out["season_gp"]
+        player_minutes += out["season_minutes_player"]
         bonus_total += out["bonus_total"]
         played_rows += out["n_played"]
         short += out["short_blocks"]
@@ -895,6 +1153,7 @@ def simulate(ctx: dict) -> dict:
         "dk_pts": np.ascontiguousarray(points.reshape(shape).transpose(1, 2, 0)),
         "games_played": np.ascontiguousarray(games.reshape(shape).transpose(1, 2, 0)),
         "season_minutes": season_minutes, "season_gp": season_gp,
+        "player_minutes": player_minutes / n_sims,
         "bonus_per_game": bonus_total / max(played_rows, 1),
         "played_rows": played_rows, "short_blocks": short, "probe": probe,
     }
@@ -1004,6 +1263,54 @@ def bonus_on_realized_minutes(ctx: dict, rows: pd.DataFrame, draws: int = 12,
         total += float(bonus_part(box).sum())
         n += len(box)
     return total / max(n, 1)
+
+
+def no_design_team_minutes(cfg: dict, ctx: dict, sim: dict) -> dict:
+    """Team-by-team, how much of the season's minutes the no-design players absorbed.
+
+    The check the level grading has to pass and a player-level metric cannot see. A team's
+    season minutes are a **fixed pot** — `5 x game_length` per team-game, allocated exactly
+    by the composition — so every minute handed to a rostered player the availability head
+    has no row for is a minute taken from a teammate the tensor *does* score. A rate that is
+    too high for a call-up and too low for a top-5 pick can be right on average across the
+    league and wrong on all thirty teams, and the errors do not cancel within a roster.
+
+    Realized minutes are joined on `(player_id, game_id)` against the simulator's own grid
+    rather than summed per player over the season, so a traded player contributes exactly
+    the games the grid gave him and both sides share a denominator.
+    """
+    targets = pd.read_parquet(Path(cfg["data"]["features_dir"]) / "component_targets.parquet",
+                              columns=["player_id", "season", "season_type", "game_id",
+                                       "min", "played"])
+    rows = targets[(targets["season"] == ctx["season"])
+                   & (targets["season_type"] == "regular") & (targets["played"] == 1)]
+    grid = ctx["grid"][["player_id", "team_id", "game_id"]]
+    realized = (grid.merge(rows[["player_id", "game_id", "min"]],
+                           on=["player_id", "game_id"], how="left").fillna({"min": 0.0})
+                .groupby("player_id", as_index=False).agg(minutes=("min", "sum")))
+
+    frame = pd.DataFrame({"player_id": ctx["player_ids"],
+                          "simulated": sim["player_minutes"]})
+    frame = frame.merge(realized, on="player_id", how="left").fillna({"minutes": 0.0})
+    frame = frame.merge(grid.drop_duplicates("player_id")[["player_id", "team_id"]],
+                        on="player_id", how="left")
+    frame["no_design"] = np.isin(ctx["player_ids"], np.asarray(
+        ctx["no_design_availability"].index, dtype=ctx["player_ids"].dtype))
+
+    by_team = frame.groupby("team_id").apply(
+        lambda g: pd.Series({
+            "sim_share": g.loc[g["no_design"], "simulated"].sum()
+            / max(g["simulated"].sum(), 1e-9),
+            "obs_share": g.loc[g["no_design"], "minutes"].sum()
+            / max(g["minutes"].sum(), 1e-9)}), include_groups=False)
+    error = (by_team["sim_share"] - by_team["obs_share"]).to_numpy()
+    return {"n": int(len(by_team)),
+            "value": float(frame.loc[frame["no_design"], "simulated"].sum()
+                           / max(frame["simulated"].sum(), 1e-9)),
+            "bar_value": float(frame.loc[frame["no_design"], "minutes"].sum()
+                               / max(frame["minutes"].sum(), 1e-9)),
+            "mae": float(np.abs(error).mean()), "bias": float(error.mean()),
+            "rmse": float(np.sqrt((error ** 2).mean()))}
 
 
 def _bar(frame: pd.DataFrame, **filters) -> pd.DataFrame:
@@ -1137,6 +1444,13 @@ def gate_a(cfg: dict, ctx: dict, sim: dict) -> pd.DataFrame:
                                            ["predictive_sd"].iloc[0]),
                  **marginal_metrics(minutes[:, keep], realized["minutes"].to_numpy()[keep])})
 
+    # ── 5. where the no-design players' minutes came from ────────────────────
+    rows.append({"check": "no_design_team_minutes_share", "unit": "team-season",
+                 "gate": "diagnostic", "artifact": "component_targets.parquet",
+                 "bar_source": "realized, on the simulator's own grid rows",
+                 "no_design_level": ctx["no_design_level"],
+                 **no_design_team_minutes(cfg, ctx, sim)})
+
     # ── diagnostics, reported and not gated ──────────────────────────────────
     probe = sim["probe"]
     frame = pd.DataFrame({"ps": probe["unit"], "min": probe["minutes"],
@@ -1228,6 +1542,14 @@ def save_tensor(sim: dict, ctx: dict, dest: Path) -> Path:
         player_season_sigma=np.array(float(ctx["ps_sigma"].mean())),
         sigma_source=np.array(ctx["sigma_source"]),
         composition_variant=np.array(ctx["composition_variant"]),
+        # The availability layout belongs beside the composition variant and the injected
+        # sigma for the same reason those two are here: it changes the tensor materially
+        # while leaving every season marginal identical, so a consumer holding two tensors
+        # drawn under different layouts has no other way to tell them apart.
+        availability_layout=np.array(ctx["layout"]),
+        # And so does the no-design level key, for the same reason one level up: it moves
+        # minutes between rostered players without changing any head.
+        no_design_level=np.array(ctx["no_design_level"]),
         scoring_periods=np.arange(N_SCORING_PERIODS),
         tournament_round=np.r_[np.ones(ROUND_1_WEEKS, dtype=int), [2, 3, 4]],
         prior_minutes=pool["total_minutes_lag1"].to_numpy(np.float32),
@@ -1245,9 +1567,7 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
     n_sims = int(n_sims or cfg_sim.get("n_sims", N_SIMS))
     seed = int(SEED if seed is None else seed)
 
-    targets = pd.read_parquet(features_dir / "component_targets.parquet")
-    design = component_build_design(targets, cfg["data"]["seasons"],
-                                    cfg["data"]["raw_dir"])
+    design = component_head_design(cfg)
     seasons = seasons or validation_seasons(design)
 
     print(f"Season simulator — the player x scoring-period x sim tensor")
@@ -1259,7 +1579,7 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
           f"({ROUND_1_WEEKS} Round-1 weeks + 3 double weeks), {n_sims:,} sims, "
           f"seed {seed}")
 
-    composition = composition_frame(cfg)
+    composition = head_frame(cfg)
     paths: dict[str, Path] = {}
     gates = []
     for season in seasons:
@@ -1272,8 +1592,27 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
         print(f"  minutes: composition @ {ctx['composition_variant']} with a "
               f"per-(player, season) effect, sigma "
               f"{float(ctx['ps_sigma'].mean()):.3f} ({ctx['sigma_source']})")
-        print(f"  availability: the head where it has a row, {ctx['no_design_availability']:.4f} "
-              f"where it does not (an expanding-window empirical rate)")
+        nd = ctx["no_design_availability"]
+        print(f"  availability: the head where it has a row; where it does not, an "
+              f"expanding-window empirical rate\n"
+              f"    graded `{ctx['no_design_level']}` over {len(nd):,} players — "
+              + (f"{nd.min():.4f} to {nd.max():.4f}, mean {nd.mean():.4f}"
+                 if len(nd) else "none on this roster"))
+        counts = np.bincount(ctx["avail_rho_bin"], minlength=ctx["avail_rho"].shape[1])
+        print("    dispersion: " + ", ".join(
+            f"{label} rho {ctx['avail_rho'][:, j].mean():.4f} ({n:,} players)"
+            for j, (label, n) in enumerate(zip(ctx["avail_rho_labels"], counts))))
+        if ctx["avail_mixture"]:
+            pi = ctx["avail_pi"].mean(axis=0)
+            print(f"    mixture: pi {pi.mean():.4f} mean, "
+                  f"{np.percentile(pi, 10):.4f}-{np.percentile(pi, 90):.4f} "
+                  f"p10-p90, low component {ctx['avail_mu_low'].mean():.4f} "
+                  f"at rho {ctx['avail_rho_low'].mean():.4f}")
+        print(f"    layout: {ctx['layout']} — "
+              + (f"tenure edge blocks pooled from {len(ctx['edges'].pairs):,} prior "
+                 f"player-seasons, " if ctx["edges"] is not None
+                 else "no tenure factor, ")
+              + f"overflow {ctx['layout_overflow']}")
         print(f"  copula: {len(COUNT_HEADS)} count frailties, lognormal sigma "
               f"{ctx['frailty_sigma']:.4f} at overdispersion "
               f"{BONUS_GAME_OVERDISPERSION}; {ctx['copula']['saturated']} of "
@@ -1360,6 +1699,10 @@ def _report_gate(table: pd.DataFrame) -> None:
             if row["check"] == "bonus_per_game":
                 extra = (f"  (the pooled artifact figure over every player-game is "
                          f"{float(row['pooled_artifact_bar']):.4f})")
+            if row["check"] == "no_design_team_minutes_share":
+                extra = (f"  |  per-team share error MAE {float(row['mae']):.4f}, "
+                         f"bias {float(row['bias']):+.4f} over {int(row['n'])} teams "
+                         f"at `{row['no_design_level']}`")
             print(f"{mark}{row['check']:<28} {value:10.4f}  against "
                   f"{bar:10.4f}  ({value - bar:+.4f}){extra}")
 

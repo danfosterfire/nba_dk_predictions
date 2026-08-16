@@ -121,6 +121,14 @@ stan-components` fits `fga` and `fg3a|fga` through a *different* code path — t
 within **1.7e-04** on all six of their shared cells, the same order as the gate's own
 sampling noise.
 
+⚠️ **That last corroboration expired on 2026-08-15**, for the same reason the decomposition
+below did: `make stan-components` re-ran with the preseason block and `make stan-substitution`
+did not, so the six shared fitted cells now differ by **0.053 to 0.082** nats. The two floors
+still nearly agree — **1.9e-04** on `fga` and **3.9e-04** on `fg3a|fga` — and the residual
+there is itself informative: a count floor is unshrunk arithmetic and cannot move, while a
+conversion floor's `k` is fitted on the training half, so the window cut reaches it. The first
+two corroborations are internal to this artifact and are unaffected.
+
 ### Per-factor NLL, against each factor's own no-fit floor
 
 Validation mean negative log-likelihood per player-season; lower is better. Conversion
@@ -159,6 +167,38 @@ The recorded −0.771128 margin therefore decomposes exactly:
 ```
 
 The gate survives its own correction with 65% of the recorded margin intact.
+
+⚠️ **That decomposition is the 2026-08-06 state, and its two halves have since come apart. It
+is kept because it is the arithmetic the adoption was argued on, not because it still closes.**
+The `substitution_arm` figures come from `stan_component_substitution.csv`, which
+`make stan-components` rewrites; the swept figures come from
+`stan_component_substitution_sweep.csv`, which only `make stan-substitution` rewrites — and
+that target is **not** part of `make stan`. The 2026-08-15 components run put the preseason
+block on ten of eleven heads, so the first artifact is now a **post-block** reading and the
+second is still a **pre-block** one:
+
+| quantity | artifact | 2026-08-06 | today |
+|---|---|---|---|
+| recorded margin | `…_substitution.csv` | −0.771128 | **−0.7218** |
+| handicapped arm A | `…_substitution.csv` | 10.797078 | **10.738** |
+| arm B pinned | `…_substitution.csv` | 10.025950 | **10.0162** |
+| arm B pinned | `…_substitution_sweep.csv` | 10.025950 | *unchanged* |
+
+**The floating-point identity check at the head of this section is the casualty, and it did
+exactly the job it was built for.** Two modules computing the same quantity from different
+entry points agreed to **1.78e-15**; they now disagree by **9.8e-03**, and that gap is the
+preseason block rather than a bug — the check caught a configuration drift that no single
+artifact could have shown. Restoring it means re-running `make stan-substitution` so both
+sides sit on the same heads, which is a refit for record-keeping and is deliberately not being
+done. **Until then the handicap (0.291919) and the surviving share (65%) are not
+re-derivable**: subtracting a pre-block number from a post-block one is not a decomposition,
+and quoting the difference as though it were would be the exact error this doc was written to
+correct.
+
+None of this reopens the verdict. Gate 0's own margin — **−0.501041**, both arms swept inside
+one artifact — is internally consistent and unmoved, and the finding below it, that the
+reparameterized *floor* beats the canonical *fitted* configuration, is a comparison within the
+sweep alone.
 
 ### ⭐ The finding worth remembering: the coordinate change beats the fitting
 
@@ -260,11 +300,14 @@ Two things retired with the test column that the validation half cannot replace:
   with room to spare.
 
 The handicapped pair that motivated the whole gate — **−0.771** on validation and **−0.793**
-on test, the latter unsigned as **0.792657** — is now half live and half history.
-`stan_component_substitution.csv` still carries the validation figure and it is still
-value-checked there. The test figure had been recovered from *this* artifact's test rows
-after that file went validation-only on 2026-08-06; this re-run removed that last copy, so
-it is a presence-checked record now like the rest of this block.
+on test, the latter unsigned as **0.792657** — is now history on both halves.
+`stan_component_substitution.csv` carried the validation figure and was value-checked there
+until 2026-08-15, when `make stan-components` re-ran with the preseason block and the same
+cell became **−0.7218**; that is the live claim now and −0.771 is presence-checked beside it.
+The test figure had been recovered from *this* artifact's test rows after that file went
+validation-only on 2026-08-06; the re-run removed that last copy, so it is a presence-checked
+record like the rest of this block. **Neither movement touches the gate**, which is decided
+inside the sweep alone.
 
 ## What adoption required — and what it did
 

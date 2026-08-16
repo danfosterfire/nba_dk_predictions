@@ -92,6 +92,11 @@ RECALIBRATION_ERROR = 17.0
 N_DRAFTS = 400                         # per grid point in the Gate B sweep
 NOISE_GRID = (0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 9.0, 14.0, 20.0, 30.0)
 
+# The `adp_need` calibration's second axis, in picks of boost per still-owed starting slot.
+# 0 nests the shipped pure-ADP field exactly, which is the control that keeps the two
+# calibrations comparable on the same target.
+NEED_GRID = (0.0, 2.0, 4.0, 8.0, 16.0, 32.0)
+
 # The measured shape of market disagreement by tier, `docs/adp-plan.md`: mean absolute rank
 # gap between the consensus and the one real DK board runs 5.1 picks in rounds 1-2, 9.7 in
 # 3-4, 10.5 in 5-8 and 30.8 in rounds 9+ — where 9 of the 16 roster spots are filled. That
@@ -840,16 +845,20 @@ def curve_error(mean_pick: np.ndarray, adp: np.ndarray, mask: np.ndarray) -> flo
 
 
 def gate_b(board: Board, cfg: FieldConfig, n_drafts: int, rng: np.random.Generator,
-           pod_size: int = ROUND_ONE_POD) -> dict:
+           pod_size: int = ROUND_ONE_POD,
+           seat_strategies: list[str] | None = None) -> dict:
     """One grid point: simulate a field, and score its realized ADP against the observed."""
-    state = run_drafts(board, cfg, n_drafts, rng, pod_size=pod_size)
+    state = run_drafts(board, cfg, n_drafts, rng, pod_size=pod_size,
+                       seat_strategies=seat_strategies)
     mean_pick, rate = simulated_adp(state)
     has = ~np.isnan(board.adp)
     fit = fit_region(board.adp)
     elite = has & (board.adp <= ELITE_PICKS)
     return {
+        "opponent": (seat_strategies or [AdpAutodraft.name])[0],
         "noise_model": cfg.noise_model,
         "rank_noise_sd": cfg.rank_noise_sd,
+        "need_weight": cfg.need_weight,
         "n_drafts": n_drafts,
         "n_adp": int(has.sum()),
         "n_fit": int(fit.sum()),
@@ -913,6 +922,44 @@ def calibrate(board: Board, base: FieldConfig, n_drafts: int, seed: int = SEED,
     return frame
 
 
+def calibrate_need(board: Board, base: FieldConfig, n_drafts: int, seed: int = SEED,
+                   grid=NOISE_GRID, need_grid=NEED_GRID,
+                   pod_size: int = ROUND_ONE_POD) -> pd.DataFrame:
+    """Fit the `adp_need` field — noise and lineup reasoning jointly, on Gate B's target.
+
+    The question this grid answers is the one the pure-ADP calibration could not ask:
+    **does the fitted rank noise stand in for lineup reasoning the field model omits?** A
+    need-aware drafter takes the position his starting slate still owes earlier than his
+    board says, which is a *systematic, position-shaped* deviation from consensus — exactly
+    the kind of deviation a symmetric rank noise can only fake in aggregate. If the observed
+    ADP curve carries that shape, `need_weight > 0` improves `mae_fit` and the fitted noise
+    drops; if it does not, the 0-row wins and the reasoning is a measured null rather than
+    an assumption either way.
+
+    One shape (`tiered`, the arm the base calibration selected), two scalars. The
+    `need_weight = 0` column of the grid reproduces the base calibration's tiered row
+    exactly — same seed, same draws — which pins the two artifacts together.
+
+    Selection reads validation only, like everywhere else in this repo.
+    """
+    seats = [AdpNeedAware.name] * pod_size
+    rows = []
+    for need in need_grid:
+        for sd in grid:
+            cfg = replace(base, noise_model="tiered", rank_noise_sd=float(sd),
+                          need_weight=float(need))
+            row = gate_b(board, cfg, n_drafts, np.random.default_rng(seed), pod_size,
+                         seat_strategies=seats)
+            rows.append({k: v for k, v in row.items()
+                         if k not in ("mean_pick", "draft_rate")})
+    frame = pd.DataFrame(rows)
+    frame["selected"] = False
+    frame.loc[frame["mae_fit"].idxmin(), "selected"] = True
+    frame["passes"] = frame["mae_fit"] <= RECALIBRATION_ERROR
+    frame["bar"] = RECALIBRATION_ERROR
+    return frame
+
+
 def selected_field(cfg: dict, out_dir: Path | None = None,
                    tournament: str | None = None) -> FieldConfig:
     """The shipped field, read from the Gate B artifact rather than re-decided.
@@ -922,18 +969,43 @@ def selected_field(cfg: dict, out_dir: Path | None = None,
     sweep — resolves it here. A literal number in the config would be a second source of
     truth for a figure the artifact already owns, which is the rule
     `src/final_evaluation.py` follows for which arm shipped.
+
+    A composition that seats `adp_need` resolves from **its own** Gate B artifact
+    (`draft_gate_b_need.csv`), because its noise and its `need_weight` were fitted jointly
+    and reading the pure-ADP noise under a need-aware field would mix two calibrations.
     """
     block = cfg.get("sim", {}).get("field", {})
     caps = block.get("position_caps", POSITION_CAPS)
     base = FieldConfig(position_caps=tuple(int(caps[p]) for p in POSITIONS),
-                       need_weight=float(block.get("need_weight", 0.0)),
+                       need_weight=float(block.get("need_weight") or 0.0),
                        require_legal_lineup=bool(block.get("require_legal_lineup", True)))
+    out_dir = Path(out_dir or cfg["evaluation"]["predictions_dir"])
+
+    mix = field_composition(cfg, tournament)
+    if AdpNeedAware.name in mix:
+        sd, model, need = (block.get("rank_noise_sd"), block.get("noise_model"),
+                           block.get("need_weight"))
+        if sd is not None and model is not None and need is not None:
+            return replace(base, noise_model=str(model), rank_noise_sd=float(sd),
+                           need_weight=float(need))
+        path = out_dir / "draft_gate_b_need.csv"
+        if not path.exists():
+            raise FileNotFoundError(
+                f"{path} not found — the `adp_need` field's noise and need_weight are "
+                f"fitted, not chosen; run `make draft-sim-need` first")
+        fitted = pd.read_csv(path)
+        fitted = fitted[fitted["selected"] & (fitted["season"] == "pooled")]
+        if fitted.empty:
+            raise ValueError(f"{path} carries no pooled selected row")
+        row = fitted.iloc[0]
+        return replace(base, noise_model=str(row["noise_model"]),
+                       rank_noise_sd=float(row["rank_noise_sd"]),
+                       need_weight=float(row["need_weight"]))
 
     sd, model = block.get("rank_noise_sd"), block.get("noise_model")
     if sd is not None and model is not None:
         return replace(base, noise_model=str(model), rank_noise_sd=float(sd))
 
-    out_dir = Path(out_dir or cfg["evaluation"]["predictions_dir"])
     path = out_dir / "draft_gate_b.csv"
     if not path.exists():
         raise FileNotFoundError(
@@ -1161,6 +1233,119 @@ def run(cfg: dict, seasons: list[str] | None = None, n_drafts: int | None = None
     return paths
 
 
+def run_need(cfg: dict, seasons: list[str] | None = None, n_drafts: int | None = None,
+             seed: int | None = None) -> dict[str, Path]:
+    """Calibrate the `adp_need` field — `make draft-sim-need`.
+
+    The same Gate B protocol as `run`, on the need-aware opponent: fit
+    (`rank_noise_sd`, `need_weight`) jointly against the observed ADP curve, pooled over the
+    validation seasons, against the same 17.0-pick bar. Writes its own artifact rather than
+    rows in `draft_gate_b.csv`, because `selected_field` resolves each composition from the
+    calibration that fitted it and a shared file would let one field's selected row shadow
+    the other's.
+    """
+    features_dir = Path(cfg["data"]["features_dir"])
+    out_dir = Path(cfg["evaluation"]["predictions_dir"])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    n_drafts = int(n_drafts or cfg.get("sim", {}).get("field", {}).get("n_drafts",
+                                                                      N_DRAFTS))
+    seed = int(SEED if seed is None else seed)
+    pod_size = int(cfg.get("sim", {}).get("pod_size", ROUND_ONE_POD))
+
+    design = split_frame(cfg)
+    seasons = seasons or validation_seasons(design)
+    for season in seasons:
+        assert_season_allowed(season, design)
+
+    pool = pd.read_parquet(features_dir / "draft_pool.parquet")
+    base = FieldConfig(
+        position_caps=tuple(int(cfg.get("sim", {}).get("field", {})
+                                .get("position_caps", POSITION_CAPS)[p])
+                            for p in POSITIONS))
+
+    print("Draft — the `adp_need` field: disciplined consensus merged with lineup "
+          "reasoning")
+    print(f"  every seat leans toward the starting slots it still owes "
+          f"(2 G / 2 F / 1 C), `need_weight` picks per owed slot")
+    print(f"  (noise, need) fitted JOINTLY on Gate B's mean-ADP target; "
+          f"need_weight = 0 nests the shipped pure-ADP field exactly")
+    print(f"  The test split is LOCKED — seasons go through `held_out.selection_split`.")
+
+    grids, curves = [], []
+    for season in seasons:
+        print(f"\n── {season} ──")
+        frame = build_board(pool, season)
+        board = to_arrays(frame, season)
+        grid = calibrate_need(board, base, n_drafts, seed, pod_size=pod_size)
+        grid.insert(0, "season", season)
+        grids.append(grid)
+        best = grid.loc[grid["mae_fit"].idxmin()]
+        zero = grid[grid["need_weight"] == 0.0]
+        print(f"  best (need, sd) = ({best['need_weight']:.0f}, "
+              f"{best['rank_noise_sd']:.1f})  MAE(fit) {best['mae_fit']:.3f}  against "
+              f"the need-0 column's best {zero['mae_fit'].min():.3f}")
+
+    pooled = (pd.concat(grids)
+              .groupby(["opponent", "noise_model", "rank_noise_sd", "need_weight"],
+                       as_index=False)
+              .agg(mae_fit=("mae_fit", "mean"), mae_all=("mae_all", "mean"),
+                   mae_elite=("mae_elite", "mean"), top1_sim=("top1_sim", "mean"),
+                   top1_observed=("top1_observed", "mean"),
+                   n_adp=("n_adp", "sum"), n_fit=("n_fit", "sum"),
+                   undrafted_adp=("undrafted_adp", "sum"),
+                   min_draft_rate=("min_draft_rate", "min"),
+                   roster_overlap=("roster_overlap", "mean"),
+                   pool_coverage=("pool_coverage", "mean")))
+    pooled["season"] = "pooled"
+    pooled["n_drafts"] = n_drafts
+    pooled["selected"] = False
+    pooled.loc[pooled["mae_fit"].idxmin(), "selected"] = True
+    pooled["passes"] = pooled["mae_fit"] <= RECALIBRATION_ERROR
+    pooled["bar"] = RECALIBRATION_ERROR
+    shipped = pooled[pooled["selected"]].iloc[0]
+    ship = replace(base, noise_model=str(shipped["noise_model"]),
+                   rank_noise_sd=float(shipped["rank_noise_sd"]),
+                   need_weight=float(shipped["need_weight"]))
+
+    zero = pooled[pooled["need_weight"] == 0.0]
+    print(f"\nGate B (`adp_need`) — pooled over {len(seasons)} validation seasons")
+    print(f"  SELECTED: need_weight={ship.need_weight:.0f}, "
+          f"rank_noise_sd={ship.rank_noise_sd:.2f} ({ship.noise_model})  "
+          f"MAE(fit) {shipped['mae_fit']:.3f} against a {RECALIBRATION_ERROR:.1f}-pick "
+          f"bar   {'✅ PASS' if shipped['passes'] else '🔴 FAIL'}")
+    print(f"  the need-0 column (= the shipped pure-ADP field, tiered) bottoms at "
+          f"MAE(fit) {zero['mae_fit'].min():.3f} — the gap is what lineup reasoning "
+          f"explains that noise had to fake")
+    print(f"  diversity at the selected arm: two drafts share "
+          f"{shipped['roster_overlap']:.0%} of a seat's roster, field reaches "
+          f"{shipped['pool_coverage']:.2f}x one draft's players")
+
+    seats = [AdpNeedAware.name] * pod_size
+    for season in seasons:
+        frame = build_board(pool, season)
+        board = to_arrays(frame, season)
+        row = gate_b(board, ship, n_drafts, np.random.default_rng(seed), pod_size,
+                     seat_strategies=seats)
+        curve = frame[["player_id", "player_name", "team", "position", "board_rank",
+                       "adp", "adp_dk_scale"]].copy()
+        curve.insert(0, "season", season)
+        curve["simulated_adp"] = row["mean_pick"]
+        curve["draft_rate"] = row["draft_rate"]
+        curve["gap"] = curve["simulated_adp"] - curve["adp_dk_scale"]
+        curve["in_fit_region"] = fit_region(board.adp)
+        curves.append(curve)
+
+    paths = {}
+    for name, frame in (("draft_gate_b_need", pd.concat(grids + [pooled],
+                                                        ignore_index=True)),
+                        ("draft_adp_curve_need", pd.concat(curves, ignore_index=True))):
+        dest = out_dir / f"{name}.csv"
+        frame.to_csv(dest, index=False)
+        print(f"Saved {len(frame):,} {name.replace('_', ' ')} rows → {dest}")
+        paths[name] = dest
+    return paths
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--season", action="append", default=None,
@@ -1170,8 +1355,14 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--no-reactive", action="store_true",
                         help="skip the timed reactive demo, which needs the sim tensor.")
+    parser.add_argument("--opponent", choices=["adp", "adp_need"], default="adp",
+                        help="which field to calibrate: the shipped pure-ADP one, or "
+                             "`adp_need` (consensus merged with lineup reasoning).")
     args = parser.parse_args()
 
     cfg = yaml.safe_load(open("configs/default.yaml"))
-    run(cfg, seasons=args.season, n_drafts=args.n_drafts, seed=args.seed,
-        reactive=not args.no_reactive)
+    if args.opponent == "adp_need":
+        run_need(cfg, seasons=args.season, n_drafts=args.n_drafts, seed=args.seed)
+    else:
+        run(cfg, seasons=args.season, n_drafts=args.n_drafts, seed=args.seed,
+            reactive=not args.no_reactive)

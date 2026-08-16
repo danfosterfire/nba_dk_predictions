@@ -1205,14 +1205,17 @@ Two things the build found that the probe could not:
 
 ---
 
-## The two target tournaments
+## The two reference tournaments
 
 Derived live by `dashboard/economics.py` from `data/raw/dk_best_ball_tournament_*.csv`.
+The stakes below are **simulated reference stakes** — no contest has been entered, and
+which to enter is an open decision (since 2026-08-11 the sweep drafts all five captured
+structures; these two remain the pair the headline results are quoted at).
 
 | | `600k_shootaround` | `20k_spin_move` |
 |---|---|---|
 | entry fee | $20 | $52 |
-| **entries this year** | **10** ($200) | **4** ($208) |
+| **simulated entries** | **10** ($200) | **4** ($208) |
 | max per player | 150 | 12 |
 | field | 35,280 | 432 |
 | rake / break-even hurdle | 14.97% / **+17.60%** | 10.97% / **+12.32%** |
@@ -1297,12 +1300,17 @@ make bracket ✅      src/sim/bracket.py            best 7 of 16 by slot per per
                                                    -> outputs/predictions/bracket_{structure,
                                                       null,entries}.csv
 make strategy-sweep ✅ src/sim/strategy.py         the sweep: Gate C's error injection,
-                                                   22 strategies x 2 tiers x 2 seasons,
-                                                   paired on the simulated season, plus
-                                                   the realized readout
+                                                   24 strategies x 5 tournament structures
+                                                   x 2 seasons (22 arms and 2 structures
+                                                   until 2026-08-11), paired on the
+                                                   simulated season, plus the realized
+                                                   readout
                                                    -> outputs/predictions/strategy_{gate_c,
                                                       injection,null,sweep,paired,gate_d,
                                                       realized,shipped}.csv
+                                                   --field adp_need --need-weight 8 is the
+                                                   robustness probe (make
+                                                   strategy-sweep-need), suffixed artifacts
 
 make draft-room-prep ✅ src/sim/draft_room.py      the engine: the cached reference field,
                                                    the null check and Gate E
@@ -1389,30 +1397,96 @@ separately because pooling them would hide the one figure that moves.
 
 | check | 2022-23 | 2023-24 | bar | artifact |
 |---|---|---|---|---|
-| season-total dk_pts MAE | **402.14** | **407.89** | 400.46 | `season_total_metrics.csv` |
-| …CRPS | **280.49** | **281.03** | 287.26 | " |
-| …R² | 0.6481 | 0.6589 | 0.7073 | " |
-| …bias | −21.93 | −63.34 | −3.06 | " |
-| games played CRPS | **9.6754** | **9.7829** | 10.0057 | `stan_games_played_metrics.csv` |
-| …bias, in games | **+0.127** | **−0.363** | — | " |
-| …pooled GP pmf total variation | **0.0602** | **0.0588** | — | `stan_games_played_gp_pmf.csv` |
-| bonus per played game | 0.1733 | 0.1702 | 0.1559 / 0.1626 realized | `bonus_calibration.csv` |
+| season-total dk_pts MAE | **397.36** | **398.45** | 400.46 | `season_total_metrics.csv` |
+| …CRPS | **276.48** | **275.17** | 287.26 | " |
+| …R² | 0.6589 | 0.6732 | 0.7073 | " |
+| …bias | −26.50 | −71.15 | −3.06 | " |
+| games played CRPS | **9.4831** | **9.5372** | 10.0057 | `stan_games_played_metrics.csv` |
+| …bias, in games | **−0.113** | **−0.560** | — | " |
+| …pooled GP pmf total variation | **0.0652** | **0.0636** | — | `stan_games_played_gp_pmf.csv` |
+| bonus per played game | 0.1737 | 0.1704 | 0.1559 / 0.1626 realized | `bonus_calibration.csv` |
 | …on **realized** minutes | **0.1535** | **0.1477** | 0.1559 / 0.1626 | `component_targets.parquet` |
-| season minutes sd, given GP | **322.05** | **319.32** | 302.75 | `minutes_unification.csv` |
+| season minutes sd, given GP | **320.54** | **315.12** | 302.75 | `minutes_unification.csv` |
+| **no-design team minutes share** | **0.1015** | **0.1079** | 0.1057 / 0.0992 realized | `component_targets.parquet` |
+| …per-team share error, MAE | **0.0294** | **0.0472** | — | " |
+
+> **Re-measured 2026-08-12 against the graded no-design availability level**
+> (`sim.availability.no_design_level = tenure_draft`,
+> `docs/availability-window-plan.md` §8b), and it added the last two rows. **The
+> games-played row is the control and it is a null**: not one of the 386 and 387 scored
+> units is a player the availability head has no row for, so no scored unit's `μ` moves and
+> the row *cannot* see this. Its gaps — −0.018 and +0.004 CRPS — are inside the seed range,
+> which had to be measured because changing any player's rate shifts the rng stream for every
+> player drawn after him, so two arms at one seed are not a paired comparison. Three seeds per
+> arm put the within-arm range at 0.073 and 0.037 on that row.
+>
+> The season total *does* move by more than the stream can explain: MAE 400.55 → **397.36**
+> and 400.00 → **398.45**, CRPS 278.67 → **276.48** and 276.41 → **275.17**, against seed
+> ranges of 1.44 / 0.66 and 1.14 / 0.76. **The channel is the minutes pot and nothing else** —
+> which rostered players are on the floor changes, a team-game's `5 × game_length` is fixed,
+> so the units the tensor does score get different minutes. The new team-level row is the
+> direct evidence: the per-team share error falls **17.2%** and **16.2%**. The bias deepens
+> (−22.89 → −26.50, −64.13 → −71.15) and that is real rather than noise — the simulator was
+> propping the veterans up with minutes that belonged to rookies, and the remaining
+> under-prediction of the season total is not this defect.
+>
+> ⚠️ **The pooled-scalar column, taken 2026-08-12 immediately before**, read MAE 400.55 /
+> 400.00, CRPS 278.67 / 276.41, R² 0.6516 / 0.6721, bias −22.89 / −64.13, games-played CRPS
+> 9.5291 / 9.5517 at bias −0.113 / −0.490, pmf TV 0.0654 / 0.0648, bonus 0.1742 / 0.1697,
+> minutes sd 319.82 / 316.37, and a per-team share error of 0.0355 / 0.0563.
+
+> **Re-measured 2026-08-12 against the `tenure_merge` availability layout**
+> (`docs/availability-window-plan.md` §13), which is what the simulator now draws. **Every
+> games-played row is unchanged to four decimals** — CRPS 9.5291 / 9.5517, bias −0.113 /
+> −0.490, pmf total variation 0.0654 / 0.0648, all identical to the previous layout's — and
+> that is the point rather than a coincidence: the layout rearranges a player's absences and
+> preserves `gp` exactly, so nothing at the season unit *can* see it. The season total moves
+> within sim noise (MAE 401.07 → 400.55 and 399.37 → 400.00, CRPS 279.03 → 278.67 and 275.60
+> → 276.41, bias −21.94 → −22.89 and −62.51 → −64.13). **A change worth 9.1× on a star's
+> P(three consecutive dead scoring periods) is invisible in every row of Gate A**, which is
+> §11a's identification argument arriving one layer down: Gate A scores season marginals, and
+> the arrangement is orthogonal to all of them. The unit that can see it is the scoring
+> period, and `make weekly-scores` is the gate that sits there.
+
+> **Re-measured 2026-08-12 against the two-component availability mixture**
+> (`docs/availability-window-plan.md` §7i), which is what the simulator now draws: the
+> component is chosen per player per draw and the rate comes from whichever one won.
+> **The row that moves most is the one the mixture was adopted for** — games-played bias
+> falls from −0.307 to **−0.113** on 2022-23 and −0.728 to **−0.490** on 2023-24, better
+> than halving it. A single component had to buy its left tail out of the *whole*
+> distribution and undershot the population; a separate disrupted-season component pays for
+> the tail directly, so the rest of the curve stops being dragged down with it. CRPS is
+> flat to three decimals (9.5262 → 9.5291, 9.6140 → 9.5517) and the season total is a wash
+> in both directions (399.03 → 401.07, 402.48 → **399.37**), which is the CRPS tie from the
+> ladder arriving intact at the deliverable. The pooled pmf total variation rose (0.0543 →
+> 0.0654) against a *fixed* comparator: `stan_games_played_gp_pmf.csv` is the single-component
+> `duration_covariates` arm, so a mixture that genuinely disagrees with it in the tail must
+> read further from it, and that distance is the change rather than an error.
+>
+> ⚠️ **The 2026-08-11 column, taken against the single-component role-graded head**, read
+> MAE 399.03 / 402.48, CRPS 278.84 / 278.40, R² 0.6543 / 0.6683, bias −21.20 / −61.14,
+> games-played CRPS 9.5262 / 9.6140 at bias −0.307 / −0.728, pmf TV 0.0543 / 0.0510, bonus
+> 0.1768 / 0.1728 and minutes sd 317.22 / 314.09. That column was itself the first reading
+> ever taken against a shipped head — the availability draw had been re-implemented inline
+> against a **scalar** dispersion and raised outright once `rho` became a vector — and it
+> replaced a pre-fix reading of CRPS 9.6754 / 9.7829 and MAE 402.14 / 407.89.
 
 **Three of the four gate rows pass and the fourth is traced out of this module.** Season
-totals land on the incumbent's MAE within 2%, and *better* than it on CRPS — the deliverable
+totals land on the incumbent's MAE within 1%, and *better* than it on CRPS — the deliverable
 is a distribution and that is the distributional metric. Games played reproduces the
 availability head it was handed rather than approximating it: CRPS **below** the head's own
 10.0057 (the simulator integrates over the posterior draw where the head's published figure
-is scored per row), a bias of a tenth of a game, and a pooled pmf within 0.06 total variation
-of the persisted one on a mean of 55.8 games against 55.6.
+is scored per row), a bias of a third of a game, and a pooled pmf within 0.06 total variation
+of the persisted one on a mean of 55.3 games against 55.4.
 
-**The bonus is +11% high in 2022-23 and +5% in 2023-24, and the cause is upstream.** Running
+**The bonus is +13% high in 2022-23 and +6% in 2023-24, and the cause is upstream.** Running
 the identical `draw_components` call on **realized** minutes and realized played games gives
-0.1535 against a realized 0.1559 and 0.1477 against 0.1626 — i.e. the component chain,
-its season/game frailty split and its copula are calibrated on the bonus to within 1.5% and
-9% respectively, in the *low* direction. Everything above that comes from the minutes the
+0.1535 against a realized 0.1559 and 0.1477 against 0.1626 — **unchanged to four decimals**
+by the availability fix above, which is the control that says the miss is not in the
+availability draw: those two rows condition on realized minutes and realized played games,
+so they are the only rows in the table the fix could not move, and they did not move. So the
+component chain, its season/game frailty split and its copula are calibrated on the bonus to
+within 1.5% and 9% respectively, in the *low* direction. Everything above that comes from the minutes the
 simulator draws, and the next row says why.
 
 #### The diagnostic that earned its keep: the composition's game-level minutes dispersion
@@ -1424,7 +1498,7 @@ it fails — and not because of anything in `src/sim/`:
 | source | implied game-level overdispersion |
 |---|---|
 | realized 2022-23 minutes | **4.22** |
-| the simulator's draws | **8.42** |
+| the simulator's draws | **8.28** *(8.42 before the availability fix)* |
 | the composition head's own draws, on **realized** availability, sigma = 0 | **7.70** |
 | …with the shipped sigma = 0.45 | 7.87 |
 
@@ -1477,10 +1551,22 @@ Both would have produced a completely plausible board.
   put them at **58.4** simulated games against a realized **30.1**, and because the minutes
   allocation is zero-sum that moved ~**29,500** minutes a season off the players the tensor
   scores — a season-total dk_pts bias of **−90.8**. They now get the expanding-window
-  empirical rate of no-design player-seasons in the earlier seasons selection may read
-  (**0.4303** for 2022-23), which is the same point-in-time device
-  `stan_composition.rookie_share_priors` already uses for their minutes share. The bias falls
-  to **−21.9**.
+  empirical rate of no-design player-seasons in the earlier seasons selection may read, which
+  is the same point-in-time device `stan_composition.rookie_share_priors` already uses for
+  their minutes share. The bias falls to **−22.9** (it read −21.9 before the availability
+  draw was fixed to read the head's role-graded dispersion, −21.2 with that fix, −21.9 again
+  under the mixture, and −22.9 under the `tenure_merge` layout — the fault this bullet is
+  about is worth −69 dk_pts and the head's likelihood and layout are worth about one between
+  them, so the four readings are the same finding).
+
+  **That rate is no longer one number** — it was **0.4303** for every one of them in 2022-23,
+  and it is now **0.2613 to 0.8294** on the same roster, pooled on whether this is the
+  player's first appearance crossed with his draft bucket
+  (`sim.availability.no_design_level = tenure_draft`,
+  `docs/availability-window-plan.md` §8b). The pooled scalar scored validation R² **−0.0865**
+  on this population — worse than predicting their own mean — against **0.4316** graded. It
+  is the same bullet's mechanism one step further in: the fault was scoring them at a rate
+  that was not theirs, and the league's rate is not theirs either.
 
 #### What the artifact carries, and the honest caveats
 
@@ -1528,46 +1614,115 @@ whole four-round structure: 2020-21 has **no Round 4 at all** (0 games in slot 1
 
 | facet | split | n | observed | predicted | MAE | bias | R² | CRPS |
 |---|---|---|---|---|---|---|---|---|
-| one week | train | 13,022 | 52.74 | 49.81 | 30.07 | **−2.93** | 0.3957 | 20.39 |
-| one week | validation | 13,141 | 53.40 | 51.14 | 29.06 | **−2.26** | 0.4549 | 19.63 |
-| double week | train | 2,298 | 93.24 | 89.63 | 50.48 | −3.61 | 0.4615 | 34.37 |
-| double week | validation | 2,319 | 98.51 | 97.31 | 52.90 | −1.21 | 0.4216 | 36.18 |
+| one week | train | 13,022 | 52.74 | 50.02 | 29.93 | **−2.72** | 0.3985 | 20.34 |
+| one week | validation | 13,141 | 53.40 | 51.8035 | 27.5537 | **−1.59578** | 0.497532 | 18.578 |
+| double week | train | 2,298 | 93.24 | 88.43 | 50.85 | −4.81 | 0.4542 | 34.41 |
+| double week | validation | 2,319 | 98.51 | 96.5407 | 52.0073 | −1.97226 | 0.430454 | 35.429 |
 
-**The season-total bias is a weekly bias, and it is front-loaded.** Gate A reads −21.9 to
-−71.6 dk_pts on a season and this says where it comes from: about −2 to −3 a week,
-concentrated at the **start** of the season. Pooled over the two validation seasons the
-per-period bias runs **−5.28** in week 1, −4.99 in week 2, −3.27 in week 3, and is inside
-one point by week 13 (−1.08) and −0.70 by week 17. That is a real shape and not noise — it
-is monotone over the first six weeks on both splits — and the natural suspect is the
-availability chain's early-season behaviour rather than the component rates, since the
-same components on realized minutes are calibrated to within 1.5% on the bonus.
+> **Re-measured 2026-08-15 against the preseason-armed component heads**
+> (`docs/preseason-plan.md` session 6b — ten of the eleven rate heads adopted the block, which
+> re-ran the whole chain). **Only the validation rows move**, and every one of them moves the
+> right way: one-week predicted mean 51.4301 → **51.8035** against an observed 53.40, bias
+> **−1.96909 → −1.59578**, MAE 27.6893 → **27.5537**, R² 0.494243 →
+> **0.497532**, CRPS 18.6603 → **18.578**; double-week predicted mean 95.8012 → **96.5407**
+> against an observed 98.51, bias **−2.71173 → −1.97226**, MAE
+> 52.1965 → **52.0073**, R² 0.430198 → **0.430454**, CRPS 35.4979 → **35.429**. The train rows
+> are unchanged to the precision quoted. **That asymmetry is the block, not noise**: the
+> preseason columns are populated for the seasons the panel covers, so the 2022-23 / 2023-24
+> tensors carry a current-season signal the 2018-19 / 2021-22 ones are further from. The
+> one-week zero share moves 19.7954% → **19.7979%**, the widest spread ratio 0.978824 →
+> **0.986257**, and the narrowest KS distance 0.0178266 → **0.0127339**.
+
+> **Re-measured 2026-08-12 against the graded no-design availability level**
+> (`sim.availability.no_design_level = tenure_draft`,
+> `docs/availability-window-plan.md` §8b), which rebuilt all four tensors. The whole table
+> moves within a third of a point on MAE and CRPS and under 0.005 on R²; the largest move is
+> the double-week *train* bias, −5.11 → **−4.81**, on the smallest facet in the table. The
+> zero share moves the other way from the layout round — 17.95% → **17.95%** on one-week
+> train and 19.00% → **19.7954%** on one-week validation, against observed 20.66% and 19.90%
+> — and the spread ratio widens slightly to **0.927–0.986257×**. **Nothing here was aimed at
+> this gate**: the change moves minutes between rostered players, and these facets pool over
+> the players the tensor scores, so a small uniform drift is the expected signature and is
+> what appeared. The pre-grading column read bias −2.87 / −2.14 / −5.11 / −2.64, CRPS 20.35 /
+> 19.46 / 34.47 / 36.11 and predicted means 49.87 / 51.26 / 88.13 / 95.87.
+
+> **Re-measured 2026-08-12 against the `tenure_merge` availability layout**
+> (`docs/availability-window-plan.md` §13). **This is the gate that can see that change and
+> Gate A is not**, so it is where the layout was checked downstream — the tensor's season
+> marginals are blind to an arrangement and the scoring period is the arrangement's own
+> unit. The table above moves within noise on the one-week facets (bias −2.93 → −2.87 and
+> −2.26 → −2.14, CRPS 20.39 → 20.35 and 19.63 → 19.46, R² up on both), and the double-week
+> *train* bias worsens from −3.61 to −5.11 while validation's goes −1.21 → −2.64. Three of
+> the four rows are inside a point; the fourth is the smallest facet in the table at 2,298
+> rows and three periods.
+>
+> **The row this change was aimed at is the zero share, and it moved on every facet toward
+> the truth.** Simulated zero weeks go **16.9% → 17.95%** on one-week train against an
+> observed 20.7%, and **18.2% → 19.00%** on one-week validation against an observed 19.9% —
+> the validation gap closing from 1.7 to **0.9** points. The pooled spread ratio widens from
+> 0.920–0.954× to 0.923–0.971× and the KS span narrows from 0.0265–0.0639 to
+> 0.0171–0.0600. All three say the same thing from different directions: laying a
+> player's absences as real tenure blocks rather than scattering them puts more of the
+> distribution's mass where a best-ball lineup actually finds it, at the cost of nothing
+> visible in the mean.
+
+**The season-total bias is a weekly bias, and it used to be front-loaded.** Gate A reads
+**−11.0438** to **−73.4** dk_pts on a season and this says where it comes from: about −1.5 a
+week, now spread evenly across them. Pooled over the two validation seasons the per-period bias
+runs **−1.54649** in week 1, **−2.51388** in week 2, **−1.77884** in week 3, **−1.01348** by
+week 13 and **−0.755881** by week 17. (Before the *component* heads took their preseason block
+the same five read −1.87224, −2.94136, −2.23589, −1.35151 and −1.05349 against a season-total
+bias of −15.4388; before the composition took its block and σ moved to 0.375, −2.31, −3.38,
+−2.55, −1.78 and −1.31; before the no-design level was graded, −1.88, −3.03, −2.28, −1.60 and
+−1.19. **Every week improved on 2026-08-14 and again on 2026-08-15**, and the season-total bias
+improved with them each time — see `docs/preseason-plan.md` P5 and session 6b.)
+
+> **This is the `tenure_merge` layout's second downstream result, and it was not the one it
+> was aimed at.** Under the previous layout the same profile read **−5.28** in week 1, −4.99
+> in week 2 and −3.27 in week 3, was **monotone over the first six weeks on both splits**,
+> and reached −1.08 by week 13 and −0.70 by week 17 — a 4.58-point range across the season
+> against **1.84** now. This paragraph used to end "the natural suspect is the availability
+> chain's early-season behaviour rather than the component rates", and that suspect is now
+> confirmed with a mechanism: a **pre-tenure block belongs at the start of the schedule**,
+> and `allocate_spells` placed it at a uniform random start, so a player signed in December
+> was simulated as available in October. Week 1's bias falls **64%** and the shape flattens.
+> What is left is a level rather than a shape, which is a different and probably harder
+> problem — but it is no longer the one this paragraph described. `docs/availability-window-plan.md` §13.
 
 **The spread is the good news, and it is the statistic that matters most here.** A best-ball
 week is a max over sixteen players, so the weekly *spread* decides more of a lineup's score
-than the weekly mean does. Pooled over every row and draw the simulated sd is **0.920–0.954×**
-the observed on all four facets. Three spreads are emitted and only one of them is
-comparable: the spread of the per-row posterior *means* (28.89 against an observed 49.05 on
-one-week train) is narrower **by construction**, because a mean over draws has averaged its
-own noise away, and reporting that one would claim a defect that was never measured.
+than the weekly mean does. Pooled over every row and draw the simulated sd is **0.927–0.986257×**
+the observed on all four facets (0.923–0.971× before the no-design level was graded, and
+0.920–0.954× before the layout change). Three
+spreads are emitted and only one of them is comparable: the spread of the per-row posterior
+*means* (**29.40** against an observed 49.05 on one-week train) is narrower **by construction**,
+because a mean over draws has averaged its own noise away, and reporting that one would claim
+a defect that was never measured.
 
 **About a fifth of player-weeks score nothing at all** — 20.7% / 19.9% observed on the
-one-week facets against 16.9% / 18.2% simulated — and a season total averages that away
+one-week facets against **17.95% / 19.7979%** simulated — and a season total averages that away
 completely. It is the clearest argument for scoring this unit: a zero week is survivable
 under a best-7-of-16 rule and a *cluster* of them is not, which is exactly what the spell
-process exists to produce.
+process exists to produce. It is also the row the `tenure_merge` layout was aimed at, and the
+one it moved: those two figures read 16.9% and 18.2% under the previous layout.
 
 Calibration is read as a distance and never as a verdict, the rule the model pages already
-carry. KS distances span **0.0265–0.0639**; the QQ curve is S-shaped away from the diagonal
-and the binned quartile lines sit **0.103–0.131** off their own levels, both of which say
-the predictive is slightly *too narrow* — the same finding the 0.92× spread ratio gives from
-the other direction. The rank-transformed panel adds what a single KS cannot see: all three
+carry. KS distances span **0.0127339–0.0582** (0.0178266–0.0582 before the component heads took
+their preseason block, 0.0171–0.0600 before the no-design level was graded, 0.0265–0.0639
+before the layout change); the QQ
+curve is S-shaped away from the diagonal and the binned quartile lines sit **0.1–0.1607**
+off their own levels (0.099968–0.1607 before the preseason block, 0.1066–0.1417 before the
+no-design level was graded), both of which say the predictive is slightly *too narrow* — the same
+finding the 0.92× spread ratio gives from the other direction. The rank-transformed panel adds what a single KS cannot see: all three
 quartile lines slide **upward** across the predicted range, i.e. the simulator over-predicts
 the player-weeks it ranks lowest and under-predicts the ones it ranks highest.
 
 The only bars in the target are on the **budget** rather than on the model: the 95% ribbon
 and the KS distance are each re-read on two interleaved halves of the 500 simulated seasons
-behind a panel, at `ECDF_BAND_TOL` / `KS_MC_TOL` = 0.02. Worst shipped readings are 0.0061
-and 0.0027. That budget was measured rather than assumed — at 250 / 500 / 1,000 / 2,000
+behind a panel, at `ECDF_BAND_TOL` / `KS_MC_TOL` = 0.02. Worst shipped readings are **0.00656533**
+and **0.00398448** (0.00670548 and 0.00394135 before the preseason block; 0.0074 and 0.0056
+before the no-design level was graded — still an order of magnitude
+inside the bar). That budget was measured rather than assumed — at 250 / 500 / 1,000 / 2,000
 simulated seasons the ribbon statistic falls as 1/√D (0.0057 → 0.0044 → 0.0020 → 0.0014 on
 one-week train) while the KS distance itself moves by **≤ 0.0016**, so 500 buys the picture
 and the remaining 1,500 buy a third of a pixel at four times the peak memory.
@@ -1943,7 +2098,9 @@ in rounds 9+ — which is where 9 of the 16 roster spots are filled.
 ### What was built, and what Gates C and D found — 2026-08-09
 
 `src/sim/strategy.py`, `make strategy-sweep`. **22 strategies × 2 tiers × 2 validation
-seasons at 500 simulated worlds each, in 4.8 minutes of numpy.** Gate C passes on the two
+seasons at 500 simulated worlds each, in 4.8 minutes of numpy** (24 strategies since the
+execution axis landed 2026-08-11 — see that section below; the original 22 reproduce to
+the digit). Gate C passes on the two
 targets it can hit and misses two rows in a stated direction; Gate D **fails, and that is the
 result** — the two tiers do not select materially different rosters, under a tier-blind
 ranking or a tier-aware objective.
@@ -2145,10 +2302,15 @@ in one season of each tier and trails it in the other, which is what N = 2 looks
   knows about the weekly distribution, the double-double threshold, or the cross-component
   correlation. The shipped objective uses all of that, and truth is drawn from the same joint.
   So the simulated lift is an **upper bound** on a real one.
-- 🔴 **The field drafts strictly by ADP with rank noise and does no lineup reasoning at all.**
-  A real drafter balances positions. The edge measured here is over that field, not over a
-  room of humans, and `docs/simulations-plan.md` already names real pick logs as the missing
-  calibration.
+- ~~🔴 **The field drafts strictly by ADP with rank noise and does no lineup reasoning at
+  all.**~~ ✅ **Measured 2026-08-11, and the caveat resolves in the field's favor** — see
+  "The field with lineup reasoning, and the execution axis" below. A joint Gate B
+  calibration fits the slot-reaching lean at **zero** (the observed market does not
+  reach), and a sweep against a stipulated 8-pick lean reads *higher* lift for every
+  value-following arm, so the shipped pure-ADP field is the **conservative** opponent.
+  Real pick logs remain the missing calibration for draft-to-draft behavior; what this
+  closes is the specific worry that the lift was an artifact of a field too naive about
+  positions.
 - **`ρ` is measured on the same two seasons the sweep scores.** It is a simulator *input*,
   calibrated the way the other four are, and validation is the split selection may read — but
   every `α` below inherits the sampling error of two seasons of ~200 priced players.
@@ -2160,6 +2322,177 @@ caveats above, and 600k's ROI is the figure `make bracket` and `make draft-room-
 already record as not estimable at any affordable budget (the null's E[payout] reads **−15%**
 at this field size, against **−0.0%** for 20k). The lift in `P(top 2 of 12)` is the number to
 read.
+
+### The field with lineup reasoning, and the execution axis — 2026-08-11
+
+Two follow-on measurements, both answers to the same worry — that the measured lift is an
+artifact of a too-simple opponent — plus the sweep growing from 22 arms to **24**. The
+request behind them: give the field a strategy that is *disciplined ADP consensus merged
+with lineup reasoning* and re-measure the lift; and price an *autodraft* execution of our
+own best strategy, for the draft night where the 30-second clock wins.
+
+#### The field: lineup reasoning is a measured null, twice over
+
+`make draft-sim-need` (`src/sim/draft.py --opponent adp_need`,
+`outputs/predictions/draft_gate_b_need.csv`). The `adp_need` opponent was already
+registered and idle — ADP plus `need_weight` picks of boost per starting slot (2 G / 2 F /
+1 C) the seat still owes. The calibration fits (`rank_noise_sd`, `need_weight`)
+**jointly** on Gate B's own mean-ADP target, tiered shape, with `need_weight = 0` nesting
+the shipped pure-ADP field bitwise (same seed, same draws — pinned by
+`test_calibrate_need_at_zero_nests_the_tiered_calibration_exactly`).
+
+**It selects `need_weight = 0`, on both validation seasons independently.** The pooled
+grid is monotone against the lean — MAE(fit) 5.922 → 6.684 picks from need 0 to 32 — and
+the degradation concentrates exactly where the market is most certain: **MAE(elite) 3.43 →
+6.98**. The observed DK curve carries no slot-reaching for a field model to imitate; real
+drafters take value and let the roster follow. So the "disciplined consensus + lineup
+reasoning" field, *calibrated*, is the shipped field.
+
+**The robustness probe agrees from the other side.** `make strategy-sweep-need` runs the
+full sweep against a **stipulated** 8-pick lean — the suffix names the stipulation
+(`strategy_*_adp_need_w8.csv`) precisely because nothing fitted it; 8 is the strongest
+lean within ~0.14 picks of the selected fit, and the noise scale still comes from the
+calibration artifact. Every value-following arm reads **higher** lift against that field:
+the shipped arm +0.2107 → **+0.3055** (600k) and +0.1989 → **+0.2656** (20k), the adp arm
++0.045 → +0.075 (600k, pooled) — and once the sweep covered all five captured structures
+(2026-08-11) the direction held in every one of them, +0.27 to +0.33 against the fitted
+field's +0.19 to +0.21. A field that reaches for slots pays value for shape, and
+the bracket pays value. The symmetric-field null stays exact against the need field
+(−1.1e-10 / −1.5e-10), so the comparison is apples to apples. **Conclusion: the fitted
+pure-ADP field is the harder opponent, and it stays shipped** — recorded as
+`field-lineup-reasoning-is-a-measured-null` in the decision registry.
+
+Plumbing that landed with it, all behind defaults that reproduce the old behavior
+exactly: `field_composition` / `assign_seats` now actually thread through `load_room`,
+`build_field`, `draft_portfolio` and both realized/injected field builds (`Room.seats`);
+the field cache is keyed by composition and `need_weight` as well as the noise pair, with
+legacy caches read as the pure-ADP field they hold; and `selected_field` resolves an
+`adp_need` composition from its own artifact rather than mixing calibrations.
+
+#### The execution axis: autodraft ≡ DK caps, and the caps help
+
+Two new arms, `axis="execution"`: the same static ranking executed as a **submitted
+pre-draft board** under DK's documented autodraft rules (8 G / 8 F / 3 C binding, no
+queue, unpriceable players ranked last rather than masked). `Strategy(autodraft=True)`
+**refuses** any axis a static order cannot express — a per-pick objective, a per-round α
+schedule, an exposure cap, a stacking bonus — because silently dropping the axis would
+measure a different strategy under the old name. That refusal is itself the first
+finding: the shipped arm (`lineup_value_blend30`) is *infeasible* as an autodraft, so its
+closest feasible twin `blend_a30` carries the axis.
+
+Three results, from `strategy_sweep.csv` / `strategy_paired.csv`:
+
+- **`autodraft_blend_a30` = `blend_caps_dk`, roster for roster.** Executing a ranking
+  through the autodraft path reproduces the caps-only manual arm exactly on every
+  tier × season — two code paths arriving at the same drafts, checked from the artifact
+  by `dashboard/strategy.autodraft_matches_caps` and pinned by a test against the real
+  sweep. DK's autodraft executor on a static board *is* the caps, nothing more.
+- **And the caps help.** The autodraft twin beats the uncapped click of the same ranking
+  by **+0.0091 [+0.0080, +0.0102]** (600k) and **+0.0076 [+0.0059, +0.0093]** (20k),
+  both resolved. 8/8/3 is crude lineup reasoning, and best-7-by-slot scoring rewards it —
+  the interesting asymmetry with the field result being the dose: a cap that prevents
+  degenerate rosters helps, an 8-pick early reach costs.
+- **What automation costs is the objective, not the executor.** Against the shipped arm,
+  the autodraft twin gives up **−0.092** (600k) and **−0.053** (20k) of simulated lift.
+  The shipped arm re-prices every candidate against the roster it already holds; no
+  static board can carry that. So the ranking-submission fallback the 30-second clock may
+  force is safe — better than a naive click — and the per-pick objective is the half
+  worth defending. Recorded as `autodraft-execution-is-the-caps-and-the-caps-help`.
+
+The sweep's existing 22 arms reproduce to the digit (each arm draws from its own
+generator, so appending arms cannot perturb the table), and page 8's block 5 renders both
+halves.
+
+#### All five captured structures are swept — 2026-08-11
+
+The sweep's tournament axis grew from the two original reference tiers to **all five
+captured structures**, which took no simulation code at all — `sweep`, `ship`, `replay_realized`
+and the reports already iterated `sim.tournaments`, and the bracket layer had priced all
+five since it landed. What it took was an **entries rule**, because "how many entries"
+was the one number the two original tiers carried by hand: the config now derives every
+count from `min(max_entries_per_player, ceil($200 / entry_fee))` — stake parity, capped
+by DK's own per-player limit — which reproduces the hand-chosen 10 and 4 exactly and
+extends to **20** (`50k_four_pt_play`, $80 — the cap binds), **150** (`15k_and_one`,
+$150 — the cap binds), and **1** (`88k_alley_oop`, $450 — one entry already overshoots).
+Where stake parity breaks, the divergence is stated in the config rather than smoothed
+over, and cross-tier comparisons should mind it: the $450 single-entry tier's portfolio
+metrics (`p_any_advance` especially) are one entry's, not a stake-matched portfolio's.
+
+Two structural facts kept the extension honest. **Gate D still compares exactly the
+first two config keys** — the original reference pair — so its audited
+6-comparisons/0-separations
+record is unchanged by construction, and the config comment now marks that ordering as
+load-bearing. And **the null check runs per structure**, so all five fields reproduce
+`n_advance / pod_size` exactly before any strategy is scored against them.
+
+**Every stake here is simulated, and no contest has been entered** — which tournaments
+to enter (if any) is an open decision, and the likely first real entries are cheap
+`15k_and_one` teams whose purpose would be pick-log capture (the
+`real-pick-logs-are-the-missing-field-calibration` deadline item) rather than profit.
+
+The cost lives in one place: `15k_and_one`'s 150 entries under the four objective arms
+(one `draft_room.evaluate` per pick) add roughly 35 minutes to `make strategy-sweep`.
+The dashboard's page 8 renders every structure from the same blocks; the reference pair
+stays highlighted in block 1 and first in the selector.
+
+**Run 2026-08-11, and what the three new structures found.** All ten null checks
+(5 structures × 2 seasons) reproduce `n_advance / pod_size` to ~1e-10; the EV nulls
+resolve far better than 600k's known −15% limit (50k −3.5%, 15k −2.3%, 88k −0.0%).
+Every audited figure from the reference pair reproduced to the digit, and Gate D's 6/0
+record is unchanged. `lineup_value_blend30` ships in **four of the five** structures
+(sim lift +0.194 to +0.211) — the exception is `88k_alley_oop`, whose single $450 entry
+under shallow cuts (2/6 → 2/6) selects **`blend_a70`** at +0.412. That is one seat's
+selection at the sweep's noisiest unit, so it is a datum about the α ridge rather than
+a strategy: on the paired table `blend_a15` resolves above a30 at 600k while
+`blend_a70` resolves above it at 20k, 50k and 88k — the axis has a resolved *sign*
+(α = 0 loses to α = 0.3 under the shipped objective in all four comparable structures,
+−0.013 to −0.034, every interval clear of zero; α = 0.85 loses nearly everywhere) and
+a location that is genuinely structure-dependent rather than one number. **The shipped
+0.30 is therefore calibrated at the axis level and inherited at the digit level**: the
+objective family was only ever built at α ∈ {0, 0.3}, so "0.30 vs its neighbours under
+`lineup_value`" is unmeasured; the honest reading is un-rejectable-compromise, not
+optimum. One bookkeeping consequence of 240 swept rows: the payout-elasticity guard is
+now a median-plus-share bar rather than every-row, because the `adp` arm at 50k in
+2022-23 sits near enough the null that its log-ratio is noise (0.81 at +0.047 lift) —
+the median clears 1 in all five structures (1.62 to 5.37).
+
+#### The pick-log stake, priced — 2026-08-11
+
+`make pick-log-stake` (`strategy_pick_log_stake.csv`, `strategy_pick_log_paired.csv`).
+The likely first real entries are ~20 cheap `15k_and_one` teams whose purpose is
+capturing pick-log data, so the execution question is live at exactly that stake: what
+does submitting a pre-draft ranking cost against drafting the same 20 × $1 teams live?
+Three arms on the same injected worlds and field (null check exact, −5.5e-11 /
+−1.0e-10): DK autodraft on the submittable board (`autodraft_blend_a30`), the live
+draft room's own payout-weighted objective (`bracket_ev`), and the reference tiers'
+shipped `lineup_value_blend30`. Gaps paired on the world, pooled over both validation
+seasons.
+
+**The answer depends on which objective the stake is scored by, and the two live arms
+split it cleanly:**
+
+| arm minus autodraft | per-entry P(adv) | P(any advances) | EV $ on the $20 |
+|---|---|---|---|
+| `bracket_ev` (the room's objective) | **−0.0198** [−0.0308, −0.0083] | −0.0281 [−0.0421, −0.0142] | **+$253** [+$195, +$314] |
+| `lineup_value_blend30` | **+0.0633** [+0.0518, +0.0736] | +0.0582 [+0.0459, +0.0709] | −$3.78 [−$36, +$28], a null |
+
+The room's objective *buys tail dollars with survival*: it advances **less** often than
+the autodrafted board — resolved, not noise — while roughly tripling simulated expected
+payout, because a zero-consolation knockout's EV lives in deep runs and that is what a
+payout-weighted objective chases. The survival-maximizing arm is the mirror image:
++0.063 per-entry advance over autodraft and not a measurable dollar. **So "the
+opportunity cost of autodrafting" is not one number**: ~$250 of simulated tail EV per
+$20 if the stake is scored in dollars, ~zero (slightly *negative*) if it is scored in
+survival — the autodrafted board is already a fine survival drafter, sitting between
+the two live objectives.
+
+Two readings for the actual decision. The dollar figures inherit every EV caveat on
+this page — an injected-world level, quoted for its *sign and pairing*, not its
+magnitude — while the survival gaps are the sweep's own resolvable unit. And the
+stake's stated purpose is **data capture, which is execution-indifferent**: the pick
+log is written at draft time, so autodrafting all 20 collects identical data for zero
+clicks, and the ~320 live picks buy only the (objective-dependent) contest outcome on
+$20. Registry: `pick-log-stake-execution-priced`.
 
 ---
 

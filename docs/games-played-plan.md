@@ -29,10 +29,10 @@ way `docs/availability-plan.md` was.
 > | arm | val CRPS | its floor | vs floor | PIT KS | implied od | tail error |
 > |---|---|---|---|---|---|---|
 > | `floor` (the incumbent) | **10.0057** | 10.0057 | — | 0.0939 | 23.7251 | **0.0406** |
-> | *`within_tenure`* (oracle) | **7.2265** | 10.0992 | **−2.8726** | 0.1232 | 11.4526 | 0.0091 |
-> | `full_window` | 10.2705 | 10.0057 | +0.2647 | 0.0733 | 22.1365 | 0.0495 |
-> | `three_state` | 10.3484 | 10.0501 | +0.2983 | 0.1171 | 20.3721 | **0.0041** |
-> | `duration_covariates` | 10.1625 | 10.0057 | +0.1568 | **0.0672** | 22.0664 | 0.0537 |
+> | *`within_tenure`* (oracle) | **7.23495** | 10.0992 | **−2.8642** | 0.1259 | 11.4603 | 0.0092 |
+> | `full_window` | 10.2797 | 10.0057 | +0.2739 | 0.0755 | 22.1686 | 0.0496 |
+> | `three_state` | 10.3466 | 10.0501 | +0.2965 | 0.1204 | 20.3687 | **0.0043** |
+> | `duration_covariates` | 10.1676 | 10.0057 | +0.1619 | **0.0672** | 22.1055 | 0.0535 |
 > | `calibrated_fallback` | 10.0207 | 10.0057 | +0.0149 | 0.1017 | 23.7251 | 0.0440 |
 > | **`hybrid`** | **10.0057** | 10.0057 | **0.0000** | 0.0939 | 23.7251 | **0.0406** |
 >
@@ -46,10 +46,10 @@ way `docs/availability-plan.md` was.
 > whose entire contribution is orthogonal to the marginal.** That is a category error in the
 > instrument, not a verdict on the arm.
 >
-> The other three fail on their merits: `duration_covariates` loses CRPS by +0.1568 (a
+> The other three fail on their merits: `duration_covariates` loses CRPS by +0.1619 (a
 > paired bootstrap on 883 rows puts it at 95% CI [+0.0737, +0.2393], P(better) = 0.1%),
 > `calibrated_fallback` loses CRPS *and* PIT, and `three_state` is worst on CRPS while
-> posting the best tail of any arm (0.0041) — a reminder that the tail alone is a noisy
+> posting the best tail of any arm (0.0043) — a reminder that the tail alone is a noisy
 > criterion on 359 rotation rows.
 >
 > ### The spell shape is where the arms actually differ
@@ -61,8 +61,8 @@ way `docs/availability-plan.md` was.
 > |---|---|---|---|---|---|
 > | observed | 0.4924 | 0.0581 | 0.0079 | 3.0857 | — |
 > | **hybrid** | 0.4904 | 0.0572 | 0.0202 | 3.8220 | **0.5310** |
-> | `full_window` | 0.4534 | 0.1052 | 0.0419 | 4.9653 | 1.7408 |
-> | `duration_covariates` | 0.4435 | 0.1083 | 0.0430 | 5.0581 | 1.8105 |
+> | `full_window` | 0.4556 | 0.1018 | 0.0409 | 4.8658 | 1.6746 |
+> | `duration_covariates` | 0.4471 | 0.1063 | 0.0416 | 4.9746 | 1.7373 |
 > | `calibrated_fallback` | 0.1171 | 0.3544 | 0.0799 | 10.0594 | 5.0082 |
 >
 > **The hybrid is 3.3x better than the best fitted arm and 9.4x better than the fallback**,
@@ -79,7 +79,7 @@ way `docs/availability-plan.md` was.
 > ### The two results that survive from the fitted arms
 >
 > 1. **The process class is right; the tenure is the bottleneck.** The oracle-tenure arm
->    scores **7.2265** against the incumbent's 10.0057 — 28% better, on validation. Given the
+>    scores **7.23495** against the incumbent's 10.0057 — 28% better, on validation. Given the
 >    observed tenure the within-tenure chain is far better than the season-level
 >    beta-binomial, and all of that is destroyed by predicting entry and exit from preseason
 >    covariates. That is mid-season roster churn, already out of scope.
@@ -91,22 +91,22 @@ way `docs/availability-plan.md` was.
 > | gate | verdict | figure |
 > |---|---|---|
 > | **0** | ✅ | plain chain **z = +5.29** (rejected); tenure decomposition **z = +0.93** |
-> | **A** | ✅ | 0.5 h linear → **0.79 h** corrected against a 6 h budget |
-> | **B** | ✅ | onset head **−0.330658** per at-risk transition against the floor's **−0.350239** (**+0.019580**), shrinkage `k` = **48.1** toward a league rate of **0.0741** |
+> | **A** | ✅ | 0.5 h linear → **0.78 h** corrected against a 6 h budget |
+> | **B** | ✅ | onset head **−0.330662** per at-risk transition against the floor's **−0.350239** (**+0.019577**), shrinkage `k` = **48.1** toward a league rate of **0.0741** |
 > | **C** | ✅ | the simulated hazard curve keeps falling past a streak of 20 |
-> | **D** | ❌ | no arm clears. `duration_covariates` **10.1625** / 0.0672 / 0.0537; `calibrated_fallback` **10.0207** / **0.1017** / 0.0440; `hybrid` 10.0057 / 0.0939 / 0.0406 against observed **0.1003** / **0.3259** |
-> | **E** | ❌ | **ran 2026-08-05 on validation.** `spell_process` scores MAE **406.80** and CRPS **291.80** against the incumbent's **400.46** / **287.26** — worse on both, by **+6.34** and **+4.55** dk_pts |
+> | **D** | ❌ | no arm clears. `duration_covariates` **10.1676** / 0.0672 / 0.0535; `calibrated_fallback` **10.0207** / **0.1017** / 0.0440; `hybrid` 10.0057 / 0.0939 / 0.0406 against observed **0.1003** / **0.3259** |
+> | **E** | ❌ | **re-run 2026-08-12 and the verdict does not move.** `spell_process` scores MAE **406.65** and CRPS **291.63** against the incumbent's **400.46** / **287.26** — worse on both, by **+6.19** and **+4.37** dk_pts (the 2026-08-05 reading was 406.80 / 291.80, +6.34 / +4.55) |
 >
-> Gate D's per-arm tail predictions are `P(GP<41)` / `P(GP<60)` of **0.1597** / **0.3740**
+> Gate D's per-arm tail predictions are `P(GP<41)` / `P(GP<60)` of **0.1597** / **0.3734**
 > (`duration_covariates`), **0.1499** / **0.3643** (`calibrated_fallback`) and **0.1553** /
 > **0.3521** (`hybrid`).
 >
-> ### ⚠️ Gate E passed on TEST by 0.03 dk_pts and FAILS on validation by 6.34
+> ### ⚠️ Gate E passed on TEST by 0.03 dk_pts and FAILS on validation by 6.19
 >
 > The recorded verdict was ✅ at **435.1053 MAE against a 435.1352 bar** — a margin of
 > **0.0299 dk_pts on a ~435 dk_pts quantity**, i.e. seven parts in a hundred thousand. On
 > validation the same treatment, the same rate model and the same six-row ladder put it
-> **6.34 dk_pts the wrong side**, and it loses CRPS and bias too (−16.65 against −3.06).
+> **6.19 dk_pts the wrong side**, and it loses CRPS and bias too (−15.87 against −3.06).
 > This is the third gate in this head to reverse when moved off the test split, and it is
 > the cleanest example of why: a bar cleared by 0.03 was never evidence of anything, and
 > reading it on the split that is not allowed to decide is what made it look like it was.
@@ -117,7 +117,7 @@ way `docs/availability-plan.md` was.
 > constant it is compared against — the same fix `stan_games_played._gate_d` took.
 >
 > Gate E failing is *consistent* with Gate D rather than new information: `spell_process`
-> composes the `duration_covariates` pmf, which already loses games-level CRPS by +0.1568,
+> composes the `duration_covariates` pmf, which already loses games-level CRPS by +0.1619,
 > and 6.34 dk_pts is roughly that loss times a ~40 dk_pts-per-game rate. **It does not
 > speak to the hybrid**, whose games-played pmf is the incumbent's by construction and
 > which would therefore tie Gate E to every decimal — the same category error Gate D has,
@@ -128,8 +128,11 @@ way `docs/availability-plan.md` was.
 ## Status: what exists, and what (b) actually is
 
 `src/models/stan_availability.py` + `src/stan/betabinomial_glm.stan` ship the season-level
-beta-binomial posterior, verified against the point MLE (21/21 coefficients inside the 95%
-interval, 254 s, 0 divergences, held-out CRPS **10.795** games on 911 rows).
+beta-binomial posterior — a two-component mixture since 2026-08-12 — verified against the
+point MLE of its own likelihood (35/35 terms inside the 95% interval, 366 s, 0 divergences,
+validation CRPS **9.8239** games on 883 rows; the recorded 24/24 at 94 s and 9.8155 are the
+pre-mixture readings, and 21/21, 254 s and held-out **10.795** on 911 rows the pre-lock,
+pre-window ones).
 
 **The spell simulator does not exist — not one line.** An exhaustive search for
 `spell|hazard|markov|onset|duration|simulator` across `src/`, `configs/`, `Makefile` and

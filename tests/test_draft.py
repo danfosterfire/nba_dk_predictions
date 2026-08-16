@@ -508,3 +508,49 @@ def test_the_shipped_field_is_read_from_the_artifact_rather_than_the_config():
     pinned = {"sim": {"field": {"rank_noise_sd": 2.5, "noise_model": "constant"}},
               "evaluation": {"predictions_dir": "outputs/predictions"}}
     assert D.selected_field(pinned).rank_noise_sd == 2.5
+
+
+# ── 10. The `adp_need` calibration ────────────────────────────────────────────
+
+def test_calibrate_need_at_zero_nests_the_tiered_calibration_exactly():
+    """The need-0 column is the shipped pure-ADP field on the same draws.
+
+    Same seed, same key arrays, a bonus of exactly zero — so `mae_fit` agrees bitwise and
+    the two artifacts are pinned together rather than merely similar.
+    """
+    frame, board = _board(_balanced_pool())
+    base = D.FieldConfig()
+    tiered = D.calibrate(board, base, n_drafts=5, grid=(0.0, 3.0), models=("tiered",))
+    need = D.calibrate_need(board, base, n_drafts=5, grid=(0.0, 3.0), need_grid=(0.0,))
+    assert (need["opponent"] == "adp_need").all()
+    assert np.array_equal(need["mae_fit"].to_numpy(), tiered["mae_fit"].to_numpy())
+    assert np.array_equal(need["mae_all"].to_numpy(), tiered["mae_all"].to_numpy())
+
+
+def test_a_large_need_weight_changes_what_the_field_drafts():
+    frame, board = _board(_balanced_pool())
+    base = D.FieldConfig()
+    quiet = D.calibrate_need(board, base, n_drafts=5, grid=(3.0,), need_grid=(0.0,))
+    keen = D.calibrate_need(board, base, n_drafts=5, grid=(3.0,), need_grid=(200.0,))
+    assert quiet["mae_fit"].iloc[0] != keen["mae_fit"].iloc[0]
+
+
+def test_selected_field_resolves_the_need_calibration_when_the_composition_seats_it(
+        tmp_path):
+    """A composition that seats `adp_need` reads its own artifact, not the pure-ADP one."""
+    pd.DataFrame([{"season": "pooled", "noise_model": "tiered", "rank_noise_sd": 2.0,
+                   "need_weight": 8.0, "selected": True}]).to_csv(
+        tmp_path / "draft_gate_b_need.csv", index=False)
+    cfg = {"sim": {"field": {"composition": {"default": {"adp_need": 1.0}}}},
+           "evaluation": {"predictions_dir": str(tmp_path)}}
+    field = D.selected_field(cfg)
+    assert field.need_weight == 8.0
+    assert field.rank_noise_sd == 2.0
+    assert field.noise_model == "tiered"
+
+
+def test_selected_field_for_the_need_composition_demands_its_own_artifact(tmp_path):
+    cfg = {"sim": {"field": {"composition": {"default": {"adp_need": 1.0}}}},
+           "evaluation": {"predictions_dir": str(tmp_path)}}
+    with pytest.raises(FileNotFoundError):
+        D.selected_field(cfg)

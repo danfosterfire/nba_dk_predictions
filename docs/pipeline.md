@@ -1,6 +1,18 @@
 
 # Pipeline (run in order)
 
+**Every recipe runs with `PYTHONUNBUFFERED=1`**, set once with `export` at the top of the
+`Makefile` rather than per target. Python buffers stdout whenever it is not writing to a
+terminal, which under `make` is almost always — so without it the progress lines this project
+prints by convention (`f"... {n:,} ... → {dest}"`) appear only when a buffer fills or the
+process exits, and a multi-hour target that is working looks exactly like one that is hung.
+That is not hypothetical: one session had the component ladder, `make posteriors` and `make
+strategy-sweep` all run blind and needed `/usr/bin/sample` to establish the sweep was alive,
+on a day the sweep took 53 minutes against a documented 4.8. It is global rather than a list
+of the slow targets because unbuffered stdout costs the fast ones nothing, and a list is one
+more place to forget a new target. Adopted 2026-08-15, after four sessions of exporting it by
+hand.
+
 ```bash
 python -m src.data.fetch           # pull raw game logs from nba_api
 python -m src.data.preprocess      # clean + add season column → data/processed/game_logs.parquet
@@ -26,6 +38,18 @@ make aging            # → outputs/eda/aging_curves.csv
 make target-profile   # → outputs/eda/target_{profile.csv,season_totals,trajectories}
 make feature-diagnostics  # → outputs/eda/feature_diagnostics.csv + feature_correlation_tier*
 make game-length      # → game_length.parquet (48 + 5k per game) + coverage csv
+make preseason        # → preseason.parquet + outputs/eda/preseason_coverage.csv
+                      #    current-season preseason games as FORECAST COVARIATES — the
+                      #    only current-season observation the project may read, and never
+                      #    a target row. Its logs are backfillable, so this stays OUT of
+                      #    `make daily-capture`; one fetch after the final preseason game
+                      #    is enough. See docs/preseason-plan.md
+make preseason-value  # → outputs/eda/preseason_value.csv   (needs `make preseason`)
+                      #    the P1 gate: redundancy, incremental signal against each head's
+                      #    OWN metric, and the missingness census. TRAIN SEASONS ONLY — it
+                      #    never materializes validation, because a screen that spends the
+                      #    selection split leaves the arm it is screening nothing to select
+                      #    on. Every figure is quoted on the season-start-roster population
 make serial-correlation   # → outputs/eda/serial_correlation.csv
                       #    lag-k autocorrelation + block variance inflation per component
 make variance-budget  # → outputs/eda/variance_budget.csv
@@ -68,6 +92,41 @@ make season-total      # composes gp × rate → outputs/predictions/season_tota
                        #   what the availability head is worth on the actual deliverable
 make component-rates   # → component_rate_metrics.csv
                        #   the 11 component heads vs the mandatory no-fit floor
+
+make components-preseason
+                       # preseason-plan session 6b: the preseason block as NESTED arms on
+                       #   ALL ELEVEN rate heads →
+                       #   outputs/predictions/components_preseason{,_rolling,_shrinkage}
+                       #   .csv. Point MLE on each head's SHIPPED variant (read from
+                       #   stan_component_metrics.csv), so no CmdStan; under five minutes.
+                       #   Needs `make preseason`, `make preseason-value` and
+                       #   `make stan-components`.
+                       #   ELEVEN, NOT SIX. P1's DR2 screen short-listed six and called
+                       #   three others actively harmful. The screen's SIGN did not survive
+                       #   on any of the three, and two of them (`fta`, `fg2m|fg2a`) clear
+                       #   the real bar outright; a fourth excluded head, `fg3a|fga`, is the
+                       #   third-largest result in the round. A screen is a filter, never a
+                       #   veto.
+                       #   SIX OF ELEVEN CLEAR the conjunction on the declared primary —
+                       #   `fga`, `fg3a|fga`, `ast`, `reb`, `fta`, `fg2m|fg2a`. On the
+                       #   fitting-half-promoted shrunk arm, which is what ships, ALL
+                       #   ELEVEN clear the rolling half (9-13 of 13 origins) and SEVEN
+                       #   clear validation. No head anywhere in the round has an interval
+                       #   clear of zero on the wrong side.
+                       #   THREE THINGS TO KNOW. Read against the no-fit floor rather than
+                       #   zero, the block is worth MORE than the whole fitted head on
+                       #   `reb` (7.25x), `fg3a|fga` (3.77x) and `fga` (1.17x). The volume
+                       #   term wants an empirical-Bayes shrink here, not P1's additive
+                       #   one, with `k` fitted per head (20 to 320 pseudo-minutes). And
+                       #   SEASON-CENTRING LOSES on this family — it is a device for levels,
+                       #   and a per-36 rate has already divided the exposure out.
+                       #   TEN OF ELEVEN SHIP, adopted 2026-08-15 via `make stan-components`
+                       #   (`stan.components.preseason`). Retention under the posterior is
+                       #   0.985 median, four heads GROWING. `fg3m|fg3a` is rolled back by
+                       #   `stan_components.PRESEASON_EXCLUDE` — the only measured-worse
+                       #   result in the whole preseason round, on three agreeing
+                       #   instruments. Priced end to end by `make preseason-contest`,
+                       #   which now flips FOUR config keys.
 ```
 
 
@@ -82,6 +141,12 @@ are the artifact worth keeping.
 
 ```bash
 make stan-availability # port of the point-MLE beta-binomial + the posterior it buys
+make stan-availability-mixture
+                       # the LOW-AVAILABILITY MIXTURE's port check — the same head with
+                       #   a second component for the disrupted season, scored against
+                       #   the point-MLE arm `make availability-window` selected. Its own
+                       #   artifacts, deliberately: `stan-availability` writes the figures
+                       #   `make docs-audit` pins, and a port check must not move them
 make stan-minutes      # min | available, trials = real game length (NEVER 48)
 make stan-components   # 8 NB count heads + 3 beta-binomial conversion heads
 make stan-composition  # the team-game minutes COMPOSITION — the per-game allocation
@@ -175,6 +240,171 @@ make minutes-unification
                        #   what makes the injection shippable: sigma_train = 0.450 against
                        #   the validation grid's 0.375.
 
+make minutes-window    # the marginal minutes head's fitting window x dispersion ladder,
+                       #   the same question `make availability-window` asked one head
+                       #   over → outputs/predictions/minutes_window_era.csv,
+                       #   minutes_window_break.csv, minutes_window.csv,
+                       #   minutes_window_rolling.csv, minutes_window_stake.csv.
+                       #   Point MLE for the ladder and a rehydrated posterior for the
+                       #   stake, so no CmdStan and no refit of either minutes head.
+                       #   THREE FINDINGS. It rebuilds availability-window-plan §6's era
+                       #   series through each head's OWN design rows, which corrects the
+                       #   sd contraction from -15.2% to -9.0%, moves the break from
+                       #   2014-15 to 2010-11, and finds the contraction has REVERTED
+                       #   since 2019-20. The ladder's window wins on validation and does
+                       #   NOT replicate on a 13-origin rolling harness (-0.079
+                       #   [-0.59, +0.43]) while role-graded rho does, 13 of 13 origins at
+                       #   a 3.03x spread — the largest in the project. And the stake is a
+                       #   NULL: sim.minutes.player_season_sigma = 0.450 stands, because a
+                       #   short window makes the marginal head a HARDER reference to tie
+                       #   rather than an easier one.
+
+make minutes-preseason # preseason-plan P3: the preseason block as a NESTED arm on the
+                       #   marginal minutes head → outputs/predictions/
+                       #   minutes_preseason{,_rolling,_shrinkage}.csv. Same point-MLE
+                       #   machinery as `minutes-window`, so no CmdStan; needs
+                       #   `make preseason` and `make preseason-value` first.
+                       #   THE GATE PASSES on both halves — validation -4.789
+                       #   [-8.08, -1.59] and a 13-origin rolling harness at -7.940
+                       #   [-9.41, -6.44], 12 of 13 — so the composition's conditional
+                       #   opens. THREE THINGS TO KNOW. Every arm INCLUDING the reference
+                       #   fits the covered window (2004-05 on), because this head fits
+                       #   from 1997-98 and the missing indicator would be an era dummy on
+                       #   a quarter of its rows; that cut alone is worth 1.19 CRPS. The
+                       #   rolling reading is LARGER than validation, the first time in
+                       #   this repo. And the shipped column is the delta CENTRED within
+                       #   season: preseason minutes are compressed, the level is nuisance,
+                       #   and centring both wins and repairs a bias the raw delta creates.
+
+make availability-preseason
+                       # preseason-plan P2: the same block as a NESTED arm on the
+                       #   AVAILABILITY head that ships — the two-component mixture →
+                       #   outputs/predictions/availability_preseason{,_rolling,_effects,
+                       #   _block}.csv. Eight arms, point MLE, ~1 h, no CmdStan. The block
+                       #   goes to two places, `beta` and the disruption weight `pi`,
+                       #   because availability-window-plan §14d established those are
+                       #   different questions. THE GATE FAILS, and it fails on the
+                       #   reading that cannot resolve it: validation CRPS -0.102
+                       #   [-0.322, +0.121] on the draftable population spans zero while the
+                       #   rolling harness reads -0.254 [-0.344, -0.162] at 10 OF 10 origins
+                       #   with the boundary held. The bar is a conjunction and it fails, so
+                       #   nothing is ported — but it was written against the opposite
+                       #   failure (§12e, §14f) and has no clause for this one. §14f's own
+                       #   diagnostic says why: the rolling interval is 2.4x NARROWER on
+                       #   4.6x the rows, so what validation lacks is resolution rather than
+                       #   the effect being smaller. TWO THINGS TO KNOW. The pooled reading
+                       #   passes at both readings and 6.2x of it (2.8x rolling) is
+                       #   mid-season signings, which is P1's population finding at this
+                       #   head's own unit. And the SHIPPED head's low-tail error changes
+                       #   SIGN between the two populations at both readings — under-
+                       #   predicting P(GP<10) pooled, over-predicting it on the draft pool
+                       #   — potential-to-dos item 9.
+
+make availability-regime # the last two open axes on the availability head's fitting rule
+                       #   → outputs/predictions/availability_{regime,shrinkage,
+                       #   regime_confirmation}.csv. (1) an explicit COVID-regime indicator
+                       #   or exclusion, swept against lookback; (2) shrinkage toward the
+                       #   long-window fit. Point MLE for selection, ~6 min, no CmdStan.
+                       #   BOTH ARE NULLS, and the round's reusable part is the
+                       #   INSTRUMENT: the walk-forward harness is blind to a regime that
+                       #   sits in its last three fitting seasons — no arm is active at
+                       #   more than 2 of 13 origins, and those two are the trough seasons
+                       #   themselves, so it ranks the arms backwards. The fix is a
+                       #   CONTAMINATION harness that injects the block into ten ordinary
+                       #   origins, with a same-size ordinary block as the control. It also
+                       #   rebuilds availability-window-plan §5b's spliced arm and
+                       #   WITHDRAWS that round's diagnosis of it: fitted jointly, the same
+                       #   coefficient partition does not beat the transplant.
+
+make availability-exchangeability
+                       # the head's TRIALS assumption — availability-window-plan §11 →
+                       #   outputs/predictions/availability_{clustering,exchangeability}.
+                       #   csv. numpy only, seconds, NOTHING IS FITTED, and that is the
+                       #   finding: `gp` is invariant to the arrangement, so C and rho
+                       #   enter its variance only through C + rho*(n - C) and no
+                       #   likelihood over gp can separate them. Five already-fitted
+                       #   non-exchangeable arms agree; `hybrid` reproduces CRPS, PIT and
+                       #   the tail error to every decimal. So the instrument is a ladder
+                       #   at the SCORING PERIOD holding gp fixed at its realized value:
+                       #   observed vs `allocate_spells` (ships) vs uniform placement
+                       #   (what the beta-binomial asserts). The assumption understates a
+                       #   star's P(3 consecutive dead periods) by 9.1x and the shipped
+                       #   layout already pays 63-82% of it. What is left is the TENURE
+                       #   half — 44.17% of missed games are edge blocks the layout gives
+                       #   neither the right shape nor the right position.
+
+make availability-no-prior
+                       # what the players the head has NO ROW FOR realize —
+                       #   availability-window-plan §8a → outputs/predictions/
+                       #   availability_no_prior.csv. Descriptive, seconds. Built to settle
+                       #   a decision that was taken and never implemented, and it
+                       #   WITHDRAWS it: the role bucket carries DISPERSION, which spans
+                       #   1.1557x across draft buckets, while the population's LEVEL spans
+                       #   3.3260x. Applied as specified the rule would hand a lottery
+                       #   top-5 pick a narrower rho than he realizes. `role_bins`'
+                       #   lowest-bucket fallback stands and is now measured rather than
+                       #   assumed.
+                       # §8b is the LADDER on the axis that survived →
+                       #   availability_no_design_level.csv. Four pooling KEYS over one
+                       #   estimator, so `pooled` reproduces the shipped scalar exactly.
+                       #   `tenure_draft` ships: CRPS 9.8689 against the incumbent's
+                       #   14.4551 on validation, and it beats the runner-up too, because
+                       #   a draft bucket is a 3.17x gradient for a FIRST appearance and a
+                       #   near-flat for a RETURN. Consumed by
+                       #   sim.availability.no_design_level.
+                       # P4(a) of preseason-plan rides in the same target →
+                       #   availability_no_prior_preseason.csv. Two extra axes on the SAME
+                       #   ladder: a preseason minutes-share key, and the population the
+                       #   rates are POOLED from. Both FAIL the gate on the draft pool and
+                       #   nothing ships. Pooled, the preseason key passes at both
+                       #   readings — the fourth instrument to show the population
+                       #   restriction is load-bearing.
+
+make composition-preseason
+                       # Session 4b of preseason-plan, gate 1 →
+                       #   outputs/predictions/composition_preseason.csv. The composition is
+                       #   the one head where two of three routes are unreachable by a
+                       #   coefficient: `w_share` is the feature OWN, the offset
+                       #   (`logit_prior`) AND the allocation order (`order_frame`), and no
+                       #   coefficient touches the last two. Blends a preseason minutes share
+                       #   into `w_share` and scores it through the head's OWN no-fit floor,
+                       #   which sets eta = 0 and isolates them — 48 s, no CmdStan, no
+                       #   fit of the head. PASSES at the head's own selection unit
+                       #   (-0.19972 [-0.21661, -0.18225] CRPS minutes per player-game) and
+                       #   TIES at the season unit, which is this head's standing lesson.
+                       #   The attribution says it is the OFFSET: `order_only` is worth
+                       #   3.75% of the margin, which reverses half of what P3 predicted.
+
+make composition-preseason-fit
+                       # Sessions 4c and 4d: the half the screen above does not settle.
+                       #   `beta` can correct an offset the floor cannot, so the increment
+                       #   could shrink under a fit — or grow, as P3's own did. Fits of the
+                       #   shipped variant (a same-window `base` control and the
+                       #   blended-offset arm at k = 80), plus BOTH frames' no-fit floors at
+                       #   the same 200 predictive draws, which makes the retention —
+                       #   fitted increment / floor increment — a within-artifact ratio.
+                       #   The bar is frozen in `report()` before the run.
+                       #   4c ran the PILOT window (2018-19 on, ~30 min) →
+                       #     composition_preseason_fit.csv, and docs-audit re-derives ~45
+                       #     figures from it, so a later round must not overwrite it.
+                       #   4d runs the head's own window, which the module CUTS to the
+                       #     preseason panel's coverage (2004-05) for the two gate arms —
+                       #     P3's rule — and adds `base_full_window` at 1996-97 carrying no
+                       #     preseason column, to price that cut on its own. ~6.3 h for the
+                       #     three; `stan.composition.preseason.label` namespaces its
+                       #     artifacts → composition_preseason_fit_covered*.csv.
+                       #   NOT part of `make stan`; does not write stan_composition_*.csv.
+
+make rookie-priors     # P4(b): does a no-prior player's own preseason beat his draft
+                       #   bucket? → outputs/predictions/rookie_priors.csv. The incumbent
+                       #   is stan_composition.rookie_share_priors, the bio_draft_number
+                       #   imputation behind his `w_share`. Three arms over one estimator,
+                       #   with the blend's `k` chosen on an inner carve of the FITTING
+                       #   half. The draft bucket is an ANTI-MODEL for rates (R2 -0.043 to
+                       #   +0.046) and the shrunk preseason clears on five of eight targets
+                       #   at 19 of 19 rolling origins; the minutes SHARE — the only target
+                       #   with a live consumer — is a tie. numpy only, ~10 s.
+
 make weekly-scores     # Gate A at the unit a LINEUP is set at: observed against
                        #   simulated dk_pts per player per scoring period, on train and
                        #   validation → outputs/predictions/weekly_score_{index,period,
@@ -209,6 +439,56 @@ make composition-effects
                        #   incumbent's record and is quoted by `make docs-audit`. The
                        #   deviation table lands BEFORE any sampling, so an aborted run
                        #   still leaves it.
+
+make mixture-value     # what the availability mixture is worth in the CONTEST, as a
+                       #   paired counterfactual
+                       #   → outputs/predictions/availability_mixture_contest.csv.
+                       #   REPORTS two arms; it does not run them. Running them is two
+                       #   passes over five targets differing in one config key
+                       #   (`stan.availability.mixture`), ~1 h each because only
+                       #   `--groups availability` of `make posteriors` is refitted, with
+                       #   `python -m src.sim.mixture_value --capture {single,mixture}`
+                       #   freezing each pass into outputs/predictions/mixture_arms/.
+                       #   `--capture` REFUSES when the config key and the arm name
+                       #   disagree. Read the `resolution` block before the `contest`
+                       #   one: 500 worlds per season resolves a lift gap of 0.0876, and
+                       #   the simulated lift is SELF-SCORED — each arm is measured in a
+                       #   world it generated, which is why the `adp` control row (a
+                       #   board identical across arms) is what the null rests on.
+
+make preseason-contest # what the PRESEASON BLOCK is worth in the contest, as a paired
+                       #   counterfactual — the same device one round over
+                       #   → outputs/predictions/preseason_block_contest.csv.
+                       #   REPORTS two arms; it does not run them. Running them is two
+                       #   passes over five targets differing in the FOUR keys that ARE
+                       #   the block (`stan.availability.preseason`,
+                       #   `stan.minutes.preseason`,
+                       #   `stan.composition.preseason.adopt`,
+                       #   `stan.components.preseason`), ~4.5 h each because all
+                       #   four head groups are refitted and the composition is 2-3 h of
+                       #   it. `--capture {base,preseason}` freezes each pass into
+                       #   outputs/predictions/preseason_arms/. Run the COUNTERFACTUAL
+                       #   first, so the shipped arm is what disk ends on. `--capture`
+                       #   REFUSES unless ALL FOUR keys agree with the arm name — a pass
+                       #   with the block half on is neither arm.
+                       #   ⚠️ IT OVERWRITES IN PLACE. The 2026-08-15 four-key pass replaced
+                       #   P5's three-key one in this same file, so preseason-plan's "P5
+                       #   closes" section is a RECORD and session 6b holds the live
+                       #   figures. The `base` capture is byte-identical across the two
+                       #   passes, which is the only reason the components' own share can
+                       #   be recovered by differencing the two deltas (-2.27088 and
+                       #   -3.84536 of season-total MAE).
+                       #   ⚠️ ONLY THREE OF THE FOUR HEAD GROUPS CAN REACH THIS. `src/sim/`
+                       #   never loads the marginal minutes head, so P3's block — the
+                       #   largest of the three by its own gate — is structurally
+                       #   invisible here; a test pins the import fact and the `reach`
+                       #   block reports which windows moved. ⚠️ The `reach` block has NO
+                       #   `components` row: `reach_rows` reports `refit_landed` for
+                       #   availability, minutes and composition only, so the family this
+                       #   round shipped has no per-head trace in the artifact that prices
+                       #   it — all four CONFIG KEYS do show 0→1. Read `resolution` before
+                       #   `contest`, then `board`: this block arrives as the allocation
+                       #   MEAN rather than as shape, so a ranking is what it can move.
 ```
 
 **After `make posteriors`, nothing else in the simulation layer needs CmdStan.** That is the

@@ -66,10 +66,11 @@ import yaml
 from src.models.held_out import selection_split
 from src.models.posteriors import load, posteriors_dir, require_window
 from src.models.stan_composition import (GROUP_KEYS, PILOT_FIRST_SEASON,
-                                         StanComposition, composition_frame,
+                                         StanComposition, head_frame,
                                          simulate_minutes)
+from src.models.stan_minutes import PRESEASON as MINUTES_PRESEASON
 from src.models.stan_minutes import FloorMinutes, StanMinutes
-from src.models.stan_minutes import build_design as minutes_build_design
+from src.models.stan_minutes import head_design as minutes_head_design
 from src.models.stan_utils import crps_from_samples, ks_uniform, pit_from_samples
 
 # The season unit: one row per player-season, which is what a draft board ranks on.
@@ -509,23 +510,38 @@ def verdict(delta: dict) -> str:
 
 def validation_frames(cfg: dict) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame,
                                           pd.DataFrame]:
-    """`(minutes_train, minutes_val, composition_val, composition_train)` — through
+    """`(minutes_train, minutes_val, composition_train, composition_val)` — through
     `selection_split` only.
+
+    The minutes side goes through `stan_minutes.head_design`, **not** `build_design`: since
+    2026-08-13 the shipped head carries a five-column preseason block, and this module
+    rehydrates that head and calls its own `predict_samples`, so a frame without those
+    columns is not a different comparison — it is a `KeyError`. The flag is read from the
+    config rather than defaulted, so `stan.minutes.preseason: false` rolls this module back
+    with the head it scores.
 
     The composition frame is built over every season for its lags and its expanding rookie
     prior and then cut to the head's fitting window, exactly as `stan_composition.run` and
     `posteriors.composition_artifact` both do; the window only decides which rows were
     *fitted*, and the validation seasons are the same either way.
+
+    The minutes **fitting** rows are deliberately *not* cut to the preseason-covered window
+    the head itself fits on. They are used here for one thing — `FloorMinutes`, a no-fit
+    carry-forward whose mean carries no preseason column — and cutting them would move the
+    floor this gate scores both heads against for a reason that has nothing to do with the
+    floor.
     """
     test_seasons = int(cfg.get("features", {}).get("availability", {})
                        .get("test_seasons", 2))
     first_season = str(cfg.get("stan", {}).get("composition", {})
                        .get("first_season", PILOT_FIRST_SEASON))
+    preseason = bool(cfg.get("stan", {}).get("minutes", {})
+                     .get("preseason", MINUTES_PRESEASON))
 
-    design = minutes_build_design(cfg)
+    design = minutes_head_design(cfg, preseason)
     minutes_train, minutes_val = selection_split(design, test_seasons)
 
-    frame = composition_frame(cfg)
+    frame = head_frame(cfg)
     pilot = frame[frame["season"] >= first_season].reset_index(drop=True)
     composition_train, composition_val = selection_split(pilot, test_seasons)
     return minutes_train, minutes_val, composition_val, composition_train
@@ -704,11 +720,26 @@ def run(cfg: dict) -> dict[str, Path]:
           f"passes through in full. And the\n  team constraint forbids the fix — a team's "
           f"season minutes are fixed at 5 x sum(game_length),\n  measured here as a "
           f"predictive sd of {rows[3]['team_season_sd']:.2f} minutes across draws.")
-    print(f"\n  The sharpest form of that: at the season unit the composition does not "
-          f"clear the no-fit\n  carry-forward floor — CRPS {rows[1]['crps_minutes']:.2f} "
-          f"against the floor's {rows[2]['crps_minutes']:.2f} — on the same draws that "
-          f"clear\n  its own per-team-game floor decisively. Same head, two units, "
-          f"opposite verdicts.")
+    # ⚠️ DERIVED, not asserted. This sentence used to hard-code "does not clear the no-fit
+    # carry-forward floor" while interpolating the two numbers beside it, and on 2026-08-14
+    # the preseason-blended composition started clearing that floor (155.94 against 161.29)
+    # while the prose went on denying it. That is the `make docs-audit` failure mode one
+    # level in — inside the module that WRITES the artifact, where no doc guard can see it —
+    # so the verdict is now computed from the same figures it quotes.
+    clears_floor = rows[1]["crps_minutes"] < rows[2]["crps_minutes"]
+    if clears_floor:
+        print(f"\n  ⚠️ And at the season unit the composition now CLEARS the no-fit "
+              f"carry-forward floor —\n  CRPS {rows[1]['crps_minutes']:.2f} against the "
+              f"floor's {rows[2]['crps_minutes']:.2f} — which it did not before the "
+              f"preseason\n  blend. The spread verdict above is unaffected: beating a "
+              f"no-fit floor on CRPS and\n  carrying 4.6x too little season-level spread "
+              f"are compatible, and the PIT KS is what\n  separates them.")
+    else:
+        print(f"\n  The sharpest form of that: at the season unit the composition does not "
+              f"clear the no-fit\n  carry-forward floor — CRPS {rows[1]['crps_minutes']:.2f} "
+              f"against the floor's {rows[2]['crps_minutes']:.2f} — on the same draws that "
+              f"clear\n  its own per-team-game floor decisively. Same head, two units, "
+              f"opposite verdicts.")
     print(f"  Its aggregate bias over the complete player set is "
           f"{rows[3]['bias_minutes']:+.1e} by CONSTRUCTION, not by\n  skill: the league's "
           f"minutes are fully allocated, so summing every unit recovers the total exactly.")

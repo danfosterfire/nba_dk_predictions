@@ -65,6 +65,24 @@ The window is stamped into every artifact regardless, and `require_window` is th
 consumer can refuse the wrong one instead of discovering it in a result — the leak it prevents
 is quiet, because a backtest reading heads fitted at a wider window has read those seasons
 *through the coefficients*, and no frame-level split guard can see that.
+
+## The fit window is not the season truncation, and they are named apart
+
+A second season axis arrived with the windowed availability head (2026-08-11) and the
+composition's pilot window before it, and the two are easy to confuse because both are "which
+seasons are in the fit":
+
+| axis | what it decides | where it lives | what enforces it |
+|---|---|---|---|
+| **fit window** | which *split* may be fitted — `train` / `train_val` / `full` | `provenance["fit_window"]`, and the directory | `require_window`, `assert_unlocked` |
+| **season truncation** | which recent *suffix* of that split is actually fitted | `extras["fit_first_season"]` | the head's own `fitting_rows`, re-applied by `model_cards` |
+
+They are orthogonal: a `train` head truncated at 2012-13 and a `train` head over the full
+history sit in the same directory, pass the same `require_window`, and are different models.
+`fit_first_season` therefore reaches the manifest as its own column rather than being left to
+`provenance["first_season"]`, which is a *readout* of the fitted frame's span and would say
+`2012-13` for a truncated head and a full-window head fitted on a frame that happens to start
+there.
 """
 
 from __future__ import annotations
@@ -196,6 +214,22 @@ def _apply_step(step: dict, frame: pd.DataFrame) -> pd.DataFrame:
         values = frame[step["column"]].to_numpy(dtype=float)
         out[step["name"]] = np.searchsorted(np.asarray(step["edges"], dtype=float),
                                             values, side="right") + 1
+    elif kind == "cut":
+        # `stan_availability.role_bins`, as a recipe step: explicit interval edges that
+        # close BOTH ends, 1-based, with anything outside them — a NaN prior season, or a
+        # value above the top edge — falling into the LOWEST bucket.
+        #
+        # A second binning kind rather than a flag on `bins` above, because the two are
+        # different conventions and collapsing them would make the difference invisible at
+        # the call site: `bins` holds INTERIOR quantile cuts that `searchsorted` extends to
+        # +/- infinity, so it has no outside, where these edges are constants with an
+        # outside that has to be given a rule. Both write a 1-based `rho_bin`; only this
+        # one can be handed a value the fit never saw.
+        out = frame.copy()
+        idx = pd.cut(frame[step["column"]].to_numpy(dtype=float),
+                     np.asarray(step["edges"], dtype=float), labels=False)
+        out[step["name"]] = (np.nan_to_num(np.asarray(idx, dtype=float), nan=0.0)
+                             .astype(int) + 1)
     elif kind == "join":
         # A per-unit feature block joined on keys, with ONE missingness indicator for the
         # whole block and train means for the holes — `stan_composition.attach_team_context`
@@ -226,6 +260,13 @@ class DesignRecipe:
     (`stan_components.build_design`, `stan_minutes.build_design`, ...). It is recorded as a
     string rather than a callable so the pickle does not pin an import path, and so a
     consumer building a 2026-27 frame can see which builder it has to satisfy.
+
+    **`pi_features` / `pi_scaler` are a SECOND design block, not more columns in the
+    first.** The availability head's low-availability mixture puts covariates on `pi`
+    through their own link, standardized by their own scaler on the same fitting rows
+    (`stan_availability.PI_FEATURES`), and that list is not a subset of `features` — so
+    folding the two together would either mis-standardize one block or silently drop it.
+    Empty on every other head, which is the single-block recipe exactly.
     """
 
     variant: str
@@ -233,6 +274,19 @@ class DesignRecipe:
     scaler: object
     steps: tuple[dict, ...] = ()
     builder: str = ""
+    pi_features: list[str] = field(default_factory=list)
+    pi_scaler: object = None
+
+    def __setstate__(self, state: dict) -> None:
+        """Restore an artifact pickled before the second block existed.
+
+        A dataclass field default is applied by `__init__`, and unpickling does not call
+        it — `pickle` restores `__dict__` directly. So without this, every artifact written
+        before these two fields raises `AttributeError` on `recipe.pi_features` rather than
+        falling back to the default, on every head and every window. Defaults first, state
+        second, so a newer pickle still wins.
+        """
+        self.__dict__.update({"pi_features": [], "pi_scaler": None, **state})
 
     def transform(self, frame: pd.DataFrame) -> pd.DataFrame:
         """Apply every fitted step, in order."""
@@ -243,17 +297,35 @@ class DesignRecipe:
 
     def matrix(self, frame: pd.DataFrame, transformed: bool = False) -> np.ndarray:
         """The standardized design matrix — mirrors every head's private `_design`."""
-        if not self.features:
+        return self._block(frame, self.features, self.scaler, transformed)
+
+    def pi_matrix(self, frame: pd.DataFrame, transformed: bool = False) -> np.ndarray:
+        """The mixture weight's standardized design — mirrors `StanAvailability._pi_design`.
+
+        `(rows x 0)` when the head carries no mixture, which is what makes a consumer's
+        `pi` expression one path rather than a branch.
+        """
+        return self._block(frame, self.pi_features, self.pi_scaler, transformed)
+
+    def _block(self, frame: pd.DataFrame, features: list[str], scaler,
+               transformed: bool) -> np.ndarray:
+        if not features:
             # The intercept-only duration arm. `features = []` is legal in Stan and the
             # head stores no scaler, so an empty (rows x 0) block is the honest design.
             return np.zeros((len(frame), 0))
+        if scaler is None:
+            raise ValueError(
+                f"the recipe names {len(features)} column(s) for this block and carries "
+                f"no scaler for them, so there is nothing to standardize a new frame "
+                f"with. The names and the fitted scaler travel together or the block "
+                f"describes a different model from the one that was fitted.")
         out = frame if transformed else self.transform(frame)
-        missing = [c for c in self.features if c not in out.columns]
+        missing = [c for c in features if c not in out.columns]
         if missing:
             raise KeyError(f"the recipe produced no column for {missing}; the frame is "
                            f"not the output of `{self.builder or 'the head builder'}`")
-        X = out[self.features].to_numpy(dtype=float)
-        return self.scaler.transform(np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0))
+        X = out[features].to_numpy(dtype=float)
+        return scaler.transform(np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0))
 
 
 # ── The artifact ──────────────────────────────────────────────────────────────
@@ -304,6 +376,30 @@ class PosteriorArtifact:
             return np.exp(np.clip(eta, -30, 30))
         return 1.0 / (1.0 + np.exp(-np.clip(eta, -30, 30)))
 
+    def pi_draws(self, frame: pd.DataFrame, transformed: bool = False) -> np.ndarray:
+        """(draws x rows) low-availability mixture weight, `pi = theta * sigmoid(Z gamma)`.
+
+        Zero everywhere when the head carries no mixture, so a consumer writes the convex
+        combination once instead of branching — `(1 - 0) * mu + 0 * mu_low` is `mu`.
+
+        The covariates come from the recipe's **second** block, which is why the block had
+        to be persisted: `pi` is the arm's distinguishing claim (it says *who* is at risk),
+        and a consumer that could not rebuild `Z` for a new frame would be holding the
+        single-component head under the mixture's name.
+        """
+        theta = np.asarray(self.draws.get("theta_draws", ()), dtype=float)
+        if not theta.size:
+            return np.zeros((self.n_draws, len(frame)))
+        Z = self.recipe.pi_matrix(frame, transformed=transformed)
+        gamma = np.asarray(self.draws["gamma_draws"], dtype=float)
+        if gamma.shape[1] != Z.shape[1]:
+            raise ValueError(
+                f"{self.head}: `gamma_draws` has {gamma.shape[1]} coefficient(s) and the "
+                f"recipe's pi block builds {Z.shape[1]} column(s). The persisted mixture "
+                f"and its design have drifted; re-run `make posteriors`.")
+        eta = np.clip(gamma @ Z.T, -30, 30)
+        return theta[:, None] / (1.0 + np.exp(-eta))
+
     def predict(self, frame: pd.DataFrame, transformed: bool = False) -> np.ndarray:
         """The head's own reported mean, per row.
 
@@ -311,6 +407,17 @@ class PosteriorArtifact:
         dispersion. This exists so the round-trip has something to compare against, and so a
         consumer can sanity-check an artifact against a stored figure.
         """
+        if self.response == "mixture_mean_mu":
+            # The PREDICTIVE mean of the two-component mixture, not the main component's.
+            # A separate response name rather than a widened `mean_mu` because they are
+            # different functions of the same draws: `mean_mu` is what `mu_draws` returns,
+            # and a head whose reported mean silently changed meaning under the same label
+            # would make the round-trip pass while checking a number the head never
+            # reports. Mirrors `StanAvailability.predict_mean` exactly.
+            mu = self.mu_draws(frame, transformed=transformed)
+            pi = self.pi_draws(frame, transformed=transformed)
+            mu_low = np.asarray(self.draws["mu_low_draws"], dtype=float)[:, None]
+            return ((1.0 - pi) * mu + pi * mu_low).mean(axis=0)
         if self.response == "eta":
             return self.eta_draws(frame, transformed=transformed).mean(axis=0)
         if self.response == "plug_in_mu":
@@ -432,6 +539,40 @@ def load_all(dest_dir: Path | str, heads: list[str] | None = None
     return {name: load(name, directory) for name in names}
 
 
+def rebuild_manifest(cfg: dict, window: str = FIT_WINDOW) -> Path:
+    """Re-derive the manifest from the artifacts already on disk. Refits nothing.
+
+    The manifest is a *projection* of the artifacts, so it can fall behind them: a column
+    added to `manifest_row` describes every artifact ever written, but only appears on rows
+    written afterwards. That is how `preseason` / `preseason_columns` came to be inside the
+    pickles' `extras` and absent from the CSV — the property was persisted correctly and the
+    readable trace was not.
+
+    Rebuilding is cheap and is also a re-verification: every artifact is loaded **from disk**
+    and round-tripped, so a row here attests to the file rather than to an object that was in
+    memory at fit time. Nothing else in this module can make that claim about an artifact it
+    did not just build.
+    """
+    dest_dir = posteriors_dir(cfg, window)
+    rows = []
+    for name, artifact in load_all(dest_dir).items():
+        dest = dest_dir / f"{name}.pkl"
+        rows.append(manifest_row(artifact, artifact.roundtrip(), dest))
+    out = pd.DataFrame(rows).sort_values("head").reset_index(drop=True)
+    manifest_path = dest_dir / "manifest.csv"
+    out.to_csv(manifest_path, index=False)
+    failed = out[~out["roundtrip_passes"]]
+    print(f"Rebuilt {len(out)} manifest rows from disk → {manifest_path}")
+    if len(failed):
+        print(f"  /!\\  {len(failed)} artifact(s) FAILED the round-trip: "
+              f"{', '.join(failed['head'])}")
+    else:
+        print(f"  every artifact re-loaded and round-tripped clean "
+              f"(max design error {out['max_design_error'].max():.2e}, "
+              f"max prediction error {out['max_prediction_error'].max():.2e})")
+    return manifest_path
+
+
 def require_window(artifacts: dict, window: str = FIT_WINDOW) -> None:
     """Refuse artifacts fitted on a wider window than the caller is allowed to consume.
 
@@ -549,7 +690,17 @@ def _thinned(model, keep: int) -> tuple[object, dict, int]:
              "beta_draws": np.asarray(model.beta_draws)[idx]}
     out.alpha_draws = draws["alpha_draws"]
     out.beta_draws = draws["beta_draws"]
-    for name in ("rho_draws", "phi_draws", "kappa_draws"):
+    # The dispersion blocks, plus the low-availability mixture's four when the head
+    # declares one. Every one of these is indexed by draw, so they thin on the SAME `idx`
+    # as `alpha` — pairing a draw's `mu` with another draw's `pi` would average the
+    # posterior without saying so. Gated on `model.mixture` rather than on the attributes
+    # existing, because `StanAvailability` carries an inert zero block in both arms and a
+    # persisted block of zeros would be a mixture artifact that nests rather than an
+    # artifact with no mixture.
+    names = ["rho_draws", "phi_draws", "kappa_draws"]
+    if getattr(model, "mixture", False):
+        names += ["theta_draws", "mu_low_draws", "rho_low_draws", "gamma_draws"]
+    for name in names:
         values = getattr(model, name, None)
         if values is None:
             continue
@@ -582,7 +733,9 @@ def _finish(head: str, head_label: str, family: str, response: str, variant: str
             features: list[str], model, fit_frame: pd.DataFrame,
             probe_transformed: pd.DataFrame, probe_raw: pd.DataFrame,
             steps: list[dict], builder: str, extras: dict, window: str,
-            cfg_stan: dict, draws_kept: int, seconds: float) -> PosteriorArtifact:
+            cfg_stan: dict, draws_kept: int, seconds: float,
+            pi_features: list[str] | None = None,
+            pi_scaler: object = None) -> PosteriorArtifact:
     """Thin, capture the reference from the live head, assemble, and verify.
 
     **A fitted random effect is persisted as its SCALE or refused outright, never dropped.**
@@ -609,7 +762,14 @@ def _finish(head: str, head_label: str, family: str, response: str, variant: str
                   "u_sd_scale": float(ps.scale), "u_stream": ps.stream, **ps.summary()}
     thinned, draws, n_full = _thinned(model, draws_kept)
     recipe = DesignRecipe(variant=variant, features=list(features),
-                          scaler=model.scaler, steps=tuple(steps), builder=builder)
+                          scaler=model.scaler, steps=tuple(steps), builder=builder,
+                          pi_features=list(pi_features or []), pi_scaler=pi_scaler)
+    if recipe.pi_features and recipe.pi_scaler is None:
+        raise ValueError(
+            f"{head}: the recipe names {len(recipe.pi_features)} `pi` covariate(s) and "
+            f"carries no scaler for them, so `pi_matrix` would raise on the first consumer "
+            f"rather than here. The second design block is standardized on the head's own "
+            f"fitting rows; pass the head's `pi_scaler`.")
 
     # The reference is taken through the head's OWN methods on its OWN transformed frame,
     # so the round-trip compares two genuinely different paths to the same number.
@@ -673,7 +833,7 @@ def _reference_prediction(model, response: str, frame: pd.DataFrame,
             a, b = model.shapes(frame, draw)
             mus.append(a / (a + b))
         return np.mean(mus, axis=0)
-    if response in ("mean_mu_x_trials", "mean_count"):
+    if response in ("mean_mu_x_trials", "mean_count", "mixture_mean_mu"):
         return model.predict_mean(frame)
     if response == "plug_in_mu":
         return model.mean(frame)
@@ -684,17 +844,61 @@ def _reference_prediction(model, response: str, frame: pd.DataFrame,
 
 
 def availability_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorArtifact:
-    """The beta-binomial games-played-out-of-team-games head. No variant ladder."""
+    """The beta-binomial games-played-out-of-team-games head. No variant ladder.
+
+    **Two season axes, and they are orthogonal.** `window` is the *split* axis — which of
+    train / train_val / full is eligible to be fitted, the thing `require_window` guards and
+    `posteriors/<window>/` is namespaced by. `fit_first_season` is the *truncation* axis —
+    which recent suffix of that split the head actually fits, `stan.availability.first_season`
+    in config and `StanAvailability.fitting_rows` in code. A `train` artifact truncated at
+    2012-13 and a `train` artifact over the full history are the same window and different
+    heads; conflating them would let a consumer that correctly refuses the wrong split accept
+    the wrong model. So they carry different names, live in different places (provenance
+    against extras), and both reach the manifest.
+
+    The provenance is recorded over the **truncated** frame, which is what makes
+    `model_cards.verify`'s population anchor a real check: it compares the rebuilt fitting
+    frame against `n_fit_rows` and the season span, and recording the pre-truncation frame
+    would anchor the card to a population the coefficients never saw.
+
+    The dispersion is a vector over prior-MPG role buckets, so the artifact also has to say
+    which entry applies to which row. That goes in as a `cut` recipe step writing `rho_bin`,
+    the same door `src/sim/season.py` already opens on the composition
+    (`art.recipe.transform(frame)["rho_bin"]`) — a consumer reconstructs the assignment for
+    any frame, including a 2026-27 board, without refitting and without importing the head.
+
+    **The low-availability mixture is a second design block and a different reported mean**,
+    and both are recorded rather than implied. `pi`'s covariates go into the recipe's own
+    `pi_features` / `pi_scaler`, because `PI_FEATURES` is not a subset of `FEATURE_COLS` and
+    its columns enter through a different link. And the response becomes
+    `mixture_mean_mu` — the predictive mean `(1 - pi) mu + pi mu_low`, which is what the head
+    reports — rather than `mean_mu`, which under a mixture is the *main component's* mean and
+    would let the round-trip pass while checking a quantity the shipped head never publishes.
+    """
     from src.models.availability import FEATURE_COLS
-    from src.models.stan_availability import StanAvailability, availability_design
+    from src.models.stan_availability import (FIRST_SEASON, MIXTURE, PRESEASON,
+                                              PRESEASON_COLS, ROLE_BIN_COL, ROLE_COL,
+                                              StanAvailability, head_design, head_features,
+                                              role_edges)
+    from src.models.stan_utils import GAMMA_SCALE, MU_LOW_MAX
 
     cfg_stan = cfg.get("stan", {})
+    cfg_head = cfg_stan.get("availability", {})
     test_seasons = int(cfg.get("features", {}).get("availability", {})
                        .get("test_seasons", 2))
     l2 = float(cfg.get("features", {}).get("availability", {}).get("glm_l2", 1.0))
 
-    design = availability_design(cfg)
-    fit_frame, val = windowed(design, window, test_seasons)
+    mixture = bool(cfg_head.get("mixture", MIXTURE))
+    # The preseason block reaches the head through `head_design`, which is the availability
+    # head's own path — `availability_design` stays the shared builder six other heads use.
+    # The persisted `features` and `builder` both have to name the wider one, or a consumer
+    # rebuilding a 2026-27 frame would satisfy the recipe it was given and still be missing
+    # five columns the coefficients expect.
+    preseason = bool(cfg_head.get("preseason", PRESEASON))
+    features = head_features(preseason)
+
+    design = head_design(cfg, preseason)
+    offered, val = windowed(design, window, test_seasons)
     probe = probe_rows(val)
 
     started = time.perf_counter()
@@ -702,23 +906,67 @@ def availability_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorA
         l2=l2, pmf_mode="posterior", chains=int(cfg_stan.get("chains", 4)),
         warmup=int(cfg_stan.get("warmup", 1000)),
         samples=int(cfg_stan.get("samples", 1000)),
-        seed=int(cfg_stan.get("seed", 42))).fit(fit_frame)
+        seed=int(cfg_stan.get("seed", 42)),
+        first_season=cfg_head.get("first_season", FIRST_SEASON),
+        role_rho=bool(cfg_head.get("role_rho", True)),
+        mixture=mixture,
+        gamma_scale=float(cfg_head.get("pi_gamma_scale", GAMMA_SCALE)),
+        mu_low_max=float(cfg_head.get("mu_low_max", MU_LOW_MAX)),
+        features=features).fit(offered)
     seconds = time.perf_counter() - started
+
+    # The rows the head fitted, taken from the head's own `fitting_rows` rather than
+    # re-derived from config here: the truncation is the head's, and a second expression of
+    # it is a second thing that can drift out of step with the coefficients.
+    fit_frame = model.fitting_rows(offered)
+    steps = [{"kind": "cut", "column": ROLE_COL, "edges": role_edges(model.role_rho),
+              "name": ROLE_BIN_COL}]
 
     return _finish(
         head="availability", head_label="availability", family="betabinomial",
-        response="mean_mu", variant="base", features=list(FEATURE_COLS), model=model,
-        fit_frame=fit_frame, probe_transformed=probe, probe_raw=probe, steps=[],
-        builder="src.models.stan_availability.availability_design",
-        extras={"successes": "gp", "trials": "team_games", "dispersion": "rho_draws"},
+        response="mixture_mean_mu" if model.mixture else "mean_mu",
+        variant="mixture" if model.mixture else "base",
+        features=list(features), model=model,
+        fit_frame=fit_frame, probe_transformed=probe, probe_raw=probe, steps=steps,
+        builder="src.models.stan_availability.head_design",
+        pi_features=list(model.pi_features) if model.mixture else [],
+        pi_scaler=getattr(model, "pi_scaler", None) if model.mixture else None,
+        extras={"successes": "gp", "trials": "team_games", "dispersion": "rho_draws",
+                # The dispersion axis: which `rho_draws` column applies to which row.
+                "n_rho": int(model.n_rho), "rho_bin_column": ROLE_BIN_COL,
+                "rho_bin_source": ROLE_COL,
+                "rho_bin_edges": np.asarray(role_edges(model.role_rho), dtype=float),
+                "rho_labels": list(model.rho_labels),
+                "role_rho": bool(model.role_rho),
+                # The mixture axis. `mixture` is what `rehydrate_availability` branches on,
+                # and the three scalars are what a consumer needs to form the low component
+                # without importing the head. `PI_FEATURES` is duplicated here as a
+                # readable record; the recipe's `pi_features` is the load-bearing copy.
+                "mixture": bool(model.mixture),
+                "pi_weight": "theta_draws", "low_mean": "mu_low_draws",
+                "low_dispersion": "rho_low_draws", "pi_coefficients": "gamma_draws",
+                "pi_columns": list(model.pi_features) if model.mixture else [],
+                "mu_low_max": float(model.mu_low_max),
+                "pi_gamma_scale": float(model.gamma_scale),
+                # The season-truncation axis. NOT `provenance["fit_window"]`, and not
+                # `provenance["first_season"]` either — that one is a *readout* of the
+                # frame's own span, where this is the knob that produced it.
+                "fit_first_season": str(model.first_season or ""),
+                # The preseason axis, recorded the way every other shipped switch on this
+                # head is: a consumer branches on the flag rather than inferring it from
+                # the feature list, and `false` names the pre-2026-08-13 head exactly.
+                "preseason": bool(preseason),
+                "preseason_columns": list(PRESEASON_COLS) if preseason else [],
+                "n_rows_before_truncation": int(len(offered))},
         window=window, cfg_stan=cfg_stan, draws_kept=draws_kept, seconds=seconds)
 
 
 def minutes_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorArtifact:
     """`min | available`, season-collapsed as successes out of real game length."""
     from src.models.availability import FEATURE_COLS
-    from src.models.stan_minutes import (OWN, SPLINE_KNOTS, StanMinutes, build_design,
-                                         variants)
+    from src.models.stan_minutes import (OWN, PRESEASON, PRESEASON_COLS, SPLINE_KNOTS,
+                                         StanMinutes, covered_fitting_rows, head_design,
+                                         head_features, variants)
 
     cfg_stan = cfg.get("stan", {})
     test_seasons = int(cfg.get("features", {}).get("availability", {})
@@ -726,12 +974,19 @@ def minutes_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorArtifa
     n_knots = int(cfg_stan.get("minutes", {}).get("spline_knots", SPLINE_KNOTS))
     variant = selected_variant(cfg, "stan_minutes_metrics.csv", "logit_own_spline")
 
-    design = build_design(cfg)
+    # `head_design` and the covered-window cut, both for the reason the availability head
+    # takes `head_design`: the block ships on THIS head and `build_design` is how five other
+    # modules reach their rows. The cut is on the fitting frame only and is required by the
+    # block — this head fits from 1997-98 and the panel begins at 2004-05.
+    preseason = bool(cfg_stan.get("minutes", {}).get("preseason", PRESEASON))
+    design = head_design(cfg, preseason)
     fit_frame, val = windowed(design, window, test_seasons)
+    fit_frame = covered_fitting_rows(fit_frame, cfg, preseason)
     probe_raw = probe_rows(val)
 
-    tr, probe, features = variants(fit_frame, probe_raw, n_knots)[variant]
-    steps = _minutes_steps(tr, variant, features, OWN, n_knots)
+    tr, probe, base_features = variants(fit_frame, probe_raw, n_knots)[variant]
+    features = head_features(base_features, preseason)
+    steps = _minutes_steps(tr, variant, base_features, OWN, n_knots)
 
     started = time.perf_counter()
     model = StanMinutes(features, name=f"posteriors/minutes/{variant}",
@@ -745,9 +1000,15 @@ def minutes_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorArtifa
         head="minutes", head_label="min|available", family="betabinomial",
         response="mean_mu_x_trials", variant=variant, features=features, model=model,
         fit_frame=fit_frame, probe_transformed=probe, probe_raw=probe_raw, steps=steps,
-        builder="src.models.stan_minutes.build_design",
+        builder="src.models.stan_minutes.head_design",
         extras={"successes": "successes", "trials": "trials",
-                "dispersion": "rho_draws", "base_features": list(FEATURE_COLS)},
+                "dispersion": "rho_draws", "base_features": list(FEATURE_COLS),
+                # The preseason axis, recorded the way the availability head records it: a
+                # consumer branches on the flag rather than inferring it from the columns.
+                "preseason": bool(preseason),
+                "preseason_columns": list(PRESEASON_COLS) if preseason else [],
+                "fit_first_season": (str(min(fit_frame["season"])) if len(fit_frame)
+                                     else "")},
         window=window, cfg_stan=cfg_stan, draws_kept=draws_kept, seconds=seconds)
 
 
@@ -777,16 +1038,37 @@ def component_artifacts(cfg: dict, window: str, draws_kept: int):
     n_knots = int(cfg_stan.get("components", {}).get("spline_knots", SPLINE_KNOTS))
     features_dir = Path(cfg["data"]["features_dir"])
 
-    targets = pd.read_parquet(features_dir / "component_targets.parquet")
-    design = build_design(targets, cfg["data"]["seasons"], cfg["data"]["raw_dir"])
-    fit_frame, val = windowed(design, window, test_seasons)
+    # **`head_design`, not `build_design`** — since 2026-08-15 ten of the eleven heads carry
+    # a preseason block, and this generator is the ONLY route by which a fitted head reaches
+    # the simulator. Building the plain design here would persist eleven heads with no
+    # preseason columns while `stan_component_metrics.csv` and the config both said the block
+    # was on, and nothing downstream would object: the recipes would be internally consistent
+    # and simply describe a different model from the one that was selected. That is the
+    # `docs/preseason-plan.md` P2 incident — an artifact carries no record of the code that
+    # wrote it — one layer further down, so `preseason` is stamped into every manifest row
+    # below rather than being inferred from the config at read time.
+    from src.models.stan_components import (covered_fitting_rows, head_design,
+                                            head_features, head_fitting_rows,
+                                            head_preseason_cols)
+
+    preseason = bool(cfg_stan.get("components", {}).get("preseason", True))
+    design = head_design(cfg, preseason)
+    fit_frame_full, val = windowed(design, window, test_seasons)
+    # The covered-window cut, on the FITTING rows only — required by the block, not chosen,
+    # and applied PER HEAD: a head that carries no preseason column has no era dummy to
+    # protect against and keeps its full window. `stan_components.head_fitting_rows` states
+    # the argument; `fg3m|fg3a` is the head it exists for.
+    fit_frame_covered = covered_fitting_rows(fit_frame_full, cfg, preseason)
     probe_raw = probe_rows(val)
     chosen = selected_specs(cfg)
 
     for component in COUNT_HEADS:
         variant = chosen.get(component, "log_own")
-        tr, probe, features = count_variants(fit_frame, probe_raw, component,
-                                             n_knots)[variant]
+        fit_frame = head_fitting_rows(fit_frame_full, fit_frame_covered, component,
+                                      preseason)
+        tr, probe, base_features = count_variants(fit_frame, probe_raw, component,
+                                                  n_knots)[variant]
+        features = head_features(base_features, component, preseason)
         base = [f"{component}_p36_lag1"] + CONTEXT_COLS + BIO_COLS
         steps = _count_steps(fit_frame, tr, variant, features, base,
                              f"{component}_p36_lag1", n_knots)
@@ -804,9 +1086,12 @@ def component_artifacts(cfg: dict, window: str, draws_kept: int):
             head=component, head_label=component, family="negbinomial",
             response="mean_count", variant=variant, features=features, model=model,
             fit_frame=fit_frame, probe_transformed=probe, probe_raw=probe_raw,
-            steps=steps, builder="src.models.component_rates.build_design",
+            steps=steps, builder="src.models.stan_components.head_design",
             extras={"component": component, "exposure": "total_minutes",
-                    "dispersion": "phi_draws"},
+                    "dispersion": "phi_draws",
+                    "preseason": bool(head_preseason_cols(component, preseason)),
+                    "preseason_columns": "|".join(head_preseason_cols(component,
+                                                                     preseason))},
             window=window, cfg_stan=cfg_stan, draws_kept=draws_kept, seconds=seconds)
 
     for made, attempted in CONVERSION_HEADS:
@@ -815,8 +1100,10 @@ def component_artifacts(cfg: dict, window: str, draws_kept: int):
         # Conversion heads fit on rows with attempts only — the same filter the head
         # applies internally, applied to the probe so the reference rows are scorable.
         live_probe = probe_raw[probe_raw[attempted].to_numpy(dtype=float) > 0]
-        tr, probe, features = conversion_variants(fit_frame, live_probe, made,
-                                                  attempted, n_knots)[variant]
+        fit_frame = head_fitting_rows(fit_frame_full, fit_frame_covered, made, preseason)
+        tr, probe, base_features = conversion_variants(fit_frame, live_probe, made,
+                                                       attempted, n_knots)[variant]
+        features = head_features(base_features, made, preseason)
         own = f"{made}_pct_lag1"
         base = [own, f"{attempted}_p36_lag1"] + CONTEXT_COLS + BIO_COLS
         steps = _conversion_steps(fit_frame, tr, variant, features, base, own, n_knots)
@@ -834,9 +1121,11 @@ def component_artifacts(cfg: dict, window: str, draws_kept: int):
             head=f"{made}_given_{attempted}", head_label=label, family="betabinomial",
             response="mean_mu", variant=variant, features=features, model=model,
             fit_frame=fit_frame, probe_transformed=probe, probe_raw=live_probe,
-            steps=steps, builder="src.models.component_rates.build_design",
+            steps=steps, builder="src.models.stan_components.head_design",
             extras={"made": made, "attempted": attempted, "trials": attempted,
-                    "dispersion": "rho_draws"},
+                    "dispersion": "rho_draws",
+                    "preseason": bool(head_preseason_cols(made, preseason)),
+                    "preseason_columns": "|".join(head_preseason_cols(made, preseason))},
             window=window, cfg_stan=cfg_stan, draws_kept=draws_kept, seconds=seconds)
 
 
@@ -884,14 +1173,17 @@ def composition_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorAr
     artifact carries — `sigma_u_draws`, and the predictive that consumes it — and because
     the arm that ships is decided by `make composition-effects`, not by this module.
     """
-    from src.models.stan_composition import (OWN, PILOT_FIRST_SEASON, RHO_BIN_COL,
-                                             RHO_BINS, TEAM_COLS, StanComposition,
-                                             composition_frame, effect_variants,
-                                             team_context, variants)
+    from src.models.stan_composition import (OWN, RHO_BIN_COL, RHO_BINS, TEAM_COLS,
+                                             StanComposition, effect_variants,
+                                             head_first_season, head_frame,
+                                             preseason_blend, team_context, variants)
 
     cfg_stan = cfg.get("stan", {})
     comp_cfg = cfg_stan.get("composition", {})
-    first_season = str(comp_cfg.get("first_season", PILOT_FIRST_SEASON))
+    # `head_first_season`, not the raw config key: the preseason blend cuts this head's
+    # window to the panel's first covered season, and a persisted posterior fitted on a
+    # window the artifact does not record is the 2026-08-13 failure one head over.
+    first_season = head_first_season(cfg)
     keep = int(comp_cfg.get("predictive_samples", 200))
     ps_effect = bool(comp_cfg.get("player_season_effect", False))
     team_block = bool(comp_cfg.get("team_context", False))
@@ -899,8 +1191,9 @@ def composition_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorAr
                        .get("test_seasons", 2))
     variant = selected_variant(cfg, "stan_composition_metrics.csv",
                                "betabinom_ot_graded")
+    blend = preseason_blend(cfg)
 
-    frame = composition_frame(cfg)
+    frame = head_frame(cfg)
     pilot = frame[frame["season"] >= first_season].reset_index(drop=True)
     fit_frame, val = windowed(pilot, window, test_seasons)
     # Whole team-game blocks, because the composition's design is per-row but its
@@ -940,12 +1233,19 @@ def composition_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorAr
         head="composition", head_label="minutes composition", family="composition",
         response="eta", variant=variant, features=features, model=model,
         fit_frame=fit_frame, probe_transformed=probe, probe_raw=probe_raw, steps=steps,
-        builder="src.models.stan_composition.composition_frame",
+        builder="src.models.stan_composition.head_frame",
         extras={"dispersed": int(dispersed), "n_rho": int(n_rho),
                 "rho_bin_column": RHO_BIN_COL, "dispersion": "rho_draws",
                 "first_season": first_season, "group_keys": ["game_id", "team_id"],
                 "team_context": team_block, "team_cols": list(TEAM_COLS),
-                "predictive_samples": keep},
+                "predictive_samples": keep,
+                # What the offset was built from. `preseason_blend` is the only thing that
+                # changes `w_share` between two otherwise identical artifacts, and an
+                # artifact that does not record it cannot be told apart from one fitted
+                # without it — which is exactly how the availability head was documented
+                # against the wrong arm on 2026-08-13.
+                "preseason_blend_k": None if blend is None else float(blend[0]),
+                "preseason_route": None if blend is None else str(blend[1])},
         window=window, cfg_stan=cfg_stan, draws_kept=draws_kept, seconds=seconds)
 
 
@@ -1180,6 +1480,21 @@ def selected_specs(cfg: dict) -> dict[str, str]:
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+def fit_first_season(artifact: PosteriorArtifact) -> str:
+    """The season truncation a head applied *inside* its fit window, or `""` for none.
+
+    One reader for two spellings: the availability head writes `fit_first_season` and the
+    composition — which had the truncation first, under the flatter name — writes
+    `first_season`. Renaming the composition's key would silently reinterpret every artifact
+    already on disk, so the reader takes both instead. Do not add a third spelling.
+
+    Distinct from `provenance["first_season"]`, which is the observed span of the fitted
+    frame rather than the knob that produced it.
+    """
+    return str(artifact.extras.get("fit_first_season")
+               or artifact.extras.get("first_season") or "")
+
+
 def manifest_row(artifact: PosteriorArtifact, check: dict, dest: Path) -> dict:
     p = artifact.provenance
     return {
@@ -1191,6 +1506,10 @@ def manifest_row(artifact: PosteriorArtifact, check: dict, dest: Path) -> dict:
         "n_draws": artifact.n_draws,
         "n_draws_before_thinning": p["posterior_draws_before_thinning"],
         "fit_window": p["fit_window"],
+        # The OTHER season axis — the truncation inside the window. Empty for the eighteen
+        # heads that fit whatever the window hands them. See the module docstring's table:
+        # `first_season` below is the fitted frame's observed span, not this.
+        "fit_first_season": fit_first_season(artifact),
         "n_fit_rows": p["n_fit_rows"],
         "first_season": p["first_season"],
         "last_season": p["last_season"],
@@ -1203,6 +1522,22 @@ def manifest_row(artifact: PosteriorArtifact, check: dict, dest: Path) -> dict:
         # rather than something a consumer has to unpickle to discover.
         "player_season_effect": bool(artifact.extras.get("player_season_effect", False)),
         "sigma_u": float(artifact.extras.get("sigma_u", 0.0)),
+        # Same argument as the two above, for the block adopted 2026-08-15: a property that
+        # changes what the head IS belongs on the manifest rather than inside a pickle a
+        # reader has to open. Without it the only trace is implicit — the ten blocked
+        # component heads moved their WINDOW (6,382 rows) and the opted-out `fg3m|fg3a`
+        # moved its COLUMNS (14 features at 8,630 rows) — and each head is invisible in the
+        # other's trace, which is the failure the P5 `reach` block was built after.
+        # **"Carries preseason information", in ANY form** — not "carries preseason
+        # columns", which is the narrower question and the one that reads FALSE on a head
+        # that ships a preseason blend. The three routes in this project are genuinely
+        # different: the availability and component heads take feature columns, the
+        # composition blends into `w_share` and so reaches the OFFSET and the allocation
+        # ORDER without a coefficient anywhere, and an opted-out head takes neither.
+        # `preseason_columns` then says which route, by being empty when there are none.
+        "preseason": bool(artifact.extras.get("preseason", False)
+                          or artifact.extras.get("preseason_blend_k") is not None),
+        "preseason_columns": str(artifact.extras.get("preseason_columns", "")),
         "max_design_error": check["max_design_error"],
         "max_prediction_error": check["max_prediction_error"],
         "roundtrip_passes": check["passes"],
@@ -1335,10 +1670,17 @@ if __name__ == "__main__":
                         help=f"comma-separated subset of {','.join(GROUPS)}")
     parser.add_argument("--draws", type=int, default=None,
                         help="draws kept per head, thinned across the whole posterior")
+    parser.add_argument("--rebuild-manifest", action="store_true",
+                        help="re-derive manifest.csv from the artifacts already on disk, "
+                             "round-tripping each one. Refits nothing; use it when a "
+                             "manifest column is added after the artifacts were written.")
     args = parser.parse_args()
 
     cfg = yaml.safe_load(open("configs/default.yaml"))
     cfg_sim = cfg.get("sim", {})
+    if args.rebuild_manifest:
+        rebuild_manifest(cfg, args.window or str(cfg_sim.get("fit_window", FIT_WINDOW)))
+        raise SystemExit(0)
     _run(cfg,
          window=args.window or str(cfg_sim.get("fit_window", FIT_WINDOW)),
          groups=tuple(g.strip() for g in args.groups.split(",") if g.strip()),

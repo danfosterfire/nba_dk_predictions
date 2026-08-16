@@ -77,6 +77,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from src.data.fetch import _season_start_year
 from src.models.availability import EPS, RHO_MAX, RHO_MIN, fit_dispersion
 from src.models.availability import _neg_loglik as beta_binomial_nll
 from src.models.component_rates import (BIO_COLS, CONTEXT_COLS, CONVERSION_HEADS,
@@ -86,9 +87,9 @@ from src.models.component_rates import (BIO_COLS, CONTEXT_COLS, CONVERSION_HEADS
                                         impute, nb_nll)
 from src.models.held_out import selection_split
 from src.models.stan_utils import (YearTerm, compile_model, crps_from_samples,
-                                   diagnostics_frame, ks_uniform,
-                                   pit_from_samples, posterior,
-                                   prior_sd_for_l2, sample, standardized, thin,
+                                   diagnostics_frame, ks_uniform, pi_block,
+                                   pit_from_samples, posterior, prior_sd_for_l2,
+                                   rho_block, sample, standardized, thin,
                                    warn_if_unconverged)
 
 COUNT_MODEL = "negbinomial_glm"
@@ -96,6 +97,69 @@ CONVERSION_MODEL = "betabinomial_glm"
 
 SPLINE_KNOTS = 5
 PREDICTIVE_SAMPLES = 1000
+
+# ── The preseason block, adopted 2026-08-15 ───────────────────────────────────────────
+#
+# `docs/preseason-plan.md` session 6b. Every one of the eleven heads carries it, and the
+# shipped column is the **volume-shrunk** delta — `pre_d_<head>` multiplied by
+# `min_pre / (min_pre + k)` at that head's own `k`, fitted on the fitting half — plus the four
+# age-split missing indicators. Five columns per head.
+#
+# **Every head clears the rolling-origin half of the bar**, at 11 to 13 of 13 origins with
+# intervals clear of zero on 4,300 scored fitting-half rows. **Seven also clear validation**:
+# `fga` (−3.0093 [−4.3826, −1.7217]), `fg3a|fga` (−1.4373), `reb` (−1.0929), `ast` (−1.0296),
+# `fta` (−0.6300), `tov` (−0.2213) and `fg2m|fg2a` (−0.1541). The remaining four — `stl`,
+# `blk`, `ftm|fta`, `fg3m|fg3a` — have favourable point estimates at both readings and
+# validation intervals that reach across zero on 706 rows. **No head anywhere in the round
+# has an interval clear of zero on the wrong side**, so nothing here ships against evidence
+# of harm; the four ship against a half of the bar that could not resolve them, which is the
+# same owner decision P2 recorded on the availability head.
+#
+# **The shrink is the form the fitting half chose, and it is not P1's additive term.**
+# `own_delta_shrunk` beats the declared primary on the fitting half on every head, intervals
+# clear of zero. `k` runs 20 to 320 pseudo-minutes and is READ from the artifact that fitted
+# it rather than pinned here — a per-36 rate over 60 preseason minutes divides by the same
+# exposure a minutes total is measured on, so the right `k` is a property of the head.
+#
+# **Season-centring is NOT used here**, unlike `stan_minutes`. It loses to the uncentred delta
+# on this family with intervals clear of zero on three heads: the compression it corrects is a
+# property of *levels*, and a per-36 rate has already divided the exposure out.
+#
+# ⚠️ Three heads ship a block P1's ΔR² screen called actively harmful — `blk` (−0.00847,
+# z = −3.18), `fg2m|fg2a` (−0.00845, z = −9.44) and `fta` (−0.00161, z = −2.32). None of the
+# three reproduced as harm at a paired interval; `fta` and `fg2m|fg2a` clear both halves
+# outright and `blk` clears the rolling one. The screen was a single inner split against a
+# permutation null with no row-level uncertainty, and it also misranked the heads it admitted
+# in both directions. `stan.components.preseason: false` is the exact rollback.
+PRESEASON = True
+
+#: Columns appended per head. The delta is the head's own, on its own link scale; the four
+#: indicators are shared and are P1 decision 3's age split.
+PRESEASON_MISSING_COLS = ["pre_missing__<24", "pre_missing__24-27", "pre_missing__28-31",
+                          "pre_missing__32+"]
+
+# ⚠️ **`fg3m|fg3a` carries no block, and it is the one head in the round measured as WORSE
+# with one.** Ten of the eleven improve under the posterior at a median retention of 0.991;
+# this one goes the other way, and it loses on three metrics rather than one — CRPS 4.19350
+# against its control's 4.16436, NLL 3.16495 against 3.16432, PIT KS 0.02536 against 0.02416.
+#
+# Three instruments agree, which is what makes it a finding rather than a noisy row:
+#
+#   1. **P1's attribution.** The head's apparent +0.01488 ΔR² was entirely the shared
+#      indicator pair (+0.01987); its own preseason 3P% delta was −0.00237. The attribution
+#      split exists to catch exactly this and it caught it first.
+#   2. **6b's pooled point MLE**: +0.00688 — the block already scored worse on the full
+#      validation frame before any sampler ran.
+#   3. **The posterior control**: +0.02914, the same sign and larger.
+#
+# The mechanism is the one `ftm|fta` shows from the other side: a conversion delta is a logit
+# of a percentage taken over a handful of preseason attempts, and shooting percentage is the
+# least persistent quantity in the box score. Prior-season 3P% over ~200 attempts is simply a
+# better estimate than preseason 3P% over ~15, so the block adds variance and no signal.
+# Owner decision, 2026-08-15, taken on the posterior reading.
+#
+# Named by the `made` column because that is what `head_preseason_cols` is keyed on.
+PRESEASON_EXCLUDE: frozenset[str] = frozenset({"fg3m"})
 
 # Weakly informative on standardized features. A normal(0, 1) prior is an L2 penalty of
 # 0.5, which against a log-likelihood summed over ~10^4 rows is negligible shrinkage — but
@@ -110,6 +174,162 @@ INTERCEPT_SCALE = 5.0
 # flat — weak exactly where the data is.
 PHI_INV_SCALE = 1.0
 CONVERSION_L2 = 1.0
+
+
+def head_label(component: str, attempted: str | None = None) -> str:
+    """`"reb"` or `"ftm|fta"` — the key every artifact in this family is indexed by."""
+    return component if attempted is None else f"{component}|{attempted}"
+
+
+def head_preseason_cols(component: str, preseason: bool | None = None) -> list[str]:
+    """The five columns `component`'s arm adds, or `[]` when the block is off.
+
+    Per head rather than shared, unlike `stan_minutes.PRESEASON_COLS`, because each head's
+    delta is on **its own link** — `log1p` of a per-36 rate for a count, `logit` of a
+    percentage for a conversion. A shared block here would put `reb`'s preseason rebounding
+    on `blk`'s linear predictor.
+
+    `PRESEASON_EXCLUDE` opts a head out entirely, which is what makes the block a per-head
+    decision rather than a family-wide one — `fg3m|fg3a` is measured as *worse* with it, so
+    it fits the head that shipped before 2026-08-15 while its ten siblings do not.
+    """
+    if not (PRESEASON if preseason is None else bool(preseason)):
+        return []
+    if component in PRESEASON_EXCLUDE:
+        return []
+    return [f"pre_d_{component}_shrunk"] + list(PRESEASON_MISSING_COLS)
+
+
+def head_features(features: list[str], component: str,
+                  preseason: bool | None = None) -> list[str]:
+    """A variant's feature list plus that head's preseason block, appended.
+
+    Appended rather than woven in, so the block is a **suffix** on every variant: the sweep
+    still answers "which curvature on the prior-rate term" with the block held common, and a
+    persisted recipe's column order stays stable when the flag flips.
+    """
+    return list(features) + head_preseason_cols(component, preseason)
+
+
+def shrinkage_constants(cfg: dict) -> dict[str, float]:
+    """`head -> the volume shrink `k` session 6b fitted`, off its own artifact.
+
+    Read rather than pinned, for the reason `posteriors.selected_variant` is read: `k` is a
+    **fitted quantity**, estimated on an inner carve of the fitting half by
+    `components_preseason.fit_shrinkage`, and a constant copied into this module is a
+    constant that can silently disagree with the run that chose it. The artifact is also
+    what `make docs-audit` re-derives the quoted grid from.
+    """
+    from src.models.components_preseason import heads as _armed
+
+    path = Path(cfg["evaluation"]["predictions_dir"]) / "components_preseason_shrinkage.csv"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{path} is missing and the component heads ship a volume-shrunk preseason "
+            f"delta — run `make components-preseason`, or set `stan.components.preseason: "
+            f"false` to fit the pre-2026-08-15 heads exactly.")
+    table = pd.read_csv(path)
+    chosen = table[table["selected"]].set_index("head")["k"].astype(float).to_dict()
+    missing = [h.name for h in _armed() if h.name not in chosen]
+    if missing:
+        raise ValueError(f"{path} selects no shrinkage constant for: {', '.join(missing)}")
+    return {str(k): float(v) for k, v in chosen.items()}
+
+
+def head_design(cfg: dict, preseason: bool | None = None) -> pd.DataFrame:
+    """`build_design` plus every head's preseason block — **this family's path, no other's**.
+
+    Separate from `component_rates.build_design` for the reason `stan_minutes.head_design` is
+    separate from its own builder: that function is how `season_terms`, `posteriors`, the
+    substitution sweep and `components_preseason` itself reach their rows, and a column that
+    is structurally zero before 2004-05 must not enter any of them by accident.
+
+    The block is built by `components_preseason.attach_preseason` — the same function the 6b
+    ladder measured it with — so the coefficients these heads fit are coefficients on columns
+    that were measured, not on a second implementation of them.
+    """
+    features_dir = Path(cfg["data"]["features_dir"])
+    targets = pd.read_parquet(features_dir / "component_targets.parquet")
+    design = build_design(targets, cfg["data"]["seasons"], cfg["data"]["raw_dir"])
+    if not (PRESEASON if preseason is None else bool(preseason)):
+        return design
+
+    # Function-level: `components_preseason` imports this module at the top.
+    from src.models.components_preseason import (attach_preseason, heads as _armed,
+                                                 with_shrunk_delta)
+
+    panel_path = features_dir / "preseason.parquet"
+    if not panel_path.exists():
+        raise FileNotFoundError(
+            f"{panel_path} is missing and the component heads ship a preseason block — run "
+            f"`make preseason`, or set `stan.components.preseason: false` to fit the "
+            f"pre-2026-08-15 heads exactly.")
+    out = attach_preseason(design, pd.read_parquet(panel_path))
+
+    # Each head's delta shrunk at ITS OWN fitted `k`. One frame carries all eleven shrunk
+    # columns because the column names are per head, so nothing collides.
+    constants = shrinkage_constants(cfg)
+    for head in _armed():
+        out = with_shrunk_delta(out, head.delta, constants[head.name])
+
+    wanted = sorted({c for h in _armed()
+                     for c in head_preseason_cols(h.component, True)})
+    missing = [c for c in wanted if c not in out.columns]
+    if missing:
+        raise ValueError(f"`attach_preseason` did not produce {missing}")
+    bad = [c for c in wanted if out[c].isna().any()]
+    if bad:
+        raise ValueError(f"NaN in the shipped preseason block: {bad}")
+    return out
+
+
+def head_fitting_rows(train_full: pd.DataFrame, train_covered: pd.DataFrame,
+                      component: str, preseason: bool | None = None) -> pd.DataFrame:
+    """The fitting rows for ONE head — cut only if that head carries a block.
+
+    **The window is a per-head property, not a family-wide one**, and treating it as shared
+    is a defect this module shipped for one afternoon. The cut exists solely because a
+    missing-preseason indicator on a pre-2005 row is an era dummy; a head with no such
+    indicator has nothing to protect against, so cutting it throws away 2,248 of 8,630
+    training rows (26%) to buy nothing.
+
+    That is exactly `fg3m|fg3a`'s position: `PRESEASON_EXCLUDE` opts it out on its own
+    measurement, so `stan.components.preseason: false` must mean the pre-2026-08-15 head
+    *including* its 1997-98 window, which is what this module's config comment already
+    promises.
+
+    Heads on different windows is normal here rather than a compromise — they are fitted
+    separately and the factorization is exact, and `stan_minutes` (2004-05) and
+    `stan_composition` (1996-97) already differed before this. The decision that opted the
+    head out is unaffected: the control it was measured against was fitted on the covered
+    window too, so that comparison held the window fixed.
+    """
+    return train_covered if head_preseason_cols(component, preseason) else train_full
+
+
+def covered_fitting_rows(train: pd.DataFrame, cfg: dict,
+                         preseason: bool | None = None) -> pd.DataFrame:
+    """The fitting rows, cut to the seasons the preseason panel actually covers.
+
+    **Applied to the FITTING rows only** — the design is built over every season regardless
+    and the validation rows are never touched, the discipline `stan_minutes` and
+    `stan_availability` both document.
+
+    Required by the block rather than chosen for its own sake: this design fits from 1997-98
+    and the panel begins at 2004-05, so 2,248 of 8,630 training rows would carry the
+    missing-preseason indicator for a reason that is a fact about the NBA's API rather than
+    about the player. 6b priced the cut on its own so it cannot be credited to the block —
+    the covered-window incumbent is within **0.133** CRPS of the full-window one on every
+    head, 4.8% of the block at worst, and on `tov` and `stl` the cut *helps*. That is a very
+    different bill from the quarter of the increment `stan_minutes` pays, because prior-season
+    rates are the most persistent quantity in the project and the lost seasons buy little.
+    """
+    if not (PRESEASON if preseason is None else bool(preseason)):
+        return train
+    from src.models.stan_minutes import first_covered_season
+
+    first = _season_start_year(first_covered_season(cfg))
+    return train[train["season"].map(_season_start_year) >= first].copy()
 
 
 # ── Feature variants ──────────────────────────────────────────────────────────
@@ -281,11 +501,20 @@ class StanConversion:
             model,
             {"N": len(live), "K": X.shape[1], "X": X, "n": n.tolist(), "y": y.tolist(),
              "beta_scale": prior_sd_for_l2(self.l2),
-             "intercept_scale": INTERCEPT_SCALE, **self.year.data(live)},
+             "intercept_scale": INTERCEPT_SCALE, **self.year.data(live),
+             # One dispersion for every row: `rho_block()` with no bins is the shared-rho
+             # model exactly, which is what these four conversion heads have always fitted.
+             **rho_block(len(live)),
+             # And no low-availability mixture: `pi_block()` with no design is `P = 0`,
+             # which makes that block's parameters zero-length and this target the one
+             # these four heads have always fitted.
+             **pi_block(len(live))},
             chains=self.chains, warmup=self.warmup, samples=self.samples,
             seed=self.seed, label=self.name, metric=self.metric,
+            # `rho` is a vector[n_rho] in the Stan source, so its init is a list even
+            # when the vector has one entry.
             inits={"alpha": float(np.log(share / (1 - share))),
-                   "beta": np.zeros(X.shape[1]).tolist(), "rho": 0.01})
+                   "beta": np.zeros(X.shape[1]).tolist(), "rho": [0.01]})
         warn_if_unconverged(self.diagnostics)
 
         draws = posterior(fit, ["alpha", "beta", "rho"])
@@ -413,7 +642,36 @@ def _metric_columns(scored: dict) -> dict:
     return {f"val_{k}": v for k, v in scored.items()}
 
 
-def sweep_counts(train, val, cfg_stan, n_knots) -> tuple[pd.DataFrame, list[dict]]:
+def merge_heads(existing: pd.DataFrame | None, fresh: pd.DataFrame,
+                key: str = "head") -> pd.DataFrame:
+    """`fresh` replacing `existing`'s rows for the heads it covers, others kept.
+
+    What makes `--heads` honest rather than a hand-patch. The eleven heads are fitted
+    **separately** — that is the factorization identity this whole module rests on — so a
+    head's rows depend on nothing outside itself, and refitting one leaves the other ten
+    bit-identical at a fixed seed. Re-deriving them anyway costs ~2.7 h to reproduce numbers
+    that already exist.
+
+    `posteriors.py --groups` is the standing precedent and states the same rationale: it
+    re-reads the manifest at every flush so two partial runs merge instead of the second
+    clobbering the first. This is that, one target over.
+
+    ⚠️ The safety property is that **selection is head-local**. `_finalize` picks `selected`
+    and `beats_floor` within a head's own block, so a merged file cannot have a stale winner
+    from a comparison that spanned heads. If a cross-head selection is ever added, this
+    function stops being safe and the full sweep becomes mandatory again.
+    """
+    if existing is None or existing.empty:
+        return fresh
+    kept = existing[~existing[key].isin(set(fresh[key]))]
+    return pd.concat([kept, fresh], ignore_index=True)
+
+
+def sweep_counts(train_covered, val, cfg_stan, n_knots,
+                 preseason: bool | None = None,
+                 only: tuple[str, ...] | None = None,
+                 train_full: pd.DataFrame | None = None
+                 ) -> tuple[pd.DataFrame, list[dict]]:
     """Every count head x variant, on the VALIDATION split only.
 
     Halves the fit count and doubles what each fit is worth: the old sweep ran each variant
@@ -425,12 +683,20 @@ def sweep_counts(train, val, cfg_stan, n_knots) -> tuple[pd.DataFrame, list[dict
     rows, diagnostics = [], []
 
     for component in COUNT_HEADS:
+        if only is not None and component not in only:
+            continue
+        # The window is a per-head property — see `head_fitting_rows`.
+        train = head_fitting_rows(train_full if train_full is not None else train_covered,
+                                  train_covered, component, preseason)
         floor_val = count_floor(train, val, component, seed)
         rows.append({"head": component, "kind": "count", "variant": "carry_forward",
                      "n_features": 0, **_metric_columns(floor_val)})
 
-        for label, (v_tr, v_te, v_features) in count_variants(
-                train, val, component, n_knots).items():
+        arms = count_variants(train, val, component, n_knots)
+        for label, (v_tr, v_te, v_base) in arms.items():
+            # The block is common to every arm, so the sweep still answers "which curvature
+            # on the prior-rate term" rather than crossing two axes on one selection split.
+            v_features = head_features(v_base, component, preseason)
             v_model = StanCount(v_features, component, name=f"{component}/{label}/val",
                                 chains=chains, seed=seed,
                                 **_iters(cfg_stan)).fit(v_tr)
@@ -440,22 +706,94 @@ def sweep_counts(train, val, cfg_stan, n_knots) -> tuple[pd.DataFrame, list[dict
                             v_model.predict_samples(v_te, seed), v_model.phi, seed)
             rows.append({"head": component, "kind": "count", "variant": label,
                          "n_features": len(v_features), **_metric_columns(v)})
+
+        rows, diagnostics = _control_arm(
+            rows, diagnostics, arms, component, None, cfg_stan, preseason,
+            lambda f, te, comp=component: _score_count_arm(f, te, comp, seed))
     return _finalize(pd.DataFrame(rows), "val_r2", higher_is_better=True), diagnostics
 
 
-def sweep_conversions(train, val, cfg_stan, n_knots) -> tuple[pd.DataFrame, list[dict]]:
+def _score_count_arm(model: "StanCount", frame: pd.DataFrame, component: str,
+                     seed: int) -> dict:
+    y = frame[component].to_numpy(float)
+    return score_count(y, model.predict_mean(frame),
+                       model.predict_samples(frame, seed), model.phi, seed)
+
+
+#: The variant each family's no-preseason control is taken at. `None` means "whichever the
+#: sweep selected", resolved after the fact — the control has to sit at the arm that ships or
+#: it is comparing two changes at once.
+CONTROL_SUFFIX = "__no_preseason"
+
+
+def _control_arm(rows: list[dict], diagnostics: list[dict], arms: dict,
+                 component: str, attempted: str | None, cfg_stan: dict,
+                 preseason: bool | None, score_fn) -> tuple[list[dict], list[dict]]:
+    """The same variant on the same rows with the preseason block REMOVED.
+
+    `docs/preseason-plan.md` session 6b, "what it does not settle": the point MLE that
+    measured the block collapses the posterior over `beta` to its mode, so a Stan fit owes an
+    answer to whether the increment survives integrating over coefficient uncertainty. Every
+    arm above carries the block, so the sweep alone cannot say — it compares curvatures, not
+    the block.
+
+    Isolated the way `stan_minutes.sweep` isolates its own: the fitting window is the covered
+    one either way, so the comparison is the five columns and nothing else. It is a control
+    and never a candidate — `_finalize` excludes it from `selected` — because "ship the arm
+    without the block" is a decision taken on 6b's evidence rather than one this run is
+    powered to revisit.
+    """
+    # No block on this head means nothing for a control to isolate — an excluded head's
+    # "control" would be a duplicate fit of the arm that ships, at full sampler cost.
+    if not head_preseason_cols(component, preseason):
+        return rows, diagnostics
+    label = head_label(component, attempted)
+    seed = int(cfg_stan.get("seed", 42))
+    chains = int(cfg_stan.get("chains", 4))
+    # Taken at the arm this family's sweep just selected, so the control and the shipped head
+    # differ by the block alone.
+    kind = "count" if attempted is None else "conversion"
+    fitted = [r for r in rows if r["head"] == label and r["variant"] != "carry_forward"]
+    key = "val_r2" if kind == "count" else "val_nll"
+    best = (max(fitted, key=lambda r: r[key]) if kind == "count"
+            else min(fitted, key=lambda r: r[key]))["variant"]
+    c_tr, c_te, c_base = arms[best]
+    name = f"{best}{CONTROL_SUFFIX}"
+    if attempted is None:
+        model = StanCount(list(c_base), component, name=f"{label}/{name}/val",
+                          chains=chains, seed=seed, **_iters(cfg_stan)).fit(c_tr)
+    else:
+        model = StanConversion(list(c_base), component, attempted,
+                               name=f"{label}/{name}/val", chains=chains, seed=seed,
+                               **_iters(cfg_stan)).fit(c_tr)
+    diagnostics.append(model.diagnostics)
+    rows.append({"head": label, "kind": kind, "variant": name,
+                 "n_features": len(c_base), **_metric_columns(score_fn(model, c_te))})
+    return rows, diagnostics
+
+
+def sweep_conversions(train_covered, val, cfg_stan, n_knots,
+                      preseason: bool | None = None,
+                      only: tuple[str, ...] | None = None,
+                      train_full: pd.DataFrame | None = None
+                      ) -> tuple[pd.DataFrame, list[dict]]:
     seed = int(cfg_stan.get("seed", 42))
     chains = int(cfg_stan.get("chains", 4))
     rows, diagnostics = [], []
 
     for made, attempted in CONVERSION_HEADS:
         head = f"{made}|{attempted}"
+        if only is not None and head not in only:
+            continue
+        train = head_fitting_rows(train_full if train_full is not None else train_covered,
+                                  train_covered, made, preseason)
         floor_val = conversion_floor(train, val, made, attempted, seed)
         rows.append({"head": head, "kind": "conversion", "variant": "carry_forward",
                      "n_features": 0, **_metric_columns(floor_val)})
 
-        for label, (v_tr, v_te, v_features) in conversion_variants(
-                train, val, made, attempted, n_knots).items():
+        arms = conversion_variants(train, val, made, attempted, n_knots)
+        for label, (v_tr, v_te, v_base) in arms.items():
+            v_features = head_features(v_base, made, preseason)
             v_model = StanConversion(v_features, made, attempted,
                                      name=f"{head}/{label}/val", chains=chains,
                                      seed=seed, **_iters(cfg_stan)).fit(v_tr)
@@ -463,6 +801,10 @@ def sweep_conversions(train, val, cfg_stan, n_knots) -> tuple[pd.DataFrame, list
             v = _score_conv(v_model, v_te, made, attempted, seed)
             rows.append({"head": head, "kind": "conversion", "variant": label,
                          "n_features": len(v_features), **_metric_columns(v)})
+
+        rows, diagnostics = _control_arm(
+            rows, diagnostics, arms, made, attempted, cfg_stan, preseason,
+            lambda f, te, m=made, a=attempted: _score_conv(f, te, m, a, seed))
     return _finalize(pd.DataFrame(rows), "val_nll", higher_is_better=False), diagnostics
 
 
@@ -492,11 +834,22 @@ def _finalize(table: pd.DataFrame, val_col: str,
     always have been: does the variant I would ship beat arithmetic on the rows I chose it
     with? The end-of-project certification is `src/final_evaluation.py`'s job.
     """
+    # A `--heads` run that names no head of this kind sweeps nothing, and an empty frame has
+    # no columns to flag. Returned with the schema the caller expects so `pd.concat` and
+    # `merge_heads` downstream see a well-formed zero-row block rather than a shapeless one.
+    if table.empty:
+        return pd.DataFrame(columns=["head", "kind", "variant", "n_features", val_col,
+                                     "selected", "beats_floor", "is_control"])
     out = table.copy()
     out["selected"] = False
     out["beats_floor"] = False
+    # The no-preseason control is scored like any other row and can never be selected: it is
+    # the thing the shipped arm is measured AGAINST, and letting it win would silently
+    # re-decide the block on a run that exists to price it. `stan_minutes.sweep` marks its own
+    # the same way.
+    out["is_control"] = out["variant"].str.endswith(CONTROL_SUFFIX)
     for head, block in out.groupby("head"):
-        fitted = block[block["variant"] != "carry_forward"]
+        fitted = block[(block["variant"] != "carry_forward") & ~block["is_control"]]
         if fitted.empty:
             continue
         best = (fitted[val_col].idxmax() if higher_is_better else fitted[val_col].idxmin())
@@ -846,7 +1199,15 @@ def _arm_a_grid(predictions_dir: Path) -> pd.DataFrame:
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
-def run(cfg: dict) -> dict[str, Path]:
+def run(cfg: dict, heads: tuple[str, ...] | None = None) -> dict[str, Path]:
+    """The full sweep, or `heads` alone merged into the artifact already on disk.
+
+    `heads=None` is the whole family and is what `make stan-components` runs. A subset is the
+    `posteriors --groups` idiom: the eleven heads are fitted separately, so refitting one
+    leaves the other ten bit-identical at a fixed seed and re-deriving them costs ~2.7 h of
+    sampler time to reproduce numbers already on disk. `merge_heads` states the property that
+    makes it sound.
+    """
     features_dir = Path(cfg["data"]["features_dir"])
     out_dir = Path(cfg["evaluation"]["predictions_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -854,9 +1215,13 @@ def run(cfg: dict) -> dict[str, Path]:
     n_knots = int(cfg_stan.get("components", {}).get("spline_knots", SPLINE_KNOTS))
     test_seasons = 2
 
-    targets = pd.read_parquet(features_dir / "component_targets.parquet")
-    design = build_design(targets, cfg["data"]["seasons"], cfg["data"]["raw_dir"])
-    train, val = selection_split(design, test_seasons)
+    preseason = bool(cfg_stan.get("components", {}).get("preseason", PRESEASON))
+
+    design = head_design(cfg, preseason)
+    train_full, val = selection_split(design, test_seasons)
+    # The covered-window cut, on the FITTING rows only. Required by the block rather than
+    # chosen for its own sake — see `covered_fitting_rows`.
+    train = covered_fitting_rows(train_full, cfg, preseason)
 
     print(f"Stan component heads: {len(design):,} player-seasons, "
           f"{design['season'].nunique()} target seasons")
@@ -865,16 +1230,38 @@ def run(cfg: dict) -> dict[str, Path]:
           f"`make final-evaluation`.")
     print(f"  {len(train):,} fit / {len(val):,} select "
           f"({', '.join(sorted(val['season'].unique()))} as validation)")
+    if preseason:
+        constants = shrinkage_constants(cfg)
+        carried = [h for h in sorted(constants) if head_preseason_cols(h.split("|")[0])]
+        print(f"  PRESEASON BLOCK ON (session 6b) for {len(carried)} of "
+              f"{len(constants)} heads: five columns each — the head's\n  own delta, "
+              f"volume-shrunk at its fitted k, plus the four age-split missing indicators."
+              f"\n  k = "
+              + ", ".join(f"{h} {constants[h]:.0f}" for h in carried) + ".")
+        if PRESEASON_EXCLUDE:
+            print(f"  OPTED OUT: {', '.join(sorted(PRESEASON_EXCLUDE))} — measured WORSE "
+                  f"with the block on three metrics at the\n  posterior, and P1's own "
+                  f"attribution said its gain was the indicator rather than\n  preseason "
+                  f"3P%. It fits the pre-2026-08-15 head exactly.")
+        print(f"  Fitting rows cut to the covered window: {len(train):,} of "
+              f"{len(train_full):,} ({len(train) / len(train_full):.1%}). Each head also "
+              f"fits a\n  `{CONTROL_SUFFIX.lstrip('_')}` control at its selected variant, "
+              f"which is what says whether the\n  increment survives integrating over "
+              f"`beta`. `stan.components.preseason: false` is the\n  exact rollback.")
+    else:
+        print("  PRESEASON BLOCK OFF — the pre-2026-08-15 heads exactly.")
     print(f"  {len(COUNT_HEADS)} count heads + {len(CONVERSION_HEADS)} conversion heads, "
           f"fitted SEPARATELY — the chain factorizes the joint posterior exactly.\n")
 
-    counts, diag_counts = sweep_counts(train, val, cfg_stan, n_knots)
+    counts, diag_counts = sweep_counts(train, val, cfg_stan, n_knots, preseason, heads,
+                                       train_full)
     print("Count heads — validation R^2 on the season total (higher is better):")
     print(counts.pivot_table(index="head", columns="variant", values="val_r2")
           .reindex(columns=["carry_forward", "linear", "log_own", "log_own_spline"])
           .round(4).to_string())
 
-    conversions, diag_conv = sweep_conversions(train, val, cfg_stan, n_knots)
+    conversions, diag_conv = sweep_conversions(train, val, cfg_stan, n_knots, preseason,
+                                               heads, train_full)
     print("\nConversion heads — validation beta-binomial NLL per row (lower is better):")
     print(conversions.pivot_table(index="head", columns="variant", values="val_nll")
           .reindex(columns=["carry_forward", "linear", "logit_own", "logit_own_spline"])
@@ -904,7 +1291,17 @@ def run(cfg: dict) -> dict[str, Path]:
     else:
         print("\nEvery head has a variant clearing the no-fit floor.")
 
-    substitution, diag_subst = substitution_arm(train, val, cfg_stan, n_knots)
+    if heads is not None:
+        # The substitution arm is a basis comparison over `fga`/`fg3a`, not a per-head sweep,
+        # so a targeted refit neither changes it nor may silently blank it.
+        subst_path = out_dir / "stan_component_substitution.csv"
+        substitution = (pd.read_csv(subst_path) if subst_path.exists()
+                        else pd.DataFrame())
+        diag_subst = []
+        print(f"\n3PA/2PA substitution: not re-run (targeted refit); "
+              f"{len(substitution):,} rows kept from disk.")
+    else:
+        substitution, diag_subst = substitution_arm(train, val, cfg_stan, n_knots)
     print("\n3PA/2PA substitution — two count heads vs `fga` count x `fg3a | fga` share:")
     print(substitution.round(4).to_string(index=False))
     print("  Comparable because the map is a bijection with unit Jacobian on the integers:\n"
@@ -913,6 +1310,18 @@ def run(cfg: dict) -> dict[str, Path]:
           "  validation row is the one that decides.")
 
     diag = diagnostics_frame(diag_counts + diag_conv + diag_subst)
+    if heads is not None:
+        # Merge into what is on disk rather than replacing it. Diagnostics are keyed by a
+        # `<head>/<variant>/val` label, so the refitted heads are identified by prefix.
+        m_path, d_path = (out_dir / "stan_component_metrics.csv",
+                          out_dir / "stan_component_diagnostics.csv")
+        table = merge_heads(pd.read_csv(m_path) if m_path.exists() else None, table)
+        if d_path.exists():
+            old = pd.read_csv(d_path)
+            stale = old["label"].str.split("/").str[0].isin(set(heads))
+            diag = pd.concat([old[~stale], diag], ignore_index=True)
+        print(f"\nTargeted refit of {', '.join(heads)} — merged into the artifact on disk; "
+              f"the other\nheads' rows are untouched and were never re-derived.")
     artifacts = {
         "metrics": (table, out_dir / "stan_component_metrics.csv"),
         "substitution": (substitution, out_dir / "stan_component_substitution.csv"),
@@ -988,10 +1397,28 @@ def run_substitution_sweep(cfg: dict) -> dict[str, Path]:
 
 
 if __name__ == "__main__":
-    import sys
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Fit the component rate heads.")
+    parser.add_argument("--gate0", action="store_true",
+                        help="run the 3PA/2PA substitution sweep instead")
+    parser.add_argument("--heads", default=None,
+                        help="comma-separated subset to refit (e.g. 'fg3m|fg3a'); every "
+                             "other head keeps its rows from the artifact on disk. The "
+                             "heads are fitted separately, so a subset refit is exact "
+                             "rather than approximate — see `merge_heads`. Omit for the "
+                             "full sweep.")
+    args = parser.parse_args()
 
     cfg = yaml.safe_load(open("configs/default.yaml"))
-    if "--gate0" in sys.argv:
+    if args.gate0:
         run_substitution_sweep(cfg)
     else:
-        run(cfg)
+        subset = tuple(h.strip() for h in args.heads.split(",")) if args.heads else None
+        if subset:
+            known = set(COUNT_HEADS) | {f"{m}|{a}" for m, a in CONVERSION_HEADS}
+            unknown = [h for h in subset if h not in known]
+            if unknown:
+                raise SystemExit(f"unknown head(s): {', '.join(unknown)}; "
+                                 f"choose from {sorted(known)}")
+        run(cfg, subset)

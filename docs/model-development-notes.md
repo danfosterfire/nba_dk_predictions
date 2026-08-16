@@ -140,7 +140,7 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
   | prior GP carried forward | 417.9 | 560.5 | 0.652 | +19.4 | — |
   | league/age baseline | 461.6 | 565.9 | 0.645 | +12.9 | 329.1 |
   | **beta-binomial head** | **400.5** | **514.0** | **0.707** | **−3.1** | **287.3** |
-  | *spell process* (Gate E) | *406.8* | *520.3* | *0.700* | *−16.6* | *291.8* |
+  | *spell process* (Gate E) | *406.6* | *520.0* | *0.700* | *−15.9* | *291.6* |
   | *oracle rate* | *261.9* | *367.0* | *0.851* | *−41.3* | — |
   | *oracle GP* | *214.4* | *287.5* | *0.908* | *+2.0* | — |
 
@@ -174,7 +174,7 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
   — `crps_from_atoms`, the O(K) kernel reduction, pinned against the literal double sum in
   `tests/test_season_total.py`.
 - **⭐ Gate E of the games-played plan RAN here on 2026-08-05 and the spell process FAILS
-  it** — 406.8 MAE and 291.8 CRPS against the incumbent's 400.5 / 287.3. **It had been
+  it** — 406.6 MAE and 291.6 CRPS against the incumbent's 400.5 / 287.3. **It had been
   recorded as a ✅ on test with a margin of 0.03 dk_pts** (435.1053 against a 435.1352 bar),
   which is seven parts in a hundred thousand and was never evidence of anything. That is the
   third gate in that head to reverse on moving off the test split.
@@ -415,15 +415,22 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     +0.079 NLL and `fg3m|fg3a` +0.028 (both from the PCA/spline variants), so the
     conversion side is worth ~1–2% of its NLL at most. (Recorded on the held-out split:
     3.1021 against 3.0822, +0.072 and +0.032.)
-    - **⚠️ On validation `fg3a|fga` joins it under sklearn, and the Stan head clears the same
-      floor by only +0.0034.** The shot-mix head's best Poisson/logistic variant reads 4.6317
-      against a floor of **4.6191** — it *fails* — while `stan_components` clears that
-      identical floor at **4.6157**. Both instruments now agree the head is *marginal*, where
-      the recorded reading had Stan clearing by +0.0391 on test and made the sklearn failure
-      look like an artifact of the coarser probe. The instrument difference is still real —
-      sklearn's `spline_own` basis is on raw `own` while `stan_components` splines on
-      `logit(own)`, which strictly nests the right scale — but it is worth 0.0160 NLL, not
-      the 0.04 the test column implied. **Do not quote this head as clearing comfortably.**
+    - **⚠️ On validation `fg3a|fga` joins it under sklearn, and the Stan head cleared the
+      same floor by only +0.0034.** The shot-mix head's best Poisson/logistic variant reads
+      4.6317 against a floor of **4.6191** — it *fails* — while `stan_components` cleared that
+      near-identical floor at **4.6157**. Both instruments agreed the head was *marginal*,
+      where the recorded reading had Stan clearing by +0.0391 on test and made the sklearn
+      failure look like an artifact of the coarser probe. The instrument difference is still
+      real — sklearn's `spline_own` basis is on raw `own` while `stan_components` splines on
+      `logit(own)`, which strictly nests the right scale.
+      - ✅ **The margin is no longer marginal, and "do not quote this head as clearing
+        comfortably" is withdrawn (2026-08-15).** The preseason block takes the Stan head to
+        **4.5385** against a floor of **4.6187**, a gain of **+0.0802** — twice what the test
+        column ever showed and 24× the pre-block validation reading. `fg3a|fga` is in fact
+        one of the strongest results of session 6b: **−1.4373** CRPS on validation and
+        **−1.9544** rolling at 13 of 13 origins, on a head P1's screen had excluded. The
+        sklearn probe is unchanged and still fails, so the two instruments now *disagree* —
+        which is a statement about six preseason games, not about the basis.
   - **The conversion floor has to be a *shrunk* carry-forward, and that is a fact about
     proportions.** A player who went 0-for-3 from three has a prior 3P% of exactly 0.000;
     carrying it onto 200 attempts gives a beta-binomial NLL of **1.3e9** and makes the
@@ -499,11 +506,37 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     hopeful comparison.** An L2 penalty of `l2` on standardized coefficients *is* a
     `normal(0, 1/sqrt(2·l2))` prior, so the posterior **mode** is exactly the penalized
     optimum `BetaBinomialGLM` finds — `stan_utils.prior_sd_for_l2` is that identity. Measured
-    on 9,478 train / 883 **validation**: CRPS **10.0063** (Stan plug-in) / **10.0071**
-    (posterior) against the MLE's **10.0057**, ρ **0.2808** vs **0.2806**, max coefficient gap
-    **0.00335**, largest gap **0.085 posterior sd**, and the MLE inside the 95% credible
-    interval for **21/21** terms. R̂ **1.0019**, min ESS 2,314, **0 divergences**, 196 s
-    wall clock over 4 chains.
+    on the 4,027 **windowed** fitting rows / 883 **validation**: CRPS **9.1329** (Stan
+    plug-in) / **9.1289** (posterior) against the mixture MLE's **9.1390** and the
+    single-component MLE's **9.8444**, ρ **0.2048** vs **0.2034** and **0.2627**, max
+    coefficient gap **2.62549**, largest gap **1.588 posterior sd**, and the MLE inside the
+    95% credible interval for **45/45** terms. R̂ **1.00254**, min ESS **1,502.6**,
+    **0 divergences**, 521 s wall clock over 4 chains.
+    - **⚙️ The head took a 2012-13 fitting window and a role-graded ρ on 2026-08-11, the
+      low-availability mixture on 2026-08-12, and a ten-column preseason block on
+      2026-08-13** (`docs/availability-window-plan.md` §4 and §7, `docs/preseason-plan.md`
+      P2). Every point MLE is refitted on the same windowed rows, or the port check would be
+      comparing two populations rather than two fits. The pre-block mixture read CRPS 9.8195 /
+      9.8239 against 9.8237, ρ 0.2261 vs 0.2245, gap 0.74165 at 0.597 sd, 35/35 terms,
+      R̂ 1.0073, min ESS 1,399, 366 s; the single-component role-graded block before it
+      read CRPS 9.8136 / 9.8155 against 9.8444, ρ 0.2595 vs 0.2627, gap 0.09352 at 1.658 sd,
+      24/24 terms, R̂ 1.0050, min ESS 2,382, 94 s; the full-window shared-ρ block before
+      *that* read CRPS 10.0063 / 10.0071 against 10.0057, ρ 0.2808 vs 0.2806, gap 0.00335 at
+      0.085 sd, 21/21 terms, R̂ 1.0019, min ESS 2,314, 196 s.
+      **Three revisions, three widening coefficient gaps, and the gap is not the story** —
+      it lives entirely in `γ`, the mixture weight's unpenalized and weakly identified
+      coefficients, whose posterior sds run 0.50 to 1.69. The preseason block's own ten terms
+      port within **0.08** posterior sd apiece, tighter than anything else in the table.
+      **The reference has to be the arm the head is a port OF, and that is now load-bearing
+      rather than pedantic**: referenced against the *single-component* MLE the 2026-08-12
+      mixture posterior read 19/24 with `rho[30+ mpg]` at z = **−6.34**, which measures the
+      likelihood change — the mixture takes the disrupted seasons out of the main component,
+      so its ρ falls from 0.2627 to 0.2261 — and says nothing about the port. (That reading
+      has not been recomputed since the block shipped, and cannot be: a 24-term reference
+      cannot score a 45-term posterior. What it was built to show is unaffected.) Against
+      `mixture_mle` every dispersion term agrees to z ≤ 0.38. The exact claim is pinned where
+      it can be exact: `n_rho = 1` reproduces the shared-ρ target bit for bit on Stan's own
+      `log_prob`, and `θ = 0` reproduces the single-component target bit for bit.
     - **⚠️ This block was measured on the held-out seasons until 2026-08-05 and read
       10.7947 / 10.7953 / 10.7952, ρ 0.2759 vs 0.2757, gap 0.0127 / 0.095 sd, R̂ 1.0025,
       min ESS 2,402, 254 s.** The port check moved to validation with every other head
@@ -523,15 +556,40 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
 
     | players | independent sd | shared-β sd | inflation |
     |---|---|---|---|
-    | 12 | 69.9 | 4.2 | **+0.2%** |
-    | 15 | 78.0 | 5.0 | +0.2% |
-    | 30 | 110.3 | 8.8 | +0.3% |
-    | 150 | 246.4 | 39.1 | +1.2% |
-    | **883 (whole board)** | 597.8 | 222.8 | **+6.7%** |
+    | 12 | 63.440 | 6.748 | **+0.6%** |
+    | 15 | 70.610 | 7.755 | +0.6% |
+    | 30 | 99.980 | 13.163 | +0.9% |
+    | 150 | 223.312 | 54.726 | +3.0% |
+    | **883 (whole board)** | 542.187 | 305.723 | **+14.8%** |
 
     So it is real for **board-wide exposure across many lineups** and near-irrelevant for a
-    single 15-man team. Quoting the 223-game figure as if it applied to one roster is the
-    over-claim to avoid — it was made and corrected in the session that built this.
+    single 15-man team. Quoting the **305.723**-game figure as if it applied to one roster is
+    the over-claim to avoid — it was made and corrected in the session that built this.
+    - **⚙️ The 2012-13 window roughly doubled the shared-β term, and it is the one place the
+      window is not free.** The full-window head read 69.9 / 4.2 / +0.2% at 12 players and
+      597.8 / **222.8** / **+6.7%** across the board. Fewer fitting rows leave a wider
+      posterior on β, so the term that is *exactly* the whole-board co-movement grows. That
+      is more honest rather than worse — the uncertainty was always there and 9,478 rows were
+      understating it — and on a roster it is still a rounding error. But a consumer reading
+      the board figure as "how far could the entire league move at once" is now reading a
+      number twice as large, and any simulator input derived from it moves with it.
+    - **⚙️ The mixture added to it again, by a different mechanism.** The single-component
+      role-graded head read 68.0 / 6.1 at 12 players and 581.4 / **297.2** / **+12.3%**
+      across the board (75.8 / 7.2 at 15, 107.2 / 12.3 at 30, 239.4 / 52.5 / +2.4% at 150).
+      The window's share was posterior width on β; the mixture's is the between-component
+      term `π(1−π)(m_low − m_main)²` in `predictive_moments` — the extra spread the arm was
+      adopted for, reaching the joint rather than only the marginal. Two different sources,
+      the same direction, and the same warning attached.
+    - **⚙️ The preseason block is the first change to push back, and it splits by portfolio
+      size.** The pre-block mixture read 69.060 / 6.499 / +0.4% at 12 players and 589.169 /
+      **332.588** / **+14.8%** across the board (76.810 / 7.669 at 15, 108.652 / 13.370 at
+      30, 242.604 / 58.432 / +2.9% at 150). The block cuts the full-board shared-β term to
+      **305.723** — it explains variance the coefficients were carrying, so the posterior on
+      β narrows on unchanged fitting rows — while the *inflation* at 14.8% is unmoved,
+      because the independent term fell by almost the same fraction. On a roster it goes the
+      other way: at 15 players the shared term **rose** (7.669 → 7.755) against an
+      independent term that fell (76.810 → 70.610), so the inflation reads +0.6% rather than
+      +0.5%. The level and the ratio move independently, which is why both columns are kept.
     - **The board is a SIMULATOR INPUT, so validation is where it belongs**, not merely
       where the lock put it. "How much does my whole board move together" is a number the
       simulator is *given*; calibrating it on the seasons the simulator is later backtested
@@ -560,7 +618,7 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     does not exist here, since Stan differentiates exactly.
   - **B-spline bases are badly conditioned for HMC.** The spline variants sample at treedepth
     8 (255 leapfrog steps per iteration) with a step size of 0.011, against treedepth 3–4 for
-    the linear ones — **955 s against 175 s** for the same data on the minutes head. (Both figures were re-measured on 2026-08-08 while the composition head was sampling on the same machine, so they are an UPPER bound on the uncontended cost — the earlier idle-machine pair was 721 s against 171 s. The ratio is the claim; the levels move with whatever else is running.) Valid,
+    the linear ones — **509 s against 134 s** for the same data on the minutes head. (Both figures were re-measured on 2026-08-13 with the preseason block on and the fitting window cut to 2004-05, so they are 6,152 rows rather than 8,306; the pre-block pair on a contended machine was **955** s against **175** s, and the earlier idle-machine one 721 s against 171 s. The ratio is the claim — 3.8× here, 5.5× there — and the levels move with the row count and with whatever else is running.) Valid,
     just expensive; an orthogonalized (QR-whitened) basis is the fix if spline variants ever
     become the shipped spec. (The recorded **899** s / **189** s pair is the same contrast
     on the retired test refits, which ran at double the iterations.)
@@ -568,22 +626,45 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
   real trials denominator.** `min` is successes out of **actual game length**, never 48:
   `data/features/game_length.parquet` supplies it, 5.93% of games go to overtime, and the
   prior attempt's `normal(μ,σ) T[0,48]` needed a `min == 48 → 47.9` fudge *and* discarded
-  every overtime game. Season-collapsed on 9,804 player-seasons (8,306 fit / 742 validation
-  on 2022-23 and 2023-24), `y` = season minutes, `n` = summed game length **over the games he
-  played** — so it is the conditional `min | available` and composes with the availability
-  head rather than double-counting absences. **0 rows clamped by rounding**, realized share
-  max 0.9096.
+  every overtime game. Season-collapsed on 9,804 player-seasons (**6,152** fit / 742
+  validation on 2022-23 and 2023-24), `y` = season minutes, `n` = summed game length **over
+  the games he played** — so it is the conditional `min | available` and composes with the
+  availability head rather than double-counting absences. **0 rows clamped by rounding**,
+  realized share max 0.9096.
+
+  ⚙️ **Since 2026-08-13 every arm carries a five-column preseason block and fits from
+  2004-05** (`docs/preseason-plan.md` P3) — the season-centred preseason minutes delta plus
+  four age-split missing indicators. The window is cut because the preseason panel begins at
+  2004-05 and this head used to fit from 1997-98, which is where 8,306 fitting rows became
+  6,152.
 
   | variant | val CRPS | val R² | val MAE | val bias | selected |
   |---|---|---|---|---|---|
-  | `carry_forward` (no-fit floor) | 161.45 | 0.8536 | 213.13 | **+23.91** | |
-  | linear | 144.71 | 0.8826 | 199.54 | −3.26 | |
-  | `logit(own)` | 145.45 | 0.8819 | 200.90 | −2.97 | |
-  | `logit(own)` + quadratic | 144.54 | 0.8827 | 200.84 | −13.82 | |
-  | **`logit(own)` + spline** | **143.93** | **0.8835** | 199.60 | −14.00 | **✓** |
+  | `carry_forward` (no-fit floor) | 160.71 | 0.8536 | 213.13 | **+23.91** | |
+  | linear | 137.74 | 0.8936 | 191.21 | −4.70 | |
+  | `logit(own)` | 138.53 | 0.8929 | 192.67 | −3.21 | |
+  | `logit(own)` + quadratic | 137.82 | 0.8936 | 191.89 | −12.19 | |
+  | **`logit(own)` + spline** | **136.96** | **0.8944** | 190.69 | −12.24 | **✓** |
+  | `logit(own)` + spline, block removed *(control)* | 142.87 | 0.8841 | 198.71 | −17.09 | |
 
-  Clears the floor by **+0.0299 R² and −17.5 minutes of CRPS**. Max R̂ **1.0054**,
-  **0 divergences** over 4 fits, 1,503 s total.
+  Clears the floor by **+0.0408 R² and −23.75 minutes of CRPS**. Max R̂ **1.00695**,
+  **0 divergences** over 5 fits, 1,434 s total.
+  - **The control row is the only thing in this table that prices the block**, because the
+    window moved at the same time: the shipped variant on the same 6,152 covered rows with
+    the five columns removed. **−5.911 CRPS minutes** integrated over `beta` (136.958 against
+    142.869), against **−4.789** at P3's point MLE. The increment survives the posterior and
+    is slightly larger under it — which is the question P3 explicitly could not answer.
+  - ⚠️ **The floor moved and the fitted arms are not why.** `carry_forward`'s mean is prior
+    minutes share × realized game length and reproduces to the digit (R² 0.8536, MAE 213.13,
+    bias +23.91), but its **dispersion is fitted on the training rows**, and those are now
+    the covered window. 161.45 → 160.71 is that and nothing else. A no-fit floor is no-fit
+    in its mean, not in its spread.
+  - ⚠️ **The pre-block head, kept beside the one it became** (full 1997-98 window, no
+    preseason columns): floor **161.45** / 0.8536 / 213.13 / +23.91, linear **144.71** /
+    **0.8826** / **199.54** / **−3.26**, `logit(own)` **145.45** / **0.8819** / **200.90** /
+    **−2.97**, quadratic **144.54** / **0.8827** / **200.84** / **−13.82**, spline
+    **143.93** / **0.8835** / **199.60** / **−14.00** — clearing the floor by **+0.0299** R²
+    and **−17.5** minutes, max R̂ **1.0054**, 0 divergences over 4 fits, 1,503 s.
   - ⚠️ **This table was a TEST evaluation until 2026-08-06** and read, as
     `val CRPS / test CRPS / test R²`: floor 161.45 / **168.24** / **0.8166**, linear
     **144.62** / **147.18** / **0.8565**, `logit(own)` **145.44** / **147.35** / 0.8565,
@@ -594,21 +675,25 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     them is the split.** The `test_*` columns went because `sweep` no longer writes them;
     the *old* `val_crps` values went because selection was raised from 500/500 to
     full-length chains in the same change, so even the surviving column is a different
-    measurement. Only the floor's **161.45** is arithmetic all the way down and reproduces
-    to the digit.
-  - **The selected variant reproduced, which is what makes this head's selection readable
-    at all.** `logit_own_spline` is still chosen, and it now wins by 0.61 CRPS over the
-    quadratic against 0.69 before — a margin that survived both a change of scored rows and
-    a doubling of chain length. Contrast the season-term ablation, where **9 of 13 heads
+    measurement. Only the floor's **161.45** survived that change to the digit — and it did
+    not survive the 2026-08-13 window cut, for the reason two bullets up.
+  - **The selected variant reproduced twice, which is what makes this head's selection
+    readable at all.** `logit_own_spline` is still chosen — through the split change, through
+    the doubling of chain length, and through the preseason block and its window cut, where
+    it now wins by 0.86 CRPS over the quadratic against 0.61 and 0.69 before. Contrast the
+    season-term ablation, where **9 of 13 heads
     flipped their selected arm** on margins under 1%: an ablation whose winner moves under a
     change that should not touch it is measuring noise, and this one does not move.
   - **The specification answer is the OPPOSITE of the count heads', and that is the finding.**
     There, scale is everything and curvature is nearly nothing. Here the logit scale is a
-    **dead wash** and slightly *worse* on both metrics (val R² 0.8819 against linear's
-    0.8826, val CRPS 145.45 against 144.71), while curvature is what pays. Do not generalize
-    "put it on the link's scale" from the counts to the minutes head.
+    **dead wash** and slightly *worse* on both metrics (val R² 0.8929 against linear's
+    0.8936, val CRPS 138.53 against 137.74), while curvature is what pays. Do not generalize
+    "put it on the link's scale" from the counts to the minutes head. ⚠️ The pre-block
+    reading of that wash was 0.8819 against 0.8826 and 145.45 against 144.71 — same sign,
+    very nearly the same size, which is the check that the preseason block did not change
+    what this bullet is about.
   - **The season-level ρ is NOT the number the simulator needs, and they differ by more than
-    the fit does.** Fitted season-level ρ = **0.05025**; game-level ρ measured separately
+    the fit does.** Fitted season-level ρ = **0.041894**; game-level ρ measured separately
     against each player-season's own mean over 713,947 player-games = **0.0776**, i.e.
     **4.65× binomial** at a 48-minute game. A season total cannot separate a per-game random
     effect from a per-season one — iid game noise is diluted by ~1/G while a shared season
@@ -621,14 +706,21 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
       variance inflation** from `make serial-correlation` for the serial dependence *between*
       games. Using only (2) gives independent draws with the right marginal and too little
       variance in any aggregate; using only (3) gets the clustering right and each game wrong.
+    - ⚠️ **(1) moved with the preseason block and (2) and (3) did not.** The season-level ρ
+      read **0.05025** before 2026-08-13 — about 9% wider than it now is, because the block
+      explains variance the dispersion used to carry. `sim.minutes.player_season_sigma =
+      0.450` was calibrated against the wider one and is therefore stale; re-reading the
+      composition-vs-marginal stake is P5 work and is not done.
   - **⚠️ "The fitted heads carry a −33 to −41 minute bias against the floor's −5.7" is
     WITHDRAWN — that was the held-out column, and on validation the FLOOR is the biased
-    one.** The floor over-predicts by **+23.91** minutes while the fitted arms run **−3.26**
-    (linear) to **−14.00** (spline). So the recorded explanation — "the floor is unbiased
-    because it does not shrink" — is false on the split that selects.
-    - **What reproduces is the GAP, not the level.** The fitted arms sit **−27.2** (linear)
-      to **−37.9** (spline) minutes *below* the floor on validation, against −27.1 to −35.3
-      on the retired held-out column. Shrinkage moves every arm roughly the same distance
+    one.** The floor over-predicts by **+23.91** minutes while the fitted arms run **−3.21**
+    (`logit(own)`) to **−12.24** (spline). So the recorded explanation — "the floor is
+    unbiased because it does not shrink" — is false on the split that selects.
+    - **What reproduces is the GAP, not the level.** The fitted arms sit **−28.6** (linear)
+      to **−36.15** (spline) minutes *below* the floor on validation, against −27.1 to −35.3
+      on the retired held-out column and −27.2 to −37.9 before the preseason block — three
+      readings on three fitting frames, spread over less than the gap itself.
+      Shrinkage moves every arm roughly the same distance
       down from the carry-forward; where that lands in absolute terms is a property of the
       seasons being scored. So the calibration defect is **relative**, it still compounds
       through the eleven component heads that take these minutes as exposure, and it is
@@ -642,21 +734,21 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
       sign flips between two adjacent season pairs is not the signature of a monotone
       role-graded era trend; `make season-terms` had already falsified that from the other
       direction, finding a trend makes the bias *worse* by 15.5 minutes.
-- **✅ The eleven component heads are built in Stan — `make stan-components`, 37 fits, 0
-  divergences, max R̂ 1.0076, 137.4 min. Two results overturn what `make component-rates`
+- **✅ The eleven component heads are built in Stan — `make stan-components`, 47 fits, 0
+  divergences, max R̂ 1.00713, 163.9 min. Two results overturn what `make component-rates`
   measured with sklearn, one settles a standing recommendation, and one — the free-throw
-  family — REVERSED on the move to validation.** 10,194 player-seasons, 8,630 fit / 773
+  family — REVERSED on the move to validation.** 10,194 player-seasons, **6,382** fit / 773
   validation on 2022-23 and 2023-24. Validation R² on the season total:
 
   | head | no-fit floor | linear | `log(own)` | `log(own)` + spline | selected |
   |---|---|---|---|---|---|
-  | `fga` | 0.9514 | 0.9489 | 0.9581 | **0.9584** | spline |
-  | `reb` | 0.9505 | 0.8889 | **0.9513** | 0.9511 | `log_own` |
-  | `ast` | 0.9195 | 0.6418 | 0.9198 | **0.9255** | spline |
-  | `tov` | 0.8966 | 0.9048 | **0.9170** | 0.9169 | `log_own` |
-  | `blk` | 0.8103 | **−0.2744** | **0.6730** | **0.8309** | spline |
-  | `fta` | 0.8765 | 0.5741 | **0.8909** | 0.8893 | `log_own` |
-  | `stl` | 0.8386 | 0.8492 | 0.8674 | **0.8695** | spline |
+  | `fga` | 0.9514 | 0.9527 | 0.9644 | **0.9647** | spline |
+  | `reb` | 0.9505 | 0.9011 | 0.9574 | **0.9577** | spline |
+  | `ast` | 0.9195 | 0.6607 | 0.9283 | **0.9334** | spline |
+  | `tov` | 0.8966 | 0.9057 | 0.9205 | **0.9206** | spline |
+  | `blk` | 0.8103 | **−0.5155** | **0.6485** | **0.8324** | spline |
+  | `fta` | 0.8765 | 0.5769 | **0.8963** | 0.8934 | `log_own` |
+  | `stl` | 0.8386 | 0.8472 | 0.8696 | **0.8723** | spline |
 
   > ⚠️ **This table was a TEST evaluation until 2026-08-06** and read, in the same layout:
   > `fga` 0.9464 / 0.9396 / 0.9501 / 0.9505, `reb` 0.9424 / 0.9095 / 0.9439 / 0.9428,
@@ -667,6 +759,33 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
   > count halves from **74** because the test side is no longer fitted at all, and the cost
   > falls from **305.0** min to 137.4 *despite* every fit now running full-length chains:
   > the old test side was the majority of the compute at double the iterations.
+  >
+  > ⚠️ **And every fitted cell moved again on 2026-08-15, when ten of the eleven heads adopted
+  > the preseason block** (`docs/preseason-plan.md` session 6b). The block cuts the fitting
+  > window to the seasons the preseason panel covers, so the armed heads fit **6,382** rows
+  > from 2004-05 instead of **8,630** from 1997-98, and each one also fits a same-window
+  > `__no_preseason` control — which is where 37 fits become 47 and 137.4 min becomes 163.9.
+  > The pre-block reading, same layout: `fga` 0.9514 / **0.9489** / **0.9581** / **0.9584**,
+  > `reb` 0.9505 / **0.8889** / **0.9513** / **0.9511**, `ast` 0.9195 / **0.6418** /
+  > **0.9198** / **0.9255**, `tov` 0.8966 / **0.9048** / **0.9170** / **0.9169**, `blk` 0.8103
+  > / **−0.2744** / **0.6730** / **0.8309**, `fta` 0.8765 / **0.5741** / **0.8909** /
+  > **0.8893**, `stl` 0.8386 / **0.8492** / **0.8674** / **0.8695**; max R̂ **1.0076**.
+  >
+  > **⭐ The no-fit floor column did not move by a digit, and that is the diagnostic rather
+  > than a coincidence.** A count head's floor is prior per-36 rate × actual minutes evaluated
+  > on the *validation* rows — pure arithmetic that never reads the training window — so a
+  > window change cannot touch it, while every fitted cell must move. Seeing exactly that
+  > pattern is what distinguishes "the fitting window moved" from "the scoring frame moved",
+  > and the latter would have invalidated every comparison in this block. **The conversion
+  > floors are the control on the control**: they *are* shrunk carry-forwards with `k` fitted
+  > on the training half, so three of the four *did* move (see the conversion bullet), and the
+  > one that did not is `fg3m|fg3a` — the head that carries no block and kept the full window.
+  >
+  > **Two variant selections flipped, both from `log_own` to the spline: `reb` and `tov`.**
+  > Six of the seven count heads now select a spline where four did before, with `fta` the
+  > lone holdout. Neither flip is a margin worth defending — `reb` at 0.9577 against 0.9574
+  > and `tov` at 0.9206 against 0.9205 — and `tov`'s was explicitly waived when the block was
+  > adopted, on the ground that its CRPS and R² orderings disagree at the fourth decimal.
 
   - **⚠️ `selected` and `beats_floor` used to read DIFFERENT SPLITS. They no longer do, and
     that is the semantic change to notice in the artifact.** The variant was chosen on
@@ -677,9 +796,11 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     chose it with? Certification against the held-out seasons is `src/final_evaluation.py`'s
     job and nothing else's.
   - **⭐ `fta` CLEARS its floor on validation, so "the whole free-throw family fails" is
-    WITHDRAWN.** `log_own` scores **0.8909** against a floor of **0.8765** — **+0.0144**,
+    WITHDRAWN.** `log_own` scores **0.8963** against a floor of **0.8765** — **+0.0198**,
     and it is the selected variant — where on test it read 0.8649 against 0.8673 and failed
-    by **0.0024**. Two parts in a thousand was never evidence of anything, and it was being
+    by **0.0024**. (Before the preseason block the same pair read **0.8909** for **+0.0144**,
+    so the reversal widened rather than narrowed.)
+    Two parts in a thousand was never evidence of anything, and it was being
     read as a finding about free throws in general. **`ftm|fta` still fails, and is now the
     only head in the project that fails its floor at every variant.** That was always the
     better-founded half of the claim: free-throw *percentage* has a pure-player-skill
@@ -689,42 +810,63 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     retired `fg3a` row read floor 0.9036, **linear −19.00**, `log_own` **0.3719**, spline
     0.9046 — a head that *failed its floor at two of three variants*. `fga` replaces it and
     is the best-behaved count head in the project: floor **0.9514** (the highest), selected
-    **0.9584**, and **linear costs it only 0.0025 R²** (0.9489) against `fg3a`'s −19.00. A
+    **0.9647**, and **linear costs it only 0.0120 R²** (0.9527) against `fg3a`'s −19.00. A
     total is far less skewed than its three-point part, so the scale barely matters. `blk`
-    at **−0.2744** is now the worst linear case, and the only one left that is negative at
+    at **−0.5155** is now the worst linear case, and the only one left that is negative at
     all. The retired `fg2a` row (0.9194 / 0.9018 / 0.9241 / 0.9241) is unremarkable
     either way.
   - **⚠️ `log(own)` alone is NOT sufficient under a negative binomial, and that contradicts
     the Poisson result.** `make component-rates` has `log_own` at 0.7748 (`blk`) — both
     figures now on validation, so they are directly comparable — and under NB the same spec
-    collapses to **0.6730**, far below the 0.8103 floor, with only the spline recovering it
-    (**0.8309**). The mechanism is the likelihood, not the
+    collapses to **0.6485**, far below the 0.8103 floor, with only the spline recovering it
+    (**0.8324**). The mechanism is the likelihood, not the
     data: NB2's `var = μ + μ²/φ` down-weights large counts relative to Poisson, so the fit is
     driven by the low-count mass — exactly where the log-scale relation is most curved. **The
     "splines are worth ≤ +0.003 outside `fg3a`/`blk`" guidance is Poisson-specific.** Under NB
-    the validation split picks the spline for **four** heads (`fga`, `ast`, `blk`, `stl`),
-    and for `blk` it is not a refinement but the difference between a model and a
+    the validation split picks the spline for **six** heads — every count but `fta` — and
+    for `blk` it is not a refinement but the difference between a model and a
     failure. (The retired `fg3a` made the same point harder still, at 0.8791 under Poisson
     against **0.3719** under NB.)
-  - **`linear` is catastrophic, far beyond what the Poisson fit showed** — `blk` **−0.2744**
+  - **`linear` is catastrophic, far beyond what the Poisson fit showed** — `blk` **−0.5155**
     validation R² against 0.638 under sklearn, and the retired `fg3a` read **−19.00**.
     Linear-in-raw-rate
     inside `exp()` is not merely misspecified, it is unusable. The strongest available
     statement of "the specification is scale, not curvature." **It fails the no-fit floor on
-    5 of the 7 count heads** — every one but `stl` and `tov` — and `fta` is the second-worst
-    at **0.5741**, a head where every other variant is fine.
+    4 of the 7 count heads** — every one but `fga`, `stl` and `tov` — and `fta` is the
+    second-worst at **0.5769**, a head where every other variant is fine. ⚠️ **That count was
+    5 of 7 before the preseason block**: `fga`'s linear arm now clears a floor it used to miss
+    by 0.0025, which is the block doing the most work exactly where the link function does the
+    least. It is the only one of the seven whose floor verdict changed.
   - Conversion heads, validation beta-binomial NLL per row (lower better), all **four**
-    selecting `logit(own)` + spline: the new shot-mix head `fg3a|fga` **4.6157** vs floor
-    **4.6191** (**+0.0034**), `fg2m|fg2a` **3.8046** vs floor 3.8442 (**+0.0396**),
-    `fg3m|fg3a` **3.1677** vs 3.1851 (+0.0173), `ftm|fta` 3.0804 vs **3.0541** (−0.0263,
+    selecting `logit(own)` + spline: the new shot-mix head `fg3a|fga` **4.5385** vs floor
+    **4.6187** (**+0.0802**), `fg2m|fg2a` **3.7829** vs floor 3.8138 (**+0.0309**),
+    `fg3m|fg3a` **3.1676** vs 3.1851 (+0.0174), `ftm|fta` 3.0718 vs **3.0534** (−0.0184,
     fails as predicted). Same ordering as the sklearn run and as the retired test reading
     (4.6137 / 4.6528, 3.7249 / 3.7770, 3.2407 / 3.2614, 3.1313 / 3.0822 — gains of +0.0391,
     +0.0521, +0.0208 and −0.0491).
-    **The shot-mix head still clears its floor, but by +0.0034 rather than the +0.0391 the
-    test column showed** — an order of magnitude narrower, and the one place where reading
-    the old column overstated a head-level result. It is still the head-level confirmation
-    of Gate 0, and `logit_own` alone still does *not* clear the floor, so the spline is
-    load-bearing there exactly as it is for `blk`.
+    **The shot-mix head clears its floor by +0.0802, which is now *twice* the +0.0391 the
+    test column showed** — it had fallen to **+0.0034** on the pre-block validation fit, an
+    order of magnitude narrower, and the preseason block put it back and then some. It is
+    the head-level confirmation of Gate 0, and `logit_own` alone still does *not* clear the
+    floor, so the spline is load-bearing there exactly as it is for `blk`.
+    The pre-preseason-block reading of the same four, kept beside its correction: `fg3a|fga`
+    **4.6157** vs 4.6191 (**+0.0034**), `fg2m|fg2a` **3.8046** vs 3.8442 (**+0.0396**),
+    `fg3m|fg3a` **3.1677** vs 3.1851 (**+0.0173**), `ftm|fta` 3.0804 vs 3.0541
+    (**−0.0263**). Every head improves under the block except `ftm|fta`, which improves too
+    and still fails — it is below its floor by less than it was.
+    - ⚠️ **Three of the four conversion floors moved with the block and one did not, and the
+      exception is the proof.** A conversion floor is a carry-forward *shrunk* toward the
+      league mean with `k` fitted on the training half, so cutting the window moves it —
+      **4.6191 → 4.6187**, **3.8442 → 3.8138**, **3.0541 → 3.0534**. `fg3m|fg3a` is the one
+      head that carries no preseason block, keeps the full 8,630-row window, and its floor
+      sits at **3.1851** exactly where it always has. The count floors are unshrunk arithmetic
+      and none of the seven moved at all.
+    - **`fg3m|fg3a`'s fitted NLL reproduces the pre-block head**, at **3.1676** against the
+      **3.1677** carried since before session 6b — a gap of 6e-05, which is sampler noise on
+      an identical design over identical rows. That reproduction is the check that
+      `PRESEASON_EXCLUDE` opts the head out of the *window* cut as well as the columns; an
+      earlier build of the same run fitted it on 6,382 rows while printing that it had
+      reproduced the pre-block head exactly.
 - **✅ The 3PA/2PA reparameterization survives an un-handicapped re-measurement — Gate 0,
   `make stan-substitution`, 2026-08-03. Full design and adoption spec:
   `docs/shot-attempt-basis-plan.md`.** Modelling `fga` as the count and `fg3a | fga` as a
@@ -761,6 +903,17 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
       different modules, and they agree at **10.025950** to **1.78e-15**. It replaces the
       retired check against 9.991042, which compared this gate's *test* side to a July
       number; both sides of the new one are current and on the same rows.
+      - ⚠️ **The identity broke on 2026-08-15, and the break is the check working.** The two
+        sides are rewritten by different `make` targets — `stan-components` for
+        `substitution_arm`, `stan-substitution` for the gate — and only the first re-ran when
+        ten of eleven heads adopted the preseason block. The sweep still reads **10.025950**;
+        `substitution_arm` now reads **10.0162**, handicapped arm A **10.738**, and the
+        recorded margin **−0.7218**. A quantity claimed from two artifacts against one string
+        cannot drift silently, which is exactly what it was registered that way to guarantee.
+        **Every figure that subtracts one file from the other — the 0.291919 handicap and the
+        65% surviving share — is presence-checked history now**, because differencing a
+        pre-block number against a post-block one is not a decomposition. Gate 0's own
+        **−0.501041** lives entirely inside the sweep and is untouched.
     - **⚠️ `stan_component_substitution.csv` WAS rebuilt on 2026-08-06, validation only**, so
       the sentence that stood here — that both recorded figures remain true of it, which was
       not rebuilt — is now half retired. The **validation** margin reproduces: 10.797 →
@@ -791,8 +944,17 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     floor is that strong, the **parameterization** is where the leverage is. (The retired
     test reading was 11.024027 / 10.085599 / −0.938427, with −0.390814 against the
     best-of-16 and −0.101096 of own fitting. **The floors themselves are arithmetic and
-    reproduce to the digit** — `stan_component_metrics.csv` independently agrees on both
+    reproduce to the digit** — `stan_component_metrics.csv` independently agreed on both
     arm-B rows — so the widening is the *fitted* side moving, not the benchmark.)
+    - ⚠️ **That cross-artifact agreement ended on 2026-08-15 and the two files can no longer
+      be read against each other.** `make stan-components` rewrote `stan_component_metrics.csv`
+      with the preseason block on; `make stan-substitution` did not re-run, so the sweep is
+      still pre-block. The shared fitted cells now differ by **0.053 to 0.082** nats where
+      they used to agree to 1.7e-04, and the two *floors* differ by **1.9e-04** (`fga`) and
+      **3.9e-04** (`fg3a|fga`) — small, but no longer zero, because a conversion floor's
+      shrinkage constant is fitted on the training half and the window moved. **Everything in
+      this bullet stays true of the sweep**, which is internally consistent and which is where
+      Gate 0 is decided; what is gone is the ability to corroborate it from the other file.
   - **The share head needs its spline to clear its floor, and this is the head where reading
     the test column would have shipped a failure.** `logit_own` reads 4.636018 on validation
     against a floor of 4.619109 — *below* it — while `logit_own_spline` clears at 4.615622.
@@ -820,7 +982,9 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
 - **Sampler cost is concentrated entirely in the spline variants.** 6 of 37 fits saturated
   treedepth, *all* of them spline arms; the slowest fit is 19.6 min (`fg3m|fg3a` spline)
   against 1.0–2.2 min for a linear or `log_own` count head. **37/37 cleared every convergence
-  bar** — max R̂ **1.0076**, 0 divergences.
+  bar** — max R̂ **1.0076**, 0 divergences. (Post-preseason-block: **47/47**, max R̂
+  **1.00713**, 0 divergences, 163.9 min. The concentration is unchanged — the block adds five
+  standardized columns and a same-window control per head, not a harder geometry.)
   - **Raising the selection side to full-length chains removed the one fit that used to fail
     a bar, and that is the clearest evidence the old short/long split cost something real.**
     `fg2m|fg2a/logit_own_spline/val` read R̂ **1.0118** against a 1.01 bar with ESS 450; at
@@ -833,7 +997,8 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
   July components run spanned a ~7 h machine sleep (10 h 11 m elapsed) and reported 208.6 min
   of compute with a maximum single fit of 19.8 min — no inflated row anywhere.
   `stan_utils.diagnostics` needs no sleep-correction. (That 208.6 is a record of *that* run;
-  the shot-attempt refit totalled 305.0 min, and the current validation-only heads 137.4.)
+  the shot-attempt refit totalled 305.0 min, the validation-only heads 137.4, and the
+  preseason-armed heads **163.9**.)
   - **It reproduced on the 2026-08-06 refit, and this time the arithmetic closes.** That run
     was awake 07:06–08:40 and 16:48–17:12 with a **7.8 h** sleep in between: 606 min elapsed,
     of which ~469 were asleep, leaving **136.9 min** of awake wall clock against **137.4 min**
@@ -853,12 +1018,20 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
 
   | variant | val CRPS | val PIT KS |
   |---|---|---|
-  | `carry_forward` (floor) | 4.6776 | 0.0496 |
-  | `binomial` | **4.9388** — *fails the floor* | **0.1919** |
-  | `betabinom` | 4.5417 | 0.0496 |
-  | `betabinom_ot` | 4.5431 | 0.0494 |
-  | **`betabinom_ot_graded`** (selected) | **4.4945** | 0.0428 |
-  | `independent_comparator` | 4.7842 | 0.0483 |
+  | `carry_forward` (floor) | 4.47013 | 0.0447901 |
+  | `binomial` | **4.65567** — *fails the floor* | **0.182451** |
+  | `betabinom` | 4.29017 | 0.0403882 |
+  | `betabinom_ot` | 4.28824 | 0.0409074 |
+  | **`betabinom_ot_graded`** (selected) | **4.26174** | 0.0400851 |
+  | `independent_comparator` | 4.68034 | 0.0469127 |
+
+  ⚠️ **Refreshed 2026-08-14 for the preseason-blended offset at the covered window**
+  (`docs/preseason-plan.md` P5). The pre-adoption table read, as `val CRPS / val PIT KS`:
+  floor **4.6776** / **0.0496**, `binomial` **4.9388** / **0.1919**, `betabinom` **4.5417** /
+  0.0496, `betabinom_ot` **4.5431** / **0.0494**, selected **4.4945** / **0.0428**,
+  comparator **4.7842** / **0.0483**. Every arm improved and **`betabinom_ot_graded` is
+  selected again**, which the changed offset did not oblige — the one substantive re-ordering
+  is that `betabinom_ot` now edges `betabinom` where it trailed before, on a margin of 0.002.
 
   ⚠️ **This table was a TEST evaluation until 2026-08-08**, when the artifact was
   regenerated to match code that had been validation-only since 2026-08-05. It read, as
@@ -877,8 +1050,11 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     their selected arm under a change that should not have touched them.
   - **`binomial`'s calibration failure now has a validation twin**, which it did not before:
     the old schema wrote `test_pit_ks` and no `val_pit_ks`, so the sharpest statement of the
-    arm's failure was a held-out number. It reads **0.1919** on validation against the
-    floor's 0.0496, reproducing the retired 0.1948 almost exactly.
+    arm's failure was a held-out number. It reads **0.182451** on validation against the
+    floor's **0.0447901** — and it read **0.1919** against 0.0496 before the preseason blend,
+    reproducing the retired 0.1948 almost exactly. The failure is a property of the
+    likelihood rather than of the offset: a better offset moved both numbers and left the
+    4.1× ratio between them intact.
   - **⚠️ Gate A under-predicts, but the multiplier is NOT a constant — do not treat 1.63× as
     one.** The one-pass sweep extrapolated **8.3 h** and took **9.78 h**, a **1.17×** miss,
     against the two-pass run's 12.8 h → **20.9 h** and **1.63×**. Per-row cost is
@@ -901,16 +1077,19 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     individual at `game_length`, and "**neither form gets both**". The sequential
     decomposition **does**: trials-as-remaining-capacity gives the cap, the deterministic
     last step gives the total. Both are asserted on every simulated draw.
-  - **−0.2898 minutes of CRPS against the incumbent** (4.4945 vs 4.7842, **−6.06%**) — the
-    plan predicted a wash and budgeted for arguing on capability instead. It won outright.
-    And the capability gap is there too: the independent draw misses the team total by
-    **33.89 minutes per team-game** where the composition is exact, and carries a **−0.5521**
-    minute bias against the composition's exact zero. (The pilot read −0.406 and the retired
-    test column −0.3548, i.e. **−7.2%**, at 36.87 minutes and a −1.2856 bias; the win shrinks
-    as the frame changes and is nowhere near a wash on any of them.)
+  - **−0.418598 minutes of CRPS against the incumbent** (4.26174 vs 4.68034, **−8.94%**) —
+    the plan predicted a wash and budgeted for arguing on capability instead. It won
+    outright. And the capability gap is there too: the independent draw misses the team total
+    by **33.6451 minutes per team-game** where the composition is exact, and carries a
+    **−0.366744** minute bias against the composition's exact zero. (Before the preseason
+    blend this read **−0.2898**, i.e. 4.4945 vs 4.7842 and **−6.06%**, at **33.89** minutes
+    and a **−0.5521** bias; the pilot read −0.406 and the retired test column −0.3548, i.e.
+    **−7.2%**, at 36.87 minutes and a −1.2856 bias. The win shrinks as the frame changes,
+    grows with the better offset, and is nowhere near a wash on any of them.)
   - **The pure decomposition is worse than the no-fit floor**, and this is the sharpest
-    result: the `binomial` arm reads 4.9388 against 4.6776 with PIT KS 0.1919 against
-    0.0496 — far too tight, exactly as the measured game-level ρ (4.65× binomial)
+    result: the `binomial` arm reads **4.65567** against **4.47013** with PIT KS
+    **0.182451** against **0.0447901** — far too tight, exactly as the measured game-level
+    ρ (4.65× binomial)
     predicted. The dispersion is not a refinement, it is the difference between a model
     and a failure. Same shape as the NB-vs-Poisson finding on the count heads.
   - **The offset IS the floor**, so both share one code path: `logit(w_k / Σ_{j≥k} w_j ×
@@ -919,8 +1098,9 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     renormalizer and scales everyone else up — so `β` fits *deviations* from proportional
     redistribution, which is the "who absorbs the minutes" question as a fitted quantity.
   - **✅ ρ is graded by prior-share quartile, and role grading is real** — fitted
-    **0.1768 / 0.1300 / 0.1115 / 0.0855** from fringe to star, a **2.07×** spread against
-    a single shared **0.1211**. A 34-mpg starter's allocation step is genuinely steadier
+    **0.14019 / 0.106907 / 0.0908324 / 0.0735171** from fringe to star, a **1.91×** spread
+    against a single shared **0.0990163**. A 34-mpg starter's allocation step is genuinely
+    steadier
     than a reserve's. `betabinom_ot_graded` differs from its twin in the **dispersion
     alone** — same features, same mean function — so the contrast is clean.
     **⚠️ Every ρ is larger at full window and the spread is narrower** (the pilot read
@@ -929,17 +1109,28 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     ratio. The grading is still real and still monotone; it is less extreme. (The two-pass
     run read 0.1751 / 0.1285 / 0.1099 / 0.0839 against 0.1195 at 2.09× — every value rose by
     ~0.0016 at full chain length and the ordering is untouched.)
+    **⚠️ And the preseason blend moves every ρ DOWN**, which is the same axis arriving from
+    the opposite direction. Before it the fitted values were **0.1768 / 0.1300 / 0.1115 /
+    0.0855** against a shared **0.1211** at a **2.07×** spread; the blended offset takes them
+    to 0.14019 / 0.106907 / 0.0908324 / 0.0735171 at 1.91×. That is the mechanism 4c and 4d
+    both predicted working as specified rather than a separate finding — a better offset
+    leaves less residual overdispersion for the beta-binomial to carry — and it is worth
+    keeping beside the window reading, because the two effects point opposite ways on the
+    same parameter and a future round reading only one of them would draw the wrong
+    conclusion about what drives ρ here.
     - **The calibration fix is the point, not the CRPS.** Realized/simulated variance
-      ratio by tier goes **1.2224 / 0.8430 / 0.6589 / 0.6285** shared →
-      **1.0465 / 0.8132 / 0.7071 / 0.8136** graded: mean |ratio − 1| falls **0.2730 →
-      0.1782**, a **35%** cut, with the extremes improving most.
+      ratio by tier goes **1.24296 / 0.948497 / 0.769356 / 0.638016** shared →
+      **1.00591 / 0.890576 / 0.806373 / 0.784878** graded: mean |ratio − 1| falls
+      **0.221772 → 0.13102**, a **40.9%** cut, with the extremes improving most.
       **⚠️ The pilot's 0.1055 and its near-exact 0.988 star tier oversold this** — at full
-      window the star tier lands at 0.814 and the cut is 35% rather than 59%. And **three of
-      four tiers sit below 1**, so the head is mildly over-dispersed in aggregate, which
-      is a better-posed target than chasing q2. (Retired test reading: 0.2928 → 0.1796, a
-      39% cut, with tiers 1.3466 / 0.8089 / 0.7691 / 0.5973 → 1.0845 / 0.7687 / 0.8217 /
-      0.7757.)
-    - **⚠️ q2 still gets *worse* (0.843 → 0.813), and it is structural.** The fitted ρ is the
+      window the star tier lands at 0.785 and the cut is 40.9% rather than 59%. And **three
+      of four tiers sit below 1**, so the head is mildly over-dispersed in aggregate, which
+      is a better-posed target than chasing q2. (Before the preseason blend the same rows
+      read **1.2224 / 0.8430 / 0.6589 / 0.6285** → **1.0465 / 0.8132 / 0.7071 / 0.8136**,
+      mean |ratio − 1| **0.2730 → 0.1782** for a **35%** cut. Retired test reading: 0.2928 →
+      0.1796, a 39% cut, with tiers 1.3466 / 0.8089 / 0.7691 / 0.5973 → 1.0845 / 0.7687 /
+      0.8217 / 0.7757.)
+    - **⚠️ q2 still gets *worse* (0.948 → 0.891), and it is structural.** The fitted ρ is the
       dispersion of a **sequential step**; the ratio is measured on a player's
       **marginal** minutes. Because the order is prior-share *descending*, a low-share
       player breaks his stick last and inherits the accumulated remainder variation from
@@ -949,13 +1140,19 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
       graded arm strictly generalizes. A test pins the identity at the simulator level.
       **Bin edges come from train quantiles only** — leakage here would be especially
       quiet, since ρ never touches the mean.
-  - **The OT interaction is real but tiny, and it LOSES validation** to plain `betabinom`
-    by 0.0014 CRPS. It survives only because the graded arm is built on it. Starters take
-    **0.6013** of team minutes in regulation and **0.6423** in OT; the head simulates
-    **0.5912** → **0.6415**, reproducing the +4.1 pp shift as +5.0 pp with a −1.0 pp level
-    *undershoot*. (The retired test reading had the level going the other way — observed
-    0.5882 → 0.6314 against a simulated 0.5998 → 0.6464, a +1.2 pp overshoot — so the sign
-    of the level error is a property of the scored seasons, not a standing bias.)
+  - **The OT interaction is real but tiny, and ⚠️ it now WINS validation** by 0.00193 CRPS
+    (4.28824 against plain `betabinom`'s 4.29017) — **a reversal of the pre-blend reading**,
+    where it *lost* by 0.0014 and survived only because the graded arm is built on it. The
+    margin is two parts in ten thousand in both directions, so the honest statement is that
+    the two arms are indistinguishable and the blend flipped a coin that was already on its
+    edge; nothing rests on it, because `betabinom_ot_graded` is selected either way.
+    Starters take **0.6013** of team minutes in regulation and **0.6423** in OT; the head
+    simulates **0.600961** → **0.649921**, reproducing the +4.10 pp shift as +4.90 pp with a
+    level error of **−0.03 pp** — against −1.0 pp before the blend, so the better offset very
+    nearly removed the level miss while leaving the shift intact. (The retired test reading
+    had the level going the other way — observed 0.5882 → 0.6314 against a simulated 0.5998 →
+    0.6464, a +1.2 pp overshoot — so the sign of the level error is a property of the scored
+    seasons, not a standing bias. The pre-blend simulated pair was **0.5912** → **0.6415**.)
   - **Game length itself is a two-parameter geometric tail**: p_any = 0.0608, p_more =
     0.1408, which covers 3OT/4OT for free. It predicts 128.4 single-OT games
     against 120 observed — the form holds, but it overpredicts OT by ~7% on recent
@@ -1029,7 +1226,7 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     **z = +5.29** against the sampling error of the observed proportion, where the tenure
     decomposition misses by **3.8%** (**z = +0.93**).
   - **⭐ The process class is right and the TENURE is the bottleneck.** The oracle-tenure arm
-    scores validation CRPS **7.2265** against its own floor's **10.0992** on the same rows
+    scores validation CRPS **7.23495** against its own floor's **10.0992** on the same rows
     (the incumbent reads **10.0057** on the full validation frame) — 28% better on the
     deciding split. Given the observed tenure the within-tenure chain is far better than the
     season-level beta-binomial, and every bit of that is destroyed by having to predict entry
@@ -1044,8 +1241,8 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     its tail test is a strict inequality, so the hybrid ties every bar and fails on the tie.
     **That is a category error in the instrument, not a verdict on the arm** — and it is the
     reason the head's decision is a judgement rather than a gate outcome.
-  - **The fitted arms lose on their merits**: `duration_covariates` scores **10.1625**
-    against the incumbent's 10.0057, a gap of **+0.1568** (paired bootstrap over 883 rows,
+  - **The fitted arms lose on their merits**: `duration_covariates` scores **10.1676**
+    against the incumbent's 10.0057, a gap of **+0.1619** (paired bootstrap over 883 rows,
     95% CI [+0.0737, +0.2393], P(better) = 0.1%), `full_window` +0.2647, `three_state`
     +0.2983, `calibrated_fallback` +0.0149 and it also loses PIT. `three_state` posts the *best* tail of any arm (0.0041)
     while being worst on CRPS — the tail alone is a noisy criterion on 359 rotation rows.
@@ -1053,7 +1250,7 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
     MAE and `P(GP<41)` are all functions of a pmf over a count: two models with identical
     games-played distributions can scatter absences as coin flips or block them into a
     fortnight and score the same. Simulated spell lengths against observed, mean absolute
-    relative error: **hybrid 0.5310**, `full_window` 1.7408, `duration_covariates` **1.8105**,
+    relative error: **hybrid 0.5310**, `full_window` 1.7408, `duration_covariates` **1.7373**,
     `calibrated_fallback` **5.0082**. The hybrid is within 2% on both P(T=1) and P(≥10 games)
     — the statistic a Round 1 knockout turns on — and its weakness is the extreme tail
     (+157% on month-long absences).

@@ -99,6 +99,121 @@ def year_block(n_rows: int, seasons: "pd.Series | np.ndarray | None" = None,
     return ({"S": len(order), "season_idx": idx, "year_sd_scale": float(scale)}, order)
 
 
+def rho_block(n_rows: int, bins: "np.ndarray | None" = None,
+              n_bins: int | None = None) -> dict:
+    """The dispersion-bin data block for `betabinomial_glm`.
+
+    That file declares `n_rho` and `rho_bin` unconditionally because Stan has no optional
+    data. Passing `bins=None` returns the **disabled** block — `n_rho = 1`, every row in
+    bin 1 — which is the shared-dispersion model exactly, in the same way `year_block`'s
+    `S = 0` is the no-year-effect model exactly. Every head that wants one scalar
+    dispersion gets it from here rather than hand-writing two keys, so "shared" has one
+    definition and the nesting is pinned in one place.
+
+    `bins` is **1-based** and must cover `1..n_bins` on the fitting rows; a bin with no
+    rows would leave its `rho` at the prior, which is uniform, and any row scored into it
+    later would get a dispersion drawn from nothing. That is a build failure rather than a
+    metric, so it raises.
+    """
+    if bins is None:
+        return {"n_rho": 1, "rho_bin": [1] * int(n_rows)}
+    idx = np.asarray(bins, dtype=int)
+    if len(idx) != int(n_rows):
+        raise ValueError(f"rho_bin has {len(idx)} entries for {n_rows} rows")
+    total = int(n_bins if n_bins is not None else idx.max())
+    if idx.min() < 1 or idx.max() > total:
+        raise ValueError(f"rho_bin must lie in 1..{total}; got {idx.min()}..{idx.max()}")
+    missing = sorted(set(range(1, total + 1)) - set(idx.tolist()))
+    if missing:
+        raise ValueError(
+            f"dispersion bins {missing} have no fitting rows — their rho would be drawn "
+            f"from the uniform prior and applied to real rows at prediction time")
+    return {"n_rho": total, "rho_bin": idx.tolist()}
+
+
+# The low component's mean cannot exceed this. A "disrupted season" is one where the
+# player misses more than half the schedule, and the bound is what stops the two
+# components from label-switching — structural rather than hopeful. Mirrors
+# `availability_window.MU_LOW_MAX`, which the point-MLE ladder fitted under.
+MU_LOW_MAX = 0.5
+
+# Normal scale on `gamma`, pi's covariate block. Weakly informative on standardized
+# columns: at 2.5 a one-sd move in any covariate is free to swing the disruption odds by
+# well over the 8.8x spread the point MLE fitted, so this rules out divergent coefficients
+# rather than shrinking real ones. Deliberately NOT `prior_sd_for_l2(l2)`: the penalty in
+# `availability_window` reaches `beta[1:]` only and leaves gamma unpenalized inside a box,
+# which has no Bayesian analogue — so this is the one place the port is a choice rather
+# than the identity `prior_sd_for_l2` makes everywhere else.
+GAMMA_SCALE = 2.5
+
+
+def pi_block(n_rows: int, Z: "np.ndarray | None" = None,
+             gamma_scale: float = GAMMA_SCALE,
+             mu_low_max: float = MU_LOW_MAX) -> dict:
+    """The low-availability mixture's data block for `betabinomial_glm`.
+
+    That file declares `P`, `Z`, `gamma_scale` and `mu_low_max` unconditionally because
+    Stan has no optional data. Passing `Z=None` returns the **disabled** block — `P = 0`
+    and a zero-column design — which makes `theta`, `mu_low`, `rho_low` and `gamma`
+    zero-length and the model bit-for-bit the one that existed before the mixture was
+    added, in the same way `year_block`'s `S = 0` and `rho_block`'s `n_rho = 1` are. Every
+    head that does not want a mixture gets it from here rather than hand-writing four keys,
+    so "disabled" has exactly one definition and the nesting is pinned in one place.
+
+    `Z` carries **no intercept column**: `theta` is the scale, and an intercept inside the
+    logit would put the nesting point at `gamma_0 -> -inf` instead of at an attainable
+    parameter value.
+    """
+    if Z is None:
+        return {"P": 0, "Z": np.zeros((int(n_rows), 0)),
+                "gamma_scale": float(gamma_scale), "mu_low_max": float(mu_low_max)}
+    Z = np.asarray(Z, dtype=float)
+    if Z.ndim != 2 or len(Z) != int(n_rows):
+        raise ValueError(f"Z must be (rows x P) matching {n_rows} rows; got {Z.shape}")
+    if Z.shape[1] == 0:
+        raise ValueError("an empty Z is the DISABLED block — pass Z=None for it, so that "
+                         "'no mixture' is one state rather than two that look alike")
+    return {"P": int(Z.shape[1]), "Z": Z, "gamma_scale": float(gamma_scale),
+            "mu_low_max": float(mu_low_max)}
+
+
+def chain_summary(fit, names: list[str]) -> pd.DataFrame:
+    """Per-chain posterior means, for a target that R-hat alone does not police.
+
+    R-hat compares between-chain to within-chain variance and is the right diagnostic for a
+    unimodal posterior explored at different rates. It is the **wrong** one for a mixture:
+    four chains that each sit in a different mode, none of them mixing, can post a
+    respectable R-hat while describing four different models. The point MLE of this
+    likelihood needed multi-start for exactly that reason
+    (`docs/availability-window-plan.md` §7b), so the chains are reported one at a time and
+    `spread_in_sds` — the largest gap between two chain means, in pooled posterior sds — is
+    the number to read.
+    """
+    draws = fit.draws(concat_chains=False)          # (iterations, chains, columns)
+    columns = list(fit.column_names)
+    rows = []
+    for name in names:
+        for j, column in enumerate(columns):
+            if column != name and not column.startswith(f"{name}["):
+                continue
+            values = np.asarray(draws[:, :, j], dtype=float)
+            pooled_sd = float(values.std(ddof=1))
+            means = values.mean(axis=0)
+            for chain in range(values.shape[1]):
+                rows.append({
+                    "parameter": column, "chain": chain + 1,
+                    "mean": float(means[chain]),
+                    "sd": float(values[:, chain].std(ddof=1)),
+                    "q2_5": float(np.percentile(values[:, chain], 2.5)),
+                    "q97_5": float(np.percentile(values[:, chain], 97.5)),
+                    "pooled_mean": float(values.mean()),
+                    "pooled_sd": pooled_sd,
+                    "spread_in_sds": float((means.max() - means.min()) / pooled_sd)
+                    if pooled_sd > 0 else 0.0,
+                })
+    return pd.DataFrame(rows)
+
+
 class YearTerm:
     r"""One implementation of the year random effect, held by all four head classes.
 
@@ -432,7 +547,85 @@ def standardized(train: pd.DataFrame, frames: list[pd.DataFrame], features: list
     return [scaler.transform(matrix(f)) for f in frames], scaler
 
 
+#: Source trees whose contents decide what a Stan fit actually fitted. `src/models/` holds
+#: every head's design and column list, `src/stan/` the four likelihoods, `src/features/`
+#: the builders those designs read. A change in any of them can silently make an artifact
+#: describe a model that no longer exists.
+PROVENANCE_TREES = (("models", "*.py"), ("stan", "*.stan"), ("features", "*.py"))
+
+#: The columns `code_provenance` adds. Named so a consumer can drop them when diffing two
+#: runs' *metrics* — they are provenance, not results, and they change on every commit.
+PROVENANCE_COLS = ("git_commit", "git_dirty", "src_digest", "written_at")
+
+
+def code_provenance(root: Path | None = None) -> dict:
+    """Which version of the code wrote this artifact.
+
+    **The defect this closes, stated concretely.** On 2026-08-13 the availability head was
+    ported twice. The first fit, at 14:19, carried a five-column preseason block; at 14:25 —
+    six minutes later — `PRESEASON_COLS` was switched to the shipped ten-column block, and
+    the artifacts from the *earlier* fit were written into `docs/preseason-plan.md` and
+    `dashboard/decisions.py` as if they described the head that shipped. Nothing objected:
+    the artifacts were internally consistent, `make docs-audit` had no claim on the term
+    count, and the numbers were plausible. It was caught by hand, by arithmetic on a term
+    count, the following day. **An artifact carried no record of which version of the code
+    wrote it**, so a source edit landing between a fit and its documentation was invisible
+    to every guard in the repo.
+
+    Three fields, because they fail in different ways and the third is the one that would
+    have caught this case:
+
+    * `git_commit` — HEAD's short SHA. Pins a *committed* state, and is empty outside a
+      checkout rather than raising, since an artifact is still worth writing there.
+    * `git_dirty` — whether tracked files differ from HEAD. The 14:19 fit and the 14:25 edit
+      shared a commit, so the SHA alone would have said they matched.
+    * `src_digest` — a CRC32 over the contents of `PROVENANCE_TREES`, which is what actually
+      moved between those two fits. Two artifacts with the same digest were written by the
+      same code; two with different digests were not, whatever the commit says.
+
+    Deliberately **not** a guard that raises. It is a record, and what to do about a
+    mismatch is a judgement — a dirty tree is the normal state during a working session,
+    and refusing to fit in one would make the stamp cost more than the defect.
+    """
+    import subprocess
+    from datetime import datetime, timezone
+
+    root = Path(__file__).resolve().parents[1] if root is None else Path(root)
+
+    def git(*args: str) -> str:
+        try:
+            return subprocess.run(("git", *args), cwd=root, capture_output=True,
+                                  text=True, timeout=10).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return ""
+
+    digest = 0
+    for subdir, pattern in PROVENANCE_TREES:
+        for path in sorted((root / subdir).glob(pattern)):
+            digest = zlib.crc32(path.read_bytes(), zlib.crc32(path.name.encode(), digest))
+
+    return {"git_commit": git("rev-parse", "--short", "HEAD"),
+            "git_dirty": bool(git("status", "--porcelain", "--untracked-files=no")),
+            "src_digest": f"{digest:08x}",
+            "written_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+
+
 def diagnostics_frame(rows: list[dict]) -> pd.DataFrame:
-    return pd.DataFrame(rows)[
+    """One row per fit, plus the stamp saying which code wrote them.
+
+    The stamp rides here because this is the one function every Stan head in the project
+    goes through — `stan_availability`, `stan_minutes`, `stan_components`, `stan_composition`,
+    `stan_game_length`, `stan_games_played`, `season_terms` and the preseason rounds all
+    call it — so a head cannot acquire diagnostics without acquiring provenance. Putting it
+    in each caller instead is how one of them would end up without it, which is the state
+    this closes.
+
+    The columns are appended, never inserted, and every consumer in the repo reads these
+    artifacts by name (`docs_audit.cell`), so a widened schema is additive.
+    """
+    frame = pd.DataFrame(rows)[
         ["label", "max_rhat", "min_ess_bulk", "min_ess_tail", "divergences",
          "treedepth_saturated", "n_draws", "wall_clock_s", "converged", "cmdstan"]]
+    for column, value in code_provenance().items():
+        frame[column] = value
+    return frame

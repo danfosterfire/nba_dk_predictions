@@ -74,15 +74,16 @@ from sklearn.preprocessing import SplineTransformer
 
 from src.data.preprocess import (FIT_WINDOWS, FULL_WINDOW, TRAIN_VAL_WINDOW,
                                  TRAIN_WINDOW, fit_window, held_out_seasons)
+from src.data.fetch import _season_start_year
 from src.eda.availability import with_lags
 from src.models.availability import (EPS, FEATURE_COLS, RHO_MAX, RHO_MIN,
                                      fit_dispersion)
 from src.models.held_out import selection_split
 from src.models.stan_availability import availability_design
 from src.models.stan_utils import (YearTerm, compile_model, crps_from_samples,
-                                   diagnostics_frame, ks_uniform,
-                                   pit_from_samples, posterior,
-                                   prior_sd_for_l2, sample, standardized, thin,
+                                   diagnostics_frame, ks_uniform, pi_block,
+                                   pit_from_samples, posterior, prior_sd_for_l2,
+                                   rho_block, sample, standardized, thin,
                                    warn_if_unconverged)
 
 MODEL = "betabinomial_glm"
@@ -190,6 +191,134 @@ def build_design(cfg: dict) -> pd.DataFrame:
     return as_trials(design.reset_index(drop=True))
 
 
+# ── The preseason block, adopted 2026-08-13 ──────────────────────────────────────────
+#
+# `docs/preseason-plan.md` P3, which cleared **both** halves of its bar: validation CRPS
+# −4.789 [−8.08, −1.59] minutes against the covered-window incumbent, and the rolling-origin
+# harness agreeing at −7.940 [−9.41, −6.44] on 12 of 13 origins. It is the largest measured
+# increment on this head and the first block in the project whose rolling reading is the
+# LARGER one, so validation was the conservative figure rather than the flattering one.
+#
+# **The shipped column is the season-CENTRED delta**, not the raw one. Preseason minutes are
+# compressed — a starter plays 15-20 of them — so `logit(mpg_pre / 48) − logit(share_lag1)`
+# is systematically negative by an amount that varies with the calendar, and this head has no
+# year term to absorb that. Centring separates the player-specific update from the
+# league-level level, beats the declared primary on BOTH readings (−1.794 [−2.96, −0.63] and
+# −0.459 [−0.71, −0.21]), and repairs a bias the raw column creates: season-total bias goes
+# −36.68 → **−10.95**, better than the incumbent's own −19.24. The promotion rests on the
+# rolling reading, which is what makes it a fitting-half decision rather than a swap made
+# after seeing the selection split.
+#
+# P3 decision 4: the empirical-Bayes volume shrink is a **null** (worth 0.05 CRPS), so the
+# shipped column is unshrunk and `k` is not a knob here.
+PRESEASON = True
+
+PRESEASON_COLS = ["pre_d_logit_share_centered", "pre_missing__<24", "pre_missing__24-27",
+                  "pre_missing__28-31", "pre_missing__32+"]
+
+
+def head_features(features: list[str], preseason: bool | None = None) -> list[str]:
+    """A variant's feature list plus the preseason block, appended.
+
+    Appended rather than woven in, so the block is a **suffix** on every variant: the sweep
+    still answers "which curvature on the prior-minutes term" with the block held common,
+    exactly as `FEATURE_COLS` is common to all four arms, and a persisted recipe's column
+    order stays stable when the flag flips.
+    """
+    on = PRESEASON if preseason is None else bool(preseason)
+    return list(features) + (list(PRESEASON_COLS) if on else [])
+
+
+def head_design(cfg: dict, preseason: bool | None = None) -> pd.DataFrame:
+    """`build_design` plus the preseason block — **this head's path and no other's**.
+
+    Separate from `build_design` for the reason `stan_availability.head_design` is separate
+    from `availability_design`: that builder is how `stan_composition`, `minutes_window` and
+    `minutes_preseason` reach their rows, and a column that is structurally zero before
+    2004-05 must not enter any of them by accident.
+
+    **`minutes_unification` is the exception, and it is the rule rather than a violation of
+    it**: that module rehydrates *this head's persisted posterior* and calls its own
+    `predict_samples`, so it needs the columns the posterior was fitted on. Anything that
+    scores the shipped head comes through here; anything that builds its own model on these
+    rows goes through `build_design`. `model_cards` is the other one, for the same reason.
+
+    The block is built by `availability_preseason.attach_preseason` — the same function P2
+    and the P3 ladder used — so the coefficients this head fits are coefficients on columns
+    that were measured, not on a second implementation of them.
+    """
+    design = build_design(cfg)
+    if not (PRESEASON if preseason is None else bool(preseason)):
+        return design
+
+    # `minutes_preseason`'s attach step, not the availability head's: the shipped column is
+    # the delta on THIS head's own logit-share link, centred within season, and only that
+    # module builds it (it needs `OWN`, which is this head's design). Function-level because
+    # `minutes_preseason` imports this module at the top.
+    from src.features.availability import load_artifacts
+    from src.models.minutes_preseason import attach_preseason
+
+    features_dir = Path(cfg["data"]["features_dir"])
+    panel_path = features_dir / "preseason.parquet"
+    if not panel_path.exists():
+        raise FileNotFoundError(
+            f"{panel_path} is missing and the minutes head ships a preseason block — run "
+            f"`make preseason`, or set `stan.minutes.preseason: false` to fit the "
+            f"pre-2026-08-13 head exactly.")
+    av_panel, _ = load_artifacts(features_dir)
+    out = attach_preseason(design, pd.read_parquet(panel_path), av_panel,
+                           cfg["data"]["seasons"])
+    missing = [c for c in PRESEASON_COLS if c not in out.columns]
+    if missing:
+        raise ValueError(f"`attach_preseason` did not produce {missing}")
+    if out[PRESEASON_COLS].isna().any().any():
+        bad = [c for c in PRESEASON_COLS if out[c].isna().any()]
+        raise ValueError(f"NaN in the shipped preseason block: {bad}")
+    return out
+
+
+def first_covered_season(cfg: dict) -> str:
+    """The first season whose preseason is present with an intact tail, off the artifact.
+
+    Read from `preseason_coverage.csv` rather than hard-coded — `docs/preseason-plan.md` P3
+    states that rule, and it is what makes the window a property of the capture rather than
+    a constant somebody has to remember to move.
+    """
+    from src.eda.preseason_value import covered_seasons
+
+    eda_dir = Path(cfg["eda"]["output_dir"])
+    scope = covered_seasons(pd.read_csv(eda_dir / "preseason_coverage.csv"))
+    if not scope:
+        raise ValueError("preseason_coverage.csv names no covered season")
+    return scope[0]
+
+
+def covered_fitting_rows(train: pd.DataFrame, cfg: dict,
+                         preseason: bool | None = None) -> pd.DataFrame:
+    """The fitting rows, cut to the seasons the preseason panel actually covers.
+
+    **Applied to the FITTING rows only**, the same discipline
+    `stan_availability.restrict_window` documents: the design is built over every season
+    regardless, and the validation rows are never touched.
+
+    This cut is not adopted for its own sake — `docs/minutes-window-plan.md` §3 measured a
+    recency window on this head as a null that did not replicate — it is *required* by the
+    block. This head fits from 1997-98 and the panel begins at 2004-05, so 2,154 of 8,306
+    training rows (25.9%) would carry the missing-preseason indicator for a reason that is a
+    fact about the NBA's API rather than about the player, and the indicator would read as an
+    era dummy on every one of them.
+
+    P3 priced the restriction on its own so it cannot be credited to the block: the
+    full-window incumbent reads CRPS **147.149** on the draftable rows against the
+    covered-window incumbent's **145.963**, so the cut is worth 1.19 minutes *before any
+    preseason column exists* — a quarter of the measured increment.
+    """
+    if not (PRESEASON if preseason is None else bool(preseason)):
+        return train
+    first = _season_start_year(first_covered_season(cfg))
+    return train[train["season"].map(_season_start_year) >= first].copy()
+
+
 # ── The no-fit floor ──────────────────────────────────────────────────────────
 
 def carry_forward(frame: pd.DataFrame) -> np.ndarray:
@@ -280,11 +409,22 @@ class StanMinutes:
             model,
             {"N": len(train), "K": X.shape[1], "X": X, "n": n.tolist(), "y": y.tolist(),
              "beta_scale": prior_sd_for_l2(self.l2),
-             "intercept_scale": INTERCEPT_SCALE, **self.year.data(train)},
+             "intercept_scale": INTERCEPT_SCALE, **self.year.data(train),
+             # One dispersion for every row: `rho_block()` with no bins is the shared-rho
+             # model exactly. The graded arm is availability's alone — see
+             # docs/availability-window-plan.md and §6 for the same question here, which
+             # is measured but not yet laddered.
+             **rho_block(len(train)),
+             # And no low-availability mixture: `pi_block()` with no design is `P = 0`,
+             # which makes that block's parameters zero-length and this target the one
+             # this head has always fitted. Availability's alone, for now.
+             **pi_block(len(train))},
             chains=self.chains, warmup=self.warmup, samples=self.samples,
             seed=self.seed, label=self.name, metric=self.metric,
+            # `rho` is a vector[n_rho] in the Stan source, so its init is a list even
+            # when the vector has one entry.
             inits={"alpha": float(np.log(share / (1 - share))),
-                   "beta": np.zeros(X.shape[1]).tolist(), "rho": 0.05})
+                   "beta": np.zeros(X.shape[1]).tolist(), "rho": [0.05]})
         warn_if_unconverged(self.diagnostics)
 
         draws = posterior(fit, ["alpha", "beta", "rho"])
@@ -428,8 +568,14 @@ def score(model, frame: pd.DataFrame, label: str, seed: int = 0) -> dict:
     }
 
 
-def sweep(train: pd.DataFrame, val: pd.DataFrame, cfg_stan: dict, n_knots: int
-          ) -> tuple[pd.DataFrame, list[dict]]:
+#: The variant the head ships, and the one the no-preseason control is taken at. Read from
+#: the artifact by `posteriors.selected_variant` in production; named here so the control
+#: cannot silently be taken at a different arm from the one that ships.
+SHIPPED_VARIANT = "logit_own_spline"
+
+
+def sweep(train: pd.DataFrame, val: pd.DataFrame, cfg_stan: dict, n_knots: int,
+          preseason: bool | None = None) -> tuple[pd.DataFrame, list[dict]]:
     """Every variant on the VALIDATION split. The test seasons are not touched.
 
     This used to fit each variant twice — once on `train` scored against `val`, once refit
@@ -448,6 +594,7 @@ def sweep(train: pd.DataFrame, val: pd.DataFrame, cfg_stan: dict, n_knots: int
             "samples": int(cfg_stan.get("samples", 1000))}
     chains = int(cfg_stan.get("chains", 4))
 
+    preseason_on = PRESEASON if preseason is None else bool(preseason)
     val_variants = variants(train, val, n_knots)
 
     rows, diagnostics = [], []
@@ -460,6 +607,9 @@ def sweep(train: pd.DataFrame, val: pd.DataFrame, cfg_stan: dict, n_knots: int
 
     for label in val_variants:
         v_tr, v_te, v_features = val_variants[label]
+        # The block is common to every arm, so the sweep still answers "which curvature on
+        # the prior-minutes term" rather than crossing two axes on one selection split.
+        v_features = head_features(v_features, preseason)
         # Full-length chains now: with the test side gone there is no reason to run
         # selection short, and the shorter chains were a second confound in the old
         # val/test comparison.
@@ -472,8 +622,33 @@ def sweep(train: pd.DataFrame, val: pd.DataFrame, cfg_stan: dict, n_knots: int
                      "val_mae": v["mae_minutes"], "val_pit_ks": v["pit_ks"],
                      "val_rho": v["rho"], "val_bias": v["bias_minutes"]})
 
+    # ── The control P3 said the port owes ────────────────────────────────────
+    #
+    # `docs/preseason-plan.md` P3, "What P3 does not settle": the point MLE collapses the
+    # posterior over `beta` to its mode, so a Stan fit owes an answer to whether the
+    # increment survives integrating over coefficient uncertainty. Every arm above carries
+    # the block, so the sweep alone cannot say — it compares curvatures, not the block.
+    #
+    # This is the same variant on the same rows with the block REMOVED, which isolates it:
+    # the fitting window is the covered one either way, so the comparison is the five
+    # columns and nothing else. It is a control and never a candidate — excluded from
+    # `selected` below — because "ship the arm without the block" is a decision P3 already
+    # took on evidence this run is not powered to revisit.
+    if preseason_on and PRESEASON_COLS:
+        control = f"{SHIPPED_VARIANT}__no_preseason"
+        c_tr, c_te, c_base = val_variants[SHIPPED_VARIANT]
+        c_model = StanMinutes(head_features(c_base, False), name=f"{control}/val",
+                              chains=chains, seed=seed, **full).fit(c_tr)
+        c = score(c_model, c_te, control, seed)
+        diagnostics.append(c_model.diagnostics)
+        rows.append({"variant": control, "n_features": len(c_base),
+                     "val_crps": c["crps_minutes"], "val_r2": c["r2_minutes"],
+                     "val_mae": c["mae_minutes"], "val_pit_ks": c["pit_ks"],
+                     "val_rho": c["rho"], "val_bias": c["bias_minutes"]})
+
     out = pd.DataFrame(rows)
-    fitted = out[out["variant"] != "carry_forward"]
+    out["is_control"] = out["variant"].str.endswith("__no_preseason")
+    fitted = out[(out["variant"] != "carry_forward") & ~out["is_control"]]
     best = fitted.loc[fitted["val_crps"].idxmin(), "variant"]
     out["selected"] = out["variant"] == best
     floor_r2 = float(out.loc[out["variant"] == "carry_forward", "val_r2"].iloc[0])
@@ -501,9 +676,14 @@ def run(cfg: dict) -> dict[str, Path]:
                        .get("test_seasons", 2))
     n_knots = int(cfg_stan.get("minutes", {}).get("spline_knots", SPLINE_KNOTS))
 
+    preseason = bool(cfg_stan.get("minutes", {}).get("preseason", PRESEASON))
+
     print("Stan minutes head — successes out of actual game length, never 48")
-    design = build_design(cfg)
-    train, val = selection_split(design, test_seasons)
+    design = head_design(cfg, preseason)
+    train_full, val = selection_split(design, test_seasons)
+    # The covered-window cut, on the FITTING rows only. Required by the block rather than
+    # chosen for its own sake — see `covered_fitting_rows`.
+    train = covered_fitting_rows(train_full, cfg, preseason)
 
     clamped = int(design["rounding_clamped"].sum())
     print(f"  {len(design):,} player-seasons. The test split is LOCKED — selection reads "
@@ -518,10 +698,36 @@ def run(cfg: dict) -> dict[str, Path]:
           f"max {design['minutes_share'].max():.4f} (1.0 would be every minute of "
           f"every game)")
 
-    table, diagnostics = sweep(train, val, cfg_stan, n_knots)
+    if preseason:
+        print(f"  Preseason block ON ({len(PRESEASON_COLS)} columns, "
+              f"docs/preseason-plan.md P3): the season-centred delta plus P1's age-split\n"
+              f"  missing indicator. Every arm — the floor included — fits the COVERED "
+              f"window only, from\n  {first_covered_season(cfg)}: "
+              f"{len(train):,} of {len(train_full):,} training rows "
+              f"({len(train) / max(len(train_full), 1):.1%}). The rows dropped have no "
+              f"preseason\n  row for a reason that is a fact about the API, and the "
+              f"indicator would be an era dummy on\n  every one of them. `build_design` is "
+              f"untouched — five other modules import it.")
+
+    table, diagnostics = sweep(train, val, cfg_stan, n_knots,
+                               preseason=preseason)
     print("\nVariant sweep (CRPS in minutes, lower is better):")
     print(table[["variant", "n_features", "val_crps", "val_r2", "val_mae",
                  "val_pit_ks", "selected", "beats_floor"]].round(4).to_string(index=False))
+    control = table[table.get("is_control", False) == True]        # noqa: E712
+    if len(control):
+        chosen_crps = float(table.loc[table["selected"], "val_crps"].iloc[0])
+        c = control.iloc[0]
+        print(f"\n  The preseason block, integrated over `beta` rather than plugged in at "
+              f"its mode —\n  the control `{c['variant']}` is the SHIPPED variant on the "
+              f"SAME covered rows with the\n  five columns removed, so the contrast is the "
+              f"block and nothing else:")
+        print(f"    with the block    CRPS {chosen_crps:8.3f}")
+        print(f"    without           CRPS {float(c['val_crps']):8.3f}   "
+              f"({chosen_crps - float(c['val_crps']):+.3f} minutes)")
+        print(f"  `docs/preseason-plan.md` P3 measured {-4.789:+.3f} at the point MLE on the "
+              f"draftable rows;\n  this is the same question asked of the posterior, on "
+              f"every validation row the head covers.")
     selected = table.loc[table["selected"], "variant"].iloc[0]
     floor = table[table["variant"] == "carry_forward"].iloc[0]
     chosen = table[table["variant"] == selected].iloc[0]

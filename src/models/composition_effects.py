@@ -70,8 +70,9 @@ import yaml
 from src.models.held_out import selection_split
 from src.models.stan_composition import (GROUP_KEYS, PILOT_FIRST_SEASON, TEAM_COLS,
                                          TEST_SEASONS, UNIT_KEYS, FloorComposition,
-                                         StanComposition, composition_frame,
-                                         effect_variants, score_samples, team_context)
+                                         StanComposition, announce_metric,
+                                         composition_frame, effect_variants, score_samples,
+                                         team_context)
 from src.models.stan_utils import diagnostics_frame
 
 ARMS = ("base", "ps", "ps_team", "team")
@@ -466,6 +467,12 @@ def run(cfg: dict) -> dict[str, Path]:
         print(f"\n  fitting `{arm}` — {len(feats)} features, "
               f"player-season effect {'ON' if ps else 'off'}"
               f"{' (centred)' if centered else ''}")
+        # Before the sampler, not after it. This block sat one warmup draw under the
+        # `dense_e` cliff for four days and nothing said so — the metric only reaches the
+        # artifact after the fit whose cost it decides.
+        announce_metric(len(feats), n_rho,
+                        iters["warmup"],
+                        tr.groupby(UNIT_KEYS, sort=False).ngroups if ps else 0)
         started = time.perf_counter()
         model = StanComposition(feats, dispersed, n_rho, name=f"effects/{arm}",
                                 chains=int(cfg_stan.get("chains", 4)), seed=seed,

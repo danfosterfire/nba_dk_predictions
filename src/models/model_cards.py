@@ -93,8 +93,8 @@ import pandas as pd
 import yaml
 
 from src.models.held_out import selection_split
-from src.models.posteriors import (DESIGN_TOL, team_game_probe, load_all, posteriors_dir,
-                                   require_window)
+from src.models.posteriors import (DESIGN_TOL, fit_first_season, team_game_probe, load_all,
+                                   posteriors_dir, require_window)
 from src.models.stan_utils import ks_uniform, pit_from_samples, thin
 
 # The only window whose coefficients may describe a validation row. See the module
@@ -145,7 +145,14 @@ VERIFY_ROWS = 25_000
 # `ECDF_BAND_TOL` in ECDF units. The row cap is a *subsample of the population*, so it moves
 # Monte Carlo error and not the estimand; the index carries the row count per split so a page
 # can say what it drew over.
-PRED_DRAWS = 200
+# 400 since 2026-08-12, up from 200: the availability head became a two-component mixture,
+# whose predictive is genuinely wider, and the same 200 draws stopped buying a stable ribbon
+# — `ecdf_band_mc` read **0.0216** against a 0.02 bar, so the gate below failed rather than
+# shipping a band that was measuring the sampler. The budget is measured rather than
+# extrapolated: at 300/400/600/800/1000 draws the availability band reads
+# 0.0083 / 0.0136 / 0.0059 / 0.0091 / 0.0079, which is the 1/sqrt(D) fall plus the statistic's
+# own noise, and 400 is the smallest power-of-two step that clears the bar for every head.
+PRED_DRAWS = 400
 PRED_ROWS = 20_000
 
 # Grid points on the ECDF. A response with few enough distinct values gets one point per
@@ -165,6 +172,11 @@ BAND_LEVELS = (2.5, 10.0, 25.0, 50.0, 75.0, 90.0, 97.5)
 # Heads below `BAND_MIN_ROWS` are reported and not gated: the overtime-onset head's two
 # validation cells give an ECDF that takes three values, and a half-sample gap of 0.5 there
 # is the *frame*, not the draw budget.
+#
+# Worst gated head at the shipped 400 draws is `availability` at 0.0136, which is also the
+# head that forced the budget up — see `PRED_DRAWS`. The figure this comment used to quote
+# (0.0145 at 200 draws, `game_length_depth`) held until the availability head's likelihood
+# changed under it, which is the argument for gating the budget rather than asserting it.
 ECDF_BAND_TOL = 0.02
 BAND_MIN_ROWS = 500
 
@@ -593,14 +605,38 @@ def _frames(head: str, raw_train, raw_val, design_train, design_val, features,
 
 
 def availability_frames(cfg: dict, artifacts: dict) -> dict[str, HeadFrames]:
-    """The beta-binomial games-played-out-of-team-games head. No variant ladder."""
+    """The beta-binomial games-played-out-of-team-games head. No variant ladder.
+
+    **Two season axes, and only one of them is the split.** `_split_pair` decides which
+    seasons are eligible; the head then truncates its *fitting* rows to a recent suffix of
+    them (`stan.availability.first_season`, 2012-13 since 2026-08-11), and that truncation is
+    re-applied here through the head's own `restrict_window`. Skipping it would not fail
+    quietly: the population anchor compares this frame against the row count and season span
+    `posteriors.py` recorded, so it would raise. That is the point — the anchor is what makes
+    "which rows did this head see" a checked claim rather than a convention.
+
+    `fit_first_season` comes from the artifact rather than from config, for the reason
+    `composition_frames` reads its own truncation the same way: the artifact records what was
+    fitted and the config is a knob that can move under it.
+
+    **The truncation is on the fitting rows only.** Validation is scored unfiltered, which is
+    the head's own rule — a shorter fitting window is a bias-variance trade on the fit, not a
+    claim about which rows may be predicted — so the card's validation half covers every
+    season the split allows.
+    """
     art = artifacts.get("availability")
     if art is None:
         return {}
-    from src.models.stan_availability import availability_design
+    # `head_design` rather than the shared builder: the card's population anchor compares a
+    # rebuilt frame against the persisted recipe's own feature list, and that list carries
+    # the preseason block this head ships (docs/preseason-plan.md P2). Rebuilding from
+    # `availability_design` would fail `verify` on five missing columns rather than on
+    # anything being wrong.
+    from src.models.stan_availability import head_design, restrict_window
 
     test_seasons = _test_seasons(cfg)
-    train, val = _split_pair(availability_design(cfg), test_seasons)
+    train, val = _split_pair(head_design(cfg), test_seasons)
+    train = restrict_window(train, str(art.extras.get("fit_first_season") or "") or None)
     return {"availability": _frames("availability", train, val, train, val,
                                     art.recipe.features)}
 
@@ -654,12 +690,18 @@ def minutes_frames(cfg: dict, artifacts: dict) -> dict[str, HeadFrames]:
     art = artifacts.get("minutes")
     if art is None:
         return {}
-    from src.models.stan_minutes import SPLINE_KNOTS, build_design, variants
+    # `head_design` plus the covered-window cut, so the rebuilt frame is the one the
+    # persisted recipe describes — the minutes head ships a preseason block and fits from
+    # 2004-05 (docs/preseason-plan.md P3).
+    from src.models.stan_minutes import (SPLINE_KNOTS, covered_fitting_rows, head_design,
+                                         head_features, variants)
 
     test_seasons = _test_seasons(cfg)
     n_knots = int(cfg.get("stan", {}).get("minutes", {}).get("spline_knots", SPLINE_KNOTS))
-    train, val = _split_pair(build_design(cfg), test_seasons)
-    tr, va, features = variants(train, val, n_knots)[art.recipe.variant]
+    train, val = _split_pair(head_design(cfg), test_seasons)
+    train = covered_fitting_rows(train, cfg)
+    tr, va, base_features = variants(train, val, n_knots)[art.recipe.variant]
+    features = head_features(base_features)
     return {"minutes": _frames("minutes", train, val, tr, va, art.recipe.features,
                                ladder_features=features)}
 
@@ -720,12 +762,18 @@ def composition_frames(cfg: dict, artifacts: dict) -> dict[str, HeadFrames]:
     artifact is the record of what was fitted and the config is a knob that can move under
     it. The full frame is built over every season regardless — the lags and the expanding
     rookie prior need the history — and the cut only decides which rows were fitted.
+
+    **The preseason blend is checked against the artifact rather than merely read from
+    config**, for the same reason and one step harder: `w_share` sets the offset, the
+    allocation order and the dispersion bins, so carding a blended posterior against an
+    un-blended frame would misreport every one of them without anything raising. The card
+    refuses rather than guesses.
     """
     art = artifacts.get("composition")
     if art is None:
         return {}
-    from src.models.stan_composition import (PILOT_FIRST_SEASON, RHO_BINS,
-                                             composition_frame, variants)
+    from src.models.stan_composition import (PILOT_FIRST_SEASON, RHO_BINS, head_frame,
+                                             preseason_blend, variants)
 
     test_seasons = _test_seasons(cfg)
     variant = art.recipe.variant
@@ -740,7 +788,20 @@ def composition_frames(cfg: dict, artifacts: dict) -> dict[str, HeadFrames]:
     first_season = str(art.extras.get("first_season")
                        or cfg.get("stan", {}).get("composition", {})
                        .get("first_season", PILOT_FIRST_SEASON))
-    frame = composition_frame(cfg)
+    # `None` on both sides is an artifact written before the blend existed, which is a
+    # legitimate un-blended head rather than a mismatch.
+    fitted_k = art.extras.get("preseason_blend_k")
+    configured = preseason_blend(cfg)
+    current_k = None if configured is None else configured[0]
+    if (fitted_k is None) != (current_k is None) or (
+            fitted_k is not None and not np.isclose(float(fitted_k), float(current_k))):
+        raise ValueError(
+            f"the persisted composition was fitted with preseason_blend_k={fitted_k!r} and "
+            f"the config now says {current_k!r}. `w_share` sets the offset, the allocation "
+            f"order and the dispersion bins, so the card would describe a frame the "
+            f"posterior was never fitted on — re-run `make posteriors --groups "
+            f"composition`, or restore `stan.composition.preseason.adopt`.")
+    frame = head_frame(cfg)
     pilot = frame[frame["season"] >= first_season].reset_index(drop=True)
     train, val = _split_pair(pilot, test_seasons)
     ladder = variants(train, val, RHO_BINS)
@@ -1012,9 +1073,59 @@ def coefficient_rows(head: str, art) -> list[dict]:
                              scaler_scale=float("nan")))
         rows[-1]["term_family"] = "dispersion"
 
+    rows += _mixture_rows(art)
     for row in rows:
         row["head"] = head
     return rows
+
+
+def _mixture_rows(art) -> list[dict]:
+    """The availability head's low-availability mixture — eleven terms, or none.
+
+    Emitted because a card that showed `alpha`, `beta` and `rho` for a head fitted with a
+    mixture would describe the **single-component** model: `theta` scales the whole weight,
+    `gamma` says which players carry it, and `mu_low` / `rho_low` are the disrupted season
+    itself. Those are parameters of the shipped head, not diagnostics of it.
+
+    `gamma` rides on `pi`'s OWN scaler — the recipe's second block — so its centre and scale
+    columns come from there rather than from the mean's, which would unstandardize eight
+    coefficients against the wrong nineteen-column fit. The terms are prefixed `pi:` so a
+    reader cannot mistake `pi:age` for the mean's `age`; they are different coefficients on
+    the same column through different links.
+    """
+    theta = art.draws.get("theta_draws")
+    if theta is None:
+        return []
+    out = []
+    for name, key in [("theta", "theta_draws"), ("mu_low", "mu_low_draws"),
+                      ("rho_low", "rho_low_draws")]:
+        # `dispersion`, not a role of their own: these three are scalar summaries of the low
+        # component, and the dashboard's `SCALAR_ROLES` is what keeps a scalar out of the
+        # sorted slope panel. A new role would render them as bars with no design column
+        # behind them.
+        out.append(_summary(name, art.draws[key], "dispersion",
+                            scaler_center=float("nan"), scaler_scale=float("nan")))
+        out[-1]["term_family"] = "mixture"
+
+    gamma = np.asarray(art.draws.get("gamma_draws", np.zeros((len(theta), 0))), dtype=float)
+    scaler = getattr(art.recipe, "pi_scaler", None)
+    centres = np.asarray(getattr(scaler, "mean_", []), dtype=float)
+    scales = np.asarray(getattr(scaler, "scale_", []), dtype=float)
+    for j, name in enumerate(getattr(art.recipe, "pi_features", []) or []):
+        # `coefficient`, because that is what they are — slopes on a standardized design,
+        # just through a different link — so the panel sorts them beside the mean block's
+        # and a reader can see which players `pi` picks out.
+        # `term_family` is left as `_summary` derives it — one family per term, exactly how
+        # the mean block's features are treated. Grouping the eight under a shared
+        # "mixture weight" family would be wrong in a way the page makes visible: the panel's
+        # collapse toggle keeps one row per family and labels it "widest of N bases", which
+        # is right for a spline basis over ONE quantity and nonsense for eight different
+        # covariates.
+        out.append(_summary(
+            f"pi:{name}", gamma[:, j], "coefficient",
+            scaler_center=float(centres[j]) if j < centres.size else float("nan"),
+            scaler_scale=float(scales[j]) if j < scales.size else float("nan")))
+    return out
 
 
 # ── Features ──────────────────────────────────────────────────────────────────
@@ -1371,6 +1482,12 @@ def _rehydrated(head: str, art, cfg: dict, keep: int):
     sequential capped allocation and the thinning in front of each all live in the head, and
     the card is supposed to describe the head as it ships.
 
+    **Availability moved onto this path on 2026-08-11 and it was not cosmetic.** It used to
+    fall through to `family_draws`, whose beta-binomial branch takes one dispersion per draw —
+    correct while `rho` was a scalar, and wrong the moment the head graded it by prior-MPG
+    role. `StanAvailability.mu_draws` gathers each row's own bucket, so drawing through the
+    head is what keeps a star's dispersion off a fringe player's mean.
+
     **The composition is rehydrated with the shipped per-(player, season) sigma**, because
     that is what `rehydrate_composition` gives every other consumer and the whole point of it
     living there is that nobody has to remember to apply it. The index carries the value.
@@ -1398,6 +1515,10 @@ def _rehydrated(head: str, art, cfg: dict, keep: int):
         model.rho_draws = np.asarray(art.draws["rho_draws"], dtype=float)
         model.rho = float(model.rho_draws.mean())
         return model
+    if head == "availability":
+        from src.models.stan_availability import rehydrate_availability
+
+        return rehydrate_availability(art, keep)
     if head == "minutes":
         from src.models.minutes_unification import rehydrate_minutes
 
@@ -1429,8 +1550,15 @@ def family_draws(art, spec: ResponseSpec, frame: pd.DataFrame, keep: int,
     if art.family == "betabinomial":
         from src.models.stan_minutes import beta_shapes
 
-        rho = np.asarray(thinned.draws["rho_draws"], dtype=float).reshape(-1)
-        a, b = beta_shapes(mu, rho[:, None])
+        rho = np.asarray(thinned.draws["rho_draws"], dtype=float)
+        if rho.ndim > 1 and rho.shape[1] > 1:
+            raise ValueError(
+                f"{art.head} carries a {rho.shape[1]}-column `rho_draws` — a dispersion "
+                f"graded by bin — and this branch has one dispersion per draw and no bin "
+                f"assignment to gather on. Flattening it would apply an arbitrary bucket's "
+                f"dispersion to every row. Give the head a `predict_samples` and rehydrate "
+                f"it in `_rehydrated`, as `availability` does.")
+        a, b = beta_shapes(mu, rho.reshape(-1)[:, None])
         trials = np.rint(frame[spec.trials].to_numpy(dtype=float)).astype(np.int64)
         return rng.binomial(trials[None, :], rng.beta(a, b)).astype(float)
 
@@ -1476,7 +1604,7 @@ def fitted_values(art, spec: ResponseSpec, frame: pd.DataFrame,
     if spec.check != "mean":
         return draws.mean(axis=0)
     mean = np.asarray(art.predict(frame, transformed=True), dtype=float)
-    if art.response in ("mean_mu", "plug_in_mu"):
+    if art.response in ("mean_mu", "plug_in_mu", "mixture_mean_mu"):
         if not spec.trials:
             raise KeyError(
                 f"{art.head} reports `{art.response}` — a rate — and its `ResponseSpec` "
@@ -2039,6 +2167,11 @@ def index_row(head: str, art, frames: HeadFrames, check: dict,
         "description": spec.description,
         "variant": art.recipe.variant,
         "n_features": len(art.recipe.features),
+        # The recipe's SECOND design block, which today only the availability mixture has:
+        # `pi`'s covariates enter through their own link and their own scaler, so they are
+        # not more columns in `n_features` and the coefficient panel carries both blocks.
+        # A page reading `n_features` alone would under-count the panel by exactly this.
+        "n_pi_features": len(getattr(art.recipe, "pi_features", []) or []),
         "n_terms": int(n_terms),
         # How many of this head's feature pairs a page can open a joint density on. Zero is
         # a real value — a one-feature head has no pair — and a page reading it can say so
@@ -2050,6 +2183,12 @@ def index_row(head: str, art, frames: HeadFrames, check: dict,
         "row_filter": frames.row_filter,
         "n_draws": art.n_draws,
         "fit_window": provenance.get("fit_window", ""),
+        # The second season axis, and NOT the one above. `fit_window` is which split may be
+        # fitted (`train` / `train_val` / `full`); this is which recent suffix of that split
+        # the head chose to fit, empty for the heads that fit everything the window offers.
+        # `first_season` below is neither — it is the fitted frame's observed span, which
+        # equals the truncation when there is one and predates it when there is not.
+        "fit_first_season": fit_first_season(art),
         "first_season": provenance.get("first_season", ""),
         "last_season": provenance.get("last_season", ""),
         "response": art.response,

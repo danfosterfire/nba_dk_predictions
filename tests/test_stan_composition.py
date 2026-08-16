@@ -863,6 +863,46 @@ def test_the_dense_metric_needs_the_matrix_to_be_ESTIMABLE_not_merely_to_fit():
     assert choose_metric(huge, warmup=10 ** 9) == "diag_e"
 
 
+def test_the_configured_effects_warmup_clears_the_cliff_for_the_arms_that_can():
+    """`stan.composition.effects.warmup` was 500 for four days, one step under the 600 that
+    `base` (30 parameters) and `team` (36) need, and nothing said so — the metric only
+    reaches the artifact after the fit whose cost it decides. The two plain arms were paying
+    ~10x for nothing.
+
+    `ps` is deliberately NOT asserted onto `dense_e`: 2,204 player-season effects put it out
+    of reach at any warmup here, and `diag_e` is the right metric for it. Raising the warmup
+    is worth it for that arm on a different axis — at 500 it posted max R-hat 1.13173.
+    """
+    import yaml
+
+    from src.models.stan_composition import RHO_BINS, TEAM_COLS, choose_metric
+
+    warmup = int(yaml.safe_load(open("configs/default.yaml"))
+                 ["stan"]["composition"]["effects"]["warmup"])
+    plain = 25 + 1 + RHO_BINS                       # `base`
+    with_team = plain + len(TEAM_COLS) + 1          # `team`, plus its missing indicator
+    assert choose_metric(plain, warmup) == "dense_e"
+    assert choose_metric(with_team, warmup) == "dense_e"
+    assert choose_metric(plain, 500) == "diag_e"    # what the cliff looked like
+    assert choose_metric(2204 + plain, warmup) == "diag_e"      # `ps`, correctly
+
+
+def test_announce_metric_warns_only_where_the_warning_is_actionable(capsys):
+    """A random-effect arm on `diag_e` is the design, not a misconfiguration, so warning
+    about it would train the reader to ignore the warning that matters."""
+    from src.models.stan_composition import announce_metric
+
+    assert announce_metric(25, 4, 500) == "diag_e"
+    assert "/!\\" in capsys.readouterr().out
+
+    assert announce_metric(25, 4, 1000, n_units=2204) == "diag_e"
+    out = capsys.readouterr().out
+    assert "/!\\" not in out and "out of reach" in out
+
+    assert announce_metric(25, 4, 1000) == "dense_e"
+    assert "/!\\" not in capsys.readouterr().out
+
+
 def test_an_explicit_metric_overrides_the_sizing():
     """A probe comparing the two metrics on identical data needs to force one; the
     default stays `None` so ordinary callers get the sized choice."""

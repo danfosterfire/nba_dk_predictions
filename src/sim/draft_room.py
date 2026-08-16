@@ -199,7 +199,8 @@ def field_artifact(features_dir: Path, season: str) -> Path:
 def build_field(frame: pd.DataFrame, board: draft.Board, dk_pts: np.ndarray,
                 masks: np.ndarray, round_of_period: np.ndarray,
                 field_cfg: draft.FieldConfig, n_drafts: int = N_FIELD_DRAFTS,
-                seed: int = SEED, pod_size: int = ROUND_ONE_POD) -> np.ndarray:
+                seed: int = SEED, pod_size: int = ROUND_ONE_POD,
+                seat_strategies: list[str] | None = None) -> np.ndarray:
     """`[entry, round, sim]` round totals for a field of `n_drafts` real twelve-seat pods.
 
     The rosters come from `src/sim/draft.py` at the field Gate B fitted, so the population
@@ -209,34 +210,56 @@ def build_field(frame: pd.DataFrame, board: draft.Board, dk_pts: np.ndarray,
     entry the same top ten and a field that is both far too strong and nearly identical.
     """
     state = draft.run_drafts(board, field_cfg, n_drafts, np.random.default_rng(seed),
-                             pod_size=pod_size)
+                             pod_size=pod_size, seat_strategies=seat_strategies)
     rosters = state.roster.reshape(-1, ROSTER_SIZE)
     scored = score_rosters(dk_pts, rosters, masks, round_of_period)
     return np.ascontiguousarray(scored["round_total"], dtype=np.float32)
 
 
+def _composition_key(seat_strategies: list[str] | None) -> str:
+    """One string naming the field's seat mix, for the cache key.
+
+    Order-free and pod-size-free — shares rather than counts — so `None`, the engine's
+    all-ADP default, keys identically to an explicit twelve-seat all-ADP list and to the
+    caches written before the field carried a composition at all.
+    """
+    seats = seat_strategies or [draft.AdpAutodraft.name]
+    return ",".join(f"{name}:{seats.count(name) / len(seats):.4f}"
+                    for name in sorted(set(seats)))
+
+
 def save_field(dest: Path, field_round: np.ndarray, season: str, fit_window: str,
-               field_cfg: draft.FieldConfig, n_drafts: int) -> Path:
+               field_cfg: draft.FieldConfig, n_drafts: int,
+               seat_strategies: list[str] | None = None) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(dest, round_total=field_round, season=season,
                         fit_window=fit_window, n_drafts=n_drafts,
                         noise_model=field_cfg.noise_model,
-                        rank_noise_sd=field_cfg.rank_noise_sd)
+                        rank_noise_sd=field_cfg.rank_noise_sd,
+                        need_weight=field_cfg.need_weight,
+                        composition=_composition_key(seat_strategies))
     return dest
 
 
-def load_field(path: Path, field_cfg: draft.FieldConfig, n_sims: int) -> np.ndarray | None:
+def load_field(path: Path, field_cfg: draft.FieldConfig, n_sims: int,
+               seat_strategies: list[str] | None = None) -> np.ndarray | None:
     """The cached field, or `None` when it does not describe the field being asked for.
 
     A field cached under a different noise model is not this field, and reusing it would
     price our entry against a population nothing calibrated. Cheaper to redraft than to
-    explain.
+    explain. Caches written before the field carried a composition lack the last two keys
+    and are read as the legacy pure-ADP field, which is exactly what they hold.
     """
     if not path.exists():
         return None
     with np.load(path, allow_pickle=False) as z:
+        held_need = float(z["need_weight"]) if "need_weight" in z else 0.0
+        held_mix = (str(z["composition"]) if "composition" in z
+                    else _composition_key(None))
         if (str(z["noise_model"]) != field_cfg.noise_model
                 or float(z["rank_noise_sd"]) != field_cfg.rank_noise_sd
+                or held_need != field_cfg.need_weight
+                or held_mix != _composition_key(seat_strategies)
                 or z["round_total"].shape[2] < n_sims):
             return None
         return np.ascontiguousarray(z["round_total"][:, :, :n_sims])
@@ -460,6 +483,7 @@ class Room:
     field_round: np.ndarray
     refs: dict[str, FieldReference]
     fit_window: str
+    seats: list[str] | None = None     # opponent per seat; None = all `adp`
 
     @property
     def n_sims(self) -> int:
@@ -485,7 +509,7 @@ def load_room(cfg: dict, season: str, n_sims: int | None = None,
     n_sims = int(n_sims or cfg_sim.get("n_sims_draft", 500))
     n_field_drafts = int(n_field_drafts or cfg_sim.get("draft_room", {})
                          .get("field_drafts", N_FIELD_DRAFTS))
-    # **Every captured tournament, not only the two being entered.** All five run a
+    # **Every captured tournament, not only the reference pair.** All five run a
     # 12-entry Round-1 pod, so the draft is identical and only the bracket above it
     # differs — which means a reference is a reweighting of a field that has already been
     # drafted and scored, and costs milliseconds. It is the same argument `make bracket`
@@ -503,15 +527,16 @@ def load_room(cfg: dict, season: str, n_sims: int | None = None,
     dk_pts, scorable = draft.tensor_scores(frame, tensor, n_sims)
     masks = position_masks(frame)
     field_cfg = draft.selected_field(cfg)
+    seats = draft.assign_seats(draft.field_composition(cfg), pod_size)
 
     path = field_artifact(features_dir, season)
-    field_round = None if rebuild_field else load_field(path, field_cfg, n_sims)
+    field_round = None if rebuild_field else load_field(path, field_cfg, n_sims, seats)
     if field_round is None:
         field_round = build_field(frame, board, dk_pts, masks,
                                   tensor["tournament_round"], field_cfg,
-                                  n_field_drafts, seed, pod_size)
+                                  n_field_drafts, seed, pod_size, seats)
         save_field(path, field_round, season, tensor["fit_window"], field_cfg,
-                   n_field_drafts)
+                   n_field_drafts, seats)
     field_round = field_round[:, :, :n_sims]
 
     return Room(season=season, frame=frame, board=board, dk_pts=dk_pts,
@@ -520,7 +545,7 @@ def load_room(cfg: dict, season: str, n_sims: int | None = None,
                 projection=dk_pts.sum(axis=1).mean(axis=1),
                 pod_size=pod_size, field_cfg=field_cfg, field_round=field_round,
                 refs={t: field_reference(field_round, t) for t in tournaments},
-                fit_window=tensor["fit_window"])
+                fit_window=tensor["fit_window"], seats=seats)
 
 
 # ── 4. Completing the roster, because a payout needs a finished one ──────────
@@ -1278,8 +1303,8 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
     out_dir.mkdir(parents=True, exist_ok=True)
     seed = int(SEED if seed is None else seed)
     # The null is checked on every captured structure, for `make bracket`'s reason; Gate E
-    # is measured on the two being entered, since it is a latency figure and the bracket
-    # above it barely moves it.
+    # is measured on the tournaments in `sim.tournaments`, since it is a latency figure
+    # and the bracket above it barely moves it.
     entered = list(cfg.get("sim", {}).get("tournaments", {}) or {})
 
     seasons = seasons or validation_seasons(split_frame(cfg))

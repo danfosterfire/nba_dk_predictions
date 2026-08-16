@@ -49,14 +49,22 @@ replication.
   games-played plan (✅ by 0.03 dk_pts on test → ❌ by 6.34 on validation); `fg3a|fga` under
   sklearn (clears its floor on test, fails on validation); the games-played Gate D that
   started this; **`fta`**, added 2026-08-06 when `stan_components` was re-run, which
-  failed its no-fit floor by 0.0024 on test and clears it by 0.0144 on validation,
+  failed its no-fit floor by 0.0024 on test and clears it by 0.0144 on validation
+  (**+0.0198** since the preseason block, so the reversal widened rather than narrowed),
   retiring "the whole free-throw family fails"; and **the availability model ladder**,
   added 2026-08-08, where the GBM went from third to first. **Three survived unchanged**,
   which is the useful contrast: the availability
-  Stan port still reproduces the MLE on 21/21 coefficients, the `reb` alpha-trap pair
+  Stan port still reproduces the MLE on every one of its terms (21/21 then, 24/24 after the
+  2026-08-11 window and role-graded dispersion, 35/35 since the 2026-08-12 mixture), the
+  `reb` alpha-trap pair
   reproduces 0.928 / 0.662 to a thousandth across the split change, and the substitution
   arm's validation margin reproduces at −0.771 across a half-length-to-full-length change
-  in every one of its fits.
+  in every one of its fits. ⚠️ **That last figure is a 2026-08-06 reading and is not the
+  current one**: `stan_component_substitution.csv` is written by `make stan-components`,
+  which re-ran on 2026-08-15 with the preseason block on ten of eleven heads, so the margin
+  now reads **−0.7218**. What reproduced across the chain-length change still reproduced;
+  the heads underneath it changed afterwards, which is a different event and does not
+  retract the reproduction.
   - **Every one of the five reversals was a sub-1.5% margin on test that a paired bootstrap
     could not have called.** That is the pattern the conversion established and then
     confirmed on its last head: the split move does not overturn findings with real margins,

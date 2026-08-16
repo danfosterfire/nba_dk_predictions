@@ -77,6 +77,7 @@ Usage:
 """
 
 import argparse
+import copy
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -180,6 +181,7 @@ class Strategy:
     objective: str = "ranking"
     n_entries: int = 0                 # 0 = take the tier's own entry count
     axis: str = ""                     # which sweep axis this row varies; for reporting
+    autodraft: bool = False            # execute as a submitted pre-draft ranking
 
     def __post_init__(self):
         if self.ranking not in RANKINGS:
@@ -191,6 +193,21 @@ class Strategy:
             raise ValueError(f"alpha must be a weight in [0, 1]; got {self.alpha}")
         if not 0.0 < self.exposure_cap <= 1.0:
             raise ValueError(f"exposure_cap is a share in (0, 1]; got {self.exposure_cap}")
+        if self.autodraft:
+            # A submitted board is one static ordering: DK executes it with no memory of
+            # the round, the portfolio or the roster beyond its own position caps. Any
+            # axis that varies within a draft or across entries cannot be expressed as
+            # one, and silently dropping the axis would measure a different strategy
+            # under the old name.
+            infeasible = [reason for cond, reason in
+                          ((self.objective != "ranking", "a per-pick objective"),
+                           (self.alpha_rounds is not None, "a per-round alpha schedule"),
+                           (self.exposure_cap < 1.0, "an exposure cap"),
+                           (self.stacking != 0.0, "a stacking bonus")) if cond]
+            if infeasible:
+                raise ValueError(f"{self.name}: autodraft cannot express "
+                                 f"{', '.join(infeasible)} — a submitted ranking is one "
+                                 f"static order")
 
     def alpha_at(self, round_index: int) -> float:
         """The market weight in force at draft round `round_index` (0-based)."""
@@ -213,7 +230,7 @@ class Strategy:
                 "position_caps": "/".join(f"{p}{c}" for p, c in
                                           zip(POSITIONS, self.position_caps)),
                 "exposure_cap": self.exposure_cap, "stacking": self.stacking,
-                "objective": self.objective}
+                "objective": self.objective, "autodraft": self.autodraft}
 
 
 def model_value(dk_pts: np.ndarray, ranking: str, quantile: float) -> np.ndarray:
@@ -712,7 +729,8 @@ def priceable_room(cfg: dict, room: draft_room.Room, seed: int = SEED,
     # tensor scores at zero. Thirty pods of the fitted field is a couple of seconds and
     # makes the figure reproducible from the shipped target.
     probe = draft.run_drafts(room.board, room.field_cfg, PRICEABLE_PROBE_DRAFTS,
-                             np.random.default_rng(seed), pod_size=room.pod_size)
+                             np.random.default_rng(seed), pod_size=room.pod_size,
+                             seat_strategies=room.seats)
     unpriced = (~np.asarray(room.scorable, dtype=bool))[
         probe.roster.reshape(-1, ROSTER_SIZE)]
     dropped = {"n_dropped": int(len(room.frame) - len(frame)),
@@ -731,7 +749,8 @@ def priceable_room(cfg: dict, room: draft_room.Room, seed: int = SEED,
     dk_pts = np.ascontiguousarray(room.dk_pts[keep])
     field_round = draft_room.build_field(frame, board, dk_pts, masks,
                                          room.round_of_period, room.field_cfg,
-                                         n_field_drafts, seed, room.pod_size)
+                                         n_field_drafts, seed, room.pod_size,
+                                         room.seats)
     out = draft_room.Room(
         season=room.season, frame=frame, board=board, dk_pts=dk_pts,
         scorable=np.ones(len(frame), dtype=bool), masks=masks,
@@ -739,7 +758,7 @@ def priceable_room(cfg: dict, room: draft_room.Room, seed: int = SEED,
         projection=dk_pts.sum(axis=1).mean(axis=1), pod_size=room.pod_size,
         field_cfg=room.field_cfg, field_round=field_round,
         refs={t: draft_room.field_reference(field_round, t) for t in room.refs},
-        fit_window=room.fit_window)
+        fit_window=room.fit_window, seats=room.seats)
     return out, dropped
 
 
@@ -798,9 +817,18 @@ def draft_portfolio(room: draft_room.Room, strategy: Strategy, tournament: str,
     what entries `0..k-1` took. A pod is 192 argmaxes over ~450 players, so the loop costs
     nothing measurable next to the scoring.
 
-    The opponents are `src/sim/draft.py`'s fitted field. Our own seat runs under
-    `manual_config` — DK's 8 G / 8 F / 3 C bind autodraft and not a person — with the
-    strategy's own caps substituted back in if it chose to carry any.
+    The opponents are `src/sim/draft.py`'s fitted field, seated by the room's composition.
+    Our own seat runs under `manual_config` — DK's 8 G / 8 F / 3 C bind autodraft and not a
+    person — with the strategy's own caps substituted back in if it chose to carry any.
+
+    **An `autodraft` strategy is the same ranking executed as a submitted board.** Its key
+    is frozen before the draft (one static order — `__post_init__` refuses any axis that
+    cannot be one), its picks run under the **field's own config** rather than
+    `manual_config`, because DK's caps bind precisely this mode, and players the tensor
+    cannot price are ranked behind every priced one rather than masked out — a submitted
+    board ranks everybody, and DK will draft from its tail if the caps force it. The gap
+    between an arm and its autodraft twin is therefore pure execution: what clicking every
+    pick buys over submitting the same opinion as a ranking.
     """
     board = room.board
     value = model_value(room.dk_pts, strategy.ranking, strategy.quantile)
@@ -811,8 +839,13 @@ def draft_portfolio(room: draft_room.Room, strategy: Strategy, tournament: str,
 
     cap_count = int(np.ceil(strategy.exposure_cap * n_entries - 1e-9))
     used = np.zeros(board.n_players, dtype=np.int32)
-    our_cfg = replace(draft.manual_config(room.field_cfg),
-                      position_caps=tuple(strategy.position_caps))
+    if strategy.autodraft:
+        our_cfg = room.field_cfg
+        submitted = strategy_keys(strategy, value_rank, adp_rank, 0)
+        submitted = submitted + np.where(room.scorable, 0.0, float(board.n_players))
+    else:
+        our_cfg = replace(draft.manual_config(room.field_cfg),
+                          position_caps=tuple(strategy.position_caps))
 
     rosters = np.empty((n_entries, ROSTER_SIZE), dtype=np.int64)
     n_capped = 0
@@ -821,6 +854,10 @@ def draft_portfolio(room: draft_room.Room, strategy: Strategy, tournament: str,
 
         def our_pick(state, our, allowed):
             nonlocal n_capped
+            if strategy.autodraft:
+                choice = int(np.argmin(np.where(allowed[0], submitted, np.inf)))
+                used[choice] += 1
+                return np.array([choice], dtype=np.int64)
             live = allowed[0] & room.scorable
             free = live & (used < cap_count)
             if free.any():
@@ -841,7 +878,7 @@ def draft_portfolio(room: draft_room.Room, strategy: Strategy, tournament: str,
             return np.array([choice], dtype=np.int64)
 
         state = draft.run_drafts(board, room.field_cfg, 1, rng,
-                                 pod_size=room.pod_size, seat_strategies=None,
+                                 pod_size=room.pod_size, seat_strategies=room.seats,
                                  our_seat=seat, our_pick=our_pick, our_cfg=our_cfg)
         rosters[entry] = state.roster_of(seat, 0)
 
@@ -1014,6 +1051,14 @@ def strategy_table(objective_arm: bool = True) -> list[Strategy]:
     rows.append(Strategy("blend_caps_dk", ranking="blend", alpha=0.30,
                          position_caps=tuple(draft.POSITION_CAPS[p] for p in POSITIONS),
                          axis="position_caps"))
+    # The execution axis: the same opinion submitted as a pre-draft ranking and executed
+    # by DK's autodraft logic, against clicking every pick. `blend_a30` is the twin the
+    # shipped `lineup_value_blend30` degrades to when expressed as a static board — a
+    # per-pick objective cannot be one, which is itself the first finding of the axis.
+    rows.append(Strategy("autodraft_blend_a30", ranking="blend", alpha=0.30,
+                         axis="execution", autodraft=True))
+    rows.append(Strategy("autodraft_model_mean", ranking="model_mean",
+                         axis="execution", autodraft=True))
     if objective_arm:
         for obj in ("lineup_value", "bracket_ev"):
             rows.append(Strategy(f"{obj}", ranking="model_mean", objective=obj,
@@ -1050,7 +1095,8 @@ def sweep(cfg: dict, room: draft_room.Room, truth_dk: np.ndarray, season: str,
           f"INJECTED world")
     field_round = draft_room.build_field(room.frame, room.board, truth_dk, masks,
                                          room.round_of_period, room.field_cfg,
-                                         n_field_drafts, seed, room.pod_size)
+                                         n_field_drafts, seed, room.pod_size,
+                                         room.seats)
     refs = {t: draft_room.field_reference(field_round, t) for t in entered}
     nulls = {t: symmetric_null(t) for t in entered}
     null_table = pd.DataFrame([{"season": season,
@@ -1184,7 +1230,8 @@ def replay_realized(cfg: dict, room: draft_room.Room, season: str,
                             len(room.round_of_period))
     field_round = draft_room.build_field(room.frame, room.board, truth, room.masks,
                                          room.round_of_period, room.field_cfg,
-                                         n_field_drafts, seed, room.pod_size)
+                                         n_field_drafts, seed, room.pod_size,
+                                         room.seats)
     refs = {t: draft_room.field_reference(field_round, t) for t in entered}
 
     rows = []
@@ -1246,6 +1293,150 @@ def ship(table: pd.DataFrame, realized: pd.DataFrame, cfg: dict,
     return pd.DataFrame(rows)
 
 
+# ── 9b. The pick-log stake ────────────────────────────────────────────────────
+
+#: The stake the pick-log plan would actually place: cheap `15k_and_one` teams whose
+#: purpose is capturing real draft behaviour (`docs/adp-plan.md`, the registry's
+#: `real-pick-logs-are-the-missing-field-calibration`) — ~20 pods at $1.
+PICK_LOG_TOURNAMENT = "15k_and_one"
+PICK_LOG_ENTRIES = 20
+
+#: The three ways those teams could be drafted. `autodraft_blend_a30` is the submittable
+#: pre-draft board — the shipped arm's closest feasible twin under DK's own executor.
+#: `bracket_ev` is the live draft room's literal objective (payout-weighted EV, decision
+#: 5), and `lineup_value_blend30` is the arm the reference-tier sweep ships — both need a
+#: human clicking every pick.
+PICK_LOG_BASELINE = "autodraft_blend_a30"
+PICK_LOG_ARMS = (Strategy(PICK_LOG_BASELINE, ranking="blend", alpha=0.30,
+                          axis="execution", autodraft=True),
+                 Strategy("bracket_ev", ranking="model_mean", objective="bracket_ev",
+                          axis="objective"),
+                 Strategy("lineup_value_blend30", ranking="blend", alpha=0.30,
+                          objective="lineup_value", axis="objective"))
+
+
+def pick_log_stake(cfg: dict, seasons: list[str] | None = None,
+                   tournament: str = PICK_LOG_TOURNAMENT,
+                   n_entries: int = PICK_LOG_ENTRIES, seed: int | None = None,
+                   n_sims: int | None = None,
+                   n_field_drafts: int | None = None) -> dict[str, Path]:
+    """What autodrafting the pick-log stake gives up against drafting it live.
+
+    The sweep prices the execution axis at each tier's stake-parity entry count; this
+    prices it at the stake the pick-log plan would actually place — `n_entries` cheap
+    entries in one tournament — and in the units that stake is decided in: per-entry
+    survival, the portfolio's `P(at least one advances)`, and **dollars** of expected
+    payout on the fee actually at risk. Same injected worlds, same field, same scoring
+    as the sweep; every gap is paired on the world and bootstrapped over worlds pooled
+    across the validation seasons, exactly as `paired_gaps` does it.
+
+    The EV-in-dollars row inherits the resolution caveat every EV here carries: it is a
+    level, and `make bracket` records which structures resolve their tails at an
+    affordable field size. For `15k_and_one` the null check is the guard, as always.
+    """
+    features_dir = Path(cfg["data"]["features_dir"])
+    out_dir = Path(cfg["evaluation"]["predictions_dir"])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cfg_strategy = cfg.get("sim", {}).get("strategy", {})
+    n_sims = int(n_sims or cfg_strategy.get("n_sims", N_SIMS_SWEEP))
+    n_field_drafts = int(n_field_drafts
+                         or cfg_strategy.get("field_drafts", N_FIELD_DRAFTS))
+    seed = int(SEED if seed is None else seed)
+
+    design = split_frame(cfg)
+    seasons = seasons or validation_seasons(design)
+    for season in seasons:
+        assert_season_allowed(season, design)
+
+    print(f"The pick-log stake — {n_entries} entries in {tournament}, autodraft "
+          f"against the live optimizer")
+    print(f"  The test split is LOCKED — seasons go through `held_out.selection_split`.")
+
+    level_rows = []
+    p_traces: dict = {}
+    any_traces: dict = {}
+    ev_traces: dict = {}
+    entry_fee = float("nan")
+    for season in seasons:
+        print(f"\n── {season} ──")
+        full = draft_room.load_room(cfg, season, n_sims=n_sims)
+        room, _ = priceable_room(cfg, full, seed, n_field_drafts)
+        games_played = board_games_played(features_dir, season, room, n_sims)
+        truth, _, _ = gate_c(cfg, season, room.dk_pts, games_played, room.scorable,
+                             room.frame["player_id"].to_numpy(), room.frame,
+                             truth_sim_index(n_sims))
+        field_round = draft_room.build_field(room.frame, room.board, truth, room.masks,
+                                             room.round_of_period, room.field_cfg,
+                                             n_field_drafts, seed, room.pod_size,
+                                             room.seats)
+        ref = draft_room.field_reference(field_round, tournament)
+        entry_fee = float(ref.entry_fee)
+        check = draft_room.null_check(field_round, ref)
+        print(f"  null check {tournament}: P(top 2 of 12) "
+              f"{check['p_advance_simulated']:.6f} against "
+              f"{check['p_advance_analytic']:.6f} "
+              f"({check['p_advance_error']:+.2e})")
+
+        null = symmetric_null(tournament)
+        for strategy in PICK_LOG_ARMS:
+            rng = np.random.default_rng(seed)
+            rosters, _ = draft_portfolio(room, strategy, tournament, n_entries, rng)
+            scored = score_rosters(truth, rosters, room.masks, room.round_of_period)
+            totals = scored["round_total"].astype(np.float64)
+            out = portfolio_outcome(totals, ref, np.random.default_rng(seed + 1))
+            p_trace = out.pop("trace")
+            any_trace = out.pop("trace_any")
+            ev_entry, _ = draft_room.bracket_ev(totals, ref, per_sim=True)
+            ev_trace = ev_entry.sum(axis=0)          # portfolio dollars per world
+            key = (strategy.name, tournament)
+            p_traces[key] = (np.concatenate([p_traces[key], p_trace])
+                             if key in p_traces else p_trace)
+            any_traces[key] = (np.concatenate([any_traces[key], any_trace])
+                               if key in any_traces else any_trace)
+            ev_traces[key] = (np.concatenate([ev_traces[key], ev_trace])
+                              if key in ev_traces else ev_trace)
+            level_rows.append({"season": season, "tournament": tournament,
+                               "strategy": strategy.name,
+                               "autodraft": strategy.autodraft,
+                               "n_entries": n_entries, "entry_fee": entry_fee,
+                               "stake": n_entries * entry_fee,
+                               **{k: v for k, v in out.items()},
+                               "p_advance_null": null["p_advance_round_1"],
+                               "lift_vs_null": (out["p_advance"]
+                                                - null["p_advance_round_1"])})
+            print(f"  {strategy.name:<22} P(adv) {out['p_advance']:.4f}  "
+                  f"P(any) {out['p_any_advance']:.4f}  "
+                  f"portfolio EV ${float(ev_trace.mean()):,.2f} on a "
+                  f"${n_entries * entry_fee:,.0f} stake")
+
+    paired_rows = []
+    for metric, store in (("p_advance", p_traces), ("p_any_advance", any_traces),
+                          ("ev_dollars", ev_traces)):
+        paired_rows.append(paired_gaps(store, PICK_LOG_BASELINE, tournament, metric,
+                                       np.random.default_rng(seed + 2)))
+    paired = pd.concat(paired_rows, ignore_index=True)
+    paired["n_entries"] = n_entries
+    paired["entry_fee"] = entry_fee
+    paired["stake"] = n_entries * entry_fee
+
+    print(f"\nPaired on the world, pooled over {len(seasons)} seasons — every gap is "
+          f"an arm minus {PICK_LOG_BASELINE}:")
+    for row in paired[paired["strategy"] != PICK_LOG_BASELINE].itertuples():
+        unit = "$" if row.metric == "ev_dollars" else ""
+        print(f"  {row.strategy:<22} {row.metric:<14} {unit}{row.gap:+.4f} "
+              f"[{unit}{row.gap_lo:+.4f}, {unit}{row.gap_hi:+.4f}]  "
+              f"{'resolved' if row.resolved else 'NOT resolved'}")
+
+    paths = {}
+    for name, frame in (("strategy_pick_log_stake", pd.DataFrame(level_rows)),
+                        ("strategy_pick_log_paired", paired)):
+        dest = out_dir / f"{name}.csv"
+        frame.to_csv(dest, index=False)
+        print(f"Saved {len(frame):,} {name.replace('_', ' ')} rows → {dest}")
+        paths[name] = dest
+    return paths
+
+
 # ── 10. The entry point ────────────────────────────────────────────────────────
 
 def truth_sim_index(n_sims: int, n_truth: int = 24) -> np.ndarray:
@@ -1260,10 +1451,44 @@ def truth_sim_index(n_sims: int, n_truth: int = 24) -> np.ndarray:
 
 def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
         seed: int | None = None, objective_arm: bool = True,
-        n_field_drafts: int | None = None) -> dict[str, Path]:
+        n_field_drafts: int | None = None, field: str = "adp",
+        need_weight: float | None = None) -> dict[str, Path]:
+    if field not in draft.OPPONENTS:
+        raise KeyError(f"unknown field {field!r}; registered: "
+                       f"{sorted(draft.OPPONENTS)}")
+    if need_weight is not None and field != draft.AdpNeedAware.name:
+        raise ValueError(f"--need-weight stipulates the `adp_need` field's lean and "
+                         f"means nothing for {field!r}")
+    # A non-default field is a different measurement, not a re-decision: it writes
+    # suffixed artifacts so the shipped `strategy_*.csv` — the numbers the docs audit —
+    # stay the record of the sweep against the field Gate B shipped.
+    suffix = "" if field == "adp" else f"_{field}"
+    if suffix:
+        cfg = copy.deepcopy(cfg)
+        cfg.setdefault("sim", {}).setdefault("field", {})["composition"] = {
+            "default": {field: 1.0}}
     features_dir = Path(cfg["data"]["features_dir"])
     out_dir = Path(cfg["evaluation"]["predictions_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
+    if need_weight is not None:
+        # A STIPULATED lean, not a fitted one — the calibration selects need_weight = 0
+        # (the observed curve carries no slot-reaching at all, and it degrades fastest in
+        # the elite region), so a sweep at the fitted row would reproduce the shipped
+        # field bitwise. This is the robustness probe: the noise scale is still read from
+        # the calibration artifact at the stipulated weight, and the suffix names the
+        # stipulation so the artifact cannot masquerade as a fitted field's readout.
+        suffix += f"_w{need_weight:g}"
+        fitted = pd.read_csv(out_dir / "draft_gate_b_need.csv")
+        rows = fitted[(fitted["season"] == "pooled")
+                      & (fitted["need_weight"] == float(need_weight))]
+        if rows.empty:
+            raise ValueError(f"draft_gate_b_need.csv carries no pooled rows at "
+                             f"need_weight={need_weight:g}; grid: "
+                             f"{sorted(fitted['need_weight'].dropna().unique())}")
+        row = rows.loc[rows["mae_fit"].idxmin()]
+        cfg["sim"]["field"].update(noise_model=str(row["noise_model"]),
+                                   rank_noise_sd=float(row["rank_noise_sd"]),
+                                   need_weight=float(need_weight))
     cfg_sim = cfg.get("sim", {})
     cfg_strategy = cfg_sim.get("strategy", {})
     n_sims = int(n_sims or cfg_strategy.get("n_sims", N_SIMS_SWEEP))
@@ -1283,6 +1508,9 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
     print(f"  The test split is LOCKED — seasons go through `held_out.selection_split`.")
     print(f"  {len(strategies)} strategies x {len(entered)} tiers x {len(seasons)} "
           f"seasons, {n_sims:,} simulated worlds each")
+    print(f"  the opponent field is `{field}`"
+          + (" — artifacts carry the suffix and the shipped set is untouched"
+             if suffix else " (the shipped field)"))
     print(f"  select on LIFT IN P(top 2 of 12); report ROI against the break-even hurdle")
 
     gate_c_rows, injection_rows, sweep_rows, realized_rows, null_rows = [], [], [], [], []
@@ -1365,7 +1593,7 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
                         ("strategy_gate_d", gate_d_table),
                         ("strategy_realized", realized),
                         ("strategy_shipped", ship_table)):
-        dest = out_dir / f"{name}.csv"
+        dest = out_dir / f"{name}{suffix}.csv"
         frame.to_csv(dest, index=False)
         print(f"Saved {len(frame):,} {name.replace('_', ' ')} rows → {dest}")
         paths[name] = dest
@@ -1546,8 +1774,25 @@ if __name__ == "__main__":
     parser.add_argument("--no-objective-arm", action="store_true",
                         help="skip the in-draft-objective arms, which call "
                              "`draft_room.evaluate` once per pick")
+    parser.add_argument("--field", choices=sorted(draft.OPPONENTS), default="adp",
+                        help="the opponent field to sweep against; a non-default "
+                             "choice writes suffixed artifacts (e.g. "
+                             "strategy_sweep_adp_need.csv)")
+    parser.add_argument("--need-weight", type=float, default=None,
+                        help="stipulate the adp_need field's lean instead of reading "
+                             "the fitted (zero) one — a robustness probe, suffixed "
+                             "into the artifact names")
+    parser.add_argument("--pick-log-stake", action="store_true",
+                        help="price the pick-log stake instead of running the sweep: "
+                             "20 cheap 15k_and_one entries, DK autodraft against the "
+                             "live optimizer, paired on the world")
     args = parser.parse_args()
 
     cfg = yaml.safe_load(open("configs/default.yaml"))
-    run(cfg, seasons=args.season, n_sims=args.n_sims, seed=args.seed,
-        objective_arm=not args.no_objective_arm, n_field_drafts=args.field_drafts)
+    if args.pick_log_stake:
+        pick_log_stake(cfg, seasons=args.season, seed=args.seed, n_sims=args.n_sims,
+                       n_field_drafts=args.field_drafts)
+    else:
+        run(cfg, seasons=args.season, n_sims=args.n_sims, seed=args.seed,
+            objective_arm=not args.no_objective_arm, n_field_drafts=args.field_drafts,
+            field=args.field, need_weight=args.need_weight)

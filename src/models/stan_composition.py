@@ -225,6 +225,47 @@ def choose_metric(n_params: int, warmup: int = 1000,
     return "dense_e" if warmup >= draws_per_param * n_params else "diag_e"
 
 
+def announce_metric(n_features: int, n_rho: int, warmup: int, n_units: int = 0) -> str:
+    """The metric an arm will get, printed **before** the sampler starts.
+
+    ⚠️ **A cost cliff, not a preference, and it is invisible in the artifact until the fit
+    is over.** `choose_metric` grants `dense_e` only when `warmup >= 20 x parameters`, and
+    this head's own probe measured NUTS held at treedepth 8-9 under `diag_e` against
+    treedepth 4 under `dense_e` — roughly 10x the wall clock. A `composition_preseason_fit`
+    attempt at `warmup: 500`, copied from the `effects` block, ran **32 minutes without
+    completing its 500 warmup draws**, against `composition_effects`' **880 s** for the same
+    arm at the same window for a whole 500+500 fit under `dense_e`.
+
+    Nothing said so until it was killed: CmdStan writes no draw until warmup ends and its
+    progress lines are buffered away, so the *only* early signal is the metric itself. This
+    prints it in the first second.
+
+    **A `diag_e` warning is not always actionable, which is why this warns rather than
+    raises.** An arm carrying the per-(player, season) effect has `U_n` parameters — 2,204
+    at the pilot window — and cannot reach `dense_e` at any warmup this project would run;
+    for it `diag_e` is the correct metric and the long comment above `DENSE_METRIC_MAX_MB`
+    is why. The warning is for the arms that could have had it and were configured out of
+    it by a number nobody re-read.
+
+    Lives here rather than in a caller because `choose_metric` is here: the two were in
+    different modules for one day and the copy in `composition_preseason_fit` had no `U_n`
+    term, so it would have promised `dense_e` to an arm that structurally cannot get it.
+    """
+    n_params = n_features + 1 + n_rho + n_units
+    metric = choose_metric(n_params, warmup)
+    print(f"    {n_params:,} parameters, {warmup} warmup draws → {metric}")
+    if metric != "dense_e":
+        needed = DENSE_DRAWS_PER_PARAM * n_params
+        if n_units:
+            print(f"    (expected: {n_units:,} player-season effects put `dense_e` out of "
+                  f"reach at any warmup here, and `diag_e` is the right metric for it)")
+        else:
+            print(f"    /!\\  `diag_e` on this head is ~10x the wall clock of `dense_e` "
+                  f"(treedepth 8-9 against 4 on its own probe). `dense_e` needs warmup >= "
+                  f"{needed:.0f} and this run has {warmup}.")
+    return metric
+
+
 def unit_codes(frame: pd.DataFrame) -> np.ndarray:
     """0-based (player, season) index per row, for an effect shared across a unit's games."""
     return frame.groupby(UNIT_KEYS, sort=True).ngroup().to_numpy()
@@ -436,9 +477,16 @@ def rookie_share_priors(lagged: pd.DataFrame, seasons: list[str]) -> pd.DataFram
 def order_frame(frame: pd.DataFrame) -> pd.DataFrame:
     """Fixed within-team-season order: veterans by prior share descending, then
     no-prior players by draft slot, tie-broken by `player_id`. Computable preseason —
-    every key is S-1 information — and each game's played subset inherits it."""
+    every key is S-1 information — and each game's played subset inherits it.
+
+    Sorts on `order_share` when the frame carries one and on `w_share` otherwise. The two
+    are the same column for every caller but `composition_preseason`, which needs them
+    separate to say whether a better prior share helps through the **offset** or through the
+    **order** — `w_share` reaches the model both ways, and a single number that moved both
+    could not tell them apart.
+    """
     out = frame.copy()
-    out["_w_neg"] = -out["w_share"]
+    out["_w_neg"] = -(out["order_share"] if "order_share" in out else out["w_share"])
     out["_draft"] = out["draft_number"].fillna(99)
     out = out.sort_values(["season", "game_id", "team_id", "no_prior", "_w_neg",
                            "_draft", "player_id"]).reset_index(drop=True)
@@ -533,13 +581,20 @@ def sequential_columns(frame: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def composition_frame(cfg: dict) -> pd.DataFrame:
+def composition_frame(cfg: dict, share_hook=None) -> pd.DataFrame:
     """One ordered row per played player-game, over every season.
 
     Built over the full history even when only a pilot window is fitted — the lags and
     the expanding rookie prior need the earlier seasons. Ordering is fixed within a
     team-season (prior share descending, no-prior players last by draft slot), so each
     game's played subset inherits it, and it is computable preseason.
+
+    `share_hook`, if given, is called with the per-(player, season) frame **after**
+    `w_share` is built and must return it with `w_share` replaced. It exists for
+    `composition_preseason`, which asks whether a preseason reading improves that column —
+    the one input that reaches BOTH the offset (`logit_prior`) and the allocation ORDER, so
+    it cannot be tested as a feature. `None` is today's behaviour exactly and every other
+    caller passes nothing.
     """
     features_dir = Path(cfg["data"]["features_dir"])
     seasons = cfg["data"]["seasons"]
@@ -561,11 +616,17 @@ def composition_frame(cfg: dict) -> pd.DataFrame:
                          .fillna(lagged["rookie_share_prior"])
                          .fillna(FALLBACK_ROOKIE_SHARE)
                          .clip(*SHARE_CLIP))
+    carried = ["player_id", "season", "w_share", "no_prior", "share_stale", "draft_number"]
+    if share_hook is not None:
+        lagged = share_hook(lagged)
+        if lagged["w_share"].isna().any():
+            raise ValueError("`share_hook` returned a NaN `w_share`")
+        lagged["w_share"] = lagged["w_share"].clip(*SHARE_CLIP)
+        if "order_share" in lagged:
+            lagged["order_share"] = lagged["order_share"].clip(*SHARE_CLIP)
+            carried.append("order_share")
 
-    frame = played.merge(
-        lagged[["player_id", "season", "w_share", "no_prior", "share_stale",
-                "draft_number"]],
-        on=["player_id", "season"], how="left")
+    frame = played.merge(lagged[carried], on=["player_id", "season"], how="left")
     if frame["w_share"].isna().any():
         raise ValueError("played rows with no composition weight — share_lags no "
                          "longer covers the panel")
@@ -604,6 +665,106 @@ def composition_frame(cfg: dict) -> pd.DataFrame:
           f"{frame.loc[frame['no_prior'] == 1, 'y'].sum() / frame['y'].sum():.1%} "
           f"of minutes")
     return frame
+
+
+# ── The head's own path — the preseason-blended `w_share` ─────────────────────
+
+# Adopted 2026-08-14 (`docs/preseason-plan.md` P5), on session 4d's `ship_margin`: the
+# blended arm beats the head that was shipping by -0.25409 [-0.26520, -0.24315] CRPS
+# minutes per player-game on the draft pool and -17.27296 [-22.32569, -11.92164] per
+# player-season, with `team_sum_abs_error` exactly 0 on all six arms.
+#
+# ⚠️ This head takes the preseason through `w_share` and NOT through a column on `beta`,
+# which is the opposite of the availability and minutes blocks. `w_share` reaches the model
+# three ways — as the `OWN` feature, as the offset through `sequential_columns`, and as the
+# allocation order through `order_frame` — and no coefficient reaches the last two. Session
+# 4b's attribution put 103% of the screen's margin on the OFFSET and 3.75% on the ordering,
+# so `route = offset_only` is what ships and the ordering stays on the incumbent share.
+PRESEASON = True
+
+
+def preseason_blend(cfg: dict, preseason: bool | None = None) -> tuple[float, str] | None:
+    """`(k, route)` for the shipped blend, or `None` when the head carries no preseason.
+
+    Read from `stan.composition.preseason` — the same block `make composition-preseason-fit`
+    reads, deliberately, because `blend_k` and `route` are session 4b's decisions 2 and 3
+    and the head and the round that measured it must not be able to disagree about them.
+    The other keys in that block (`first_season`, `label`, `arms`) belong to the measurement
+    target alone; `adopt` is the one this function turns on.
+    """
+    from src.models.composition_preseason import INCUMBENT_K
+    from src.models.composition_preseason_fit import ROUTE, SELECTED_K
+
+    pre_cfg = cfg.get("stan", {}).get("composition", {}).get("preseason", {})
+    on = bool(pre_cfg.get("adopt", PRESEASON)) if preseason is None else bool(preseason)
+    if not on:
+        return None
+    k = float(pre_cfg.get("blend_k", SELECTED_K))
+    if k >= INCUMBENT_K:
+        return None
+    return k, str(pre_cfg.get("route", ROUTE))
+
+
+def head_first_season(cfg: dict, preseason: bool | None = None) -> str:
+    """This head's fitting window, cut to preseason coverage when the blend is on.
+
+    `stan_minutes.first_covered_season`'s rule one head over: the panel's first intact-tail
+    season is read off `preseason_coverage.csv` rather than typed, so the window is a
+    property of the capture rather than a constant somebody has to remember to move — and it
+    matters by exactly one season, since 2003-04 has 369 real preseason rows and is still
+    excluded as `tail_missing`.
+
+    Session 4d priced the cut on its own, with a third arm that fits below coverage because
+    it carries no preseason column: `window_cost` is **-0.01991 [-0.02515, -0.01498]** CRPS
+    minutes per player-game — the same direction as P3's cut and 8.5% of the increment
+    rather than the quarter that round paid. So the cut helps here, and the block is not
+    mostly window.
+    """
+    configured = str(cfg.get("stan", {}).get("composition", {})
+                     .get("first_season", PILOT_FIRST_SEASON))
+    if preseason_blend(cfg, preseason) is None:
+        return configured
+    from src.models.stan_minutes import first_covered_season
+
+    return max(configured, first_covered_season(cfg))
+
+
+def head_frame(cfg: dict, preseason: bool | None = None) -> pd.DataFrame:
+    """`composition_frame` plus the blended `w_share` — **this head's path and no other's**.
+
+    Separate from `composition_frame` for the reason `stan_minutes.head_design` is separate
+    from `build_design`: that builder is how `composition_effects`, `minutes_window`,
+    `rookie_priors` and both `composition_preseason` modules reach their rows, and a share
+    that is structurally unavailable before 2004-05 must not enter any of them by accident.
+    The measurement modules' `base` arms are *controls*, so a blend arriving under them
+    silently would delete the very contrast they exist to draw.
+
+    **`minutes_unification`, `model_cards` and `sim/season` are the exceptions, and they are
+    the rule rather than violations of it**: each consumes this head's *persisted posterior*
+    and needs the offset and the ordering that posterior was fitted on. Anything that scores
+    or draws from the shipped head comes through here; anything that builds its own model on
+    these rows goes through `composition_frame`.
+
+    The hook is `composition_preseason.blend_hook` — the same function sessions 4b through 4d
+    measured — so what ships is the arm that was scored rather than a second implementation
+    of it.
+    """
+    blend = preseason_blend(cfg, preseason)
+    if blend is None:
+        return composition_frame(cfg)
+    k, route = blend
+
+    from src.models.composition_preseason import blend_hook, preseason_share
+
+    panel_path = Path(cfg["data"]["features_dir"]) / "preseason.parquet"
+    if not panel_path.exists():
+        raise FileNotFoundError(
+            f"{panel_path} is missing and the composition head ships a preseason-blended "
+            f"`w_share` — run `make preseason`, or set "
+            f"`stan.composition.preseason.adopt: false` to fit the pre-2026-08-14 head "
+            f"exactly.")
+    pre = preseason_share(pd.read_parquet(panel_path))
+    return composition_frame(cfg, share_hook=blend_hook(pre, k, route))
 
 
 # ── Feature variants ──────────────────────────────────────────────────────────
@@ -1411,14 +1572,25 @@ def run(cfg: dict) -> dict[str, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     cfg_stan = cfg.get("stan", {})
     comp_cfg = cfg_stan.get("composition", {})
-    first_season = str(comp_cfg.get("first_season", PILOT_FIRST_SEASON))
+    configured = str(comp_cfg.get("first_season", PILOT_FIRST_SEASON))
+    first_season = head_first_season(cfg)
     max_hours = float(comp_cfg.get("max_extrapolated_hours", MAX_EXTRAPOLATED_HOURS))
     seed = int(cfg_stan.get("seed", 42))
+    blend = preseason_blend(cfg)
 
     print("Stan composition head — team-game minutes as a decomposed multinomial")
     print(f"  pilot window: {first_season} on (the frame spans every season for "
           f"lags and rookie priors)")
-    frame = composition_frame(cfg)
+    if blend is not None:
+        print(f"  preseason-blended `w_share`: k = {blend[0]:g} on the {blend[1]} route "
+              f"(docs/preseason-plan.md P5).")
+        if first_season > configured:
+            print(f"  The window is cut from {configured} to {first_season} — the "
+                  f"preseason panel's first\n  intact-tail season, read off "
+                  f"`preseason_coverage.csv`. Session 4d priced that cut at\n  "
+                  f"-0.01991 [-0.02515, -0.01498] CRPS minutes per player-game, in the "
+                  f"arm's favour.")
+    frame = head_frame(cfg)
     pilot = frame[frame["season"] >= first_season].reset_index(drop=True)
 
     train, val = selection_split(pilot, TEST_SEASONS)

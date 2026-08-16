@@ -336,10 +336,12 @@ So the honest framing: **per-game buys calibration of the season-total distribut
 accuracy of its mean.** For a threshold-and-order-statistic product that is the thing that
 pays — the double-double bonus is a per-game threshold and minutes drive it — but the case
 must be made on those terms, not as "a better minutes model". The season head already scores
-R² 0.8835 against a no-fit floor of 0.8536, so the headroom being competed for is small.
+R² 0.8944 against a no-fit floor of 0.8536, so the headroom being competed for is small.
+(⚠️ It read **0.8835** before the preseason block shipped on 2026-08-13; the floor is
+unchanged, so the headroom got *smaller*.)
 
 **Costs, with real numbers.** 731,863 played regular-season player-games against the season
-head's 8,306 rows — **88× the data**. The season spline fit took 955 s (linear: 175 s) —
+head's 6,152 rows — **119× the data**. The season spline fit took 509 s (linear: 134 s) —
 measured while another head sampled alongside it, so an upper bound — and so a
 plain per-game beta-binomial GLM with no latent state is order **6–16 h**: tolerable, and it
 delivers per-game covariates and heterogeneous dispersion. Adding a **latent AR state per
@@ -369,28 +371,33 @@ explicit lagged-observation term, **not** a free latent per game.
 > binomial trials** with the per-player cap carried in the **trials** (`m_k = min(U, R_k)`,
 > the remaining capacity) rather than as a truncation. That gets **both** constraints:
 > the individual cap by construction, the team total by the deterministic last step.
-> Fitted on all 30 seasons and scored on validation (2022-23/2023-24), the selected variant
-> scores **4.4945** minutes of CRPS against the no-fit floor's 4.6776 and the independent
-> per-player draw's **4.7842** —
+> Fitted from 2004-05 with the preseason-blended offset and scored on validation
+> (2022-23/2023-24), the selected variant scores **4.26174** minutes of CRPS against the
+> no-fit floor's **4.47013** and the independent per-player draw's **4.68034** —
 > so it beats the incumbent on the incumbent's own marginal metric, which this plan
-> expected to be a wash, *and* the independent draw's mean team-sum error is **33.89**
+> expected to be a wash, *and* the independent draw's mean team-sum error is **33.6451**
 > minutes per team-game against the composition's exact zero.
 >
 > Two results worth carrying back here. **The pure decomposition fails**: the plain
-> binomial arm scores 4.9388 with PIT KS 0.1919, below the floor — the measured 4.65×
-> game-level dispersion is not optional, exactly as the NB-vs-Poisson result on the count
-> heads. And **the offset is the floor**, so proportional redistribution comes for free
+> binomial arm scores **4.65567** with PIT KS **0.182451**, below the floor — the measured
+> 4.65× game-level dispersion is not optional, exactly as the NB-vs-Poisson result on the
+> count heads. And **the offset is the floor**, so proportional redistribution comes for free
 > and `β` fits deviations from it — which makes "who absorbs the minutes when a starter
 > sits" a fitted quantity, the thing the redistribution section below wants.
 >
-> The dispersion is **graded by prior-share quartile** (fitted 0.1768 fringe to 0.0855
-> star, a 2.07× spread against one shared 0.1211), which cuts mean |variance ratio − 1|
-> by 35% and lands the star tier at **0.81**. Still open: the fringe tier reads **1.05**
-> and q2 0.81 — grading a *step* dispersion does not map one-to-one onto *marginal*
+> The dispersion is **graded by prior-share quartile** (fitted **0.14019** fringe to
+> **0.0735171** star, a **1.91×** spread against one shared **0.0990163**), which cuts mean
+> |variance ratio − 1| by **40.9%** and lands the star tier at **0.78**. Still open: the
+> fringe tier reads **1.01**
+> and q2 0.89 — grading a *step* dispersion does not map one-to-one onto *marginal*
 > variance, because a low-share player breaks his stick last and inherits the remainder
 > variation ahead of him. **Gate E was taken at the full window on 2026-08-04 and the head
-> ships in `make stan`**; the figures here are from the 2026-08-08 validation refit, and
-> the retired test column is preserved in `docs/minutes-composition-plan.md`. This is
+> ships in `make stan`**; the figures here are from the **2026-08-14** refit that adopted the
+> preseason blend (`docs/preseason-plan.md` P5), which moved every figure in this block in
+> the same direction — before it they read CRPS **4.4945** against a **4.6776** floor and a
+> **4.7842** comparator, a **33.89** team miss, binomial **4.9388** at PIT KS **0.1919**, and
+> dispersion 0.1768/0.0855 for a 2.07× spread cutting the ratio error by 35%. The retired
+> test column is preserved in `docs/minutes-composition-plan.md`. This is
 > **iid across games** and therefore does *not* address the 2.43× block inflation — the
 > residual serial process below is unaffected by it.
 
@@ -619,7 +626,7 @@ happens to be, but it describes the seasons scored, not the component.
 > **Why this outranks the shared-β correlation the Stan work was built for.** A league shift
 > is **perfectly correlated across every player**, so it does not diversify away: a −7% error
 > on free throws is −7% on a whole roster's free-throw points. The shared-β parameter
-> uncertainty measured in `stan_availability.board_correlation` is worth **+0.2%** on a
+> uncertainty measured in `stan_availability.board_correlation` is worth **+0.6%** on a
 > 15-man roster. Season effects are the larger non-diversifiable risk by an order of
 > magnitude, and they are currently modelled as exactly zero.
 >
@@ -634,7 +641,11 @@ happens to be, but it describes the seasons scored, not the component.
 > were measured on the 791-player *test* board. The comparison is unchanged in kind — a
 > league shift still does not diversify and shared-β still does — but quote the validation
 > figures, and note the shared-β side (+0.2% / +6.4%) is itself measured on a different
-> board again, so the ratio is indicative rather than exact.
+> board again, so the ratio is indicative rather than exact. It moved again on 2026-08-11,
+> when the availability head took a 2012-13 window and its board figures roughly doubled to
+> +0.5% / +12.3%, and again on 2026-08-13 with the preseason block, to **+0.6%** / **+14.8%**;
+> the conclusion is unchanged, since a year effect is still worth ~20× the
+> shared-β term on a roster, but do not read the ratio to a significant figure.
 
 **One piece is genuinely knowable at prediction time and should not be lumped in with the
 rest.** Rule changes and points of emphasis are announced in the summer, before opening
@@ -1080,18 +1091,30 @@ player-seasons, scored on validation (2022-23/23-24). Three results bind on ever
 > `.gitignore` already covers, so no binary is committed and no generated `.hpp` lands in
 > the source tree.
 >
-> **Availability** ports the validated point MLE and reproduces it: validation CRPS 10.0063
-> against 10.0057, ρ 0.2808 against 0.2806, and the MLE inside the 95% credible interval for
-> **21/21** coefficients. The prior is set to `normal(0, 1/sqrt(2·l2))` precisely so the
-> posterior *mode* is the penalized MLE, making that a defined check. R̂ 1.0019, 0
-> divergences, 196 s. What the posterior adds is `Var_θ(Σ_i E[Y_i|θ])` — exactly 0 for any
+> **Availability** ports the validated point MLE and reproduces it: validation CRPS 9.1329
+> against 9.1390, ρ 0.2048 against 0.2034, and the MLE inside the 95% credible interval for
+> **45/45** terms. The prior is set to `normal(0, 1/sqrt(2·l2))` precisely so the
+> posterior *mode* is the penalized MLE, making that a defined check. R̂ 1.00254, 0
+> divergences, 521 s. (Before the preseason block shipped on 2026-08-13 this read 9.8195
+> against 9.8237, ρ 0.2261 against 0.2245, **35/35** terms, R̂ 1.0073, 366 s; before the
+> mixture shipped on 2026-08-12, 9.8136 against 9.8444, ρ 0.2595 against 0.2627, 24/24 terms,
+> R̂ 1.0050, 94 s — each against the arm the head of that day was a port of.) What the
+> posterior adds is `Var_θ(Σ_i E[Y_i|θ])` — exactly 0 for any
 > point estimate — but **its size depends on the portfolio**, and this plan's framing
 > oversold it. The independent term grows as sqrt(N) and the shared-β term as N, so measured
-> on the validation board the spread inflation is **+0.2% on a 15-player roster** and **+6.7%
+> on the validation board the spread inflation is **+0.6% on a 15-player roster** and **+14.8%
 > across all 883**. Real for board-wide exposure across many lineups; near-irrelevant for one
 > drafted team. This matters for the "joint / correlation modeling across teammates" section
 > below: shared *parameter* uncertainty is not the correlation source a single roster needs —
 > shared **team state** and the shared `min` draw still are.
+>
+> ⚙️ **Both figures are the 2026-08-13 head**, which fits a 2012-13 window with a role-graded
+> ρ, a two-component mixture and a ten-column preseason block
+> (`docs/availability-window-plan.md` §4 and §7, `docs/preseason-plan.md` P2). The
+> full-window, shared-ρ head two revisions back read
+> CRPS 10.0063 against 10.0057, ρ 0.2808 against 0.2806, 21/21 terms, R̂ 1.0019, 196 s, and
+> +0.2% / **+6.7%** board inflation. The board term roughly doubled because 4,027 fitting
+> rows leave a wider posterior on β than 9,478 do — the one place the window costs something.
 >
 > ⚠️ **The port check and the board table were held-out measurements until 2026-08-05**,
 > reading CRPS 10.7947 against 10.7952, ρ 0.2759 against 0.2757, R̂ 1.0025, 254 s, and +0.2%
@@ -1100,9 +1123,15 @@ player-seasons, scored on validation (2022-23/23-24). Three results bind on ever
 >
 > **Minutes** is new and is the first head to use the real trials denominator — successes
 > out of actual game length, never 48. See `docs/availability-plan.md` for the sweep; it
-> clears its no-fit floor by +0.030 R² and −17.5 minutes of CRPS, and it reports the
+> clears its no-fit floor by +0.0408 R² and −23.75 minutes of CRPS, and it reports the
 > **game-level** dispersion (4.65× binomial) separately from the season-level ρ the collapse
 > estimates, because the simulator needs the former and the fit only sees the latter.
+>
+> ⚙️ **Since 2026-08-13 the head carries a five-column preseason block and fits from
+> 2004-05** (`docs/preseason-plan.md` P3), which is where those two figures come from; before
+> it they read **+0.030** R² and **−17.5** minutes over the floor. The block itself is worth
+> **−5.911** CRPS minutes against a control fitted on the same 6,152 rows with the columns
+> removed, so most of the difference is the block and the rest is the window.
 >
 > ⚠️ **The minutes sweep was a held-out measurement until 2026-08-06** and read a gain of
 > **+0.041** R² and **−21.4** minutes over the floor, on a test R² of **0.8572** against the
@@ -1110,37 +1139,51 @@ player-seasons, scored on validation (2022-23/23-24). Three results bind on ever
 > **189** s. Those figures are the retired test refits at double the iterations; the
 > per-game costing above is scaled from the validation fits the artifact now holds.
 >
-> **The eleven component heads** are built too — 37 fits, **0 divergences**, max R̂ 1.0076,
-> 137.4 min of compute. 10,194 player-seasons, 8,630 fit / 773 validation on 2022-23 and
+> **The eleven component heads** are built too — 47 fits, **0 divergences**, max R̂ 1.00713,
+> 163.9 min of compute. 10,194 player-seasons, **6,382** fit / 773 validation on 2022-23 and
 > 2023-24. Three findings, two of which **overturn what the sklearn run above measured**:
 >
 > - **`log(own)` alone is not sufficient under a negative binomial.** The Poisson fit has
 >   `log_own` at 0.7748 (`blk`; 0.8204 before the split moved) and, on the retired basis,
 >   0.8791 (`fg3a`); under NB the identical spec collapses to
->   **0.6730** and **0.3719**, both far below their floors, and only a spline recovers them
->   (0.8309, 0.9046). NB2's `var = μ + μ²/φ` down-weights large counts, so the fit is driven
+>   **0.6485** and **0.3719**, both far below their floors, and only a spline recovers them
+>   (0.8324, 0.9046). NB2's `var = μ + μ²/φ` down-weights large counts, so the fit is driven
 >   by the low-count mass — exactly where the log-scale relation is most curved. **The
 >   "splines are worth ≤ +0.003 outside `fg3a`/`blk`" guidance above is Poisson-specific**;
 >   under NB the validation split picks a spline for **four** heads (`fga`, `ast`, `blk`,
 >   `stl`), and on `blk` it is the difference between a model and a failure.
-> - **`linear` is worse than the sklearn run suggested** — validation R² **−0.2744** on `blk`
+> - **`linear` is worse than the sklearn run suggested** — validation R² **−0.5155** on `blk`
 >   against 0.638 under sklearn, and **−19.00** on the retired `fg3a`. Linear-in-raw-rate
 >   inside `exp()` is not merely misspecified, it is unusable, and it fails the no-fit floor
 >   on five of the seven count heads.
 > - **⭐ Adopting the shot-attempt basis (2026-08-04) retired the −19.00 case entirely.**
 >   `fg3a` is no longer a count head; `fga` replaces it and is the best-behaved count in the
->   project — floor **0.9514**, the highest of the seven, selected at **0.9584**, and
->   `log_own` already at **0.9581**. Where the wrong scale cost `fg3a` a catastrophic
->   −19.00, it costs `fga` **0.9489**, i.e. 0.0025 R². A total is far less skewed than its
->   three-point part. `blk` at −0.2744 is now the only negative linear arm left, and
+>   project — floor **0.9514**, the highest of the seven, selected at **0.9647**, and
+>   `log_own` already at **0.9644**. Where the wrong scale cost `fg3a` a catastrophic
+>   −19.00, it costs `fga` **0.9527**, i.e. 0.0120 R². A total is far less skewed than its
+>   three-point part. `blk` at −0.5155 is now the only negative linear arm left, and
 >   the `fg3a` figures above are retained as the record of the basis that was retired.
 > - **⚠️ `fta` cleared its floor when the sweep moved to validation, and "the whole
->   free-throw family fails" is withdrawn.** It reads **0.8909** against a floor of
+>   free-throw family fails" is withdrawn.** It reads **0.8963** against a floor of
 >   **0.8765** at its selected `log_own`, where the test column had it at 0.8649 against
 >   0.8673 — a failure by 0.0024, which was never a margin worth a finding. **`ftm|fta`
 >   still fails at every variant and is now the only head in the project that does.** That
 >   was always the better-founded half: free-throw *percentage* has a pure-player-skill
 >   argument that trips to the line never had.
+>
+> ⚠️ **Every fitted figure in this block moved on 2026-08-15, when ten of the eleven heads
+> adopted the preseason block** (`docs/preseason-plan.md` session 6b). The block forces the
+> **fitting window** to the seasons the preseason panel covers, so the ten armed heads fit
+> **6,382** rows from 2004-05 rather than **8,630** from 1997-98, and the fit count rises from
+> **37** to **47** because each armed head also fits a same-window `__no_preseason` control.
+> The superseded readings, kept beside their corrections: `blk` `log_own` **0.6730**, spline
+> **0.8309**, linear **−0.2744**; `fga` linear **0.9489**, `log_own` **0.9581**, spline
+> **0.9584**; `fta` selected **0.8909**; max R̂ **1.0076**; and the sampler at **137.4** min
+> over 37 fits. **The no-fit floors did not move**,
+> which is the tell that this is a fitting-window change and not a scoring change — a
+> carry-forward floor is arithmetic on the validation rows and never touches the training
+> window. **Nothing reversed**: the same variant is selected on every head, `blk` linear is
+> still the only negative arm, and `ftm|fta` is still the only head below its floor.
 >
 > ⚠️ **Every figure in this block was a TEST measurement until 2026-08-06.** The superseded
 > readings, kept because the `fta` reversal is only legible beside them: `blk` `log_own`
@@ -1152,9 +1195,9 @@ player-seasons, scored on validation (2022-23/23-24). Three results bind on ever
 > story at a different magnitude.
 >
 > **✅ The 3PA/2PA reparameterization is settled, and it wins decisively.** `fga` as a count ×
-> `fg3a | fga` as a binomial share beats two independent count heads by **−0.771 nats on
-> validation and −0.793 on test**, per player-season, on the joint density of `(fg2a, fg3a)`
-> (10.797 → 10.026; 10.784 → 9.991), replicating on both splits. The comparison is legitimate
+> `fg3a | fga` as a binomial share beats two independent count heads by **−0.7218 nats on
+> validation**, per player-season, on the joint density of `(fg2a, fg3a)`
+> (**10.738** → **10.0162**). The comparison is legitimate
 > because `(fg2a, fg3a) ↔ (fga, fg3a)` is a **bijection with unit Jacobian on the integers**,
 > so the two joint log-densities are directly comparable. The recommendation below is now a
 > measurement.
@@ -1165,8 +1208,15 @@ player-seasons, scored on validation (2022-23/23-24). Three results bind on ever
 > `stan_component_substitution_sweep.csv` instead, but `make stan-substitution` was
 > re-run validation-only the same day and that copy is gone too. Those three figures are
 > presence-checked in `src/docs_audit.py` and value-checked nowhere. **The validation half
-> reproduced unchanged at full-length chains** and is still audited: 10.797 → 10.026 at
-> −0.771.
+> reproduced unchanged at full-length chains** and was audited at 10.797 → 10.026 for
+> **−0.771** until 2026-08-15, when the preseason block moved both heads and the same cells
+> became 10.738 → 10.0162 for −0.7218. The margin narrows by 0.049 nats and the verdict does
+> not move. ⚠️ **`stan_component_substitution.csv` is now a post-block reading while
+> `stan_component_substitution_sweep.csv` is still pre-block**, because only
+> `make stan-components` rewrites the first and only `make stan-substitution` rewrites the
+> second — so the two may no longer be differenced against each other. That is worked through
+> in `docs/shot-attempt-basis-plan.md`; Gate 0's own **−0.501041** lives entirely inside the
+> sweep and is unaffected.
 >
 > Every head is quoted against `carry_forward`, and every variant is selected on the
 > validation split. **There is no longer a test column to report** — the held-out reading is
@@ -1181,7 +1231,7 @@ copula if needed — measured off-diagonals average **+0.0225** across the seven
 correlated multivariate player effect, and only after measuring it is worth it (the player random
 effect on rates was largely in-sample leakage). Reparameterize the 3PA/2PA substitution as
 `fga` count × `fg3a | fga` share rather than coupling two Poissons — ✅ **measured 2026-07-30
-and worth −0.771 nats per player-season on validation**, see the built-block above.
+and worth −0.7218 nats per player-season on validation**, see the built-block above.
 
 ## New model surface area
 
@@ -1287,13 +1337,13 @@ before shipping; given this repo's record on ceilings, a settled null is the lik
   small-scale timing check~~ — ✅ **answered by building it.** Season-collapsed, the whole
   surface is cheap: the availability head is 254 s and the eight count heads are ~1–3 min each
   on 4 chains. The cost wall is **not** the hierarchy, it is abandoning the collapse — see the
-  per-game minutes subsection, where the same head goes from 8,306 rows to 731,863.
+  per-game minutes subsection, where the same head goes from 6,152 rows to 731,863.
 - ~~**Whether minutes should be fitted per-game at all is open and deliberately deferred**~~
   — **partly answered 2026-07-31.** Of the three options costed under "Fitting strategy",
   the **team-game composition model is built and wins** (`make stan-composition`,
-  `docs/minutes-composition-plan.md`): **−0.2898** minutes of validation CRPS against the
-  independent per-player draw, and both the individual cap and the team total exact by
-  construction. It was an afternoon rather than days, because the season collapse was never
+  `docs/minutes-composition-plan.md`): **−0.418598** minutes of validation CRPS against the
+  independent per-player draw (**−0.2898** before the preseason blend was adopted), and both
+  the individual cap and the team total exact by construction. It was an afternoon rather than days, because the season collapse was never
   what made it expensive — the numerics were.
   - Still open, and **unaffected by this**: the composition is iid across games, so it does
     nothing about the 2.43× ten-game block inflation. **The residual serial process remains

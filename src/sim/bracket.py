@@ -113,7 +113,7 @@ correction a brute force over every pod-size assignment consistent with the CSV 
 **none** that reconciled `15k_and_one`, which is what identified the rows rather than the
 pods as the problem.
 
-**All five tournaments are simulated**, not only the two being entered. They cost one
+**All five tournaments are simulated**, not only the reference pair. They cost one
 scoring pass between them — the field is drafted once per season at the largest tournament's
 size and each contest takes the prefix it needs, which is valid because entries are
 exchangeable and every field size is a multiple of the 12-entry round-1 pod. Four structures

@@ -12,11 +12,20 @@ test. Missing artifacts are *skipped*, so a fresh checkout without `make eda` is
 It guards the artifact→prose direction tightly and the prose→artifact direction loosely;
 see the module docstring for exactly what it cannot catch.
 
-**It covers thirteen docs with 2,460 claims and one builder per doc**: `README.md`,
-`availability-plan`, `minutes-composition-plan`, `predictions-plan`, `games-played-plan`,
-`shot-attempt-basis-plan`, `adp-plan`, `simulations-plan`, and the five files the 2026-08-08
+**It covers sixteen docs with 3,721 claims and one builder per doc**: `README.md`,
+`availability-plan`, `availability-window-plan`, `minutes-composition-plan`,
+`minutes-window-plan`, `predictions-plan`, `games-played-plan`, `shot-attempt-basis-plan`,
+`adp-plan`, `simulations-plan`, `preseason-plan`, and the five files the 2026-08-08
 reorganization split `CLAUDE.md` into — `facts-archive`, `model-development-notes`,
 `data-quirks`, `project-spec` and `train-validate-test-split`.
+
+**`preseason-plan` joined on 2026-08-12, at P0 rather than at the end of the build.** A
+coverage table is the one kind of section that goes stale invisibly — re-running a backfill
+in a later season changes every row of it at once, and nothing in the prose would object —
+so the stage whose entire output is figures is the stage that most needs claiming. Its
+planning-probe table is deliberately claimed nowhere: it is a superseded scratch
+measurement that carries its own correction inline, which is a different thing from the
+`historical=True` case.
 
 Coverage of measured figures: 79% (README), 79% (shot-attempt basis), 67% (model
 development notes), 64% (composition), 63% (predictions), 60% (adp), 58% (availability),

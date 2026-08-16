@@ -126,6 +126,46 @@ FEATURE_COLS = [
 # minutes into the total mixes team quality into what was a clean regular-season workload
 # measure. Keep the two effects in separate columns.
 
+
+# ── The absence-composition block, added 2026-08-12 ───────────────────────────
+#
+# `docs/availability-window-plan.md` §11b measured that a "missed game" is four processes
+# with opposite role signatures — interior healthy scratch, interior in-season injury, a
+# still-rostered edge block, and roster churn the player was never on a roster for — and
+# the head sees none of it. `FEATURE_COLS` carries how MUCH he missed and nothing about WHY.
+#
+# **Shares of missed games, never counts.** The counts sum to `missed_games`, which is
+# `team_games - gp`, which is `gp_share_lag1` on a different scale — the strongest column
+# in the block. A count block would be near-collinear with it and would measure nothing new.
+# The composition is the new information, so the composition is what goes in.
+#
+# Held OUT of `FEATURE_COLS` and out of `LAG_COLS`, on the `WORKLOAD_COLS` precedent above.
+# `build_design` is imported by `stan_minutes`, `stan_composition`, `stan_games_played`,
+# `model_cards`, `sim/season`, `season_terms` and `final_evaluation`; a column that is
+# structurally zero before 2006-07 must not be able to enter any of them by accident. The
+# ladder opts in by calling `attach_absence_mix` and passing the wider feature list, which
+# is also what makes it an ablation rather than a change of head.
+MISSED_MIX_KINDS = ("scratch", "inactive", "injury", "not_rostered")
+
+#: The un-lagged share columns `absence_mix_shares` writes.
+ABSENCE_MIX_SHARE_COLS = [f"missed_{k}_share" for k in MISSED_MIX_KINDS]
+
+#: What a caller adds to its feature list. Lag 1 only: the composition of two seasons ago
+#: is a weaker version of the same signal and would cost four more unpenalized columns.
+ABSENCE_MIX_COLS = [f"{c}_lag1" for c in ABSENCE_MIX_SHARE_COLS]
+
+#: What `season_availability` has to have supplied for the shares to be computable.
+ABSENCE_MIX_SOURCE_COLS = ([f"missed_{k}" for k in MISSED_MIX_KINDS]
+                           + ["missed_games", "status_coverage"])
+
+# Below this share of a player-season's games resolved by the box-score backfill, the
+# reason split is a statement about the backfill rather than about the player. It matches
+# `src/eda/availability.py::MIN_STATUS_COVERAGE`, which is where the decomposition was
+# first tested. On the real panel `status_coverage` is **exactly 0.0** before 2006-07 and
+# ≥ 0.9878 from 2006-07 on, so no threshold in (0, 0.98) separates the rows differently —
+# the constant is a guard against a half-finished backfill, not a tuned knob.
+MIN_MIX_COVERAGE = 0.9
+
 class _HeldOut(pd.DataFrame):
     """A DataFrame that refuses to be read while the held-out split is locked.
 
@@ -248,6 +288,60 @@ def assert_point_in_time(design: pd.DataFrame) -> pd.DataFrame:
     if design["as_of_date"].isna().any():
         raise ValueError("rows with no as_of_date: season start dates are missing")
     return design
+
+
+def absence_mix_shares(frame: pd.DataFrame,
+                       min_coverage: float = MIN_MIX_COVERAGE) -> pd.DataFrame:
+    """Missed games split by reason, as **shares of a season's missed games**.
+
+    One row per `(season, player_id)` with `ABSENCE_MIX_SHARE_COLS`, un-lagged.
+
+    **The value at `missed_games == 0` is 0.0 in every share, and that is a choice.** A
+    player who missed nothing has no composition to report, and zero is the only value
+    that does not assert one: a league mean would tell the head he had a typical mix of
+    absences he did not have, and NaN would drop 4.56% of the covered rows for having had
+    a healthy season, which is the opposite of what the block is for. It is not
+    confusable with a real composition either — the four kinds cover **99.24%** of missed
+    games, so only 0.51% of rows with any absence at all read as four zeros.
+
+    **The missing-by-reason columns are structurally ZERO before the backfill, not NaN.**
+    `status_coverage` is exactly 0.0 before 2006-07, where `missed_decomposition` routes
+    every absence to `missed_unknown`; taking shares there would tell the head there were
+    no healthy scratches in 1997-98, which is a fact about the backfill. So rows below
+    `min_coverage` are masked to NaN **here**, before any lagging, and a caller that fits
+    on them will fail loudly on a NaN design rather than quietly on a false zero.
+    """
+    missing = [c for c in ABSENCE_MIX_SOURCE_COLS if c not in frame.columns]
+    if missing:
+        raise ValueError(f"absence_mix_shares needs {missing} from `season_availability`")
+
+    out = frame[["season", "player_id"]].copy()
+    denom = frame["missed_games"].to_numpy(dtype=float)
+    covered = frame["status_coverage"].to_numpy(dtype=float) >= min_coverage
+    for kind, col in zip(MISSED_MIX_KINDS, ABSENCE_MIX_SHARE_COLS):
+        share = np.divide(frame[f"missed_{kind}"].to_numpy(dtype=float), denom,
+                          out=np.zeros(len(frame)), where=denom > 0)
+        out[col] = np.where(covered, share, np.nan)
+    return out
+
+
+def attach_absence_mix(design: pd.DataFrame, frame: pd.DataFrame, seasons: list[str],
+                       min_coverage: float = MIN_MIX_COVERAGE) -> pd.DataFrame:
+    """`ABSENCE_MIX_COLS` merged onto a design matrix — the block's only entry point.
+
+    Separate from `build_design` deliberately. Every head in the project reaches its rows
+    through that function, and the composition is only defined from 2006-07 on, so putting
+    it there would put a structurally-zero column inside seven other heads. A caller opts
+    in here and widens its own feature list, which is what keeps this an ablation.
+
+    The shares are season S−1 quantities like every other lag column, so
+    `assert_point_in_time` still holds on the result and is re-run to say so.
+    """
+    shares = absence_mix_shares(frame, min_coverage)
+    lagged = with_lags(shares, seasons, ABSENCE_MIX_SHARE_COLS, max_lag=1)
+    keep = ["season", "player_id"] + ABSENCE_MIX_COLS
+    out = design.merge(lagged[keep], on=["season", "player_id"], how="left")
+    return assert_point_in_time(out)
 
 
 def split_seasons(design: pd.DataFrame, test_seasons: int = TEST_SEASONS

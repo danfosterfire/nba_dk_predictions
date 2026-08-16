@@ -116,16 +116,26 @@ def units_block(cards: dict, row: pd.Series, th: dict) -> None:
     floors = " and ".join(
         f"{part['floor_crps']:,.4g} per {part['unit_label']}"
         for _, part in board.drop_duplicates("unit").iterrows())
+    # ⚠️ DERIVED, not asserted. This caption used to state the season-unit reversal in prose
+    # while the tiles above it read `clears` from the artifact. On 2026-08-14 the
+    # preseason-blended composition started clearing the season floor and the caption went on
+    # denying it — the same failure `make docs-audit` guards in the docs, inside a page the
+    # audit cannot reach. The verdict now comes from the same frame the panels are drawn from.
+    comp_season = board[(board["head"] == mc.HEAD_COMPOSITION)
+                        & (board["unit"] == "season")]
+    season_clears = bool(comp_season["clears"].iloc[0]) if not comp_season.empty else False
+    season_line = (
+        "per season it now clears that floor too, and what still separates the two heads "
+        "there is the **spread** rather than the floor — see the panels below"
+        if season_clears else
+        "per season the composition fails the carry-forward floor the marginal head clears")
     st.caption(
         f"**The zero line is the floor, and the axis is a ratio to it** — a floor of "
         f"{floors} cannot share an axis, and the floor is what "
         "every head in this project is quoted against anyway, so the two units are made "
-        "commensurable by the reference they already had. The finding is the reversal: the "
-        "same posterior is on opposite sides of the line in the two panels, and so is the "
-        "head it is drawn against. Per-game the composition beats its floor and the "
-        "independent draw does not; per season the composition fails the carry-forward "
-        "floor the marginal head clears. **A head is only a model at the unit it was "
-        "scored at.**")
+        "commensurable by the reference they already had. Per-game the composition beats "
+        f"its floor and the independent draw does not; {season_line}. **A head is only a "
+        "model at the unit it was scored at.**")
 
     spread = mc.spread_panel(unification, cards["index"])
     if not spread.empty:
@@ -217,16 +227,19 @@ def sigma_block(cards: dict, row: pd.Series, th: dict) -> None:
              f"Against the marginal head in season-total CRPS minutes, 95% interval "
              f"[{float(at_shipped['val_ci_lo']):+,.2f}, "
              f"{float(at_shipped['val_ci_hi']):+,.2f}] — an interval straddling zero is a "
-             f"tie, which is what `{at_shipped['verdict']}` in the artifact records"),
+             f"tie and one clear of it is not, which is the reading the artifact records "
+             f"as `{at_shipped['verdict']}`"),
             ("Predictive sd · injected", f"{float(at_shipped['val_sd']):,.2f}",
              "The injected composition's season-total predictive sd, in minutes, at the "
              "shipped σ" + against),
         ]
         if marginal_ks is not None:
+            better = float(at_shipped["val_pit_ks"]) < marginal_ks
             tiles.append((
                 "PIT KS · injected", f"{float(at_shipped['val_pit_ks']):.4f}",
                 f"Against the marginal head's {marginal_ks:.4f} at the same unit — the "
-                f"injected arm is the better calibrated of the two, with the team "
+                f"injected arm is the "
+                f"{'better' if better else 'worse'} calibrated of the two, with the team "
                 f"constraint still exact"))
         for col, (label, value, helptext) in zip(st.columns(max(len(tiles), 3)), tiles):
             col.metric(label, value, help=helptext)
@@ -236,13 +249,16 @@ def sigma_block(cards: dict, row: pd.Series, th: dict) -> None:
             fig_paired(gaps, th, baseline="the marginal head",
                        unit="season-total CRPS minutes"),
             width="stretch", key=f"sigma-gap-{head}", config={"displayModeBar": False})
+        closed = (f"and the shipped σ takes that to "
+                  f"{float(at_shipped['val_delta']):+,.2f}"
+                  if at_shipped is not None else "and one parameter closes most of it")
         st.caption(
             "The same encoding the tournament page uses for a comparison that does not "
             "resolve, because it is the same idea: **an interval straddling zero is a "
             "tie**, carried three ways at once — the interval visibly crosses the "
             "baseline, the marker is hollow, and the legend and the table below both say "
-            "so. Here a tie is the *result*: the un-injected head loses by "
-            f"{float(gaps['gap'].iloc[0]):+,.2f} and one parameter closes it.")
+            "so. Here what one parameter is worth is the *result*: the un-injected head "
+            f"loses by {float(gaps['gap'].iloc[0]):+,.2f} {closed}.")
 
     st.plotly_chart(
         fig_sigma_grids(sweep, th, marginal_crps=marginal),

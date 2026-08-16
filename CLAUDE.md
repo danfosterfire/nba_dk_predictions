@@ -19,52 +19,34 @@ realistic tournament rules.
 ## Where to find context
 
 Context for this project is stored across various .md files in ./docs. Refer 
-to the relevant docs for the task at hand. The docs are:
+to the relevant docs for the task at hand.
+
+**This section is a router, not a summary.** One line per doc saying what it covers and
+when to open it — no findings, no figures, no dates. Detail belongs in the doc itself.
+The docs are:
 
   - project-spec.md: Project overview and core rules for implementation. 
   **Always read this.**
   - adp-plan.md: Plan and notes for collecting average draft position ("adp") data
   - availability-plan.md: Plan and notes for modeling availability (games played 
   and minutes per game). Work completed and mostly archival.
-  - dashboard-plan.md: Plan and notes for the streamlit dashboard. As of 
-  2026-08-08 the dashboard is a **data-visualization surface**, not a project 
-  walkthrough — read this before adding or editing a view. Its nine-page 
-  "expansion" shipped 2026-08-10 and the revision round below added a tenth page 
-  the same day; the "Charter amendment 2026-08-10" subsection 
-  sets the three bounds the one page of prose (the Overview) exists under, and 
-  each step has a "Step N, as built" section. **Bound 1 was amended 2026-08-10** 
-  when the Overview was rewritten as a paper — "opens above the fold, scrolls no 
-  further than one screen more", a measured ceiling — and bound 2 gained a half: 
-  a typed sentence on that page carries no digit at all. 
-  `dashboard-build-prompts.md`, the 
-  ten one-per-session build prompts, was ephemeral scaffolding and was deleted 
-  when the expansion landed.
-  - dashboard-revision-plan.md: The round *after* the expansion, planned 
-  2026-08-10 — five one-per-session steps (appearance, which availability head 
-  ships, DHARMa-style quantile residuals, a dk_pts page at the unit the contest is 
-  decided at, and the Overview as a paper). It inherits every rule 
-  `dashboard-plan.md` set; read that 
-  one first. Three of the five items turned out to have different answers than the 
-  request assumed, and the doc records why. **All five shipped 2026-08-10** and each 
-  has an "as built" section: the appearance is now Streamlit's own setting, with 
-  the page chrome generated into `.streamlit/config.toml` by `make 
-  dashboard-config`; every head declares its role in the shipped chain; block 6 
-  of the model pages is a scaled quantile residual rather than a raw one; the 
-  dashboard has a tenth page, **Weekly scores**, which is Gate A at the scoring 
-  period (`make weekly-scores`, `src/sim/weekly.py`); and the Overview is now a 
-  four-section paper rather than five hero tiles, which cost a charter amendment. 
-  Step 4's unit moved from the 
-  tournament round to the **week** mid-session at the user's request, and the doc 
-  records both the request and what the change cost. Its prompts appendix was 
-  ephemeral scaffolding and was deleted when the round landed.
+  - availability-window-plan.md: The availability head's fitting window, season term, 
+  dispersion, **likelihood**, absence-composition covariates and trials assumption, what 
+  the shipped mixture is worth in the contest, how players the head has no row for are 
+  treated, and the simulator's **availability layout** — where a player's missed games fall, 
+  which the head cannot say. Read it before changing any of those, or before pricing a head 
+  change with `make strategy-sweep`.
+  - dashboard-plan.md: The dashboard's charter and pages. The dashboard is a 
+  **data-visualization surface**, not a project walkthrough — read this before adding 
+  or editing a view.
+  - dashboard-revision-plan.md: The revision round after the dashboard expansion. It 
+  inherits every rule `dashboard-plan.md` sets; read that one first.
   - data-quirks.md: Notes and findings in exploring the raw data.
   - dk_best_ball_rules.md: Copy of the tournament rules for draft kings best 
   ball tournaments **always read this**.
-  - docs-audit.md: How the two documentation guards work — `make docs-audit` 
-  (re-derives every quoted result from its artifact, a gate; sampler timings are 
-  presence-checked only) and `make 
-  dashboard-audit` (registry drift, a report). Read this before editing a 
-  quoted figure or adding a doc to the audit.
+  - docs-audit.md: How the two documentation guards work — `make docs-audit` (a gate) 
+  and `make dashboard-audit` (a report). Read this before editing a quoted figure or 
+  adding a doc to the audit.
   - eda-plan.md: Plan and notes for exploratory data analysis and feature 
   reduction. Work completed and mostly archival at this point.
   - facts-archive.md: Known facts, do not re-derive. Refer to this if we 
@@ -73,21 +55,15 @@ to the relevant docs for the task at hand. The docs are:
   completed and mostly archival at this point.
   - injuries_paper.md: Copy of a study on workload contributing to achilles 
   tendon ruptures in basketball players. Archival.
-  - model-cards-plan.md: The contract between the fitted heads and the dashboard's 
-  model detail pages — what `make model-cards` writes, and the four rules the emitter 
-  inherits (`selection_split` only, the `train` posterior window, a build-time recipe 
-  check that fails rather than writing a wrong artifact, and a predictive drawn through 
-  each head's own `predict_samples` whose mean must reproduce that head's own). Read 
-  this before adding a `model_card_*` artifact or changing a head's variant ladder. 
-  Since 2026-08-10 every head also declares a **`chain_role`** — what the simulator 
-  does with it, in a closed vocabulary, pinned against `src/sim/` by a test rather 
-  than merely written down. Sixteen of the twenty heads are in the draw path; 
-  `gp_entry`, `gp_exit`, `gp_onset` and the marginal `minutes` head are not. The 
-  ninth artifact, `model_card_quantile.csv`, is DHARMa's scaled quantile residual 
-  and **replaced** the calibration file's raw-residual panel; its KS distance is 
-  reported and never thresholded.
   - minutes-composition-plan.md: Plan and notes for the production version of 
   the minutes-played model. Work completed and mostly archival at this point.
+  - minutes-window-plan.md: The marginal minutes head's fitting window and dispersion, 
+  and what they do to the composition's injected σ. Read it before changing either, or 
+  before re-opening whether the marginal head can be retired.
+  - model-cards-plan.md: The contract between the fitted heads and the dashboard's 
+  model detail pages — what `make model-cards` writes, the rules the emitter inherits, 
+  and each head's declared `chain_role`. Read this before adding a `model_card_*` 
+  artifact or changing a head's variant ladder.
   - model-development-notes.md: Detailed notes and findings developed during
   the model selection and fitting processes. Archival unless we reopen model 
   selection questions.
@@ -101,6 +77,11 @@ to the relevant docs for the task at hand. The docs are:
   - predictions-plan.md: Plan and notes for the models for the various box-score 
   statistics that feed into the *dk_pts* figure. Work completed and mostly 
   archival.
+  - preseason-plan.md: The post-preseason problem-statement change — current-season 
+  preseason games entering the existing heads (as feature columns on the availability, 
+  minutes and component rate heads, and as the composition's prior share), the gates, 
+  which head is opted out and why, and the October production runbook. Read before 
+  touching preseason fetch, panel, features, or any head's preseason flag.
   - provenance-plan.md: Plan for keeping documentation, dashboard, and 
   context up-to-date with latest findings and ensuring reproducibility of 
   context.

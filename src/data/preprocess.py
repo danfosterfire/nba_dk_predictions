@@ -35,7 +35,14 @@ RENAME = {c: c.lower() for c in KEEP_COLS}
 
 REGULAR_SEASON = "regular"
 PLAYOFFS = "playoffs"
+PRE_SEASON = "pre_season"
+# "Every type that can be a TARGET ROW" — regular season and playoffs, not preseason.
+# See `load_raw` for why the odd one out is excluded by construction.
 ALL_SEASON_TYPES = "all"
+
+# Which file prefix maps to which kind. `game_logs_{season}.csv` has no prefix and is the
+# regular season; everything else announces itself.
+_LOG_PREFIXES = {"playoffs_": PLAYOFFS, "pre_season_": PRE_SEASON}
 
 
 # ── The evaluation split, for the measurements that feed the simulator ────────
@@ -130,16 +137,20 @@ def held_out_seasons(frame: pd.DataFrame,
 
 def _parse_log_filename(stem: str) -> tuple[str, str]:
     """`game_logs_2021_22` -> ("regular", "2021-22");
-    `game_logs_playoffs_2021_22` -> ("playoffs", "2021-22").
+    `game_logs_playoffs_2021_22` -> ("playoffs", "2021-22");
+    `game_logs_pre_season_2021_22` -> ("pre_season", "2021-22").
 
-    Both season types share the same `season` label. Deriving the season from the slug
+    All three season types share the same `season` label. Deriving the season from the slug
     without stripping the prefix produced the pseudo-season `playoffs-2021-22`, which
     silently doubled the season count for every downstream
-    `groupby(["player_id", "season"])`.
+    `groupby(["player_id", "season"])` — and an unrecognized prefix does not just invent a
+    label, it also returns `REGULAR_SEASON`, so the rows arrive in the *default* frame.
+    That is why every new prefix belongs in `_LOG_PREFIXES` rather than in a caller's glob.
     """
     slug = stem.replace("game_logs_", "")
-    if slug.startswith("playoffs_"):
-        return PLAYOFFS, slug.replace("playoffs_", "").replace("_", "-")
+    for prefix, kind in _LOG_PREFIXES.items():
+        if slug.startswith(prefix):
+            return kind, slug[len(prefix):].replace("_", "-")
     return REGULAR_SEASON, slug.replace("_", "-")
 
 
@@ -155,18 +166,29 @@ def load_raw(raw_dir: str | Path, season_type: str = REGULAR_SEASON,
     change*, not a level shift (see `CLAUDE.md`). The playoff logs stay on disk and stay
     useful as **prior-season workload features**, which is a different role entirely.
 
-    `season_type` is one of "regular", "playoffs" or "all". Anything else raises rather
-    than silently returning an empty frame.
-    """
-    if season_type not in (REGULAR_SEASON, PLAYOFFS, ALL_SEASON_TYPES):
-        raise ValueError(
-            f"season_type must be one of 'regular', 'playoffs', 'all'; got {season_type!r}")
+    `season_type` is one of "regular", "playoffs", "pre_season" or "all". Anything else
+    raises rather than silently returning an empty frame.
 
+    **"all" means regular + playoffs, and deliberately excludes the preseason.** A
+    preseason game is a *forecast covariate* for the season about to start and never a
+    target row (`docs/preseason-plan.md`), so it must be asked for by name. The default
+    the other way round would be silent: `src/features/game_length.py` reads "all" to
+    derive every game's length from summed team minutes, and would have absorbed ~70
+    exhibition games per season into an artifact whose whole claim is that its two
+    independent estimates disagree on none of them.
+    """
+    if season_type not in (REGULAR_SEASON, PLAYOFFS, PRE_SEASON, ALL_SEASON_TYPES):
+        raise ValueError(
+            "season_type must be one of 'regular', 'playoffs', 'pre_season', 'all'; "
+            f"got {season_type!r}")
+
+    wanted = ({REGULAR_SEASON, PLAYOFFS} if season_type == ALL_SEASON_TYPES
+              else {season_type})
     raw_dir = Path(raw_dir)
     frames = []
     for f in sorted(raw_dir.glob("game_logs_*.csv")):
         kind, season = _parse_log_filename(f.stem)
-        if season_type != ALL_SEASON_TYPES and kind != season_type:
+        if kind not in wanted:
             continue
         df = pd.read_csv(f, usecols=columns, low_memory=False)
         df["season"] = season

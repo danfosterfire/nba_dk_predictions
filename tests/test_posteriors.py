@@ -125,6 +125,69 @@ def test_unknown_step_kind_raises_rather_than_silently_skipping():
         P._apply_step({"kind": "not_a_step"}, pd.DataFrame({"x": [1.0]}))
 
 
+@pytest.mark.parametrize("role_rho", [True, False])
+def test_the_cut_step_reproduces_the_availability_heads_own_role_bins(role_rho):
+    """The recipe's whole job: which `rho` applies to which player, without refitting.
+
+    Checked against `role_bins` itself rather than against a hand-written expectation, on
+    the values that decide it — a NaN prior season, both sides of every edge, and a value
+    above the top one. Getting any of those wrong hands a player another bucket's dispersion
+    and renders as a perfectly good-looking card.
+    """
+    from src.models.stan_availability import (ROLE_BIN_COL, ROLE_COL, role_bins,
+                                              role_edges)
+
+    frame = pd.DataFrame({ROLE_COL: [np.nan, 0.0, 11.9, 12.0, 12.1, 24.0, 29.9, 30.0,
+                                     59.9, 60.0, 61.0, -3.0]})
+    step = {"kind": "cut", "column": ROLE_COL, "edges": role_edges(role_rho),
+            "name": ROLE_BIN_COL}
+    rebuilt = P._apply_step(step, frame)[ROLE_BIN_COL].to_numpy()
+    assert list(rebuilt) == list(role_bins(frame, role_rho))
+    assert rebuilt.min() >= 1
+
+
+def test_a_shared_dispersion_cut_puts_every_row_in_one_bin():
+    """`role_rho=False` is `n_rho = 1`, and the recipe has to nest it rather than branch."""
+    from src.models.stan_availability import ROLE_COL, role_edges
+
+    frame = pd.DataFrame({ROLE_COL: [np.nan, -10.0, 0.0, 35.0, 1e6]})
+    out = P._apply_step({"kind": "cut", "column": ROLE_COL,
+                         "edges": role_edges(False), "name": "rho_bin"}, frame)
+    assert set(out["rho_bin"]) == {1}
+
+
+def test_the_fit_window_and_the_season_truncation_are_different_columns():
+    """Two season axes that must never be read as one another.
+
+    `fit_window` says which split may be fitted; `fit_first_season` says which suffix of it
+    was. A head that fits everything the window offers reports `""` for the second, which is
+    what makes a truncated head distinguishable from an untruncated one *in the same
+    directory* — the only thing `require_window` cannot tell apart.
+    """
+    truncated = P.PosteriorArtifact(
+        head="availability", head_label="availability", family="betabinomial",
+        response="mean_mu", recipe=P.DesignRecipe("base", [], None),
+        extras={"fit_first_season": "2012-13"},
+        provenance={"fit_window": "train", "first_season": "2012-13"})
+    plain = P.PosteriorArtifact(
+        head="reb", head_label="reb", family="negbinomial", response="mean_count",
+        recipe=P.DesignRecipe("base", [], None), extras={},
+        provenance={"fit_window": "train", "first_season": "1997-98"})
+    # The composition had the truncation first, under a flatter name; the reader takes both
+    # so that renaming its key never becomes the price of adding the column.
+    legacy = P.PosteriorArtifact(
+        head="composition", head_label="composition", family="composition",
+        response="eta", recipe=P.DesignRecipe("base", [], None),
+        extras={"first_season": "2016-17"},
+        provenance={"fit_window": "train", "first_season": "2016-17"})
+
+    assert P.fit_first_season(truncated) == "2012-13"
+    assert P.fit_first_season(plain) == ""
+    assert P.fit_first_season(legacy) == "2016-17"
+    # The distinction is only visible when the two disagree, which is the untruncated head.
+    assert plain.provenance["first_season"] != P.fit_first_season(plain)
+
+
 # ── The round trip, per family ────────────────────────────────────────────────
 
 def _count_artifact(variant: str, component: str = "reb", n_knots: int = 4):
@@ -627,3 +690,206 @@ def test_the_composition_team_recipe_reproduces_the_ladders_own_columns():
     for name in features:
         np.testing.assert_allclose(rebuilt[name].to_numpy(float),
                                    te[name].to_numpy(float), rtol=0, atol=0)
+
+
+# ── The availability head's low-availability mixture ──────────────────────────
+#
+# `pi` is a SECOND design block with its own scaler and its own link, and it reaches the
+# artifact through four extra draw arrays. Each test below is one way that block can be
+# half-persisted while every shape check still agrees — which is the failure the round-trip
+# was extended to see rather than one it already saw.
+
+def _mixture_artifact(n_draws: int = 64, theta: float = 0.35, seed: int = 7):
+    """A fitted-shaped mixture head put through `_finish`, and the frame it scored."""
+    from src.models.availability import FEATURE_COLS
+    from src.models.stan_availability import PI_FEATURES, StanAvailability
+
+    rng = np.random.default_rng(seed)
+    n = 120
+    frame = pd.DataFrame({**_availability_block(n, rng),
+                          "player_id": np.arange(n),
+                          "season": np.repeat(["2021-22", "2022-23"], n // 2),
+                          "gp": rng.integers(0, 82, n).astype(float),
+                          "team_games": np.full(n, 82.0)})
+    model = _inject(StanAvailability.__new__(StanAvailability), FEATURE_COLS,
+                    _raw_matrix(frame, FEATURE_COLS), n_draws=n_draws, seed=seed,
+                    role_rho=False, mixture=True, pmf_mode="posterior",
+                    pi_features=list(PI_FEATURES), predictive_draws=n_draws,
+                    gamma_scale=2.5, mu_low_max=0.5,
+                    rho_draws=np.full((n_draws, 1), 0.25),
+                    theta_draws=np.full(n_draws, theta),
+                    mu_low_draws=np.full(n_draws, 0.10),
+                    rho_low_draws=np.full(n_draws, 0.05),
+                    gamma_draws=rng.normal(size=(n_draws, len(PI_FEATURES))) * 0.4)
+    model.pi_scaler = StandardScaler().fit(_raw_matrix(frame, PI_FEATURES))
+    artifact = P._finish(
+        head="availability", head_label="availability", family="betabinomial",
+        response="mixture_mean_mu", variant="mixture", features=list(FEATURE_COLS),
+        model=model, fit_frame=frame, probe_transformed=frame, probe_raw=frame,
+        steps=[], builder="test",
+        pi_features=list(PI_FEATURES), pi_scaler=model.pi_scaler,
+        extras={"successes": "gp", "trials": "team_games", "dispersion": "rho_draws",
+                "n_rho": 1, "role_rho": False, "mixture": True,
+                "fit_first_season": ""},
+        window="train", cfg_stan={}, draws_kept=n_draws, seconds=0.0)
+    return artifact, frame, model
+
+
+def test_the_mixture_round_trip_checks_the_predictive_mean_not_the_main_components():
+    """The trap the second block was wired around, and it is one level up from the recipe.
+
+    `response = "mean_mu"` serves the reference through `mu_draws`, which under a mixture is
+    the **main component's** mean — a quantity the shipped head never reports. So the
+    round-trip would compare the recipe against the wrong number and pass. `mixture_mean_mu`
+    routes both sides through `predict_mean`, and the assertion that makes this a real check
+    is the last one: the two means differ by far more than the tolerance, so agreeing with
+    one is disagreeing with the other.
+    """
+    artifact, frame, model = _mixture_artifact()
+    check = artifact.roundtrip()
+    assert check["passes"], check
+
+    np.testing.assert_allclose(artifact.predict(frame), model.predict_mean(frame),
+                               rtol=0, atol=P.PREDICTION_TOL)
+    main_only = artifact.mu_draws(frame).mean(axis=0)
+    assert np.max(np.abs(artifact.predict(frame) - main_only)) > 1e-3
+
+
+def test_pi_is_rebuilt_from_the_recipes_own_second_block():
+    """The artifact must reach the head's `pi` from raw columns and its own scaler.
+
+    Not a restatement of the head: `mixture_draws` standardizes through `pi_scaler` and
+    applies `theta * sigmoid(Z gamma)` inside `StanAvailability`, and this path rebuilds `Z`
+    from the persisted recipe with no head in it at all. `pi` has to *vary* for the check to
+    mean anything — a block of zeros would agree with a broken scaler.
+    """
+    artifact, frame, model = _mixture_artifact()
+    pi_head, _, _ = model.mixture_draws(frame)
+    np.testing.assert_allclose(artifact.pi_draws(frame), pi_head, rtol=0, atol=1e-12)
+    assert np.ptp(artifact.pi_draws(frame).mean(axis=0)) > 0.01
+
+
+def test_a_head_with_no_mixture_persists_no_mixture_block_and_pi_is_zero():
+    """`pi = 0` everywhere is the single-component head, and it must cost no branch.
+
+    `StanAvailability` carries an inert zero block in BOTH arms, so `_thinned` gates on
+    `model.mixture` rather than on the attributes existing — otherwise a single-component
+    artifact would carry four arrays of zeros and read as a mixture that happens to nest.
+    """
+    from src.models.availability import FEATURE_COLS
+    from src.models.stan_availability import StanAvailability
+
+    rng = np.random.default_rng(3)
+    n = 60
+    frame = pd.DataFrame({**_availability_block(n, rng),
+                          "gp": rng.integers(0, 82, n).astype(float),
+                          "team_games": np.full(n, 82.0)})
+    model = _inject(StanAvailability.__new__(StanAvailability), FEATURE_COLS,
+                    _raw_matrix(frame, FEATURE_COLS), role_rho=False, mixture=False,
+                    pmf_mode="posterior", predictive_draws=64,
+                    rho_draws=np.full((64, 1), 0.25))
+    model._absorb_mixture(None)
+    artifact = P._finish(
+        head="availability", head_label="availability", family="betabinomial",
+        response="mean_mu", variant="base", features=list(FEATURE_COLS), model=model,
+        fit_frame=frame, probe_transformed=frame, probe_raw=frame, steps=[],
+        builder="test", extras={"dispersion": "rho_draws", "mixture": False},
+        window="train", cfg_stan={}, draws_kept=64, seconds=0.0)
+
+    assert "theta_draws" not in artifact.draws
+    assert not artifact.recipe.pi_features and artifact.recipe.pi_scaler is None
+    assert not artifact.pi_draws(frame).any()
+
+
+def test_a_recipe_pickled_before_the_pi_block_restores_the_field_defaults():
+    """A dataclass default is applied by `__init__`, and unpickling does not call it.
+
+    Every artifact written before `pi_features` / `pi_scaler` existed restores *without*
+    those attributes, so `recipe.pi_features` would raise `AttributeError` on every head and
+    every window rather than falling back. `__setstate__` is what makes the two-block recipe
+    a backward-compatible change instead of a repo-wide re-run.
+    """
+    import pickle
+
+    recipe = P.DesignRecipe(variant="base", features=["age"],
+                            scaler=StandardScaler().fit(np.zeros((4, 1))))
+    state = dict(recipe.__dict__)
+    state.pop("pi_features"), state.pop("pi_scaler")
+    old = pickle.loads(pickle.dumps(recipe))
+    old.__setstate__(state)                    # what an old pickle hands back
+    assert old.pi_features == [] and old.pi_scaler is None
+    assert old.pi_matrix(pd.DataFrame({"age": [1.0, 2.0]})).shape == (2, 0)
+
+
+def test_rehydrating_an_incomplete_mixture_artifact_raises_rather_than_nesting():
+    """Half a mixture block is the single-component head wearing the mixture's name.
+
+    Both halves are load-bearing and both fail silently: without `gamma_draws` there is no
+    `pi` to apply, and without the recipe's `pi_scaler` there is no way to standardize a new
+    frame's `Z` — and in each case the head would predict, cleanly, from the main component
+    alone.
+    """
+    from src.models.stan_availability import rehydrate_availability
+
+    artifact, _, _ = _mixture_artifact()
+    assert rehydrate_availability(artifact, keep=16).mixture
+
+    dropped = P.PosteriorArtifact(
+        head=artifact.head, head_label=artifact.head_label, family=artifact.family,
+        response=artifact.response, recipe=artifact.recipe,
+        draws={k: v for k, v in artifact.draws.items() if k != "gamma_draws"},
+        extras=dict(artifact.extras))
+    with pytest.raises(ValueError, match="incomplete"):
+        rehydrate_availability(dropped, keep=16)
+
+    unscaled = P.DesignRecipe(variant="mixture", features=artifact.recipe.features,
+                              scaler=artifact.recipe.scaler)
+    stripped = P.PosteriorArtifact(
+        head=artifact.head, head_label=artifact.head_label, family=artifact.family,
+        response=artifact.response, recipe=unscaled, draws=dict(artifact.draws),
+        extras=dict(artifact.extras))
+    with pytest.raises(ValueError, match="incomplete"):
+        rehydrate_availability(stripped, keep=16)
+
+
+def test_a_rehydrated_mixture_head_reproduces_the_originals_predictive():
+    """The point of rehydrating: a consumer gets *this head*, mixture and all."""
+    from src.models.stan_availability import rehydrate_availability
+
+    artifact, frame, model = _mixture_artifact()
+    rehydrated = rehydrate_availability(artifact, keep=artifact.n_draws)
+    np.testing.assert_allclose(rehydrated.predict_mean(frame), model.predict_mean(frame),
+                               rtol=0, atol=1e-12)
+    np.testing.assert_allclose(rehydrated.predict_pmf(frame, 82),
+                               model.predict_pmf(frame, 82), rtol=0, atol=1e-12)
+
+
+def test_a_mixture_recipe_without_its_scaler_is_refused_twice():
+    """The names and the fitted scaler travel together, checked where each can go wrong.
+
+    At build time, because a half-written recipe should fail in `make posteriors` and not in
+    whatever reads the artifact three targets later; and in the recipe itself, because an
+    artifact can be assembled by hand and `None.transform` is not a diagnosis.
+    """
+    from src.models.availability import FEATURE_COLS
+    from src.models.stan_availability import StanAvailability
+
+    with pytest.raises(ValueError, match="no scaler"):
+        P.DesignRecipe(variant="mixture", features=["age"],
+                       scaler=StandardScaler().fit(np.zeros((4, 1))),
+                       pi_features=["age"]).pi_matrix(pd.DataFrame({"age": [1.0]}))
+
+    rng = np.random.default_rng(5)
+    frame = pd.DataFrame({**_availability_block(40, rng), "gp": 40.0, "team_games": 82.0})
+    model = _inject(StanAvailability.__new__(StanAvailability), FEATURE_COLS,
+                    _raw_matrix(frame, FEATURE_COLS), role_rho=False, mixture=False,
+                    pmf_mode="posterior", predictive_draws=64,
+                    rho_draws=np.full((64, 1), 0.25))
+    model._absorb_mixture(None)
+    with pytest.raises(ValueError, match="no scaler"):
+        P._finish(head="availability", head_label="availability", family="betabinomial",
+                  response="mean_mu", variant="base", features=list(FEATURE_COLS),
+                  model=model, fit_frame=frame, probe_transformed=frame, probe_raw=frame,
+                  steps=[], builder="test", pi_features=["age"], pi_scaler=None,
+                  extras={"dispersion": "rho_draws"}, window="train", cfg_stan={},
+                  draws_kept=64, seconds=0.0)

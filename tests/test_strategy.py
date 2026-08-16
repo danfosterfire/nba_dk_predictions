@@ -486,3 +486,58 @@ def test_the_truth_sims_are_thinned_rather_than_a_prefix():
     assert idx.min() == 0 and idx.max() == 1999
     assert len(idx) == 24
     assert np.all(np.diff(idx) > 1)
+
+
+# ── 9. The execution axis and the need-aware field ────────────────────────────
+
+def test_autodraft_refuses_any_axis_a_static_ranking_cannot_express():
+    """Silently dropping the axis would measure a different strategy under the old name."""
+    for kwargs in ({"objective": "lineup_value"}, {"alpha_rounds": (0.1, 0.3, 0.6)},
+                   {"exposure_cap": 0.5}, {"stacking": 4.0}):
+        with pytest.raises(ValueError):
+            S.Strategy("x", ranking="blend", alpha=0.3, autodraft=True, **kwargs)
+    S.Strategy("ok", ranking="blend", alpha=0.3, autodraft=True)
+
+
+def test_an_autodraft_arm_is_bound_by_dks_caps_and_the_manual_twin_is_not():
+    """The whole difference between the two execution modes, on one roster.
+
+    DK's 8 G / 8 F / 3 C bind a submitted pre-draft ranking and not a manual pick, so a
+    model board that loves centres holds more than three of them only when someone clicks.
+    """
+    room = _room()
+    is_c = room.frame["position"].to_numpy() == "C"
+    level = np.where(is_c, 100.0, 50.0) - 0.01 * np.arange(len(is_c))
+    room.dk_pts = np.ascontiguousarray(
+        np.broadcast_to(level[:, None, None], room.dk_pts.shape).astype(np.float32))
+
+    manual, _ = S.draft_portfolio(room, S.Strategy("m"), "t", 1,
+                                  np.random.default_rng(0))
+    auto, _ = S.draft_portfolio(room, S.Strategy("a", autodraft=True), "t", 1,
+                                np.random.default_rng(0))
+    assert int(is_c[manual[0]].sum()) > 3
+    assert int(is_c[auto[0]].sum()) <= 3
+    assert len(set(auto[0].tolist())) == ROSTER_SIZE
+
+
+def test_a_need_zero_field_nests_the_shipped_adp_field_exactly():
+    """`adp_need` at `need_weight = 0` is the pure-ADP field, bitwise.
+
+    Same rng, same draws, a bonus of exactly zero — so the portfolio drafted against it is
+    identical. That nesting is what keeps the two Gate B calibrations comparable, and a
+    large need weight has to break it or the axis measures nothing. Our arm drafts by ADP
+    so it contends with the field for exactly the players the need bonus reorders — a
+    model-ranked arm's targets are scattered enough to dodge the reordering entirely.
+    """
+    room = _room()
+    ours = S.Strategy("m", ranking="adp")
+    base, _ = S.draft_portfolio(room, ours, "t", 2, np.random.default_rng(0))
+
+    room.seats = ["adp_need"] * room.pod_size
+    room.field_cfg = D.FieldConfig(rank_noise_sd=4.0, need_weight=0.0)
+    nested, _ = S.draft_portfolio(room, ours, "t", 2, np.random.default_rng(0))
+    assert np.array_equal(nested, base)
+
+    room.field_cfg = D.FieldConfig(rank_noise_sd=4.0, need_weight=400.0)
+    keen, _ = S.draft_portfolio(room, ours, "t", 2, np.random.default_rng(0))
+    assert not np.array_equal(keen, base)
