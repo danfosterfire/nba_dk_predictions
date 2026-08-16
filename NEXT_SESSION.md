@@ -1,144 +1,179 @@
-# Next session — after 6b closed and the round merged
+# Next session — the documentation pass 6b owes
 
 Read `CLAUDE.md` and `docs/project-spec.md` first, then `docs/preseason-plan.md`'s session 6b
-section. **Check `git status` rather than trusting any line here about what is committed** —
-three handoffs in a row got that wrong.
+section. **Check `git status` rather than trusting any line here about what is committed.**
+
+## ⛔ The repo is RED, deliberately
+
+```
+make docs-audit    130 disagreements   ← FAILS
+pytest tests/      1,865 pass, 1 FAIL  ← test_docs_audit, reporting the same 130
+```
+
+Nothing is broken. The code is committed and green on its own tests; **every quoted component
+figure in the docs is stale**, because the covered-window cut moved the fitting rows for ten
+of the eleven rate heads and the whole chain re-ran behind them. Clearing that is this
+session's job and essentially all of it.
 
 ## Branch
 
-**The preseason round is complete and `incorporate-preseason-data` is merged into
-`tweaks-post-dashboard`** (fast-forward, 2026-08-15). ⚠️ **Nothing has been pushed.** The
-merge is local; `origin/tweaks-post-dashboard` is still at the pre-round commit. Pushing is
-the owner's call.
+`tweaks-post-dashboard`, **20 ahead of origin, nothing pushed.** Two commits from 2026-08-15:
+`a0f3b08` (the 6b ladder at six heads) and `ace35d5` (the widening, the port, the chain).
 
-## What happened on 2026-08-15 (second session)
+## What happened on 2026-08-15, part two
 
-**Session 6b ran — the last unrun session in the round's map.** `make components-preseason`
-(`src/models/components_preseason.py`) arms the six rate heads P1 short-listed and holds them
-to the P2/P3 bar. **Every gate P0 through P5 plus 6b is now closed.**
+### 1. The ladder widened to all eleven heads, and the exclusions were wrong
 
-### 1. The instrument — point MLE, under five minutes, no CmdStan
+P1's ΔR² screen admitted six heads. All three it called **actively harmful** failed to
+reproduce as harm at a paired interval:
 
-Each arm is the head's **shipped variant** (read from `stan_component_metrics.csv`, never
-hard-coded — the six do not agree) plus preseason columns, fitted through
-`component_rates.fit_count_head` / `fit_conversion_head`. Six heads × seven arms × two
-populations, plus a 13-origin rolling harness. Same shape as `minutes_preseason`, one family
-over. 18 new tests.
+| head | P1 screen | validation | rolling | gate |
+|---|---|---|---|---|
+| `fta` | −0.00161, z −2.32 | **−0.6300 [−0.8518, −0.2181]** | −0.8141, 13/13 | ✅ |
+| `fg2m\|fg2a` | −0.00845, **z −9.44** | **−0.1541 [−0.2238, −0.0186]** | −0.1581, 12/13 | ✅ |
+| `blk` | −0.00847, z −3.18 | −0.0857 [−0.2074, +0.0573] | −0.1649, 12/13 | rolling only |
 
-### 2. Three of six clear — and P1's top-ranked head is the null
+And two of the five excluded heads were never negative: `fg3m|fg3a` read **+0.01488 at
+z = 7.53** (excluded on attribution — the gain was the shared indicator) and `fg3a|fga`
+**+0.00467 delta-carried**, better than two heads that *were* armed. `fg3a|fga` turns out to
+be among the strongest results in the round: **−1.4373** validation, **−1.9544** rolling,
+13 of 13 origins.
 
-| head | validation | rolling | gate |
-|---|---|---|---|
-| `fga` | −2.7502 [−3.9831, −1.5961] | −3.0663, **13/13** | ✅ |
-| `ast` | −0.8503 [−1.3175, −0.3491] | −0.9492, 12/13 | ✅ |
-| `reb` | −0.8213 [−1.3263, −0.3384] | −0.8138, 12/13 | ✅ |
-| `tov` | −0.0480 [−0.2421, **+0.1619**] | −0.2860, 12/13 | ❌ validation |
-| `stl` | −0.0850 [−0.1678, **+0.0026**] | −0.0671, 12/13 | ❌ validation, by a whisker |
-| `ftm\|fta` | −0.0129 [−0.0639, +0.0391] | −0.0249, 9/13 | ❌ **both** |
+On the shipped `own_delta_shrunk` arm **every one of the eleven clears the rolling half**;
+seven also clear validation. **No head anywhere in the round has an interval clear of zero on
+the wrong side.**
 
-**`ftm|fta` was P1's LARGEST rate increment** (+0.0176 R², z = 18.8) and is the round's only
-two-sided failure — and no arm gets it over its own floor. The mechanism is that a conversion
-delta is a logit of a percentage over ~10–40 preseason free throws (sd **2.2023** on the logit
-scale against `ast`'s 0.3617). A ΔR² screen cannot see that; a distributional bar can. **P1's
-own "what it does not settle" fired, on the head P1 ranked first.**
+### 2. Ten of eleven ship; `fg3m|fg3a` is rolled back
 
-### 3. The headline: on two heads the block beats the whole fitted head
+Retention under the posterior: **10 of 11 hold, median 0.991**. `fg3m|fg3a` is the sole
+reversal — **+0.02914** CRPS, and worse on CRPS, NLL *and* PIT KS at once. Three instruments
+agree (P1's attribution, 6b's pooled point MLE at +0.00688, the posterior control), so
+`stan_components.PRESEASON_EXCLUDE` opts it out and it now reproduces the pre-block head
+exactly: fitted NLL **3.1676** against the 3.1677 the docs have carried since before 6b.
 
-Read against the no-fit floor rather than zero: on `reb` fitting buys **0.1507** CRPS and the
-block buys **0.8213** more (**5.45×**); on `fga` the ratio is **1.07×**. The README's "the rate
-side is nearly saturated" line is now qualified in place — it is saturated against
-*prior-season* information, and six preseason games are not that.
+### 3. The chain, run end to end
 
-### 4. Two method findings that generalize
+Gate A improves on both seasons. Because this pass reuses P5's **byte-identical base
+capture**, the components share is separable by differencing the two paired passes:
 
-- **The volume term wants an empirical-Bayes shrink on rates**, not P1's additive
-  `pre_log_min`. `own_delta_shrunk` beats the declared primary on the fitting half on all five
-  count heads with intervals clear of zero, and read on that promoted arm the gate count goes
-  **3 → 4** (`tov` flips). Selected `k` runs 20 to **320** pseudo-minutes. Mechanism: a minutes
-  total over 60 preseason minutes is measured *on* those minutes; a per-36 rate *divides* by
-  them.
-- **Season-centring is a device for LEVELS, not for deltas in general.** It shipped on P2 and
-  P3 and **loses here** with intervals clear of zero on `fga`, `reb` and `tov`. A per-36 rate
-  has already divided the exposure out, so there is no season-level nuisance left to remove.
+| | base | shipped | 4-key delta | P5's 3-key | **components adds** |
+|---|---|---|---|---|---|
+| MAE 2022-23 | 397.2475 | 360.9636 | −36.2839 | −34.0130 | **−2.2709** |
+| MAE 2023-24 | 397.9555 | 373.6643 | −24.2912 | −20.4458 | **−3.8454** |
 
-### 5. Three risk entries updated, all in the same direction
+Bias moves **+15.68 / +16.55** toward zero. Contest: simulated **null** in all five
+tournaments at a 0.0748 bar, realized **positive in all five** (+0.0960 at the 600k), and the
+`adp` control moved **−0.0052** — the wrong way for a world effect.
 
-The rolling-shrinkage pattern inverted a **third** time (validation ÷ rolling: 0.90, 0.90,
-1.27, 0.17, 1.01, 0.52 — not one head shows the §12e/§14f shape). The coverage cut costs
-**≤0.133** CRPS here against a quarter of the increment on P3. And P1 decision 5's
-pooled/draftable restriction is **nearly a no-op** on this family (ratios 0.87–1.29, draftable
-*larger* on five of six), because the `≥ 200 prior minutes` filter already removes 91.4% of the
-population it corrects for.
+### 4. Four wiring gaps, three of which would have shipped a head that was not the head
+
+Recorded because the *pattern* matters more than any one of them — a head can be selected
+under one specification and persisted under another, and every artifact stays internally
+consistent:
+
+- **`posteriors.component_artifacts`** built rows through `component_rates.build_design` and
+  would have persisted eleven heads with **no preseason columns** while the config and metrics
+  artifact both said the block was on.
+- **`src/sim/season.py`** did the same in two places. Caught at *run time* by
+  `PosteriorRecipe._block`, 40 s into a 60-minute chain — the guard names the builder the
+  frame should have come from, which is why the error identified its own fix.
+- **`manifest_row`** has a fixed column list and never picked up the new `extras`, so the
+  trace reached the pickles and not the CSV.
+- **`covered_fitting_rows`** cut the window family-wide, so the rolled-back head was fitted on
+  **6,382** rows instead of 8,630 — the pre-block columns on the post-block window — while the
+  run printed that it fitted the pre-block head "exactly".
+
+All four fixed, all pinned by tests, including an AST test that stops `season.py` importing
+the plain builder under any alias.
+
+## 🔥 The work: the documentation pass
+
+### 1. The 130 docs-audit disagreements
+
+```
+docs/model-development-notes.md   39      README.md                  13
+docs/preseason-plan.md            38      docs/predictions-plan.md   11
+docs/simulations-plan.md          22      docs/shot-attempt-basis-plan.md  6
+docs/train-validate-test-split.md  1
+```
+
+Almost all are one cause: **the component heads' fitting window moved from 8,630 rows
+(1997-98) to 6,382 (2004-05)**, so every quoted R², NLL, CRPS and floor moved with it. Follow
+the house convention — the superseded figure stays beside its correction, and
+`historical=True` in `src/docs_audit.py` is how it is registered.
+
+⚠️ **Do not "fix" these by re-running anything.** The artifacts are correct; the prose is
+stale. `docs/no-refits-for-record-keeping` is the standing rule.
+
+### 2. `docs/preseason-plan.md` session 6b — rewrite, do not patch
+
+The section was written for the **six-head** run and every headline in it is now wrong twice
+over: "3 of 6 clear" is now 6 of 11 at the gate and 10 of 11 shipped, and the figures moved
+again when the window cut went per-head. It needs:
+
+- the eleven-head gate table and the screen-reversal finding (the strongest result in the
+  round: a ΔR² screen's *sign* did not survive on any of the three heads it called harmful)
+- the retention table and `fg3m|fg3a`'s rollback as its own subsection
+- the session map row and the gates section
+- the four risk entries, which currently cite six-head numbers
+
+### 3. `dashboard/decisions.py`
+
+Four entries exist from the six-head run and all need updating; `fg3m|fg3a`'s exclusion needs
+a new one — it is the only measured-worse result in the entire preseason round and belongs on
+the decision log for that reason alone.
+
+### 4. `README.md`, `docs/pipeline.md`
+
+README §2 and §3 carry six-head prose and the 5.45× / 1.07× ratios, which moved. `pipeline.md`
+carries a `components-preseason` block written for six heads.
+
+### 5. Register the new figures
+
+`_preseason_components()` in `src/docs_audit.py` claims the six-head run. It needs the eleven
+heads, the retention table, the control arms, and the contest delta.
 
 ## Do NOT re-decide these
 
 1. Everything the previous handoffs list under this heading still holds.
 2. **σ = 0.375**, frozen across counterfactual arms by design.
-3. **The realized side is priced by pairing, not by the simulated bar.** A test pins it.
-4. **Nothing from 6b ships.** A cleared gate earns a Stan port and a port is a separate door —
-   the same structure as P3 earning the composition a pricing session rather than an adoption.
-5. **`blk`, `fta`, `fg2m|fg2a`, `fg3m|fg3a` get no arm** (P1 decision 2), and `ftm|fta` is now
-   a recorded null too. The conversion family is a null on preseason data in all four heads.
+3. **Ten of eleven component heads ship the block**, and `fg3m|fg3a` does not. Owner decision
+   2026-08-15 on the posterior reading.
+4. **`stl`, `blk`, `ftm|fta`, `fg3m|fg3a`'s siblings ship against the validation half** — they
+   pass rolling and cannot be resolved on 706 validation rows. Same owner decision P2 recorded.
+5. **`tov`'s variant flip to `log_own_spline`** is accepted; the CRPS/R² disagreement is small
+   and was explicitly waived.
 
-## Verified green
+## Loose ends, all small
 
-```
-make docs-audit        # 0 disagreements, 0 stale claims, 3,716 figures
-make dashboard-audit   # 0 orphaned artifacts, 0 pending constants, 292 findings
-pytest tests/          # 1,858 passed (1,840 + 18)
-```
-
-All 292 dashboard-audit findings are the `reviewed`-date drift carried for several sessions —
-0 missing artifacts, 0 orphans.
-
-## The work
-
-### 1. 🔥 `potential-to-dos.md` item 13 — port the three cleared arms and price them
-The direct continuation, and the largest unexploited increment measured in the project. Unlike
-the marginal minutes head these six are **in the simulator's draw path**, so the whole pricing
-chain exists: a `head_design` port behind a `stan.components.preseason` flag, scored against a
-same-window control, then `make posteriors --groups components` and one `make
-preseason-contest` pass. The entry names the bar, the falsifier, and the retention figure to
-watch (three rounds found the increment *grew* under the posterior; a retention below 1.0
-would be the first).
-
-### 2. The open decision that now stands on five heads
-**Whether a rolling-only win should ship.** P2 registered it and did not take it; `stl` and
-`tov` now stand in exactly that position, `stl` missing validation by **+0.0026** with 12 of 13
-origins. It is a decision about the bar, and three rounds have now failed it in the direction
-the bar was not written for. What would settle it without widening anything is more scored
-validation seasons — and those are the test split.
-
-### 3. The season-total bias — `potential-to-dos.md` item 12
-Unchanged from the last handoff. Gate A's bias is −15.44 / −66.64 against a −3.06 bar,
-pre-existing rather than introduced. ⚠️ The naive version of the measurement gives the
-**opposite sign** — read the entry before re-running it.
-
-### 4. Split the block's two reaching heads
-Also unchanged. Which of availability / composition buys the contest gain is unmeasured;
-`--groups availability` alone is ~6 minutes.
-
-### 5. Small, un-scheduled
-- `PYTHONUNBUFFERED=1` on long `make` targets — used again this session and it worked; worth
-  making the default.
-- The `make stan-*` **metric** artifacts still carry no provenance stamp.
-- `dashboard-audit`'s `reviewed`-date drift, carried for several sessions and now at 292.
-- `mixture_value.py` has the same latent `RESOLVED`-bar flaw `preseason_contest.py` fixed;
-  worth fixing next time that target is touched.
+- **The `reach` block has no `components` row.** `preseason_contest.reach_rows` reports
+  `refit_landed` for availability, minutes and composition only, so the family this round
+  shipped has no trace in the artifact that prices it. All four config keys do show 0→1.
+- **Gate C's `rho` is fitted on the rows the backtest scores.** It is solved per season *and
+  per arm* by bisection against that season's realized model-vs-market skill gap — not a
+  static constant. `README.md` names four simulator inputs calibrated this way and `rho` is
+  not among them; it probably should be. It also means the two arms' simulated worlds are not
+  the same world, which is why `sim_lift` is not arm-comparable (P5 already says this).
+- **`potential-to-dos.md` item 13** — port and price — is now **done**, and should be marked
+  as such rather than left open.
+- **Item 14** is new and unstarted: `make stan` discards draws that `make posteriors` then
+  refits, worth **4.9 h per full train-window run**.
+- `PYTHONUNBUFFERED=1` on long `make` targets, still worth making the default.
 
 ## Lessons worth carrying forward
 
-**A screen ranks by signal; a bar ranks by signal net of the noise carrying it.** P1's ΔR²
-put `ftm|fta` first across the whole rate family and `reb` last among the clearing heads. At a
-distributional unit `ftm|fta` is the only two-sided failure and `reb` has the largest
-block-to-fit ratio in the round. Both reversals have the same cause — a noisy regressor with
-real signal in it still raises R² on a point estimate, and only a predictive has to pay for
-the noise. This is the third instance of the general rule the repo already records as "a head
-is only a model at the unit it was scored at".
+**A screen's sign is not evidence about the heads it failed.** P1's permutation z said `blk`,
+`fta` and `fg2m|fg2a` did *worse than a shuffled block* — which reads as evidence of harm
+rather than absence of gain. None of the three reproduced, and two clear the real bar
+outright. The same screen had already misranked the heads it *passed*, in both directions.
+Excluding on a screen that has been contradicted is the same error as trusting it.
 
-**A device is not a finding until its scope is measured.** Season-centring won on two heads
-and was recorded as "the arm to watch". It loses on the third family, and the reason was
-predictable from the mechanism — the compression it corrects is a property of *levels*, and a
-per-36 rate has already divided the exposure out. The arm was written to test exactly that and
-came out the other way, which is the argument for carrying an attribution arm you expect to
-lose.
+**Wire every consumer, not the ones you happen to be reading.** Four call sites needed the
+same change; two were found by reading, one by a run-time guard, one by checking output that
+should have contained a column and did not. The guard that caught the third existed because
+someone wrote `builder` into the error message — the cheapest thing in this session and the
+only reason that failure took 40 seconds to diagnose instead of an afternoon.
+
+**A partial-run path is worth building the first time you want one.** `--heads` on
+`stan_components` and `--rebuild-manifest` on `posteriors` each took minutes and each replaced
+a multi-hour re-run. `posteriors --groups` was the precedent and had been there all along.
