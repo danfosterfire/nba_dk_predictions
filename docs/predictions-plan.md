@@ -1139,37 +1139,51 @@ player-seasons, scored on validation (2022-23/23-24). Three results bind on ever
 > **189** s. Those figures are the retired test refits at double the iterations; the
 > per-game costing above is scaled from the validation fits the artifact now holds.
 >
-> **The eleven component heads** are built too — 37 fits, **0 divergences**, max R̂ 1.0076,
-> 137.4 min of compute. 10,194 player-seasons, 8,630 fit / 773 validation on 2022-23 and
+> **The eleven component heads** are built too — 47 fits, **0 divergences**, max R̂ 1.00713,
+> 163.9 min of compute. 10,194 player-seasons, **6,382** fit / 773 validation on 2022-23 and
 > 2023-24. Three findings, two of which **overturn what the sklearn run above measured**:
 >
 > - **`log(own)` alone is not sufficient under a negative binomial.** The Poisson fit has
 >   `log_own` at 0.7748 (`blk`; 0.8204 before the split moved) and, on the retired basis,
 >   0.8791 (`fg3a`); under NB the identical spec collapses to
->   **0.6730** and **0.3719**, both far below their floors, and only a spline recovers them
->   (0.8309, 0.9046). NB2's `var = μ + μ²/φ` down-weights large counts, so the fit is driven
+>   **0.6485** and **0.3719**, both far below their floors, and only a spline recovers them
+>   (0.8324, 0.9046). NB2's `var = μ + μ²/φ` down-weights large counts, so the fit is driven
 >   by the low-count mass — exactly where the log-scale relation is most curved. **The
 >   "splines are worth ≤ +0.003 outside `fg3a`/`blk`" guidance above is Poisson-specific**;
 >   under NB the validation split picks a spline for **four** heads (`fga`, `ast`, `blk`,
 >   `stl`), and on `blk` it is the difference between a model and a failure.
-> - **`linear` is worse than the sklearn run suggested** — validation R² **−0.2744** on `blk`
+> - **`linear` is worse than the sklearn run suggested** — validation R² **−0.5155** on `blk`
 >   against 0.638 under sklearn, and **−19.00** on the retired `fg3a`. Linear-in-raw-rate
 >   inside `exp()` is not merely misspecified, it is unusable, and it fails the no-fit floor
 >   on five of the seven count heads.
 > - **⭐ Adopting the shot-attempt basis (2026-08-04) retired the −19.00 case entirely.**
 >   `fg3a` is no longer a count head; `fga` replaces it and is the best-behaved count in the
->   project — floor **0.9514**, the highest of the seven, selected at **0.9584**, and
->   `log_own` already at **0.9581**. Where the wrong scale cost `fg3a` a catastrophic
->   −19.00, it costs `fga` **0.9489**, i.e. 0.0025 R². A total is far less skewed than its
->   three-point part. `blk` at −0.2744 is now the only negative linear arm left, and
+>   project — floor **0.9514**, the highest of the seven, selected at **0.9647**, and
+>   `log_own` already at **0.9644**. Where the wrong scale cost `fg3a` a catastrophic
+>   −19.00, it costs `fga` **0.9527**, i.e. 0.0120 R². A total is far less skewed than its
+>   three-point part. `blk` at −0.5155 is now the only negative linear arm left, and
 >   the `fg3a` figures above are retained as the record of the basis that was retired.
 > - **⚠️ `fta` cleared its floor when the sweep moved to validation, and "the whole
->   free-throw family fails" is withdrawn.** It reads **0.8909** against a floor of
+>   free-throw family fails" is withdrawn.** It reads **0.8963** against a floor of
 >   **0.8765** at its selected `log_own`, where the test column had it at 0.8649 against
 >   0.8673 — a failure by 0.0024, which was never a margin worth a finding. **`ftm|fta`
 >   still fails at every variant and is now the only head in the project that does.** That
 >   was always the better-founded half: free-throw *percentage* has a pure-player-skill
 >   argument that trips to the line never had.
+>
+> ⚠️ **Every fitted figure in this block moved on 2026-08-15, when ten of the eleven heads
+> adopted the preseason block** (`docs/preseason-plan.md` session 6b). The block forces the
+> **fitting window** to the seasons the preseason panel covers, so the ten armed heads fit
+> **6,382** rows from 2004-05 rather than **8,630** from 1997-98, and the fit count rises from
+> **37** to **47** because each armed head also fits a same-window `__no_preseason` control.
+> The superseded readings, kept beside their corrections: `blk` `log_own` **0.6730**, spline
+> **0.8309**, linear **−0.2744**; `fga` linear **0.9489**, `log_own` **0.9581**, spline
+> **0.9584**; `fta` selected **0.8909**; max R̂ **1.0076**; and the sampler at **137.4** min
+> over 37 fits. **The no-fit floors did not move**,
+> which is the tell that this is a fitting-window change and not a scoring change — a
+> carry-forward floor is arithmetic on the validation rows and never touches the training
+> window. **Nothing reversed**: the same variant is selected on every head, `blk` linear is
+> still the only negative arm, and `ftm|fta` is still the only head below its floor.
 >
 > ⚠️ **Every figure in this block was a TEST measurement until 2026-08-06.** The superseded
 > readings, kept because the `fta` reversal is only legible beside them: `blk` `log_own`
@@ -1181,9 +1195,9 @@ player-seasons, scored on validation (2022-23/23-24). Three results bind on ever
 > story at a different magnitude.
 >
 > **✅ The 3PA/2PA reparameterization is settled, and it wins decisively.** `fga` as a count ×
-> `fg3a | fga` as a binomial share beats two independent count heads by **−0.771 nats on
-> validation and −0.793 on test**, per player-season, on the joint density of `(fg2a, fg3a)`
-> (10.797 → 10.026; 10.784 → 9.991), replicating on both splits. The comparison is legitimate
+> `fg3a | fga` as a binomial share beats two independent count heads by **−0.7218 nats on
+> validation**, per player-season, on the joint density of `(fg2a, fg3a)`
+> (**10.738** → **10.0162**). The comparison is legitimate
 > because `(fg2a, fg3a) ↔ (fga, fg3a)` is a **bijection with unit Jacobian on the integers**,
 > so the two joint log-densities are directly comparable. The recommendation below is now a
 > measurement.
@@ -1194,8 +1208,15 @@ player-seasons, scored on validation (2022-23/23-24). Three results bind on ever
 > `stan_component_substitution_sweep.csv` instead, but `make stan-substitution` was
 > re-run validation-only the same day and that copy is gone too. Those three figures are
 > presence-checked in `src/docs_audit.py` and value-checked nowhere. **The validation half
-> reproduced unchanged at full-length chains** and is still audited: 10.797 → 10.026 at
-> −0.771.
+> reproduced unchanged at full-length chains** and was audited at 10.797 → 10.026 for
+> **−0.771** until 2026-08-15, when the preseason block moved both heads and the same cells
+> became 10.738 → 10.0162 for −0.7218. The margin narrows by 0.049 nats and the verdict does
+> not move. ⚠️ **`stan_component_substitution.csv` is now a post-block reading while
+> `stan_component_substitution_sweep.csv` is still pre-block**, because only
+> `make stan-components` rewrites the first and only `make stan-substitution` rewrites the
+> second — so the two may no longer be differenced against each other. That is worked through
+> in `docs/shot-attempt-basis-plan.md`; Gate 0's own **−0.501041** lives entirely inside the
+> sweep and is unaffected.
 >
 > Every head is quoted against `carry_forward`, and every variant is selected on the
 > validation split. **There is no longer a test column to report** — the held-out reading is
@@ -1210,7 +1231,7 @@ copula if needed — measured off-diagonals average **+0.0225** across the seven
 correlated multivariate player effect, and only after measuring it is worth it (the player random
 effect on rates was largely in-sample leakage). Reparameterize the 3PA/2PA substitution as
 `fga` count × `fg3a | fga` share rather than coupling two Poissons — ✅ **measured 2026-07-30
-and worth −0.771 nats per player-season on validation**, see the built-block above.
+and worth −0.7218 nats per player-season on validation**, see the built-block above.
 
 ## New model surface area
 

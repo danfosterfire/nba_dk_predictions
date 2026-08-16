@@ -241,28 +241,35 @@ REGISTRY: tuple[Decision, ...] = (
     Decision(
         id="preseason-rate-arms-gate",
         topic="components",
-        claim="Three of the six armed rate heads clear the preseason gate — `fga`, "
-              "`ast`, `reb` — and four on the fitting-half-promoted shrunk arm. Nothing "
-              "ships: a cleared gate earns a Stan port, which is a separate door.",
+        claim="TEN of the eleven component rate heads ship the preseason block. Six "
+              "clear the two-reading gate on the declared primary arm; on the shrunk arm "
+              "that ships, all eleven clear the rolling half and seven clear validation.",
         because="P1's screen was an R² on a point estimate and its own text says so. "
                 "Re-asked at the P2/P3 bar — a validation CRPS interval clear of zero on "
-                "the draftable population AND the rolling harness agreeing — `fga` reads "
-                "−2.7502 [−3.9831, −1.5961] and −3.0663 [−3.4993, −2.6236] at 13 of 13 "
-                "origins, `ast` −0.8503 and −0.9492 at 12 of 13, `reb` −0.8213 and "
-                "−0.8138 at 12 of 13. `stl` and `tov` pass the rolling half decisively "
-                "and cannot be resolved on 706 validation rows — `stl` misses by "
-                "+0.0026 — which is the same shape as "
-                "[[preseason-availability-arm-fails-its-crps-bar]]. Read against the "
-                "no-fit floor rather than against zero, the block is worth MORE than the "
-                "entire fitted head is worth over arithmetic on two heads: 5.45× on "
-                "`reb` (fitting buys 0.1507 CRPS, the block 0.8213) and 1.07× on `fga`. "
-                "The attribution holds at a distributional unit — `missing_only` is a "
-                "tie or worse everywhere and on `ast` it LOSES rolling at +0.0488 "
-                "[+0.0128, +0.0888] — so the gain is the preseason rate and not the fact "
-                "of a preseason row. The coverage cut costs almost nothing here (≤0.133 "
-                "CRPS, and on two heads it helps), unlike on the minutes head where it "
-                "was a quarter of the increment.",
-        status="measured",
+                "the draftable population AND the rolling harness agreeing — six clear on "
+                "the primary: `fga` −2.7502 [−3.9831, −1.5961] and −3.0663 at 13 of 13 "
+                "origins, `fg3a|fga` −0.8512 and −1.3042 at 13 of 13, `ast` −0.8503 and "
+                "−0.9492, `reb` −0.8213 and −0.8138, `fta` −0.4299 and −0.5993, "
+                "`fg2m|fg2a` −0.1348 and −0.0860. On the shipped `own_delta_shrunk` arm "
+                "every one of the eleven wins rolling at 9–13 of 13 origins and seven win "
+                "validation; the other four pass rolling on ~4,300 rows and cannot be "
+                "resolved on 706 validation ones — the same shape as "
+                "[[preseason-availability-arm-fails-its-crps-bar]], and the same owner "
+                "decision. NO head anywhere in the round has an interval clear of zero on "
+                "the wrong side. Read against the no-fit floor rather than against zero, "
+                "the block is worth MORE than the entire fitted head is worth over "
+                "arithmetic on three heads: 7.25× on `reb` (fitting buys 0.1507 CRPS, the "
+                "block 1.0929), 3.77× on `fg3a|fga` and 1.17× on `fga`. The attribution "
+                "holds at a distributional unit — `missing_only` is a tie or worse "
+                "everywhere and on `ast` it LOSES rolling at +0.0488 [+0.0128, +0.0888] — "
+                "so the gain is the preseason rate and not the fact of a preseason row. "
+                "The coverage cut costs almost nothing here (≤0.133 CRPS, and on six of "
+                "eleven heads it helps), unlike on the minutes head where it was a quarter "
+                "of the increment. It survives the posterior: ten of eleven hold at a "
+                "median retention of 0.985 with four GROWING — see "
+                "[[preseason-rate-screen-sign-did-not-survive]] for why eleven were armed "
+                "and [[preseason-fg3m-rolled-back]] for the eleventh.",
+        status="settled",
         reproduce="make components-preseason → "
                   "outputs/predictions/components_preseason.csv, "
                   "outputs/predictions/components_preseason_rolling.csv",
@@ -274,9 +281,10 @@ REGISTRY: tuple[Decision, ...] = (
     Decision(
         id="preseason-conversion-heads-null",
         topic="components",
-        claim="The conversion family is a null on preseason data in all four of its "
-              "heads. `ftm|fta` was P1's LARGEST rate increment and fails both halves "
-              "of the bar.",
+        claim="`ftm|fta` was P1's LARGEST rate increment and is a tie at both readings "
+              "of the real bar. ⚠️ The wider claim it was recorded under — that the "
+              "conversion family is a null in all four heads — is WITHDRAWN: two of the "
+              "four clear the gate outright once they are actually armed.",
         because="P1 nulled `fg2m|fg2a` and `fg3m|fg3a` (the latter's whole apparent gain "
                 "being `has_preseason`) and ranked `ftm|fta` first across the entire rate "
                 "family at +0.0176 R², z = 18.8. At the head's own unit it is a tie on "
@@ -289,8 +297,33 @@ REGISTRY: tuple[Decision, ...] = (
                 "0.3617, which is mostly sampling noise. A ΔR² screen cannot see that, "
                 "because a noisy regressor carrying real signal still raises R² on a "
                 "point estimate; a distributional bar can, because the noise has to be "
-                "paid for in the predictive. See [[preseason-rate-arms-gate]].",
-        status="null",
+                "paid for in the predictive. ⚠️ The FAMILY claim did not survive the "
+                "widening. P1 nulled `fg2m|fg2a` and `fg3a|fga` was never armed at all; "
+                "on the real bar `fg3a|fga` reads −1.4373 validation and −1.9544 rolling "
+                "at 13 of 13 origins and `fg2m|fg2a` −0.1541 and −0.1581, so both clear "
+                "and both ship. What survives is head-level and narrower: `ftm|fta` is a "
+                "tie, and `fg3m|fg3a` is worse — the two heads whose target is a SHOOTING "
+                "percentage rather than a shot MIX. `fg3a|fga` is a conversion head by "
+                "likelihood and a mix by meaning, which is exactly the distinction "
+                "`docs/shot-attempt-basis-plan.md` was written around: shares persist at "
+                "0.886 and conversion percentages at 0.500. See "
+                "[[preseason-rate-arms-gate]] and [[preseason-fg3m-rolled-back]].",
+        status="withdrawn",
+        replaced_by="**Two of the four conversion heads clear the bar and ship**, and "
+                    "one of them is among the round's strongest results: `fg3a|fga` "
+                    "reads −1.4373 on validation and −1.9544 rolling at 13 of 13 "
+                    "origins, and `fg2m|fg2a` −0.1541 and −0.1581. What survives is a "
+                    "narrower and better-founded claim about the TARGET rather than the "
+                    "likelihood: a preseason block is a null where the target is a "
+                    "shooting PERCENTAGE (`ftm|fta` a tie, `fg3m|fg3a` measurably worse) "
+                    "and it works where the target is a shot MIX (`fg3a|fga`) or a "
+                    "two-point conversion over ~10× the attempts (`fg2m|fg2a`).",
+        caught_by="Arming all eleven heads instead of P1's six, in the same session. "
+                  "`fg3a|fga` had never been armed at all — it was excluded from the "
+                  "short list as small (+0.00467) rather than as negative — so the "
+                  "'all four heads' claim had only ever been tested on three of them, "
+                  "and one of those three was tested by a screen whose sign did not "
+                  "survive. See [[preseason-rate-screen-sign-did-not-survive]].",
         reproduce="make components-preseason → "
                   "outputs/predictions/components_preseason.csv",
         source="docs/preseason-plan.md",
@@ -306,12 +339,15 @@ REGISTRY: tuple[Decision, ...] = (
               "half — not P1's additive `pre_log_min` term.",
         because="The plan left the volume question open between the two forms. On the "
                 "marginal minutes head P3 closed it at k = 20 and near-nil. On rates the "
-                "shrunk arm beats the declared primary on the fitting half on all five "
-                "count heads with intervals clear of zero — `fga` −0.5734 at 13 of 13 "
-                "origins, `reb` −0.4484 at 13 of 13, `ast` −0.1946 at 12 of 13 — and the "
+                "shrunk arm beats the declared primary on the fitting half on ALL "
+                "ELEVEN heads with intervals clear of zero — `fg3a|fga` −0.6501 at 13 of "
+                "13 origins, `fga` −0.5734 at 13 of 13, `reb` −0.4484 at 13 of 13, `fta` "
+                "−0.2148 at 13 of 13, `ast` −0.1946 at 12 of 13 — and the "
                 "selected `k` runs 20 to 320 pseudo-minutes, mean weights 0.640 down to "
-                "0.140. Read on the promoted arm the gate count goes from 3 to 4: `tov` "
-                "flips to −0.2213 [−0.4003, −0.0257] on validation at 13 of 13 rolling. "
+                "0.140. Read on the promoted arm the validation count goes from 6 to 7 "
+                "and every head wins rolling: `tov` flips to −0.2213 [−0.4003, −0.0257] "
+                "on validation at 13 of 13 rolling. That is why it is the arm that "
+                "SHIPS, and why the block-to-fit ratios are quoted from it. "
                 "The mechanism is why the two heads disagree — a minutes total over 60 "
                 "preseason minutes is measured ON those minutes, while a per-36 rate "
                 "DIVIDES by them, so the same exposure buys far less precision and there "
@@ -335,8 +371,11 @@ REGISTRY: tuple[Decision, ...] = (
         because="P2 shipped the centred column on a level and P3 on a delta, and the "
                 "plan recorded centring as 'the arm to watch'. Against the uncentred "
                 "primary at the rolling reading it LOSES with intervals clear of zero on "
-                "`fga` (+0.1160 [+0.0209, +0.2081]), `reb` (+0.0627) and `tov` (+0.0334) "
-                "and ties on the other three — no rate head prefers it. The argument "
+                "`fg3a|fga` (+0.2704 [+0.1824, +0.3614]), `fga` (+0.1160 [+0.0209, "
+                "+0.2081]), `reb` (+0.0627), `tov` (+0.0334) and `fg2m|fg2a` (+0.0195) "
+                "and ties on the other six — no rate head prefers it, and the widening "
+                "STRENGTHENED the finding: `fg3a|fga`, one of the heads P1 had excluded, "
+                "is the largest loss in the table. The argument "
                 "centring was built on is about compression: preseason minutes are "
                 "compressed by a calendar-varying amount (2 games a team in the 2011-12 "
                 "lockout against 8 in an ordinary year) and a head with no season term "
@@ -351,6 +390,78 @@ REGISTRY: tuple[Decision, ...] = (
         reviewed="2026-08-15",
         date="2026-08-15",
         tags=("preseason", "components", "minutes"),
+    ),
+    Decision(
+        id="preseason-fg3m-rolled-back",
+        topic="components",
+        claim="`fg3m|fg3a` carries NO preseason block, and it is the only head in the "
+              "entire preseason round that a paired instrument measured as WORSE with "
+              "one. `stan_components.PRESEASON_EXCLUDE` opts it out.",
+        because="Ten of the eleven rate heads improve under the posterior at a median "
+                "retention of 0.985; this one goes the other way, and it loses on three "
+                "metrics rather than one — CRPS 4.19350 against its control's 4.16436, "
+                "NLL 3.16495 against 3.16432, PIT KS 0.02536 against 0.02416. THREE "
+                "INSTRUMENTS AGREE, which is what makes it a finding rather than a noisy "
+                "row. (1) P1's attribution: the head's apparent +0.01488 ΔR² at z 7.53 "
+                "was entirely the shared indicator pair (+0.01987) and its own preseason "
+                "3P% delta was −0.00237 — the attribution split exists to catch exactly "
+                "this and it caught it first. (2) 6b's pooled point MLE at +0.0069, the "
+                "only positive reading among the eleven, before any sampler ran. (3) The "
+                "posterior control at +0.02914, same sign and larger. The mechanism is "
+                "the one `ftm|fta` shows from the other side: a conversion delta is a "
+                "logit of a percentage over ~15 preseason attempts, and shooting "
+                "percentage is the least persistent quantity in the box score, so "
+                "prior-season 3P% over ~200 attempts is simply the better estimate and "
+                "the block adds variance with no signal. The rollback is EXACT and "
+                "checked rather than asserted: with the block off the head must reproduce "
+                "the pre-6b fit on the pre-6b window, and it reads NLL 3.1676 against "
+                "3.1677. That check is load-bearing — `covered_fitting_rows` cut the "
+                "window family-wide, so an earlier build fitted this head on 6,382 rows "
+                "instead of 8,630 while printing that it had reproduced the pre-block "
+                "head 'exactly'. See [[preseason-rate-arms-gate]].",
+        status="settled",
+        reproduce="make stan-components → "
+                  "outputs/predictions/stan_component_metrics.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-15",
+        date="2026-08-15",
+        tags=("preseason", "components"),
+    ),
+    Decision(
+        id="preseason-rate-screen-sign-did-not-survive",
+        topic="components",
+        claim="A screen's SIGN is not evidence about the heads it failed. P1's "
+              "permutation z called three rate heads actively harmful; none of the three "
+              "reproduced as harm, and two of them clear the real bar outright.",
+        because="P1's ΔR² screen short-listed six of the eleven rate heads and recorded "
+                "`blk` (−0.00847, z −3.18), `fg2m|fg2a` (−0.00845, z −9.44) and `fta` "
+                "(−0.00161, z −2.32) as doing WORSE than a shuffled block — which reads "
+                "as evidence of harm rather than as absence of gain. Session 6b armed all "
+                "eleven anyway, on the ground that the same screen had already misranked "
+                "the heads it PASSED in both directions (`reb` was its smallest clearing "
+                "count head and has the round's largest block-to-fit ratio at 7.25×; "
+                "`ftm|fta` was its largest and is a tie at both readings). At a paired "
+                "interval `fta` reads −0.6300 validation and −0.8141 rolling at 13 of 13 "
+                "origins and `fg2m|fg2a` −0.1541 and −0.1581 — both ship — while `blk` "
+                "clears the rolling half. Two further excluded heads were never negative: "
+                "`fg3a|fga` (+0.00467, excluded as small) is the round's third-largest "
+                "result at −1.4373 and −1.9544 at 13 of 13, and `fg3m|fg3a` (+0.01488) is "
+                "the one head that genuinely reverses — so the screen was wrong about "
+                "FIVE of five exclusions, in both directions. A permutation z on a single "
+                "inner split with no row-level uncertainty is a statement about one "
+                "split's noise. Excluding on a screen that has already been contradicted "
+                "is the same error as trusting it: the screen stays useful as a filter "
+                "for what is worth FITTING and is not usable as a veto. Generalizes "
+                "[[preseason-rate-arms-gate]] and "
+                "[[preseason-conversion-heads-null]].",
+        status="settled",
+        reproduce="make components-preseason → "
+                  "outputs/predictions/components_preseason.csv, "
+                  "outputs/predictions/components_preseason_rolling.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-15",
+        date="2026-08-15",
+        tags=("preseason", "components", "method"),
     ),
     Decision(
         id="preseason-draftable-population",

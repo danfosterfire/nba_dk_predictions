@@ -2512,74 +2512,101 @@ def _predictions() -> list[Claim]:
         lambda: (cell(STAN_MIN_M, "val_r2", variant="logit_own_spline")
                  - cell(STAN_MIN_M, "val_r2", variant="carry_forward")),
         "minutes R2 gain over floor")
-    add("137.4", STAN_C_D, lambda: total(STAN_C_D, "wall_clock_s") / 60,
+    add("163.9", STAN_C_D, lambda: total(STAN_C_D, "wall_clock_s") / 60,
         "component sampler minutes")
+    add("137.4", STAN_C_D, lambda: total(STAN_C_D, "wall_clock_s") / 60,
+        "component sampler minutes, pre-preseason-block", historical=True)
     add("305.0", STAN_C_D, lambda: total(STAN_C_D, "wall_clock_s") / 60,
         "component sampler minutes, both splits", historical=True)
-    add("1.0076", STAN_C_D, lambda: max_of(STAN_C_D, "max_rhat"),
+    add("1.00713", STAN_C_D, lambda: max_of(STAN_C_D, "max_rhat"),
         "component max R-hat")
+    add("1.0076", STAN_C_D, lambda: max_of(STAN_C_D, "max_rhat"),
+        "component max R-hat, pre-preseason-block", historical=True)
     add("1.0118", STAN_C_D, lambda: max_of(STAN_C_D, "max_rhat"),
         "component max R-hat, half-length selection fits", historical=True)
-    # Two retirements are layered here and they are NOT the same thing. `fg3a` is a retired
+    # THREE retirements are layered here and they are NOT the same thing. `fg3a` is a retired
     # count HEAD (shot-attempt basis, 2026-08-04) whose rows left the artifact; `test_r2` is
-    # a retired COLUMN (held-out lock, 2026-08-06) that left every head at once. Both are
-    # carried as historical, so a reader can see which basis and which split a figure came
-    # from rather than finding one number where two measurements used to be.
-    for head, quoted, retired in [("blk", "0.6730", False), ("fg3a", "0.3719", True)]:
+    # a retired COLUMN (held-out lock, 2026-08-06) that left every head at once; and on
+    # 2026-08-15 the preseason block cut the FITTING WINDOW from 8,630 rows to 6,382 on ten of
+    # the eleven heads, which moved every fitted cell while leaving the no-fit floors exactly
+    # where they were. All three are carried as historical, so a reader can see which basis,
+    # which split and which window a figure came from rather than finding one number where
+    # three measurements used to be.
+    for head, quoted, retired in [("blk", "0.6485", False), ("fg3a", "0.3719", True)]:
         add(quoted, STAN_C_M, lambda h=head: stan_c(h, "log_own", "val_r2"),
             f"NB {head} log_own R2", historical=retired)
+    add("0.6730", STAN_C_M, lambda: stan_c("blk", "log_own", "val_r2"),
+        "NB blk log_own R2, pre-preseason-block", historical=True)
     add("0.6794", STAN_C_M, lambda: stan_c("blk", "log_own", "val_r2"),
         "NB blk log_own R2, on test", historical=True)
-    for head, quoted, retired in [("blk", "0.8309", False), ("fg3a", "0.9046", True)]:
+    for head, quoted, retired in [("blk", "0.8324", False), ("fg3a", "0.9046", True)]:
         add(quoted, STAN_C_M,
             lambda h=head: stan_c(h, "log_own_spline", "val_r2"),
             f"NB {head} spline R2", historical=retired)
+    add("0.8309", STAN_C_M, lambda: stan_c("blk", "log_own_spline", "val_r2"),
+        "NB blk spline R2, pre-preseason-block", historical=True)
     add("0.8579", STAN_C_M, lambda: stan_c("blk", "log_own_spline", "val_r2"),
         "NB blk spline R2, on test", historical=True)
     add("−19.00", STAN_C_M, lambda: stan_c("fg3a", "linear", "val_r2"),
         "NB fg3a linear R2", historical=True)
+    # The floor is the one live cell that did NOT move, and that is load-bearing evidence
+    # rather than a coincidence — see the doc.
     for quoted, variant, label in [("0.9514", "carry_forward", "fga floor"),
-                                   ("0.9489", "linear", "fga linear R2"),
+                                   ("0.9527", "linear", "fga linear R2"),
+                                   ("0.9644", "log_own", "fga log_own R2"),
+                                   ("0.9647", "log_own_spline", "fga selected R2")]:
+        add(quoted, STAN_C_M, lambda v=variant: stan_c("fga", v, "val_r2"),
+            f"NB {label}")
+    for quoted, variant, label in [("0.9489", "linear", "fga linear R2"),
                                    ("0.9581", "log_own", "fga log_own R2"),
                                    ("0.9584", "log_own_spline", "fga selected R2")]:
         add(quoted, STAN_C_M, lambda v=variant: stan_c("fga", v, "val_r2"),
-            f"NB {label}")
+            f"NB {label}, pre-preseason-block", historical=True)
     for quoted, variant, label in [("0.9464", "carry_forward", "fga floor"),
                                    ("0.9396", "linear", "fga linear R2"),
                                    ("0.9501", "log_own", "fga log_own R2"),
                                    ("0.9505", "log_own_spline", "fga selected R2")]:
         add(quoted, STAN_C_M, lambda v=variant: stan_c("fga", v, "val_r2"),
             f"NB {label}, on test", historical=True)
-    add("−0.2744", STAN_C_M, lambda: stan_c("blk", "linear", "val_r2"),
+    add("−0.5155", STAN_C_M, lambda: stan_c("blk", "linear", "val_r2"),
         "NB blk linear R2")
+    add("−0.2744", STAN_C_M, lambda: stan_c("blk", "linear", "val_r2"),
+        "NB blk linear R2, pre-preseason-block", historical=True)
     add("−1.393", STAN_C_M, lambda: stan_c("blk", "linear", "val_r2"),
         "NB blk linear R2, on test", historical=True)
     # The reversal this conversion turned up: `fta` failed its floor by 0.0024 on test and
-    # clears it by 0.0144 on validation. Both readings are claimed — the live pair against
-    # the artifact, the test pair for the record — because the finding it retired ("the
-    # whole free-throw family fails") is only legible next to the numbers that produced it.
-    add("0.8909", STAN_C_M, lambda: stan_c("fta", "log_own", "val_r2"),
+    # clears it by 0.0144 on validation — 0.0198 since the block, so it widened. Every reading
+    # is claimed, because the finding it retired ("the whole free-throw family fails") is only
+    # legible next to the numbers that produced it.
+    add("0.8963", STAN_C_M, lambda: stan_c("fta", "log_own", "val_r2"),
         "NB fta selected R2")
+    add("0.8909", STAN_C_M, lambda: stan_c("fta", "log_own", "val_r2"),
+        "NB fta selected R2, pre-preseason-block", historical=True)
     add("0.8765", STAN_C_M, lambda: stan_c("fta", "carry_forward", "val_r2"),
         "NB fta floor")
     add("0.8649", STAN_C_M, lambda: stan_c("fta", "log_own", "val_r2"),
         "NB fta best fitted R2, on test", historical=True)
     add("0.8673", STAN_C_M, lambda: stan_c("fta", "carry_forward", "val_r2"),
         "NB fta floor, on test", historical=True)
-    # The validation half comes from `stan_component_substitution.csv`, which the 2026-08-06
-    # refit rewrote and which reproduced it to the quoted precision. The test half is
-    # history: it outlived that refit inside the Gate 0 sweep, and then that sweep went
-    # validation-only too. Presence-checked only — there is no artifact left to check it
-    # against, which is the honest state rather than a gap.
-    add("−0.771", STAN_C_S,
+    # The validation half comes from `stan_component_substitution.csv`, which `make
+    # stan-components` rewrites — so the 2026-08-15 preseason block moved it from −0.771 to
+    # −0.7218. The test half is history twice over: it outlived the 2026-08-06 refit inside the
+    # Gate 0 sweep, and then that sweep went validation-only too. Presence-checked only — there
+    # is no artifact left to check it against, which is the honest state rather than a gap.
+    add("−0.7218", STAN_C_S,
         lambda: cell(STAN_C_S, "reparam_minus_canonical", split="val",
                      arm="two_counts"), "substitution gain, val")
+    add("−0.771", STAN_C_S, lambda: float("nan"),
+        "substitution gain, val, pre-preseason-block", historical=True)
     add("−0.793", SHOT_SWEEP, lambda: float("nan"),
         "substitution gain, test", historical=True)
-    for arm, quoted in [("two_counts", "10.797"), ("fga_x_fg3a_share", "10.026")]:
+    for arm, quoted in [("two_counts", "10.738"), ("fga_x_fg3a_share", "10.0162")]:
         add(quoted, STAN_C_S,
             lambda a=arm: cell(STAN_C_S, "mean_joint_nll", split="val", arm=a),
             f"substitution joint NLL val/{arm}")
+    for quoted in ("10.797", "10.026"):
+        add(quoted, STAN_C_S, lambda: float("nan"),
+            f"substitution joint NLL val, pre-preseason-block: {quoted}", historical=True)
     for arm, quoted in [("two_counts", "10.784"), ("fga_x_fg3a_share", "9.991")]:
         add(quoted, SHOT_SWEEP, lambda: float("nan"),
             f"substitution joint NLL test/{arm}", historical=True)
@@ -3505,21 +3532,38 @@ def _established_facts() -> list[Claim]:
     # The live table, on validation. `retired` marks a head the shot-attempt basis removed;
     # the superseded TEST reading of every surviving head follows below, so the two axes a
     # figure can move along — which basis, which split — stay separately legible.
-    stan_counts = [("fga", "0.9514", "0.9489", "0.9581", "0.9584", False),
-                   ("reb", "0.9505", "0.8889", "0.9513", "0.9511", False),
+    stan_counts = [("fga", "0.9514", "0.9527", "0.9644", "0.9647", False),
+                   ("reb", "0.9505", "0.9011", "0.9574", "0.9577", False),
                    ("fg2a", "0.9194", "0.9018", "0.9241", "0.9241", True),
-                   ("ast", "0.9195", "0.6418", "0.9198", "0.9255", False),
+                   ("ast", "0.9195", "0.6607", "0.9283", "0.9334", False),
                    ("fg3a", "0.9036", "−19.00", "0.3719", "0.9046", True),
-                   ("tov", "0.8966", "0.9048", "0.9170", "0.9169", False),
-                   ("blk", "0.8103", "−0.2744", "0.6730", "0.8309", False),
-                   ("fta", "0.8765", "0.5741", "0.8909", "0.8893", False),
-                   ("stl", "0.8386", "0.8492", "0.8674", "0.8695", False)]
+                   ("tov", "0.8966", "0.9057", "0.9205", "0.9206", False),
+                   ("blk", "0.8103", "−0.5155", "0.6485", "0.8324", False),
+                   ("fta", "0.8765", "0.5769", "0.8963", "0.8934", False),
+                   ("stl", "0.8386", "0.8472", "0.8696", "0.8723", False)]
     for head, floor, linear, log_own, spline, retired in stan_counts:
         for quoted, variant in [(floor, "carry_forward"), (linear, "linear"),
                                 (log_own, "log_own"), (spline, "log_own_spline")]:
             add(quoted, STAN_C_M,
                 lambda h=head, v=variant: stan_c(h, v, "val_r2"),
                 f"NB {head} {variant}", historical=retired)
+    # The pre-preseason-block reading of the same table (2026-08-15 cut the fitting window from
+    # 8,630 rows to 6,382 on ten of the eleven heads). The FLOOR column is deliberately absent:
+    # it did not move, so it is still value-checked above, and that invariance is the doc's own
+    # evidence that the window moved rather than the scoring frame.
+    stan_counts_pre_block = [("fga", "0.9489", "0.9581", "0.9584"),
+                             ("reb", "0.8889", "0.9513", "0.9511"),
+                             ("ast", "0.6418", "0.9198", "0.9255"),
+                             ("tov", "0.9048", "0.9170", "0.9169"),
+                             ("blk", "−0.2744", "0.6730", "0.8309"),
+                             ("fta", "0.5741", "0.8909", "0.8893"),
+                             ("stl", "0.8492", "0.8674", "0.8695")]
+    for head, linear, log_own, spline in stan_counts_pre_block:
+        for quoted, variant in [(linear, "linear"), (log_own, "log_own"),
+                                (spline, "log_own_spline")]:
+            add(quoted, STAN_C_M,
+                lambda h=head, v=variant: stan_c(h, v, "val_r2"),
+                f"NB {head} {variant}, pre-preseason-block", historical=True)
     stan_counts_on_test = [("fga", "0.9464", "0.9396", "0.9501", "0.9505"),
                            ("reb", "0.9424", "0.9095", "0.9439", "0.9428"),
                            ("ast", "0.9197", "0.6615", "0.9223", "0.9240"),
@@ -3533,10 +3577,14 @@ def _established_facts() -> list[Claim]:
             add(quoted, STAN_C_M,
                 lambda h=head, v=variant: stan_c(h, v, "val_r2"),
                 f"NB {head} {variant}, on test", historical=True)
-    conversions = [("fg3a|fga", "4.6157", "4.6191"),
-                   ("fg2m|fg2a", "3.8046", "3.8442"),
-                   ("fg3m|fg3a", "3.1677", "3.1851"),
-                   ("ftm|fta", "3.0804", "3.0541")]
+    # ⚠️ Unlike the count floors, three of these four MOVED with the preseason block, because a
+    # conversion floor is a carry-forward shrunk with `k` fitted on the training half. The
+    # exception is `fg3m|fg3a`, the one head that carries no block and keeps the full window —
+    # so its floor is registered once and its fitted NLL reproduces the pre-block head.
+    conversions = [("fg3a|fga", "4.5385", "4.6187"),
+                   ("fg2m|fg2a", "3.7829", "3.8138"),
+                   ("fg3m|fg3a", "3.1676", "3.1851"),
+                   ("ftm|fta", "3.0718", "3.0534")]
     for head, fitted, floor in conversions:
         add(fitted, STAN_C_M,
             lambda h=head: stan_c(h, "logit_own_spline", "val_nll"),
@@ -3544,6 +3592,15 @@ def _established_facts() -> list[Claim]:
         add(floor, STAN_C_M,
             lambda h=head: stan_c(h, "carry_forward", "val_nll"),
             f"NB {head} floor NLL")
+    for head, fitted, floor in [("fg3a|fga", "4.6157", "4.6191"),
+                                ("fg2m|fg2a", "3.8046", "3.8442"),
+                                ("fg3m|fg3a", "3.1677", None),
+                                ("ftm|fta", "3.0804", "3.0541")]:
+        add(fitted, STAN_C_M, lambda: float("nan"),
+            f"NB {head} fitted NLL, pre-preseason-block", historical=True)
+        if floor is not None:
+            add(floor, STAN_C_M, lambda: float("nan"),
+                f"NB {head} floor NLL, pre-preseason-block", historical=True)
     for head, fitted, floor in [("fg3a|fga", "4.6137", "4.6528"),
                                 ("fg2m|fg2a", "3.7249", "3.7770"),
                                 ("fg3m|fg3a", "3.2407", "3.2614"),
@@ -3554,34 +3611,44 @@ def _established_facts() -> list[Claim]:
         add(floor, STAN_C_M,
             lambda h=head: stan_c(h, "carry_forward", "val_nll"),
             f"NB {head} floor NLL, on test", historical=True)
-    add("+0.0034", STAN_C_M,
+    add("+0.0802", STAN_C_M,
         lambda: stan_c("fg3a|fga", "carry_forward", "val_nll")
         - stan_c("fg3a|fga", "logit_own_spline", "val_nll"),
         "fg3a|fga NLL gain")
-    add("+0.0396", STAN_C_M,
+    add("+0.0309", STAN_C_M,
         lambda: stan_c("fg2m|fg2a", "carry_forward", "val_nll")
         - stan_c("fg2m|fg2a", "logit_own_spline", "val_nll"),
         "fg2m|fg2a NLL gain")
-    add("+0.0173", STAN_C_M,
+    add("+0.0174", STAN_C_M,
         lambda: stan_c("fg3m|fg3a", "carry_forward", "val_nll")
         - stan_c("fg3m|fg3a", "logit_own_spline", "val_nll"),
         "fg3m|fg3a NLL gain")
-    add("−0.0263", STAN_C_M,
+    add("−0.0184", STAN_C_M,
         lambda: stan_c("ftm|fta", "carry_forward", "val_nll")
         - stan_c("ftm|fta", "logit_own_spline", "val_nll"),
         "ftm|fta NLL gain")
+    # The pre-block gains. `fg3a|fga`'s is the one that matters as a record: it was the doc's
+    # "clears by only +0.0034" caveat, which the block retired by taking the head to +0.0802.
+    for quoted, head in [("+0.0034", "fg3a|fga"), ("+0.0396", "fg2m|fg2a"),
+                         ("+0.0173", "fg3m|fg3a"), ("−0.0263", "ftm|fta")]:
+        add(quoted, STAN_C_M, lambda: float("nan"),
+            f"{head} NLL gain, pre-preseason-block", historical=True)
     for quoted, label in [("+0.0391", "fg3a|fga"), ("+0.0521", "fg2m|fg2a"),
                           ("+0.0208", "fg3m|fg3a"), ("−0.0491", "ftm|fta")]:
         add(quoted, STAN_C_M,
             lambda h=label: stan_c(h, "carry_forward", "val_nll")
             - stan_c(h, "logit_own_spline", "val_nll"),
             f"{label} NLL gain, on test", historical=True)
-    add("137.4", STAN_C_D, lambda: total(STAN_C_D, "wall_clock_s") / 60,
+    add("163.9", STAN_C_D, lambda: total(STAN_C_D, "wall_clock_s") / 60,
         "component sampler minutes")
+    add("137.4", STAN_C_D, lambda: total(STAN_C_D, "wall_clock_s") / 60,
+        "component sampler minutes, pre-preseason-block", historical=True)
     add("305.0", STAN_C_D, lambda: total(STAN_C_D, "wall_clock_s") / 60,
         "component sampler minutes, both splits", historical=True)
-    add("1.0076", STAN_C_D, lambda: max_of(STAN_C_D, "max_rhat"),
+    add("1.00713", STAN_C_D, lambda: max_of(STAN_C_D, "max_rhat"),
         "component max R-hat")
+    add("1.0076", STAN_C_D, lambda: max_of(STAN_C_D, "max_rhat"),
+        "component max R-hat, pre-preseason-block", historical=True)
     add("1.0118", STAN_C_D, lambda: max_of(STAN_C_D, "max_rhat"),
         "component max R-hat, half-length selection fits", historical=True)
     # The handicapped margins, kept in the doc beside their correction. The validation one
@@ -3590,9 +3657,11 @@ def _established_facts() -> list[Claim]:
     # file's conversion inside the Gate 0 sweep, and the 2026-08-06 re-run of that sweep took
     # the last copy. Demoted rather than frozen, because freezing a run to keep a claim
     # checkable is the tail wagging the dog.
-    add("−0.771", STAN_C_S,
+    add("−0.7218", STAN_C_S,
         lambda: cell(STAN_C_S, "reparam_minus_canonical", split="val",
                      arm="two_counts"), "substitution gain, val (handicapped)")
+    add("−0.771", STAN_C_S, lambda: float("nan"),
+        "substitution gain, val (handicapped), pre-block", historical=True)
     add("−0.793", SHOT_SWEEP, lambda: float("nan"),
         "substitution gain, test (handicapped)", historical=True)
     add("0.792657", SHOT_SWEEP, lambda: float("nan"),
@@ -3632,32 +3701,39 @@ def _established_facts() -> list[Claim]:
         "gate 0 arm A best-of-16, on test", historical=True)
     # The handicap decomposition, live on validation since the 2026-08-06 re-run. Its test
     # predecessors sit beside it in the doc and are presence-checked only.
-    add("10.797078", STAN_C_S,
+    # ⚠️ The handicap decomposition SPANS TWO ARTIFACTS, and since 2026-08-15 they sit on
+    # opposite sides of the preseason block: `make stan-components` rewrote
+    # `stan_component_substitution.csv` with the block on ten of eleven heads, while
+    # `SHOT_SWEEP` is only rewritten by `make stan-substitution`, which is not in `make stan`.
+    # So every cross-artifact figure below is demoted to historical — not because it drifted,
+    # but because it is no longer a subtraction of two comparable numbers. Re-running the
+    # sweep would restore them and is a refit for record-keeping; see the doc.
+    add("10.797078", STAN_C_S, lambda: float("nan"),
+        "gate 0 handicapped arm A, pre-block", historical=True)
+    add("10.738", STAN_C_S,
         lambda: cell(STAN_C_S, "mean_joint_nll", split="val", arm="two_counts"),
-        "gate 0 handicapped arm A")
-    add("0.291919", SHOT_SWEEP,
-        lambda: cell(STAN_C_S, "mean_joint_nll", split="val",
-                     arm="two_counts") - shot("two_counts"),
-        "gate 0 handicap in nats, on validation")
+        "gate 0 handicapped arm A, post-block")
+    add("0.291919", SHOT_SWEEP, lambda: float("nan"),
+        "gate 0 handicap in nats — no longer re-derivable across the two artifacts",
+        historical=True)
     add("−0.021832", SHOT_SWEEP,
         lambda: shot("fga_x_fg3a_share") - shot_head("fga", "log_own")
         - shot_head("fg3a|fga", "logit_own"),
         "gate 0 value of sweeping arm B")
-    add("−0.771128", STAN_C_S,
-        lambda: cell(STAN_C_S, "reparam_minus_canonical", split="val",
-                     arm="two_counts"), "gate 0 recorded margin, full precision")
-    add("65%", SHOT_SWEEP,
-        lambda: (shot("fga_x_fg3a_share") - shot("two_counts"))
-        / cell(STAN_C_S, "reparam_minus_canonical", split="val", arm="two_counts"),
-        "gate 0 share of the recorded margin surviving the correction")
-    # Claimed from both artifacts against one string: they are the same quantity computed by
-    # different code, and the whole point is that they cannot drift apart.
+    add("−0.771128", STAN_C_S, lambda: float("nan"),
+        "gate 0 recorded margin, full precision, pre-block", historical=True)
+    add("65%", SHOT_SWEEP, lambda: float("nan"),
+        "gate 0 share of the recorded margin surviving the correction — pre-block",
+        historical=True)
+    # This pair was claimed from both artifacts against ONE string precisely so they could not
+    # drift apart. They have, by 9.8e-03, and the cause is the block rather than a bug — so the
+    # two strings are now separate claims and the doc carries both sides of the gap.
     add("10.025950", SHOT_SWEEP,
         lambda: shot_head("fga", "log_own") + shot_head("fg3a|fga", "logit_own"),
-        "gate 0 arm B pinned")
-    add("10.025950", STAN_C_S,
+        "gate 0 arm B pinned, from the sweep — still exactly this")
+    add("10.0162", STAN_C_S,
         lambda: cell(STAN_C_S, "mean_joint_nll", split="val", arm="fga_x_fg3a_share"),
-        "…and substitution_arm computes it identically")
+        "…and what substitution_arm computes for it now that the heads differ")
     for quoted, label in [("0.305646", "the handicap"),
                           ("−0.487010", "margin before arm B was swept"),
                           ("−0.006539", "what sweeping arm B added")]:
@@ -4610,37 +4686,53 @@ def _readme() -> list[Claim]:
     # than only their inputs, because the ratio is the sentence — "the block is worth more
     # than the fitted head is" goes stale if either end moves, and a reader checking one
     # column would not catch it.
+    # Read on the SHIPPED arm (`own_delta_shrunk`) since 2026-08-15, not on the declared
+    # primary — the ship decision was taken there, so a ratio quoted from the primary would
+    # describe an arm nobody adopted. That change alone takes `reb` from 5.45x to 7.25x.
     def block_over_fit(head: str) -> float:
         floor = _pc(head, "carry_forward", "val_crps")
         incumbent = _pc(head, "incumbent", "val_crps")
-        return (incumbent - _pc(head, "own_delta", "val_crps")) / (floor - incumbent)
+        return ((incumbent - _pc(head, "own_delta_shrunk", "val_crps"))
+                / (floor - incumbent))
 
     add("0.1507", PRE_CMP,
         lambda: _pc("reb", "carry_forward", "val_crps") - _pc("reb", "incumbent",
                                                               "val_crps"),
         "reb: what fitting buys over the no-fit floor")
-    add("0.8213", PRE_CMP,
-        lambda: _pc("reb", "incumbent", "val_crps") - _pc("reb", "own_delta", "val_crps"),
+    add("1.0929", PRE_CMP,
+        lambda: (_pc("reb", "incumbent", "val_crps")
+                 - _pc("reb", "own_delta_shrunk", "val_crps")),
         "reb: what the preseason block buys on top")
-    add("5.45", PRE_CMP, lambda: block_over_fit("reb"), "reb: block over fit")
-    add("1.07", PRE_CMP, lambda: block_over_fit("fga"), "fga: block over fit")
+    add("7.25", PRE_CMP, lambda: block_over_fit("reb"), "reb: block over fit")
+    add("3.77", PRE_CMP, lambda: block_over_fit("fg3a|fga"), "fg3a|fga: block over fit")
+    add("1.17", PRE_CMP, lambda: block_over_fit("fga"), "fga: block over fit")
+    for quoted in ("0.8213", "5.45", "1.07"):
+        add(quoted, PRE_CMP, lambda: float("nan"),
+            f"the six-head 6b reading on the declared primary arm: {quoted}",
+            historical=True)
     add("−19.00", STAN_C_M, lambda: stan_c("fg3a", "linear", "val_r2"),
         "fg3a under a linear predictor", historical=True)
     # Rounded to 3dp here on purpose — this is the overview, and `implied_tolerance`
     # handles the rounding. The 3dp form is what makes the README's copy independently
     # checkable rather than a transcription of the notes' 4dp table.
-    add("0.673", STAN_C_M, lambda: stan_c("blk", "log_own", "val_r2"),
+    add("0.649", STAN_C_M, lambda: stan_c("blk", "log_own", "val_r2"),
         "blk log_own R2, 3dp")
-    add("0.831", STAN_C_M, lambda: stan_c("blk", "log_own_spline", "val_r2"),
+    add("0.832", STAN_C_M, lambda: stan_c("blk", "log_own_spline", "val_r2"),
         "blk spline R2, 3dp")
+    add("0.673", STAN_C_M, lambda: float("nan"),
+        "blk log_own R2, 3dp, pre-preseason-block", historical=True)
+    add("0.831", STAN_C_M, lambda: float("nan"),
+        "blk spline R2, 3dp, pre-preseason-block", historical=True)
     add("0.679", STAN_C_M, lambda: stan_c("blk", "log_own", "val_r2"),
         "blk log_own R2, 3dp, on test", historical=True)
     add("0.858", STAN_C_M, lambda: stan_c("blk", "log_own_spline", "val_r2"),
         "blk spline R2, 3dp, on test", historical=True)
-    add("+0.0144", STAN_C_M,
+    add("+0.0198", STAN_C_M,
         lambda: stan_c("fta", "log_own", "val_r2") - stan_c("fta", "carry_forward",
                                                             "val_r2"),
         "fta clears its floor — the reversal the split move produced")
+    add("+0.0144", STAN_C_M, lambda: float("nan"),
+        "fta's floor margin, pre-preseason-block", historical=True)
     # The two figures behind "the substitution arm's canonical side was handicapped":
     # `substitution_arm` fits every head at log_own, and that is the variant on which
     # `fg3a` fails its own floor. Claimed so the caveat cannot rot into a bare assertion.
@@ -4716,10 +4808,12 @@ def _readme() -> list[Claim]:
     # word is gone from the prose. What replaces it is a different and better-founded
     # replication: the margin survived a doubling of chain length. The test figures stay in
     # the README as the record of what the adoption was decided on, presence-checked only.
-    add("−0.771", STAN_C_S,
+    add("−0.7218", STAN_C_S,
         lambda: cell(STAN_C_S, "reparam_minus_canonical", split="val",
                      arm="two_counts"),
         "substitution gain, val (handicapped)")
+    add("−0.771", STAN_C_S, lambda: float("nan"),
+        "substitution gain, val (handicapped), pre-preseason-block", historical=True)
     add("−0.793", SHOT_SWEEP, lambda: float("nan"),
         "substitution gain, test (handicapped)", historical=True)
     add("−0.493549", SHOT_SWEEP, lambda: float("nan"),
@@ -4769,17 +4863,26 @@ def _readme() -> list[Claim]:
     def shipped(column: str) -> float:
         return cell(STRATEGY_SHIPPED, column, tournament="600k_shootaround")
 
-    add("0.2358", STRATEGY_SHIPPED, lambda: shipped("sim_lift"),
+    add("0.230387", STRATEGY_SHIPPED, lambda: shipped("sim_lift"),
         "shipped arm's simulated advance lift, 600k")
-    add("0.204098", STRATEGY_SHIPPED, lambda: shipped("realized_lift"),
+    add("0.197293", STRATEGY_SHIPPED, lambda: shipped("realized_lift"),
         "shipped arm's realized advance lift, 600k")
+    for quoted in ("0.2358", "0.204098"):
+        add(quoted, STRATEGY_SHIPPED, lambda: float("nan"),
+            f"shipped arm's advance lift before the component block: {quoted}",
+            historical=True)
     # Gate D's failure is a *count of zero*, which is the one shape of result that decays
     # silently: a sweep that started separating the tiers would leave the prose true-looking
     # and wrong. Both ends are claimed, so the denominator cannot drift either.
     add("6", STRATEGY_GATE_D, lambda: rows(STRATEGY_GATE_D),
         "Gate D paired comparisons")
-    add("0", STRATEGY_GATE_D, lambda: total(STRATEGY_GATE_D, "materially_different"),
+    # ⚠️ Reversed on 2026-08-15: the component block took this from 0 to 1 of 6. The claim is
+    # still "a count", and it is still the shape that decays silently — which is why it caught
+    # its own reversal on the first audit after the run rather than on a re-read.
+    add("1", STRATEGY_GATE_D, lambda: total(STRATEGY_GATE_D, "materially_different"),
         "Gate D comparisons that separate the tiers")
+    add("0", STRATEGY_GATE_D, lambda: float("nan"),
+        "Gate D comparisons separating the tiers, pre-component-block", historical=True)
 
     # ── results: the field, and the execution axis (2026-08-11) ──────────────
     # The fitted need weight is a zero the same way Gate D's count is: a recalibration
@@ -4791,7 +4894,7 @@ def _readme() -> list[Claim]:
     add("0.306", SHIPPED_NEED,
         lambda: cell(SHIPPED_NEED, "sim_lift", tournament="600k_shootaround"),
         "shipped arm's simulated lift against the stipulated need-aware field, 600k")
-    add("+0.00841967", STRATEGY_PAIRED,
+    add("+0.000303134", STRATEGY_PAIRED,
         lambda: cell(STRATEGY_PAIRED, "gap", tournament="600k_shootaround",
                      metric="p_advance", baseline="blend_a30",
                      strategy="autodraft_blend_a30"),
@@ -4805,9 +4908,13 @@ def _readme() -> list[Claim]:
                     & (frame["strategy"] == arm)]
         return float(hit["lift_vs_null"].mean()) if len(hit) else float("nan")
 
-    add("0.105298", STRATEGY_SHIPPED,
+    add("0.0706785", STRATEGY_SHIPPED,
         lambda: shipped("sim_lift") - sweep_mean_lift("autodraft_blend_a30"),
         "lift given up by autodrafting instead of the shipped objective, 600k")
+    for quoted in ("+0.00841967", "0.105298"):
+        add(quoted, STRATEGY_SHIPPED, lambda: float("nan"),
+            f"execution-axis reading before the component block: {quoted}",
+            historical=True)
 
     # ── discussion ────────────────────────────────────────────────────────────
     add("0.317", PROFILE,
@@ -4868,22 +4975,27 @@ def _readme() -> list[Claim]:
     def pc5(block: str, measure: str, key: str, column: str = "preseason") -> float:
         return cell(PRE_CONTEST, column, block=block, measure=measure, key=key)
 
-    add("+0.102767", PRE_CONTEST,
+    add("+0.095962", PRE_CONTEST,
         lambda: pc5("contest", "realized_lift", "600k_shootaround", "delta"),
         "README P5 realized lift delta, 600k")
-    add("10", PRE_CONTEST,
+    add("9", PRE_CONTEST,
         lambda: pc5("realized", "delta_positive_cells", "all tournaments"),
         "README P5 realized cells moving the block's way")
+    # The tenth cell is a TIE. The README's claim is "no cell moves against the block", which
+    # is a statement about this row and not about the count above it.
+    add("0.000000", PRE_CONTEST,
+        lambda: pc5("realized", "min_abs_delta", "all tournaments"),
+        "README P5 the weakest realized cell — a tie, not a loss")
     add("10", PRE_CONTEST,
         lambda: pc5("realized", "delta_positive_cells", "all tournaments", "base"),
         "README P5 the denominator behind that count")
     add("0.074835", PRE_CONTEST,
         lambda: pc5("resolution", "min_detectable_lift_gap", "base"),
         "README P5 the simulated resolution bar")
-    add("−0.006490", PRE_CONTEST,
+    add("−0.00515", PRE_CONTEST,
         lambda: pc5("strategy", "adp_only_lift", "600k_shootaround", "delta"),
         "README P5 the adp control — the sign that carries the conclusion")
-    add("+0.034429", PRE_CONTEST,
+    add("+0.04585", PRE_CONTEST,
         lambda: pc5("strategy", "lift_delta_mean", "600k_shootaround"),
         "README P5 mean simulated lift delta over 24 strategies")
 
@@ -4971,28 +5083,41 @@ def _shot_basis() -> list[Claim]:
     def handicapped(arm: str) -> float:
         return cell(STAN_C_S, "mean_joint_nll", split="val", arm=arm)
 
-    add(_c("10.797078", STAN_C_S, lambda: handicapped("two_counts"),
+    # ⚠️ 2026-08-15: the decomposition's two artifacts came apart. `STAN_C_S` is rewritten by
+    # `make stan-components`, which re-ran with the preseason block on ten of eleven heads;
+    # `SHOT_SWEEP` is rewritten only by `make stan-substitution`, which is not in `make stan`
+    # and did not re-run. Every figure that SUBTRACTS one from the other is therefore no
+    # longer a decomposition and is demoted to presence-checked. The single-artifact figures
+    # on either side stay value-checked — including the post-block readings, which the doc now
+    # carries beside the pre-block ones.
+    add(_c("10.797078", STAN_C_S, lambda: float("nan"),
+           "handicapped arm A, pre-block", doc=SHOT, historical=True))
+    add(_c("10.738", STAN_C_S, lambda: handicapped("two_counts"),
            "arm A with both heads at log_own — the handicapped arm", doc=SHOT))
-    add(_c("0.291919", SHOT_SWEEP,
-           lambda: handicapped("two_counts") - joint("two_counts"),
-           "the handicap, in nats — on validation", doc=SHOT))
-    add(_c("−0.771128", STAN_C_S,
+    add(_c("0.291919", SHOT_SWEEP, lambda: float("nan"),
+           "the handicap, in nats — spans both artifacts, no longer re-derivable",
+           doc=SHOT, historical=True))
+    add(_c("−0.771128", STAN_C_S, lambda: float("nan"),
+           "the recorded handicapped margin, full precision, pre-block", doc=SHOT,
+           historical=True))
+    add(_c("−0.7218", STAN_C_S,
            lambda: cell(STAN_C_S, "reparam_minus_canonical", split="val",
                         arm="two_counts"),
            "the recorded handicapped margin, full precision", doc=SHOT))
     add(_c("−0.021832", SHOT_SWEEP, lambda: joint("fga_x_fg3a_share") - pinned(),
            "what sweeping arm B added", doc=SHOT))
-    add(_c("65%", SHOT_SWEEP,
-           lambda: (joint("fga_x_fg3a_share") - joint("two_counts"))
-           / cell(STAN_C_S, "reparam_minus_canonical", split="val", arm="two_counts"),
-           "share of the recorded margin that survives the correction", doc=SHOT))
-    # The regression check: the gate's pinned arm B and `substitution_arm`'s arm B are the
-    # same quantity computed by different code in different modules. Claimed from both
-    # artifacts against the one quoted string, so they cannot drift apart silently.
+    add(_c("65%", SHOT_SWEEP, lambda: float("nan"),
+           "share of the recorded margin that survives the correction — pre-block",
+           doc=SHOT, historical=True))
+    # The regression check WORKED. The gate's pinned arm B and `substitution_arm`'s arm B are
+    # the same quantity computed by different code in different modules, and they were claimed
+    # from both artifacts against one quoted string precisely so they could not drift apart
+    # silently. They drifted, by 9.8e-03, and the string had to be split — which is the check
+    # reporting a real configuration change rather than failing.
     add(_c("10.025950", SHOT_SWEEP, pinned,
-           "arm B pinned at (log_own, logit_own)", doc=SHOT))
-    add(_c("10.025950", STAN_C_S, lambda: handicapped("fga_x_fg3a_share"),
-           "…and `substitution_arm` computes it identically", doc=SHOT))
+           "arm B pinned at (log_own, logit_own) — the sweep side, unmoved", doc=SHOT))
+    add(_c("10.0162", STAN_C_S, lambda: handicapped("fga_x_fg3a_share"),
+           "…and what `substitution_arm` computes for it post-block", doc=SHOT))
 
     # ── the headline: the coordinate change beats the fitting ─────────────────
     def floor_total(names: tuple[str, str], variants: tuple[str, str]) -> float:
@@ -5055,9 +5180,11 @@ def _shot_basis() -> list[Claim]:
             ("0.792657", "the recorded handicapped margin, unsigned")]:
         retired(quoted, f"retired test-split figure: {label}")
 
-    # The validation half of the handicapped pair is still live, in the one artifact that
-    # still carries it.
-    add(_c("−0.771", STAN_C_S,
+    # The validation half of the handicapped pair, which the 2026-08-15 preseason block moved
+    # underneath: `make stan-components` rewrites this artifact. Both readings stay in the doc.
+    add(_c("−0.771", STAN_C_S, lambda: float("nan"),
+           "the recorded handicapped margin, val — pre-block", doc=SHOT, historical=True))
+    add(_c("−0.7218", STAN_C_S,
            lambda: cell(STAN_C_S, "reparam_minus_canonical", split="val",
                         arm="two_counts"),
            "the recorded handicapped margin, val", doc=SHOT))
@@ -5562,7 +5689,13 @@ def _train_validate_test() -> list[Claim]:
     C: list[Claim] = _availability_ladder_claims(
         SPLIT, scope="headline",
         historical=("10.795", "10.888", "10.896", "13.614"))
-    C.append(_c("−0.771", STAN_C_S,
+    # The reproduction this doc records happened on 2026-08-06 and is not retracted by the
+    # 2026-08-15 preseason block — but `stan_component_substitution.csv` is written by
+    # `make stan-components`, so the artifact moved underneath the sentence. The pre-block
+    # value stays presence-checked beside its correction; the live one is value-checked.
+    C.append(_c("−0.771", STAN_C_S, lambda: float("nan"),
+                "pre-preseason-block substitution margin", doc=SPLIT, historical=True))
+    C.append(_c("−0.7218", STAN_C_S,
                 lambda: cell(STAN_C_S, "reparam_minus_canonical", split="val",
                              arm="two_counts"),
                 "substitution margin held across the chain-length change", doc=SPLIT))
@@ -5666,12 +5799,12 @@ def _weekly() -> list[Claim]:
     """
     facets = (("week", "train", "13,022", "52.74", "50.02", "29.93", "−2.72", "0.3985",
                "20.34"),
-              ("week", "validation", "13,141", "53.40", "51.4301", "27.6893", "−1.96909",
-               "0.494243", "18.6603"),
+              ("week", "validation", "13,141", "53.40", "51.8035", "27.5537", "−1.59578",
+               "0.497532", "18.578"),
               ("double_week", "train", "2,298", "93.24", "88.43", "50.85", "−4.81",
                "0.4542", "34.41"),
-              ("double_week", "validation", "2,319", "98.51", "95.8012", "52.1965", "−2.71173",
-               "0.430198", "35.4979"))
+              ("double_week", "validation", "2,319", "98.51", "96.5407", "52.0073", "−1.97226",
+               "0.430454", "35.429"))
     columns = ("n", "observed_mean", "predicted_mean", "mae", "bias", "r2", "crps")
     C: list[Claim] = []
     for period_type, split, *quoted in facets:
@@ -5686,7 +5819,7 @@ def _weekly() -> list[Claim]:
         # The spread, which is what a max over sixteen players is most sensitive to.
         _c("0.927", WEEK_INDEX, lambda: _week_spread_ratio(largest=False),
            "narrowest simulated/observed sd ratio", doc=SIMS),
-        _c("0.978824", WEEK_INDEX, lambda: _week_spread_ratio(largest=True),
+        _c("0.986257", WEEK_INDEX, lambda: _week_spread_ratio(largest=True),
            "widest simulated/observed sd ratio", doc=SIMS),
         _c("29.40", WEEK_INDEX, lambda: _week("point_sd"),
            "one-week train point-prediction sd", doc=SIMS),
@@ -5702,26 +5835,41 @@ def _weekly() -> list[Claim]:
            "one-week validation observed zero share", doc=SIMS),
         _c("17.95%", WEEK_INDEX, lambda: _week("predicted_zero_share"),
            "one-week train simulated zero share", doc=SIMS),
-        _c("19.7954%", WEEK_INDEX,
+        _c("19.7979%", WEEK_INDEX,
            lambda: _week("predicted_zero_share", split="validation"),
            "one-week validation simulated zero share", doc=SIMS),
         # Calibration, read as a distance and never as a verdict.
-        _c("0.0178266", WEEK_INDEX, lambda: _week_extreme("ks", largest=False),
+        _c("0.0127339", WEEK_INDEX, lambda: _week_extreme("ks", largest=False),
            "narrowest KS distance", doc=SIMS),
         _c("0.0582", WEEK_INDEX, lambda: _week_extreme("ks", largest=True),
            "widest KS distance", doc=SIMS),
-        _c("0.099968", WEEK_QUANTILE, lambda: _week_line_gap(largest=False),
+        _c("0.1", WEEK_QUANTILE, lambda: _week_line_gap(largest=False),
            "narrowest quantile-line gap", doc=SIMS),
         _c("0.1607", WEEK_QUANTILE, lambda: _week_line_gap(largest=True),
            "widest quantile-line gap", doc=SIMS),
         # The only bars in the target, and both are on the budget rather than the model.
-        _c("0.00670548", WEEK_INDEX, lambda: _week_extreme("ecdf_band_mc"),
+        _c("0.00656533", WEEK_INDEX, lambda: _week_extreme("ecdf_band_mc"),
            "worst ribbon half-sample disagreement", doc=SIMS),
-        _c("0.00394135", WEEK_INDEX, lambda: _week_extreme("ks_mc"),
+        _c("0.00398448", WEEK_INDEX, lambda: _week_extreme("ks_mc"),
            "worst KS half-sample disagreement", doc=SIMS),
         *[_c(quoted, WEEK_INDEX, lambda: float("nan"),
              f"pre-grading half-sample bar reading, {quoted}", doc=SIMS, historical=True)
           for quoted in ("0.0074", "0.0056")],
+        # The pre-preseason-block column (2026-08-15, `docs/preseason-plan.md` session 6b).
+        # ONLY the validation facets moved, which is itself the finding: the block populates
+        # the seasons the preseason panel covers, so the training tensors barely see it.
+        *[_c(quoted, WEEK_INDEX, lambda: float("nan"),
+             f"pre-preseason-block weekly reading, {quoted}", doc=SIMS, historical=True)
+          for quoted in ("51.4301", "27.6893", "−1.96909", "0.494243", "18.6603",
+                         "95.8012", "52.1965", "−2.71173", "0.430198", "35.4979",
+                         "0.978824", "19.7954%", "0.0178266", "0.099968",
+                         "0.00670548", "0.00394135")],
+        *[_c(quoted, WEEK_PERIOD, lambda: float("nan"),
+             f"pre-preseason-block weekly bias profile, {quoted}", doc=SIMS,
+             historical=True)
+          for quoted in ("−1.87224", "−2.94136", "−2.23589", "−1.35151", "−1.05349")],
+        _c("−15.4388", SIM_GATE_A, lambda: float("nan"),
+           "smallest season-total bias, pre-preseason-block", doc=SIMS, historical=True),
         # The pre-grading facet column, quoted in the note beside the live table for the
         # same reason the layout round quoted its own: the claim is the movement.
         *[_c(quoted, WEEK_INDEX, lambda: float("nan"),
@@ -5738,15 +5886,15 @@ def _weekly() -> list[Claim]:
           for quoted in ("−2.93", "−2.26", "−3.61", "−1.21", "20.39", "19.63",
                          "16.9%", "18.2%", "0.920", "0.954", "0.0265", "0.0639")],
         # Where the season-total bias actually sits, week by week.
-        _c("−1.87224", WEEK_PERIOD, lambda: _week_period_bias(0),
+        _c("−1.54649", WEEK_PERIOD, lambda: _week_period_bias(0),
            "validation bias in week 1", doc=SIMS),
-        _c("−2.94136", WEEK_PERIOD, lambda: _week_period_bias(1),
+        _c("−2.51388", WEEK_PERIOD, lambda: _week_period_bias(1),
            "validation bias in week 2", doc=SIMS),
-        _c("−2.23589", WEEK_PERIOD, lambda: _week_period_bias(2),
+        _c("−1.77884", WEEK_PERIOD, lambda: _week_period_bias(2),
            "validation bias in week 3", doc=SIMS),
-        _c("−1.35151", WEEK_PERIOD, lambda: _week_period_bias(12),
+        _c("−1.01348", WEEK_PERIOD, lambda: _week_period_bias(12),
            "validation bias in week 13", doc=SIMS),
-        _c("−1.05349", WEEK_PERIOD, lambda: _week_period_bias(16),
+        _c("−0.755881", WEEK_PERIOD, lambda: _week_period_bias(16),
            "validation bias in week 17", doc=SIMS),
         # The pre-`tenure_merge` profile, quoted beside the live one because the finding is
         # that the SHAPE went away — a flat −2 where there used to be a monotone ramp.
@@ -5754,7 +5902,7 @@ def _weekly() -> list[Claim]:
              f"pre-layout weekly bias profile, {quoted}", doc=SIMS, historical=True)
           for quoted in ("−5.28", "−4.99", "−3.27", "−1.08", "−0.70")],
         # Gate A's own season-total bias, so the weekly row is read against it.
-        _c("−15.4388", SIM_GATE_A, lambda: _season_total_bias(largest=True),
+        _c("−11.0438", SIM_GATE_A, lambda: _season_total_bias(largest=True),
            "smallest season-total bias", doc=SIMS),
         # The same row's earlier readings, kept in the prose because the bullet's argument is
         # that a −69 dk_pts fault dwarfs everything measured on the head since. They are
@@ -7591,30 +7739,93 @@ def _pcr(head: str, arm: str, column: str, population: str = "draftable") -> flo
     return _one(table(PRE_CMP_ROLL), column, head=head, arm=arm, population=population)
 
 
+#: Label for the posterior half of the retention table — the two artifacts are read by
+#: different helpers and the label has to say which side a figure came from.
+STAN_C_M_LABEL = "{} block gain under the posterior (selected − its no-preseason control)"
+
+#: The ten heads that ship the block. `fg3m|fg3a` is absent BY CONSTRUCTION: it carries no
+#: block, so `stan_components` fits it no control, so there is no subtraction to make. A
+#: KeyError here would mean the rollback had silently come undone.
+PRE_CMP_SHIPPED = ("fga", "fg3a|fga", "reb", "ast", "fta", "tov", "fg2m|fg2a", "stl", "blk",
+                   "ftm|fta")
+
+
+def _posterior_block_gain(head: str) -> float:
+    """What the preseason block is worth on `head` once the posterior is integrated over.
+
+    The selected arm minus its **same-window, same-variant** `__no_preseason` control, both
+    from `stan_component_metrics.csv`. One subtraction inside one artifact, which is the whole
+    reason `stan_components` fits the control at all — a comparison across runs would confound
+    the block with the sampler seed and the fitting window at once.
+    """
+    frame = table(STAN_C_M)
+    if frame is None:
+        return float("nan")
+    rows = frame[frame["head"] == head]
+    selected = rows[rows["selected"].astype(bool)]
+    control = rows[rows["is_control"].astype(bool)]
+    if selected.empty or control.empty:
+        return float("nan")
+    return float(selected["val_crps"].iloc[0]) - float(control["val_crps"].iloc[0])
+
+
+def _retention_median() -> float:
+    """Median retention over the ten heads that ship the block.
+
+    Quoted rather than a mean because two of the ten are ratios of quantities whose intervals
+    span zero (`ftm|fta` at 2.108, `blk` at 0.608) and a mean over those is not a summary of
+    anything. The median is the figure the doc claims and it is derived, not stored.
+    """
+    ratios = [_posterior_block_gain(h)
+              / _pc(h, "own_delta_shrunk", "crps_vs_incumbent", population="all")
+              for h in PRE_CMP_SHIPPED]
+    return float(np.median(ratios))
+
+
 def _preseason_components() -> list[Claim]:
-    """`docs/preseason-plan.md` session 6b — the rate heads' arms.
+    """`docs/preseason-plan.md` session 6b — the rate heads' arms, all ELEVEN of them.
 
-    Claimed densely for the reason `_preseason_minutes` gives: the section's output is a
-    **six-headed conjunction**, so a doc that kept the validation column fresh and let the
-    rolling one rot would read as three passes on evidence that no longer exists.
+    Claimed densely for the reason `_preseason_minutes` gives: the section's output is an
+    **eleven-headed conjunction**, so a doc that kept the validation column fresh and let the
+    rolling one rot would read as a set of passes on evidence that no longer exists.
 
-    Two families beyond the gate itself. **The floor comparison**, because the round's
-    headline — "on `reb` the block is worth 5.45× what fitting is worth" — is a ratio of two
-    artifact cells and goes stale from either end. And **the losing arms**: `missing_only`
-    and the centred arms carry the attribution, and "the gain is the delta and nothing else"
-    is a claim about the rows that lost.
+    Four families beyond the gate itself. **The floor comparison**, because the round's
+    headline — "on `reb` the block is worth 7.25× what fitting is worth" — is a ratio of two
+    artifact cells and goes stale from either end. **The losing arms**: `missing_only` and the
+    centred arms carry the attribution, and "the gain is the delta and nothing else" is a claim
+    about the rows that lost. **The screen reversal**, which is the round's strongest finding
+    and lives at the join between P1's numbers and 6b's — the three heads P1's permutation z
+    called actively harmful and that none of the three reproduced as. And **the retention
+    table**, which is derived across two artifacts (the point MLE here, the posterior in
+    `stan_component_metrics.csv`) and is the one figure a reader would have no way to
+    reconstruct.
+
+    `fg3m|fg3a` is the exception threaded through all of them: it ships no block, so it has no
+    `__no_preseason` control row, and its rollback figures are presence-checked records of the
+    measurement run that decided it rather than live cells.
     """
     C: list[Claim] = []
 
     def add(quoted: str, actual, label: str, artifact: str = PRE_CMP, **kw) -> None:
         C.append(_c(quoted, artifact, actual, label, doc=PRESEASON, **kw))
 
-    # ── the gate, both halves, all six heads ─────────────────────────────────
+    HEADS = ("fga", "fg3a|fga", "reb", "ast", "fta", "tov", "fg2m|fg2a", "stl", "blk",
+             "fg3m|fg3a", "ftm|fta")
+
+    # ── the gate on the declared primary, both halves, all eleven heads ──────
     gate = [("fga", "−2.7502", "−3.9831", "−1.5961", "−3.0663", "−3.4993", "−2.6236", "13"),
+            ("fg3a|fga", "−0.8512", "−1.4600", "−0.2401", "−1.3042", "−1.5403", "−1.0748",
+             "13"),
             ("ast", "−0.8503", "−1.3175", "−0.3491", "−0.9492", "−1.1447", "−0.7537", "12"),
             ("reb", "−0.8213", "−1.3263", "−0.3384", "−0.8138", "−1.0001", "−0.6344", "12"),
-            ("tov", "−0.0480", "−0.2421", "+0.1619", "−0.2860", "−0.3641", "−0.2086", "12"),
+            ("fta", "−0.4299", "−0.8518", "−0.0160", "−0.5993", "−0.7865", "−0.4247", "12"),
+            ("fg2m|fg2a", "−0.1348", "−0.2238", "−0.0448", "−0.0860", "−0.1165", "−0.0550",
+             "12"),
             ("stl", "−0.0850", "−0.1678", "+0.0026", "−0.0671", "−0.1016", "−0.0305", "12"),
+            ("blk", "−0.0743", "−0.2074", "+0.0616", "−0.1288", "−0.1837", "−0.0692", "12"),
+            ("tov", "−0.0480", "−0.2421", "+0.1619", "−0.2860", "−0.3641", "−0.2086", "12"),
+            ("fg3m|fg3a", "−0.0044", "−0.0517", "+0.0460", "−0.0183", "−0.0350", "−0.0004",
+             "8"),
             ("ftm|fta", "−0.0129", "−0.0639", "+0.0391", "−0.0249", "−0.0493", "+0.0017",
              "9")]
     for head, v, vlo, vhi, r, rlo, rhi, won in gate:
@@ -7635,26 +7846,133 @@ def _preseason_components() -> list[Claim]:
     add("13", lambda: _pcr("ast", "own_delta", "n_origins"), "origins in the harness",
         artifact=PRE_CMP_ROLL)
 
+    # ── the SHIPPED arm, which is what the ship decision was read on ─────────
+    shipped = [("fga", "−3.0093", "−4.3826", "−1.7217", "−3.6397", "−4.1416", "−3.1649",
+                "13"),
+               ("fg3a|fga", "−1.4373", "−2.1407", "−0.7513", "−1.9544", "−2.2347",
+                "−1.6952", "13"),
+               ("reb", "−1.0929", "−1.6223", "−0.5916", "−1.2622", "−1.4908", "−1.0378",
+                "13"),
+               ("ast", "−1.0296", "−1.5424", "−0.4740", "−1.1438", "−1.3877", "−0.9077",
+                "13"),
+               ("fta", "−0.6300", "−1.0189", "−0.2181", "−0.8141", "−1.0231", "−0.6140",
+                "13"),
+               ("tov", "−0.2213", "−0.4003", "−0.0257", "−0.3552", "−0.4370", "−0.2711",
+                "13"),
+               ("fg2m|fg2a", "−0.1541", "−0.2790", "−0.0186", "−0.1581", "−0.2058",
+                "−0.1094", "12"),
+               ("blk", "−0.0857", "−0.2272", "+0.0573", "−0.1649", "−0.2227", "−0.1016",
+                "12"),
+               ("stl", "−0.0763", "−0.1706", "+0.0170", "−0.1008", "−0.1382", "−0.0617",
+                "11"),
+               ("fg3m|fg3a", "−0.0221", "−0.0716", "+0.0299", "−0.0327", "−0.0504",
+                "−0.0152", "9"),
+               ("ftm|fta", "−0.0138", "−0.0681", "+0.0395", "−0.0347", "−0.0608", "−0.0083",
+                "9")]
+    for head, v, vlo, vhi, r, rlo, rhi, won in shipped:
+        add(v, lambda h=head: _pc(h, "own_delta_shrunk", "crps_vs_incumbent"),
+            f"{head} shipped arm, validation CRPS against the incumbent")
+        add(vlo, lambda h=head: _pc(h, "own_delta_shrunk", "crps_vs_incumbent_lo"),
+            f"{head} shipped arm, val lo")
+        add(vhi, lambda h=head: _pc(h, "own_delta_shrunk", "crps_vs_incumbent_hi"),
+            f"{head} shipped arm, val hi")
+        add(r, lambda h=head: _pcr(h, "own_delta_shrunk", "crps_vs_incumbent"),
+            f"{head} shipped arm, rolling CRPS", artifact=PRE_CMP_ROLL)
+        add(rlo, lambda h=head: _pcr(h, "own_delta_shrunk", "crps_vs_incumbent_lo"),
+            f"{head} shipped arm, rolling lo", artifact=PRE_CMP_ROLL)
+        add(rhi, lambda h=head: _pcr(h, "own_delta_shrunk", "crps_vs_incumbent_hi"),
+            f"{head} shipped arm, rolling hi", artifact=PRE_CMP_ROLL)
+        add(won, lambda h=head: _pcr(h, "own_delta_shrunk", "origins_won"),
+            f"{head} shipped arm origins won", artifact=PRE_CMP_ROLL)
+
     # ── the floor comparison, which is the round's headline ──────────────────
-    floors = [("reb", "21.0404", "20.8897", "20.0684"),
-              ("fga", "43.1785", "40.6019", "37.8517"),
-              ("ast", "20.2724", "19.2283", "18.3780"),
-              ("stl", "5.9411", "5.3884", "5.3034"),
-              ("tov", "9.7352", "8.9483", "8.9004"),
-              ("ftm|fta", "3.8930", "3.9283", "3.9154")]
-    for head, floor, incumbent, primary in floors:
+    floors = [("reb", "21.0404", "20.8897", "19.7968"),
+              ("fg3a|fga", "21.1561", "20.7750", "19.3377"),
+              ("fga", "43.1785", "40.6019", "37.5927"),
+              ("ast", "20.2724", "19.2283", "18.1988"),
+              ("fg2m|fg2a", "8.1818", "7.9719", "7.8178"),
+              ("fta", "23.0410", "21.7443", "21.1143"),
+              ("blk", "5.7356", "5.4488", "5.3631"),
+              ("tov", "9.7352", "8.9483", "8.7271"),
+              ("fg3m|fg3a", "4.3888", "4.2857", "4.2635"),
+              ("stl", "5.9411", "5.3884", "5.3121"),
+              ("ftm|fta", "3.8930", "3.9283", "3.9145")]
+    for head, floor, incumbent, ship in floors:
         add(floor, lambda h=head: _pc(h, "carry_forward", "val_crps"), f"{head} no-fit floor")
         add(incumbent, lambda h=head: _pc(h, "incumbent", "val_crps"),
             f"{head} covered-window incumbent CRPS")
-        add(primary, lambda h=head: _pc(h, "own_delta", "val_crps"),
-            f"{head} primary arm CRPS")
-    # `ftm|fta` does not clear its floor in ANY arm, which is a claim about the best of them.
-    add("3.9131", lambda: _pc("ftm|fta", "own_delta_centered", "val_crps"),
-        "ftm|fta's best arm, still above its floor")
+        add(ship, lambda h=head: _pc(h, "own_delta_shrunk", "val_crps"),
+            f"{head} shipped arm CRPS")
+    # The two ratios the headline rests on. Derived rather than quoted flat, because each is a
+    # quotient of two cells and would go stale from either end without saying so.
+    for head, quoted in (("reb", "7.25"), ("fg3a|fga", "3.77"), ("fga", "1.17")):
+        add(quoted,
+            lambda h=head: ((_pc(h, "incumbent", "val_crps")
+                             - _pc(h, "own_delta_shrunk", "val_crps"))
+                            / (_pc(h, "carry_forward", "val_crps")
+                               - _pc(h, "incumbent", "val_crps"))),
+            f"{head} block-to-fit ratio", tol=0.005)
+
+    # ── the retention table: the point MLE against the posterior ─────────────
+    # Two artifacts, and the ratio is the claim. `fg3m|fg3a` is absent by construction — it
+    # has no control row because it ships no block, which is the rollback being real.
+    retention = [("fga", "−2.7455", "−2.6882", "0.979"),
+                 ("fg3a|fga", "−1.2394", "−1.2617", "1.018"),
+                 ("reb", "−1.0475", "−1.0381", "0.991"),
+                 ("ast", "−0.9504", "−0.9305", "0.979"),
+                 ("fta", "−0.5797", "−0.5415", "0.934"),
+                 ("tov", "−0.2116", "−0.2131", "1.007"),
+                 ("fg2m|fg2a", "−0.1244", "−0.1423", "1.144"),
+                 ("stl", "−0.0682", "−0.0638", "0.936"),
+                 ("blk", "−0.0824", "−0.0501", "0.608"),
+                 ("ftm|fta", "−0.0178", "−0.0375", "2.108")]
+    for head, mle, posterior, ratio in retention:
+        add(mle, lambda h=head: _pc(h, "own_delta_shrunk", "crps_vs_incumbent",
+                                    population="all"),
+            f"{head} shipped arm, POOLED point-MLE delta")
+        add(posterior, lambda h=head: _posterior_block_gain(h), STAN_C_M_LABEL.format(head),
+            artifact=STAN_C_M)
+        add(ratio, lambda h=head: (_posterior_block_gain(h)
+                                   / _pc(h, "own_delta_shrunk", "crps_vs_incumbent",
+                                         population="all")),
+            f"{head} retention under the posterior", artifact=STAN_C_M, tol=0.0005)
+    add("0.985", lambda: _retention_median(), "median retention over the ten shipped heads",
+        artifact=STAN_C_M, tol=0.0005)
+
+    # ── `fg3m|fg3a`'s rollback: three instruments, two of them elsewhere ─────
+    # The pooled point MLE is the only one of the three that survives in a live artifact. P1's
+    # attribution is a figure from another session's run, and the posterior control was
+    # measured on a fit that no longer exists precisely BECAUSE the head was then excluded —
+    # so both are presence-checked. Freezing a run to keep a claim checkable is the tail
+    # wagging the dog; see the module docstring.
+    add("+0.0069", lambda: _pc("fg3m|fg3a", "own_delta_shrunk", "crps_vs_incumbent",
+                               population="all"),
+        "fg3m|fg3a POOLED — the only positive reading in the eleven")
+    add("−0.311", lambda: (_pc("fg3m|fg3a", "own_delta_shrunk", "crps_vs_incumbent",
+                               population="all")
+                           / _pc("fg3m|fg3a", "own_delta_shrunk", "crps_vs_incumbent")),
+        "fg3m|fg3a pooled/draftable ratio — a sign change, not a shrinkage", tol=0.0005)
+    for quoted, label in (("+0.01488", "P1's apparent gain"),
+                          ("+0.01987", "P1's shared-indicator attribution"),
+                          ("−0.00237", "P1's own-delta attribution"),
+                          ("+0.02914", "the posterior control's CRPS delta"),
+                          ("4.19350", "measurement-run CRPS with the block"),
+                          ("4.16436", "measurement-run control CRPS"),
+                          ("3.16495", "measurement-run NLL with the block"),
+                          ("3.16432", "measurement-run control NLL"),
+                          ("0.02536", "measurement-run PIT KS with the block"),
+                          ("0.02416", "measurement-run control PIT KS")):
+        add(quoted, lambda: float("nan"), f"fg3m|fg3a rollback, {label}", historical=True)
+    # The rollback is exact, and THIS is the cell that says so: with the block off the head
+    # must reproduce the pre-6b fit on the pre-6b window, not on the cut one.
+    add("3.1676", lambda: stan_c("fg3m|fg3a", "logit_own_spline", "val_nll"),
+        "fg3m|fg3a fitted NLL — the rolled-back head", artifact=STAN_C_M)
 
     # ── the coverage cut, priced so it cannot be credited to the block ───────
-    for head, quoted in [("fga", "40.4692"), ("ast", "19.2082"), ("reb", "20.8875"),
-                         ("tov", "8.9748"), ("stl", "5.3912"), ("ftm|fta", "3.9393")]:
+    for head, quoted in [("fga", "40.4692"), ("fta", "21.7233"), ("ast", "19.2082"),
+                         ("fg3m|fg3a", "4.2827"), ("reb", "20.8875"), ("stl", "5.3912"),
+                         ("ftm|fta", "3.9393"), ("blk", "5.4604"), ("tov", "8.9748"),
+                         ("fg2m|fg2a", "8.0827"), ("fg3a|fga", "20.9155")]:
         add(quoted, lambda h=head: _pc(h, "incumbent_full_window", "val_crps"),
             f"{head} full-window incumbent CRPS")
     add("6,382", lambda: _pc("ast", "incumbent", "n_train"), "covered-window training rows")
@@ -7666,10 +7984,15 @@ def _preseason_components() -> list[Claim]:
 
     # ── the promoted arm, and the shrinkage constant behind it ───────────────
     shrunk = [("fga", "20", "0.640", "−0.5734", "−0.7553", "−0.4024", "13"),
+              ("fg3a|fga", "160", "0.237", "−0.6501", "−0.8239", "−0.4874", "13"),
               ("reb", "160", "0.237", "−0.4484", "−0.5656", "−0.3309", "13"),
+              ("fta", "320", "0.140", "−0.2148", "−0.3329", "−0.1057", "13"),
               ("ast", "80", "0.367", "−0.1946", "−0.2864", "−0.1024", "12"),
+              ("fg2m|fg2a", "320", "0.140", "−0.0721", "−0.1038", "−0.0401", "12"),
               ("tov", "320", "0.140", "−0.0691", "−0.1184", "−0.0248", "11"),
+              ("blk", "40", "0.509", "−0.0360", "−0.0594", "−0.0143", "10"),
               ("stl", "80", "0.367", "−0.0338", "−0.0532", "−0.0148", "11"),
+              ("fg3m|fg3a", "40", "0.509", "−0.0145", "−0.0220", "−0.0070", "11"),
               ("ftm|fta", "160", "0.237", "−0.0098", "−0.0231", "+0.0032", "9")]
     for head, k, weight, delta, lo, hi, won in shrunk:
         add(k, lambda h=head: _one(table(PRE_CMP_SHRINK), "k", head=h, selected=True),
@@ -7685,8 +8008,10 @@ def _preseason_components() -> list[Claim]:
             f"{head} shrunk vs primary, rolling hi", artifact=PRE_CMP_ROLL)
         add(won, lambda h=head: _pcr(h, "own_delta_shrunk", "origins_won_vs_primary"),
             f"{head} shrunk arm origins won against the primary", artifact=PRE_CMP_ROLL)
-    for head, delta, lo, hi in [("ast", "−0.1792", "−0.3322", "−0.0091"),
+    for head, delta, lo, hi in [("fg3a|fga", "−0.5861", "−0.9162", "−0.2872"),
                                 ("reb", "−0.2716", "−0.4695", "−0.0914"),
+                                ("fta", "−0.2001", "−0.3865", "−0.0018"),
+                                ("ast", "−0.1792", "−0.3322", "−0.0091"),
                                 ("tov", "−0.1733", "−0.2669", "−0.0833")]:
         add(delta, lambda h=head: _pc(h, "own_delta_shrunk", "crps_vs_primary"),
             f"{head} shrunk arm against the primary, validation")
@@ -7698,25 +8023,15 @@ def _preseason_components() -> list[Claim]:
         "fga shrunk against the primary, validation — the one tie")
     add("+0.0070", lambda: _pc("fga", "own_delta_shrunk", "crps_vs_primary_hi"),
         "fga shrunk vs primary, val hi")
-    # `tov` flips the gate when read on the promoted arm — the whole point of the promotion.
-    add("−0.2213", lambda: _pc("tov", "own_delta_shrunk", "crps_vs_incumbent"),
-        "tov shrunk arm against the incumbent, validation")
-    add("−0.4003", lambda: _pc("tov", "own_delta_shrunk", "crps_vs_incumbent_lo"),
-        "tov shrunk vs incumbent, val lo")
-    add("−0.0257", lambda: _pc("tov", "own_delta_shrunk", "crps_vs_incumbent_hi"),
-        "tov shrunk vs incumbent, val hi")
-    add("−0.0763", lambda: _pc("stl", "own_delta_shrunk", "crps_vs_incumbent"),
-        "stl shrunk arm against the incumbent — still fails validation")
-    add("−0.1706", lambda: _pc("stl", "own_delta_shrunk", "crps_vs_incumbent_lo"),
-        "stl shrunk vs incumbent, val lo")
-    add("+0.0170", lambda: _pc("stl", "own_delta_shrunk", "crps_vs_incumbent_hi"),
-        "stl shrunk vs incumbent, val hi")
 
-    # ── centring, the arm that replicated twice and loses here ───────────────
-    centred = [("fga", "+0.1160", "+0.0209", "+0.2081"),
+    # ── centring, the arm that replicated twice and loses on eleven heads ────
+    centred = [("fg3a|fga", "+0.2704", "+0.1824", "+0.3614"),
+               ("fga", "+0.1160", "+0.0209", "+0.2081"),
                ("reb", "+0.0627", "+0.0191", "+0.1068"),
                ("tov", "+0.0334", "+0.0148", "+0.0514"),
-               ("ast", "+0.0342", "−0.0138", "+0.0755")]
+               ("fg2m|fg2a", "+0.0195", "+0.0094", "+0.0293"),
+               ("ast", "+0.0342", "−0.0138", "+0.0755"),
+               ("fta", "−0.0167", "−0.0683", "+0.0347")]
     for head, delta, lo, hi in centred:
         add(delta, lambda h=head: _pcr(h, "own_delta_centered", "crps_vs_primary"),
             f"{head} centred against the primary, rolling", artifact=PRE_CMP_ROLL)
@@ -7724,6 +8039,10 @@ def _preseason_components() -> list[Claim]:
             f"{head} centred vs primary, rolling lo", artifact=PRE_CMP_ROLL)
         add(hi, lambda h=head: _pcr(h, "own_delta_centered", "crps_vs_primary_hi"),
             f"{head} centred vs primary, rolling hi", artifact=PRE_CMP_ROLL)
+    for head, quoted in (("blk", "−0.0018"), ("stl", "−0.0009"), ("fg3m|fg3a", "+0.0006"),
+                         ("ftm|fta", "−0.0000")):
+        add(quoted, lambda h=head: _pcr(h, "own_delta_centered", "crps_vs_primary"),
+            f"{head} centred against the primary, rolling", artifact=PRE_CMP_ROLL)
 
     # ── the attribution: the indicator alone is a null, and on `ast` a loss ──
     add("+0.0488", lambda: _pcr("ast", "missing_only", "crps_vs_incumbent"),
@@ -7734,11 +8053,32 @@ def _preseason_components() -> list[Claim]:
         "ast missing-only, rolling hi", artifact=PRE_CMP_ROLL)
 
     # ── the pooled/draftable ratio, which is P1 decision 5 measured to a null ─
-    for head, quoted in [("ast", "−0.7410"), ("fga", "−2.4302"), ("stl", "−0.0779"),
-                         ("tov", "−0.0483"), ("reb", "−0.8092"), ("ftm|fta", "−0.0167")]:
-        add(quoted, lambda h=head: _pc(h, "own_delta", "crps_vs_incumbent",
-                                       population="all"),
-            f"{head} primary arm, POOLED validation delta")
+    for head, quoted in (("fg2m|fg2a", "0.807"), ("fg3a|fga", "0.862"), ("stl", "0.894"),
+                         ("fga", "0.912"), ("fta", "0.920"), ("ast", "0.923"),
+                         ("tov", "0.956"), ("reb", "0.958"), ("blk", "0.962"),
+                         ("ftm|fta", "1.286")):
+        add(quoted,
+            lambda h=head: (_pc(h, "own_delta_shrunk", "crps_vs_incumbent", population="all")
+                            / _pc(h, "own_delta_shrunk", "crps_vs_incumbent")),
+            f"{head} pooled ÷ draftable on the shipped arm", tol=0.0005)
+
+    # ── the rolling-shrinkage risk, inverted a fourth time ───────────────────
+    for head, quoted in (("ftm|fta", "0.398"), ("blk", "0.520"), ("tov", "0.623"),
+                         ("fg3m|fg3a", "0.676"), ("fg3a|fga", "0.735"), ("stl", "0.756"),
+                         ("fta", "0.774"), ("fga", "0.827"), ("reb", "0.866"),
+                         ("ast", "0.900"), ("fg2m|fg2a", "0.974")):
+        add(quoted,
+            lambda h=head: (_pc(h, "own_delta_shrunk", "crps_vs_incumbent")
+                            / _pcr(h, "own_delta_shrunk", "crps_vs_incumbent")),
+            f"{head} validation ÷ rolling on the shipped arm", tol=0.0005)
+
+    # ── the six-head round this section replaced, kept for the record ────────
+    for quoted in ("20.0684", "37.8517", "18.3780", "5.3034", "8.9004", "3.9154", "3.9131",
+                   "−0.7410", "−2.4302", "−0.0779", "−0.0483", "−0.8092", "−0.0167",
+                   "5.45", "0.81", "0.15", "0.06"):
+        add(quoted, lambda: float("nan"),
+            f"the six-head 6b ladder, superseded by the eleven-head one: {quoted}",
+            historical=True)
     return C
 
 
@@ -8731,86 +9071,128 @@ def _preseason_contest() -> list[Claim]:
     def pc(block: str, measure: str, key: str, column: str = "preseason") -> float:
         return cell(PRE_CONTEST, column, block=block, measure=measure, key=key)
 
+    # ⚠️ THE ARTIFACT NOW HOLDS THE FOUR-KEY PASS. `make preseason-contest` re-ran on
+    # 2026-08-15 with `stan.components.preseason` joining P5's three keys, and it overwrites
+    # `preseason_block_contest.csv` in place. So every P5 figure below is presence-checked
+    # history and the live claims are session 6b's. The `base` column is the exception: the
+    # capture is byte-identical across the two passes, which is exactly what makes the
+    # components' share recoverable by differencing, so those cells stay value-checked.
+
     # ── the attribution ───────────────────────────────────────────────────────
-    for season, base, ship, delta in (
-            ("2022-23", "397.24747", "363.23449", "−34.01297"),
-            ("2023-24", "397.95546", "377.50963", "−20.44583")):
+    for season, base in (("2022-23", "397.2475"), ("2023-24", "397.9555")):
         add(base, lambda s=season: pc("gate_a", "season_total_dk.mae", s, "base"),
-            f"counterfactual season-total MAE, {season}")
+            f"counterfactual season-total MAE, {season} — the shared base capture")
+    for season, ship, delta in (("2022-23", "360.96362", "−36.28385"),
+                                ("2023-24", "373.66427", "−24.29119")):
         add(ship, lambda s=season: pc("gate_a", "season_total_dk.mae", s),
             f"shipped season-total MAE, {season}")
         add(delta, lambda s=season: pc("gate_a", "season_total_dk.mae", s, "delta"),
             f"the block's season-total MAE delta, {season}")
-    for season, crps, r2, bias in (("2022-23", "−23.81954", "+0.05006", "11.28673"),
-                                   ("2023-24", "−15.19750", "+0.03100", "4.06281")):
+    for season, crps, r2, bias in (("2022-23", "−25.05380", "+0.05232", "+15.68180"),
+                                   ("2023-24", "−18.30024", "+0.03650", "+16.54580")):
         add(crps, lambda s=season: pc("gate_a", "season_total_dk.crps", s, "delta"),
             f"the block's season-total CRPS delta, {season}")
         add(r2, lambda s=season: pc("gate_a", "season_total_dk.r2", s, "delta"),
             f"the block's season-total R2 delta, {season}")
         add(bias, lambda s=season: pc("gate_a", "season_total_dk.bias", s, "delta"),
             f"the block's season-total bias delta, {season}")
+    # The components' own share, and the only reason the two passes can be differenced: it is a
+    # difference of two deltas, one live and one recorded, so it is derived from the live cell
+    # and the P5 constant rather than claimed against a column that does not exist.
+    for season, quoted, p5 in (("2022-23", "−2.27088", -34.01297),
+                               ("2023-24", "−3.84536", -20.44583)):
+        add(quoted,
+            lambda s=season, prior=p5: (pc("gate_a", "season_total_dk.mae", s, "delta")
+                                        - prior),
+            f"what the component heads add over P5's three keys, {season}")
 
     # ── the board, and the mechanism under it ─────────────────────────────────
-    for season, spearman, moved, picks in (("2022-23", "0.962988", "16.411458", "96"),
-                                           ("2023-24", "0.971150", "14.666667", "89")):
+    for season, spearman, moved, picks in (("2022-23", "0.960627", "17.109375", "93"),
+                                           ("2023-24", "0.968677", "16.58854", "98")):
         add(spearman, lambda s=season: pc("board", "spearman_mean_total", s),
             f"board rank correlation between the arms, {season}")
         add(moved, lambda s=season: pc("board", "mean_abs_rank_move_drafted", s),
             f"mean |rank move| over the drafted picks, {season}")
         add(picks, lambda s=season: pc("board", "picks_moving_12plus", s),
             f"drafted picks moving a full round, {season}")
-    add("88%", lambda: pc("board", "top100_overlap", "2022-23"),
+    add("89%", lambda: pc("board", "top100_overlap", "2022-23"),
         "top-100 overlap between the arms, 2022-23")
-    add("91%", lambda: pc("board", "top100_overlap", "2023-24"),
+    add("90%", lambda: pc("board", "top100_overlap", "2023-24"),
         "top-100 overlap between the arms, 2023-24")
-    # The mechanism: stars gain LEVEL while games played does not move.
-    add("+81.317731", lambda: pc("draw", "mean_total", "2022-23 30+ mpg", "delta"),
+    add("+97.85932", lambda: pc("draw", "mean_total", "2022-23 30+ mpg", "delta"),
         "star mean season total, the block's delta")
-    add("+53.867108", lambda: pc("draw", "mean_total", "2023-24 30+ mpg", "delta"),
+    add("+90.90647", lambda: pc("draw", "mean_total", "2023-24 30+ mpg", "delta"),
         "star mean season total, the block's delta, 2023-24")
 
     # ── the contest, both arms, plus the control the reading rests on ─────────
     for tour, base, ship, delta in (
-            ("600k_shootaround", "0.101331", "0.204098", "+0.102767"),
-            ("20k_spin_move", "0.039989", "0.307681", "+0.267691"),
-            ("50k_four_pt_play", "0.093927", "0.273454", "+0.179527"),
-            ("15k_and_one", "0.076103", "0.237339", "+0.161236"),
-            ("88k_alley_oop", "0.347996", "0.400663", "+0.052667")):
+            ("600k_shootaround", "0.101331", "0.197293", "+0.095962"),
+            ("20k_spin_move", "0.039989", "0.369438", "+0.329449"),
+            ("50k_four_pt_play", "0.093927", "0.296073", "+0.202146"),
+            ("15k_and_one", "0.076103", "0.224399", "+0.148296"),
+            ("88k_alley_oop", "0.347996", "0.352671", "+0.004675")):
         add(base, lambda t=tour: pc("contest", "realized_lift", t, "base"),
             f"counterfactual realized lift, {tour}")
         add(ship, lambda t=tour: pc("contest", "realized_lift", t),
             f"shipped realized lift, {tour}")
         add(delta, lambda t=tour: pc("contest", "realized_lift", t, "delta"),
             f"the block's realized lift delta, {tour}")
-    add("−0.006490", lambda: pc("strategy", "adp_only_lift", "600k_shootaround", "delta"),
+    add("−0.00515", lambda: pc("strategy", "adp_only_lift", "600k_shootaround", "delta"),
         "THE CONTROL: the `adp` board is identical across arms, so its delta is world only")
-    add("+0.034429", lambda: pc("strategy", "lift_delta_mean", "600k_shootaround"),
+    add("+0.04585", lambda: pc("strategy", "lift_delta_mean", "600k_shootaround"),
         "mean simulated lift delta over the 24 swept strategies")
     add("22", lambda: pc("strategy", "lift_delta_positive", "600k_shootaround"),
         "swept strategies whose simulated lift moved positive")
-    add("+1.053226", lambda: pc("strategy", "reference_lift_z", "600k_shootaround"),
+    add("+0.119757", lambda: pc("strategy", "reference_lift_z", "600k_shootaround"),
         "the reference strategy's delta in sds of the across-strategy spread")
-    add("0.814702", lambda: pc("strategy", "ordering_spearman", "600k_shootaround"),
+    add("0.708569", lambda: pc("strategy", "ordering_spearman", "600k_shootaround"),
         "the sweep's ordering between the arms")
+    for tour, quoted in (("600k_shootaround", "+0.048836"), ("20k_spin_move", "+0.037243"),
+                         ("50k_four_pt_play", "+0.067894"), ("15k_and_one", "+0.067229"),
+                         ("88k_alley_oop", "−0.037810")):
+        add(quoted, lambda t=tour: pc("contest", "sim_lift", t, "delta"),
+            f"simulated lift delta, {tour} — every one under the resolution bar")
 
     # ── what the instrument CANNOT say ───────────────────────────────────────
     add("0.074835", lambda: pc("resolution", "min_detectable_lift_gap", "base"),
         "the 95% resolvable simulated lift gap; every simulated row is under it")
-    # "10 of 10" is TWO claims, per the house idiom: a count that stays true while its
+    # "9 of 10" is TWO claims, per the house idiom: a count that stays true while its
     # denominator moves underneath it is the same silent staleness one level down, and this
     # denominator moves if a tournament or a season is added.
-    add("10", lambda: pc("realized", "delta_positive_cells", "all tournaments"),
+    add("9", lambda: pc("realized", "delta_positive_cells", "all tournaments"),
         "realized season x tournament cells moving the block's way")
     add("10", lambda: pc("realized", "delta_positive_cells", "all tournaments", "base"),
         "the denominator behind that count")
-    add("0.003700", lambda: pc("realized", "min_abs_delta", "all tournaments"),
+    # The tenth cell is a TIE, not a loss, and the doc's claim is "no cell moves against the
+    # block" rather than "all ten move with it". That distinction rests entirely on this row.
+    add("0.000000", lambda: pc("realized", "min_abs_delta", "all tournaments"),
         "the weakest realized cell — the claim is only as strong as this")
-    for season, base, ship in (("2022-23", "0.399071", "0.347987"),
-                               ("2023-24", "0.395650", "0.302934")):
+    for season, base, ship in (("2022-23", "0.399071", "0.362309"),
+                               ("2023-24", "0.395650", "0.311690")):
         add(base, lambda s=season: pc("verdict", "injection_rho", s, "base"),
             f"Gate C's fitted rotation, counterfactual arm, {season}")
         add(ship, lambda s=season: pc("verdict", "injection_rho", s),
             f"Gate C's fitted rotation, shipped arm, {season}")
+    # Gate D reversed at four keys: 0 of 6 in the counterfactual, 1 of 6 in the shipped arm.
+    add("1", lambda: pc("verdict", "gate_d_materially_different", "all tournaments"),
+        "Gate D comparisons separating the tiers, shipped arm")
+    add("6", lambda: pc("verdict", "gate_d_comparisons", "all tournaments"),
+        "the denominator behind that count")
+
+    # ── P5's three-key pass, superseded in place by the four-key one ──────────
+    for quoted in ("363.23449", "−34.01297", "377.50963", "−20.44583",
+                   "−23.81954", "+0.05006", "11.28673",
+                   "−15.19750", "+0.03100", "4.06281",
+                   "0.962988", "16.411458", "96", "0.971150", "14.666667", "89",
+                   "88%", "91%", "+81.317731", "+53.867108",
+                   "0.204098", "+0.102767", "0.307681", "+0.267691",
+                   "0.273454", "+0.179527", "0.237339", "+0.161236",
+                   "0.400663", "+0.052667",
+                   "−0.006490", "+0.034429", "+1.053226", "0.814702",
+                   "0.003700", "0.347987", "0.302934",
+                   "+0.054249", "+0.036241", "+0.070857", "+0.064491", "−0.020059"):
+        add(quoted, lambda: float("nan"),
+            f"P5's three-key contest pass, superseded in place: {quoted}", historical=True)
     return C
 
 

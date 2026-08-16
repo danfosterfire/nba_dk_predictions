@@ -83,27 +83,38 @@ make component-rates   # → component_rate_metrics.csv
 
 make components-preseason
                        # preseason-plan session 6b: the preseason block as NESTED arms on
-                       #   the six rate heads P1's gate short-listed →
+                       #   ALL ELEVEN rate heads →
                        #   outputs/predictions/components_preseason{,_rolling,_shrinkage}
                        #   .csv. Point MLE on each head's SHIPPED variant (read from
                        #   stan_component_metrics.csv), so no CmdStan; under five minutes.
                        #   Needs `make preseason`, `make preseason-value` and
                        #   `make stan-components`.
-                       #   THREE OF SIX CLEAR the conjunction — `fga`, `ast`, `reb` — and
-                       #   FOUR on the fitting-half-promoted shrunk arm, which adds `tov`.
-                       #   `stl` misses validation by +0.0026 with 12 of 13 rolling
-                       #   origins; `ftm|fta` — P1's TOP-RANKED head — fails both halves
-                       #   and never clears its own floor.
+                       #   ELEVEN, NOT SIX. P1's DR2 screen short-listed six and called
+                       #   three others actively harmful. The screen's SIGN did not survive
+                       #   on any of the three, and two of them (`fta`, `fg2m|fg2a`) clear
+                       #   the real bar outright; a fourth excluded head, `fg3a|fga`, is the
+                       #   third-largest result in the round. A screen is a filter, never a
+                       #   veto.
+                       #   SIX OF ELEVEN CLEAR the conjunction on the declared primary —
+                       #   `fga`, `fg3a|fga`, `ast`, `reb`, `fta`, `fg2m|fg2a`. On the
+                       #   fitting-half-promoted shrunk arm, which is what ships, ALL
+                       #   ELEVEN clear the rolling half (9-13 of 13 origins) and SEVEN
+                       #   clear validation. No head anywhere in the round has an interval
+                       #   clear of zero on the wrong side.
                        #   THREE THINGS TO KNOW. Read against the no-fit floor rather than
                        #   zero, the block is worth MORE than the whole fitted head on
-                       #   `reb` (5.45x) and `fga` (1.07x). The volume term wants an
-                       #   empirical-Bayes shrink here, not P1's additive one, with `k`
-                       #   fitted per head (20 to 320 pseudo-minutes). And SEASON-CENTRING
-                       #   LOSES on this family — it is a device for levels, and a per-36
-                       #   rate has already divided the exposure out.
-                       #   NOTHING SHIPS: a cleared gate earns a Stan port, which is a
-                       #   separate door, and these heads sit in the simulator's draw path
-                       #   so a port is priceable with `make preseason-contest`.
+                       #   `reb` (7.25x), `fg3a|fga` (3.77x) and `fga` (1.17x). The volume
+                       #   term wants an empirical-Bayes shrink here, not P1's additive
+                       #   one, with `k` fitted per head (20 to 320 pseudo-minutes). And
+                       #   SEASON-CENTRING LOSES on this family — it is a device for levels,
+                       #   and a per-36 rate has already divided the exposure out.
+                       #   TEN OF ELEVEN SHIP, adopted 2026-08-15 via `make stan-components`
+                       #   (`stan.components.preseason`). Retention under the posterior is
+                       #   0.985 median, four heads GROWING. `fg3m|fg3a` is rolled back by
+                       #   `stan_components.PRESEASON_EXCLUDE` — the only measured-worse
+                       #   result in the whole preseason round, on three agreeing
+                       #   instruments. Priced end to end by `make preseason-contest`,
+                       #   which now flips FOUR config keys.
 ```
 
 
@@ -437,21 +448,33 @@ make preseason-contest # what the PRESEASON BLOCK is worth in the contest, as a 
                        #   counterfactual — the same device one round over
                        #   → outputs/predictions/preseason_block_contest.csv.
                        #   REPORTS two arms; it does not run them. Running them is two
-                       #   passes over five targets differing in the THREE keys that ARE
+                       #   passes over five targets differing in the FOUR keys that ARE
                        #   the block (`stan.availability.preseason`,
                        #   `stan.minutes.preseason`,
-                       #   `stan.composition.preseason.adopt`), ~4.5 h each because all
-                       #   three head groups are refitted and the composition is 2-3 h of
+                       #   `stan.composition.preseason.adopt`,
+                       #   `stan.components.preseason`), ~4.5 h each because all
+                       #   four head groups are refitted and the composition is 2-3 h of
                        #   it. `--capture {base,preseason}` freezes each pass into
                        #   outputs/predictions/preseason_arms/. Run the COUNTERFACTUAL
                        #   first, so the shipped arm is what disk ends on. `--capture`
-                       #   REFUSES unless ALL THREE keys agree with the arm name — a pass
+                       #   REFUSES unless ALL FOUR keys agree with the arm name — a pass
                        #   with the block half on is neither arm.
-                       #   ⚠️ ONLY TWO OF THE THREE HEADS CAN REACH THIS. `src/sim/`
+                       #   ⚠️ IT OVERWRITES IN PLACE. The 2026-08-15 four-key pass replaced
+                       #   P5's three-key one in this same file, so preseason-plan's "P5
+                       #   closes" section is a RECORD and session 6b holds the live
+                       #   figures. The `base` capture is byte-identical across the two
+                       #   passes, which is the only reason the components' own share can
+                       #   be recovered by differencing the two deltas (-2.27088 and
+                       #   -3.84536 of season-total MAE).
+                       #   ⚠️ ONLY THREE OF THE FOUR HEAD GROUPS CAN REACH THIS. `src/sim/`
                        #   never loads the marginal minutes head, so P3's block — the
                        #   largest of the three by its own gate — is structurally
                        #   invisible here; a test pins the import fact and the `reach`
-                       #   block reports which windows moved. Read `resolution` before
+                       #   block reports which windows moved. ⚠️ The `reach` block has NO
+                       #   `components` row: `reach_rows` reports `refit_landed` for
+                       #   availability, minutes and composition only, so the family this
+                       #   round shipped has no per-head trace in the artifact that prices
+                       #   it — all four CONFIG KEYS do show 0→1. Read `resolution` before
                        #   `contest`, then `board`: this block arrives as the allocation
                        #   MEAN rather than as shape, so a ranking is what it can move.
 ```

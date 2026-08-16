@@ -1663,6 +1663,18 @@ now superseded rather than withdrawn.**
 
 ## P5 closes — the paired counterfactual, 2026-08-15
 
+⚠️ **Every figure in this section is the THREE-key reading, and the artifact no longer holds
+it.** `make preseason-contest` was re-run later the same day by session 6b with a fourth key,
+`stan.components.preseason`, and it overwrites `preseason_block_contest.csv` in place. The
+numbers below are what P5 measured and are the record of the three-key pass; the live four-key
+readings are in session 6b's "The chain, run end to end", and they are **larger on every Gate A
+row**. Two things make the pair readable rather than confusing: the `base` column is a
+**byte-identical capture** across the two passes and reproduces to every decimal, which is what
+lets the components' share be recovered by differencing; and the four-key pass moved the
+realized consistency count from **10 of 10** cells to **9 of 10 with the tenth exactly zero**,
+so this section's strongest sentence is the one that did not survive intact. Everything here is
+presence-checked rather than value-checked.
+
 **`make preseason-contest`, `src/sim/preseason_contest.py` →
 `outputs/predictions/preseason_block_contest.csv`.** The instrument is
 `src/sim/mixture_value.py` one round over: two arms of the same chain, captured under the
@@ -1796,7 +1808,12 @@ the *delta*. `88k_alley_oop` is the demonstration — the base arm's lift moves 
   from the model-versus-market skill gap and a better model needs less of it. That is
   independent corroboration that the block improved the model, and it is also why `sim_lift`
   is not arm-comparable. It is carried as a `verdict` row rather than as prose.
-- **Gate D still fails 0 of 6 in both arms**, unchanged by any of this.
+- **Gate D still fails 0 of 6 in both arms**, unchanged by any of this. ⚠️ **That reversed at
+  four keys**: the shipped arm now separates the tiers in **1** of **6** paired comparisons
+  (2022-23, `tier_aware`, `bracket_ev`), against **0** in the counterfactual. One of six on a
+  comparison that was designed to fail is not a strategy finding — the same season's other
+  tier-aware arm and both of 2023-24's stay below the bar — but "0 of 6" is no longer the
+  literal reading and `README.md` was corrected with it.
 - **What the availability and composition blocks are worth SEPARATELY.** This arm moves both;
   splitting them is another paired pass.
 
@@ -1807,19 +1824,47 @@ season-level spread the injection exists to supply, and it stands — but the σ
 been run against a blended composition, and a narrower base predictive is exactly the input
 that grid is sensitive to. It is not re-read here.
 
-## Session 6b — the rate heads' arms: 3 of 6 clear, and P1's top-ranked head is a null
+## Session 6b — the rate heads' arms: eleven heads, ten ship, and a screen whose sign did not survive
 
 `make components-preseason` (`src/models/components_preseason.py`) →
 `components_preseason.csv`, `components_preseason_rolling.csv`,
 `components_preseason_shrinkage.csv`. Point MLE on the `component_rates` machinery over each
-head's **shipped** variant, so no CmdStan; six heads × seven arms × two populations, plus a
-13-origin rolling harness, in **under five minutes**. Run 2026-08-15, the last session in the
-round's map.
+head's **shipped** variant, so no CmdStan; **eleven heads × seven arms × two populations**, plus
+a 13-origin rolling harness, in **under five minutes**. Run 2026-08-15, the last session in the
+round's map. The Stan port and the chain re-run followed the same day
+(`make stan-components`, `make posteriors`, `make simulate-season`, `make strategy-sweep`,
+`make preseason-contest`).
 
 **It is a P1 commitment, not a parking-lot idea.** P1 decision 2 put `ast`, `fga`, `stl`,
 `tov`, `reb` and `ftm|fta` on a short list and recorded `blk`, `fta`, `fg2m|fg2a` and
 `fg3m|fg3a` as nulls that get no arm. That result *reversed* the plan's expectation that the
 rate half would collapse, and it added a session rather than shrinking one.
+
+### The ladder widened to all eleven heads, and the exclusions were the reason
+
+The session opened on P1's six and did not stay there. **P1's screen is a ΔR² on a point
+estimate against a permutation null, and it had already been shown to misrank the heads it
+admitted** — `reb` was its *smallest* clearing count head and is this round's largest
+block-to-fit ratio. A screen that misranks the arms it passes is not evidence about the arms
+it failed, so all five excluded heads were armed too. **Every one of the exclusions was
+wrong**, in both directions:
+
+| head | P1 screen | shipped-arm validation | shipped-arm rolling | verdict |
+|---|---|---|---|---|
+| `fg3a\|fga` | +0.00467, *excluded as small* | **−1.4373** [−2.1407, −0.7513] | **−1.9544** [−2.2347, −1.6952], 13/13 | ✅ **3rd largest in the round** |
+| `fta` | −0.00161, **z −2.32** | **−0.6300** [−1.0189, −0.2181] | **−0.8141** [−1.0231, −0.6140], 13/13 | ✅ clears both |
+| `fg2m\|fg2a` | −0.00845, **z −9.44** | **−0.1541** [−0.2790, −0.0186] | **−0.1581** [−0.2058, −0.1094], 12/13 | ✅ clears both |
+| `blk` | −0.00847, **z −3.18** | −0.0857 [−0.2272, **+0.0573**] | **−0.1649** [−0.2227, −0.1016], 12/13 | rolling only |
+| `fg3m\|fg3a` | +0.01488 at z 7.53, own delta −0.00237 | −0.0221 [−0.0716, **+0.0299**] | −0.0327 [−0.0504, −0.0152], 9/13 | rolling only — **and the one head that reverses** |
+
+**⭐ The strongest result in the round is that the screen's *sign* did not survive on a single
+head it called harmful.** P1's permutation z said `blk`, `fta` and `fg2m|fg2a` did *worse than
+a shuffled block*, which reads as evidence of harm rather than as absence of gain. None of the
+three reproduced as harm at a paired interval, and two of them clear the real bar outright —
+`fta` at **13 of 13** origins. **No head anywhere in this round has an interval clear of zero
+on the wrong side**, on either reading, on either population, at any arm. A permutation z on a
+single inner split is a statement about one split's noise, and excluding on a screen that has
+already been contradicted is the same error as trusting it.
 
 ### The bar, stated before the run — and it is P1's own caveat, executed
 
@@ -1830,7 +1875,7 @@ clear of zero on the **draftable** population, **and** the rolling-origin harnes
 (interval clear of zero, majority of origins). Every arm — the reference included — fits the
 covered window only, and the full-window incumbent rides as a context row.
 
-The multiplicity is larger here than in any earlier round: **six heads** rather than one, so
+The multiplicity is larger here than in any earlier round: **eleven heads** rather than one, so
 the rolling half is carrying more weight, not less. It is scored on both populations, unlike
 P3's, because the fits are shared and the pair is what makes the pooled/draftable gap
 interpretable.
@@ -1840,58 +1885,48 @@ interpretable.
 | head | validation | rolling | origins | gate |
 |---|---|---|---|---|
 | `fga` | **−2.7502** [−3.9831, −1.5961] | **−3.0663** [−3.4993, −2.6236] | **13/13** | ✅ **PASS** |
+| `fg3a\|fga` | **−0.8512** [−1.4600, −0.2401] | **−1.3042** [−1.5403, −1.0748] | **13/13** | ✅ **PASS** |
 | `ast` | **−0.8503** [−1.3175, −0.3491] | **−0.9492** [−1.1447, −0.7537] | 12/13 | ✅ **PASS** |
 | `reb` | **−0.8213** [−1.3263, −0.3384] | **−0.8138** [−1.0001, −0.6344] | 12/13 | ✅ **PASS** |
-| `tov` | −0.0480 [−0.2421, **+0.1619**] | −0.2860 [−0.3641, −0.2086] | 12/13 | ❌ fails validation |
+| `fta` | **−0.4299** [−0.8518, −0.0160] | **−0.5993** [−0.7865, −0.4247] | 12/13 | ✅ **PASS** |
+| `fg2m\|fg2a` | **−0.1348** [−0.2238, −0.0448] | **−0.0860** [−0.1165, −0.0550] | 12/13 | ✅ **PASS** |
 | `stl` | −0.0850 [−0.1678, **+0.0026**] | −0.0671 [−0.1016, −0.0305] | 12/13 | ❌ fails validation |
+| `blk` | −0.0743 [−0.2074, **+0.0616**] | −0.1288 [−0.1837, −0.0692] | 12/13 | ❌ fails validation |
+| `tov` | −0.0480 [−0.2421, **+0.1619**] | −0.2860 [−0.3641, −0.2086] | 12/13 | ❌ fails validation |
+| `fg3m\|fg3a` | −0.0044 [−0.0517, **+0.0460**] | −0.0183 [−0.0350, −0.0004] | 8/13 | ❌ fails validation |
 | `ftm\|fta` | −0.0129 [−0.0639, +0.0391] | −0.0249 [−0.0493, +0.0017] | 9/13 | ❌ **fails both** |
 
-**Three of six clear the conjunction.** Two more (`tov`, `stl`) pass the rolling half
-decisively and cannot be resolved on 706 validation rows — the P2 shape again, and `stl`'s
-validation interval misses by **+0.0026**. One is a genuine null at both readings.
+**Six of eleven clear the conjunction**, against three of six when the ladder was narrower —
+and the three heads the widening added (`fg3a|fga`, `fta`, `fg2m|fg2a`) are all heads P1 had
+excluded. Four more pass the rolling half decisively and cannot be resolved on 706 validation
+rows — the P2 shape again, and `stl`'s validation interval misses by **+0.0026**. One is a
+genuine null at both readings.
 
-### The headline: on two heads the block is worth more than the fitted head is
+### The promoted arm: `own_delta_shrunk`, and the gate read on what actually ships
 
-The no-fit carry-forward is on every row, and reading the block against it rather than against
-zero is what makes a small CRPS number legible:
+`own_delta_shrunk` beats the declared primary **on the fitting half on every one of the
+eleven heads**, intervals clear of zero — which is P3's promotion rule, the one that reversed
+P1 decision 4 on the availability head. That makes it the arm the ship decision is read on:
 
-| head | no-fit floor | incumbent | primary arm | fitting buys | the block buys | ratio |
-|---|---|---|---|---|---|---|
-| `reb` | **21.0404** | **20.8897** | **20.0684** | **0.1507** | **0.8213** | **5.45×** |
-| `fga` | 43.1785 | 40.6019 | **37.8517** | 2.5765 | **2.7502** | **1.07×** |
-| `ast` | 20.2724 | 19.2283 | 18.3780 | 1.0441 | 0.8503 | 0.81× |
-| `stl` | 5.9411 | 5.3884 | 5.3034 | 0.5527 | 0.0850 | 0.15× |
-| `tov` | 9.7352 | 8.9483 | 8.9004 | 0.7869 | 0.0480 | 0.06× |
-| `ftm\|fta` | 3.8930 | 3.9283 | 3.9154 | **−0.0353** (never clears) | 0.0129 | — |
+| head | validation | rolling | origins | validation |
+|---|---|---|---|---|
+| `fga` | **−3.0093** [−4.3826, −1.7217] | **−3.6397** [−4.1416, −3.1649] | **13/13** | ✅ |
+| `fg3a\|fga` | **−1.4373** [−2.1407, −0.7513] | **−1.9544** [−2.2347, −1.6952] | **13/13** | ✅ |
+| `reb` | **−1.0929** [−1.6223, −0.5916] | **−1.2622** [−1.4908, −1.0378] | **13/13** | ✅ |
+| `ast` | **−1.0296** [−1.5424, −0.4740] | **−1.1438** [−1.3877, −0.9077] | **13/13** | ✅ |
+| `fta` | **−0.6300** [−1.0189, −0.2181] | **−0.8141** [−1.0231, −0.6140] | **13/13** | ✅ |
+| `tov` | **−0.2213** [−0.4003, −0.0257] | **−0.3552** [−0.4370, −0.2711] | **13/13** | ✅ |
+| `fg2m\|fg2a` | **−0.1541** [−0.2790, −0.0186] | **−0.1581** [−0.2058, −0.1094] | 12/13 | ✅ |
+| `blk` | −0.0857 [−0.2272, +0.0573] | **−0.1649** [−0.2227, −0.1016] | 12/13 | — |
+| `stl` | −0.0763 [−0.1706, +0.0170] | **−0.1008** [−0.1382, −0.0617] | 11/13 | — |
+| `fg3m\|fg3a` | −0.0221 [−0.0716, +0.0299] | **−0.0327** [−0.0504, −0.0152] | 9/13 | — |
+| `ftm\|fta` | −0.0138 [−0.0681, +0.0395] | **−0.0347** [−0.0608, −0.0083] | 9/13 | — |
 
-On `reb` the entire fitted head is worth **0.1507** CRPS rebounds over arithmetic and six
-preseason games are worth **0.8213** more; on `fga` the block is worth more than the fit by
-itself. That qualifies the project's standing line — "the rate side is nearly saturated from
-prior-season information alone" — in the only way it can be qualified: it is saturated
-*against prior-season information*, and a preseason game is not prior-season information.
-The line stands as written; what 6b adds is that the remaining headroom is reachable and
-where.
-
-### P1's own top-ranked head is the round's null, and that is the caveat firing
-
-`ftm|fta` was the **largest** rate increment P1 measured — +0.0176 R², delta-carried, z = 18.8,
-larger than any count head. At the head's own unit it is a tie on validation
-(**−0.0129 [−0.0639, +0.0391]**) and a tie rolling (**−0.0249 [−0.0493, +0.0017]**, 9 of 13
-origins), and **no arm gets it over its floor** — the shrunk carry-forward reads **3.8930**
-against the best arm's **3.9131**, so the block does not rescue the project's known conversion
-null.
-
-The mechanism is in the panel rather than in the head. A conversion delta is a **logit of a
-percentage** over ~10–40 preseason free throws; across the design its sd is **2.2023** on the
-logit scale with a range of −9.21 to +13.81, which is mostly sampling noise wearing a
-coefficient's clothes. A per-36 count rate over the same preseason minutes is far better
-determined — `ast`'s delta has sd **0.3617**. **A screen that ranks by ΔR² cannot see this**,
-because a noisy regressor with a real signal in it still raises R² on a point estimate; a
-distributional bar can, because the noise has to be paid for in the predictive.
-
-This is the strongest vindication in the round of having written P1's caveat down, and it is
-worth stating plainly: **the one head P1 ranked first is the one head that fails at both
-readings.**
+**Every one of the eleven clears the rolling half**, at 9 to 13 of 13 origins on ~4,300 scored
+fitting-half rows; **seven also clear validation**, up from three on the primary. `tov` flips
+the gate on the promotion and `ftm|fta` — a two-sided null on the primary — becomes a rolling
+pass. The four that do not clear validation have favourable point estimates at both readings
+and intervals that reach across zero on 706 rows.
 
 ### The volume question closes, in the opposite direction from P3
 
@@ -1903,27 +1938,118 @@ rates the answer is different and larger:
 | head | selected `k` | mean weight | rolling `crps_vs_primary` | origins won vs primary |
 |---|---|---|---|---|
 | `fga` | 20 | 0.640 | **−0.5734** [−0.7553, −0.4024] | **13/13** |
+| `fg3a\|fga` | 160 | 0.237 | **−0.6501** [−0.8239, −0.4874] | **13/13** |
 | `reb` | 160 | 0.237 | **−0.4484** [−0.5656, −0.3309] | **13/13** |
+| `fta` | 320 | 0.140 | **−0.2148** [−0.3329, −0.1057] | **13/13** |
 | `ast` | 80 | 0.367 | **−0.1946** [−0.2864, −0.1024] | 12/13 |
+| `fg2m\|fg2a` | 320 | 0.140 | **−0.0721** [−0.1038, −0.0401] | 12/13 |
 | `tov` | 320 | 0.140 | **−0.0691** [−0.1184, −0.0248] | 11/13 |
+| `blk` | 40 | 0.509 | **−0.0360** [−0.0594, −0.0143] | 10/13 |
 | `stl` | 80 | 0.367 | **−0.0338** [−0.0532, −0.0148] | 11/13 |
+| `fg3m\|fg3a` | 40 | 0.509 | **−0.0145** [−0.0220, −0.0070] | 11/13 |
 | `ftm\|fta` | 160 | 0.237 | −0.0098 [−0.0231, +0.0032] | 9/13 |
 
-**`own_delta_shrunk` beats the declared primary on the fitting half on all five count heads**,
-intervals clear of zero, which is P3's promotion rule — the one that reversed P1 decision 4 on
-the availability head. On validation it wins on `ast` (**−0.1792 [−0.3322, −0.0091]**), `reb` (**−0.2716
-[−0.4695, −0.0914]**) and `tov` (**−0.1733 [−0.2669, −0.0833]**) and ties on `fga` (−0.2591,
-interval reaching +0.0070).
+On validation the promoted arm wins on `fg3a|fga` (**−0.5861 [−0.9162, −0.2872]**), `reb`
+(**−0.2716 [−0.4695, −0.0914]**), `fta` (**−0.2001 [−0.3865, −0.0018]**), `ast`
+(**−0.1792 [−0.3322, −0.0091]**) and `tov` (**−0.1733 [−0.2669, −0.0833]**), and ties on
+`fga` (−0.2591, interval reaching +0.0070).
 
-**Read on the promoted arm the gate count goes from 3 to 4**: `tov` flips to
-**−0.2213 [−0.4003, −0.0257]** on validation with **13/13** origins rolling. `stl` still fails
-validation (−0.0763 [−0.1706, +0.0170]).
-
-The mechanism is why the two heads disagree. A minutes total over 60 preseason minutes is
+The mechanism is why rates and minutes disagree. A minutes total over 60 preseason minutes is
 measured *on* those 60 minutes; a per-36 **rate** over the same 60 divides by them, so the
 same exposure buys far less precision and there is much more to shrink. The selected `k` runs
-to **320 pseudo-minutes** on `tov` — more than two full preseasons — which is the grid saying
-that head's delta should be believed about a seventh.
+to **320 pseudo-minutes** on three heads — more than two full preseasons — which is the grid
+saying those deltas should be believed about a seventh. P1's additive `pre_log_min` is not the
+right form: it is a tie on every head at both readings.
+
+### The headline: on two heads the block is worth more than the fitted head is
+
+The no-fit carry-forward is on every row, and reading the block against it rather than against
+zero is what makes a small CRPS number legible. Read on the shipped arm:
+
+| head | no-fit floor | incumbent | shipped arm | fitting buys | the block buys | ratio |
+|---|---|---|---|---|---|---|
+| `reb` | **21.0404** | **20.8897** | **19.7968** | **0.1507** | **1.0929** | **7.25×** |
+| `fg3a\|fga` | 21.1561 | 20.7750 | **19.3377** | 0.3811 | **1.4373** | **3.77×** |
+| `fga` | 43.1785 | 40.6019 | **37.5927** | 2.5765 | **3.0093** | **1.17×** |
+| `ast` | 20.2724 | 19.2283 | 18.1988 | 1.0441 | 1.0296 | 0.99× |
+| `fg2m\|fg2a` | 8.1818 | 7.9719 | 7.8178 | 0.2099 | 0.1541 | 0.73× |
+| `fta` | 23.0410 | 21.7443 | 21.1143 | 1.2967 | 0.6300 | 0.49× |
+| `blk` | 5.7356 | 5.4488 | 5.3631 | 0.2868 | 0.0857 | 0.30× |
+| `tov` | 9.7352 | 8.9483 | 8.7271 | 0.7869 | 0.2213 | 0.28× |
+| `fg3m\|fg3a` | 4.3888 | 4.2857 | 4.2635 | 0.1031 | 0.0221 | 0.21× |
+| `stl` | 5.9411 | 5.3884 | 5.3121 | 0.5527 | 0.0763 | 0.14× |
+| `ftm\|fta` | 3.8930 | 3.9283 | 3.9145 | **−0.0353** (never clears) | 0.0138 | — |
+
+On `reb` the entire fitted head is worth **0.1507** CRPS rebounds over arithmetic and six
+preseason games are worth **1.0929** more; on `fg3a|fga` the ratio is 3.77× and on `fga` the
+block is worth more than the fit by itself. That qualifies the project's standing line — "the
+rate side is nearly saturated from prior-season information alone" — in the only way it can be
+qualified: it is saturated *against prior-season information*, and a preseason game is not
+prior-season information. The line stands as written; what 6b adds is that the remaining
+headroom is reachable and where.
+
+### The retention under the posterior — ten of eleven hold
+
+A cleared gate earns a Stan port, which is a separate door. `stan_components` fits each armed
+head **and a same-window `__no_preseason` control at the same variant**, so the block's value
+under the posterior is one subtraction inside one artifact rather than a comparison across
+runs. Retention is that posterior gain divided by the point MLE's, both pooled:
+
+| head | point MLE | under the posterior | retention |
+|---|---|---|---|
+| `fg2m\|fg2a` | −0.1244 | −0.1423 | **1.144** |
+| `fg3a\|fga` | −1.2394 | −1.2617 | **1.018** |
+| `tov` | −0.2116 | −0.2131 | **1.007** |
+| `reb` | −1.0475 | −1.0381 | **0.991** |
+| `fga` | −2.7455 | −2.6882 | 0.979 |
+| `ast` | −0.9504 | −0.9305 | 0.979 |
+| `stl` | −0.0682 | −0.0638 | 0.936 |
+| `fta` | −0.5797 | −0.5415 | 0.934 |
+| `blk` | −0.0824 | −0.0501 | 0.608 |
+| `ftm\|fta` | −0.0178 | −0.0375 | **2.108** |
+
+**Ten of eleven hold, at a median retention of 0.985**, four of them *growing* under the
+posterior. That matches the precedent from the other two head families — P3's block grew
+(−4.789 → −5.911) and 4c's retention was 1.040 — and it is the answer to 6b's own largest
+open question, which was whether a plug-in point MLE would survive parameter uncertainty.
+`ftm|fta`'s 2.108 is not a real amplification: it is a ratio of two numbers whose intervals
+both span zero, and the head still does not clear its floor at any variant.
+
+### `fg3m|fg3a` is rolled back — the only measured-worse result in the whole preseason round
+
+**Ten of the eleven ship the block. `fg3m|fg3a` does not**, and it is the only head anywhere
+in P0–6b that a paired instrument measured as *worse* with the preseason than without it.
+`stan_components.PRESEASON_EXCLUDE` opts it out by the `made` column, which is what
+`head_preseason_cols` is keyed on.
+
+**Three instruments agree, which is what makes it a finding rather than a noisy row:**
+
+1. **P1's attribution.** The head's apparent **+0.01488** ΔR² at z 7.53 was entirely the
+   shared indicator pair (**+0.01987**); its own preseason 3P% delta was **−0.00237**. The
+   attribution split exists to catch exactly this and it caught it first, in P1.
+2. **6b's pooled point MLE: +0.0069.** The only positive `crps_vs_incumbent` in the eleven —
+   the block already scored worse on the full validation frame before any sampler ran.
+3. **The posterior control: +0.02914** CRPS, the same sign and larger, and worse on **three**
+   metrics rather than one — CRPS 4.19350 against its control's 4.16436, NLL 3.16495 against
+   3.16432, PIT KS 0.02536 against 0.02416. (Those four are the *measurement* run's figures;
+   the shipped artifact no longer carries a control row for this head, precisely because the
+   head is now excluded, so they are presence-checked records rather than live cells.)
+
+The mechanism is the one `ftm|fta` shows from the other side: **a conversion delta is a logit
+of a percentage taken over a handful of preseason attempts, and shooting percentage is the
+least persistent quantity in the box score.** Prior-season 3P% over ~200 attempts is simply a
+better estimate than preseason 3P% over ~15, so the block adds variance and no signal.
+Owner decision, 2026-08-15, taken on the posterior reading.
+
+**The rollback is exact, and it is checked rather than asserted.** With the block off, the head
+must reproduce the pre-6b head — same columns *and* the same full 8,630-row window, because
+`covered_fitting_rows` cuts the window family-wide and an excluded head must be excluded from
+the cut too. It does: fitted NLL **3.1676** against the **3.1677** the docs carried before 6b,
+a gap of 6e-05 that is sampler noise on an identical design. An earlier build of the same run
+fitted it on 6,382 rows — the pre-block columns on the post-block window — while printing that
+it had reproduced the pre-block head "exactly"; a head can be selected under one specification
+and persisted under another with every artifact staying internally consistent, which is why
+the reproduction is now a test rather than a printout.
 
 ### Centring does NOT replicate, and the reason is structural
 
@@ -1933,103 +2059,231 @@ uncentred primary at the rolling reading, on the draftable population:
 
 | head | `own_delta_centered` vs primary | verdict |
 |---|---|---|
+| `fg3a\|fga` | **+0.2704** [+0.1824, +0.3614] | **loses** |
 | `fga` | **+0.1160** [+0.0209, +0.2081] | **loses** |
 | `reb` | **+0.0627** [+0.0191, +0.1068] | **loses** |
 | `tov` | **+0.0334** [+0.0148, +0.0514] | **loses** |
+| `fg2m\|fg2a` | **+0.0195** [+0.0094, +0.0293] | **loses** |
 | `ast` | +0.0342 [−0.0138, +0.0755] | ties |
+| `fta` | −0.0167 [−0.0683, +0.0347] | ties |
+| `blk` | −0.0018 | ties |
 | `stl` | −0.0009 | ties |
+| `fg3m\|fg3a` | +0.0006 | ties |
 | `ftm\|fta` | −0.0000 | ties |
 
-Three losses with intervals clear of zero and three ties — no head prefers it. The mechanism
-is the one the arm was written to test: **the compression argument is about levels.** Preseason
-minutes are compressed by an amount that varies with the calendar (2 games a team in the
-2011-12 lockout against 8 in an ordinary year), and a head with no season term has nowhere to
-put that. A **per-36 rate has already divided the exposure out**, so there is no season-level
-nuisance left for centring to remove — and removing a season mean that is not a nuisance costs
-real cross-player signal. P3's finding is not contradicted; its **scope** is now measured, and
-it is levels rather than deltas-in-general.
+**Five losses with intervals clear of zero and six ties — no head prefers it**, and the
+widening strengthened the finding rather than diluting it: `fg3a|fga`, one of the added heads,
+is the largest loss in the table. The mechanism is the one the arm was written to test: **the
+compression argument is about levels.** Preseason minutes are compressed by an amount that
+varies with the calendar (2 games a team in the 2011-12 lockout against 8 in an ordinary
+year), and a head with no season term has nowhere to put that. A **per-36 rate has already
+divided the exposure out**, so there is no season-level nuisance left for centring to remove —
+and removing a season mean that is not a nuisance costs real cross-player signal. P3's finding
+is not contradicted; its **scope** is now measured, and it is levels rather than
+deltas-in-general.
 
 ### Two things the losing arms settle
 
 **The gain is the preseason rate and not the fact of a preseason row.** `missing_only` — the
-four age indicators alone — is a tie or worse on every head at both readings, and on `ast` it
-actively **loses** rolling at **+0.0488 [+0.0128, +0.0888]**. P1's attribution columns said
-this on a point estimate; it now holds at a distributional unit, which is what stops the round
-being a restatement of the missingness census.
+four age indicators alone — is a tie on ten of the eleven heads at both readings, and on `ast`
+it actively **loses** rolling at **+0.0488 [+0.0128, +0.0888]**. P1's attribution columns said
+this on a point estimate; it now holds at a distributional unit on eleven heads, which is what
+stops the round being a restatement of the missingness census.
 
 **The coverage cut costs essentially nothing on this family**, which is a reversal of the
 pattern on the other two heads. `incumbent_full_window` against `incumbent`:
 
 | head | full window | covered window | cut costs |
 |---|---|---|---|
-| `fga` | 40.4692 | 40.6019 | +0.1327 (4.8% of the block) |
-| `ast` | 19.2082 | 19.2283 | +0.0201 (2.4%) |
-| `reb` | 20.8875 | 20.8897 | +0.0022 (0.3%) |
-| `tov` | 8.9748 | 8.9483 | **−0.0265** (the cut *helps*) |
-| `stl` | 5.3912 | 5.3884 | −0.0028 |
-| `ftm\|fta` | 3.9393 | 3.9283 | −0.0110 |
+| `fga` | 40.4692 | 40.6019 | +0.1327 (4.4% of the block) |
+| `fta` | 21.7233 | 21.7443 | +0.0210 (3.3%) |
+| `ast` | 19.2082 | 19.2283 | +0.0202 (2.0%) |
+| `fg3m\|fg3a` | 4.2827 | 4.2857 | +0.0029 |
+| `reb` | 20.8875 | 20.8897 | +0.0022 (0.2%) |
+| `stl` | 5.3912 | 5.3884 | **−0.0028** (the cut *helps*) |
+| `ftm\|fta` | 3.9393 | 3.9283 | **−0.0110** |
+| `blk` | 5.4604 | 5.4488 | **−0.0115** |
+| `tov` | 8.9748 | 8.9483 | **−0.0265** |
+| `fg2m\|fg2a` | 8.0827 | 7.9719 | **−0.1108** |
+| `fg3a\|fga` | 20.9155 | 20.7750 | **−0.1405** |
 
 P3 paid a **quarter** of its increment to the same restriction and session 4d paid **8.5%**;
-here the worst head pays 4.8% and two heads are better off cut. **6,382** of **8,630** training
-rows survive (74.0%), and prior-season rates are the most persistent quantity in the project,
-so the lost seasons were buying very little.
+here the worst head pays 4.4% and **six of the eleven are better off cut**. **6,382** of
+**8,630** training rows survive (74.0%), and prior-season rates are the most persistent
+quantity in the project, so the lost seasons were buying very little.
 
 ### P1 decision 5 is nearly a no-op here, and that is measured rather than assumed
 
-Pooled against draftable on the primary arm — **−0.7410** against −0.8503 (`ast`), **−2.4302**
-against −2.7502 (`fga`), **−0.0779** against −0.0850 (`stl`), **−0.0483** against −0.0480
-(`tov`), **−0.8092** against −0.8213 (`reb`), **−0.0167** against −0.0129 (`ftm|fta`) — is a
-ratio of 0.87, 0.88, 0.92, 1.01, 0.98 and 1.29. The draftable reading is *larger* on five of
-six, against **6.2×** smaller on the availability head and a verdict flip on P4's. **9,320** of
-**10,194** design rows (**91.4%**) and **706** of **773** validation rows are on a
-season-start roster, because the `≥ 200 prior minutes` filter has already removed the
-mid-season-signing
-population that made the restriction load-bearing elsewhere. P1 said exactly this in prose;
-the number now exists, and the rule is stronger for having a family where it changes nothing.
+Pooled against draftable on the shipped arm the ratio runs **0.807** to **0.962** across the
+ten heads that ship — `fg2m|fg2a` 0.807, `fg3a|fga` 0.862, `stl` 0.894, `fga` 0.912, `fta`
+0.920, `ast` 0.923, `tov` 0.956, `reb` 0.958, `blk` 0.962, with `ftm|fta` at 1.286 on a null.
+The draftable reading is *larger* on nine of ten, against **6.2×** smaller on the availability
+head and a verdict flip on P4's. **9,320** of **10,194** design rows (**91.4%**) and **706** of
+**773** validation rows are on a season-start roster, because the `≥ 200 prior minutes` filter
+has already removed the mid-season-signing population that made the restriction load-bearing
+elsewhere. P1 said exactly this in prose; the number now exists, and the rule is stronger for
+having a family where it changes nothing.
 
-### The rolling-shrinkage risk runs the other way a third time
+`fg3m|fg3a` is the exception worth naming: its ratio is **−0.311**, because the pooled reading
+is positive (+0.0069) and the draftable one is negative. A ratio across a sign change is not a
+shrinkage, and it is the one head where the two populations disagree about direction — which is
+consistent with it being the round's null and is a third instrument pointing the same way.
 
-Validation ÷ rolling on the primary arm: **0.90** (`ast`), **0.90** (`fga`), **1.27** (`stl`),
-**0.17** (`tov`), **1.01** (`reb`), **0.52** (`ftm|fta`). Not one head shows the §12e / §14f
-pattern of a validation reading 4–6× the rolling one. Three families have now tested it —
-availability, minutes, rates — and all three inverted it. The risk entry is updated
-accordingly; what it protects against has still never recurred in this round, and the bar
-still has no clause for the failure that keeps happening instead.
+### The rolling-shrinkage risk runs the other way a fourth time
+
+Validation ÷ rolling on the shipped arm runs **0.398** (`ftm|fta`) to **0.974**
+(`fg2m|fg2a`), with `fga` at 0.827, `fg3a|fga` 0.735, `reb` 0.866, `ast` 0.900, `fta` 0.774,
+`tov` 0.623, `stl` 0.756, `blk` 0.520 and `fg3m|fg3a` 0.676. **Not one of the eleven shows the
+§12e / §14f pattern of a validation reading 4–6× the rolling one** — every head reads *smaller*
+on validation than rolling, which is the opposite failure. Four families have now tested it —
+availability, minutes, composition, rates — and all four inverted it. The risk entry is updated
+accordingly; what it protects against has still never recurred in this round, and the bar still
+has no clause for the failure that keeps happening instead.
+
+### The chain, run end to end — and the components share is separable
+
+`make preseason-contest` re-ran with a **fourth** config key, `stan.components.preseason`,
+joining the three P5 flipped. Because this pass reuses P5's **byte-identical base capture** —
+the `base` column reproduces to every decimal — the components' contribution is the difference
+between the two paired passes:
+
+| season-total MAE | `base` | shipped (4 keys) | 4-key delta | P5's 3-key delta | **components add** |
+|---|---|---|---|---|---|
+| 2022-23 | 397.2475 | **360.96362** | **−36.28385** | −34.01297 | **−2.27088** |
+| 2023-24 | 397.9555 | **373.66427** | **−24.29119** | −20.44583 | **−3.84536** |
+
+CRPS moves **−25.05380** and **−18.30024**, R² **+0.05232** and **+0.03650**, and bias
+**+15.68180** and **+16.54580** toward zero — the bias improvement is the largest of the round
+on both seasons. The games-played pmf total variation falls at both seasons, which it should:
+the component heads do not touch availability, so that row is the sanity check rather than a
+result.
+
+**The board moves further than P5's three keys moved it**: rank correlation **0.960627 /
+0.968677**, mean |Δrank| over the 192 drafted picks **17.109375 / 16.58854**, drafted picks
+moving a full round **93 / 98** of 192, top-100 overlap **89% / 90%**. Stars (30+ mpg) gain
+**+97.85932** and **+90.90647** of mean season total against P5's +81.32 and +53.87 — so the
+rate block adds to the level on exactly the population the composition block was already
+lifting.
+
+**The contest reads the same way P5's did, and the control still inverts.** Every simulated
+tournament is a null against the instrument's own bar of **0.074835** (+0.048836, +0.037243,
++0.067894, +0.067229, −0.037810). The `adp` control — a board identical across arms, so its
+delta can only be the world — moved **−0.00515** against a 24-strategy mean of **+0.04585**,
+with **22** of 24 strategies positive. `ordering_spearman` is **0.708569** and
+`lineup_value_blend30` is top in both arms. Gate C's fitted rotation falls again — 0.399071 →
+**0.362309** and 0.395650 → **0.311690** — which is the same corroboration P5 read from it: the
+rotation is solved from the model-versus-market skill gap, and a better model needs less of it.
+It is also why the two arms' simulated worlds are not the same world, and why `sim_lift` is not
+arm-comparable.
+
+| tournament | `base` | shipped | delta |
+|---|---|---|---|
+| 20k_spin_move | 0.039989 | **0.369438** | **+0.329449** |
+| 50k_four_pt_play | 0.093927 | **0.296073** | **+0.202146** |
+| 15k_and_one | 0.076103 | **0.224399** | **+0.148296** |
+| 600k_shootaround | 0.101331 | **0.197293** | **+0.095962** |
+| 88k_alley_oop | 0.347996 | **0.352671** | **+0.004675** |
+
+⚠️ **The realized consistency count weakens from P5's, and the honest statement is a tie
+rather than a loss.** **9** of **10** season × tournament cells move the block's way and the
+tenth is **exactly 0.000000** — `88k_alley_oop` in 2022-23, where the two arms' realized lift
+is identical to every printed digit. **No cell moves against the block**, which is the claim
+the section actually needs; "10 of 10 positive" is not available at four keys and is not being
+quoted.
+
+⚠️ **`reference_lift_z` collapses from +1.053226 to +0.119757**, which is not a weakening of
+the result but a change in its denominator: the z is the reference strategy's delta measured in
+sds of the *across-strategy* spread, and the fourth key moved more strategies further, so the
+spread grew faster than the reference's own delta. It is a statement about the sweep's
+dispersion and should not be read as an effect size.
+
+### Four wiring gaps, three of which would have shipped a head that was not the head
+
+Recorded because the *pattern* matters more than any one of them: **a head can be selected
+under one specification and persisted under another, with every artifact staying internally
+consistent.** Nothing downstream would have contradicted itself.
+
+- **`posteriors.component_artifacts`** built its rows through `component_rates.build_design`
+  and would have persisted eleven heads with **no preseason columns** while the config and the
+  metrics artifact both said the block was on.
+- **`src/sim/season.py`** did the same in two places. Caught at *run time* by
+  `PosteriorRecipe._block`, 40 s into a 60-minute chain — and the guard names the builder the
+  frame should have come from, which is why the error identified its own fix.
+- **`manifest_row`** has a fixed column list and never picked up the new `extras`, so the
+  block's trace reached the pickles and not the CSV.
+- **`covered_fitting_rows`** cut the window family-wide, so the rolled-back `fg3m|fg3a` was
+  fitted on **6,382** rows instead of **8,630** — the pre-block columns on the post-block
+  window — while the run printed that it had reproduced the pre-block head "exactly".
+
+All four are fixed and pinned by tests, including an AST test that stops `season.py` importing
+the plain builder under any alias. **Wire every consumer, not the ones you happen to be
+reading**: four call sites needed the same change, and they were found by four different
+methods — two by reading, one by a run-time guard, one by checking an output that should have
+contained a column and did not.
+
+### ⚠️ The six-head ladder this section replaced
+
+This section was first written for P1's six admitted heads and read **"3 of 6 clear"**. Those
+figures are superseded rather than wrong — they are the same arms scored on the same rows, and
+the eleven-head run reproduces every one of them — but the *headline* they supported was an
+artefact of which heads had been armed. The six-head reading, kept for the record: primary-arm
+CRPS `reb` **20.0684**, `fga` **37.8517**, `ast` **18.3780**, `stl` **5.3034**, `tov`
+**8.9004**, `ftm|fta` **3.9154**, with `ftm|fta`'s best arm at **3.9131** and still above its
+floor; pooled primary-arm deltas **−0.7410** (`ast`), **−2.4302** (`fga`), **−0.0779** (`stl`),
+**−0.0483** (`tov`), **−0.8092** (`reb`), **−0.0167** (`ftm|fta`); and a block-to-fit ratio of
+**5.45×** on `reb` against 1.07× on `fga`, 0.81× on `ast`, 0.15× on `stl` and 0.06× on `tov`.
+
+Two of those changed meaning on the widening. The `reb` ratio rises from **5.45×** to
+**7.25×** because it is now read on the *shipped* arm rather than the declared primary, and
+`fga`'s from 1.07× to 1.17× for the same reason — so "the block is worth more than the fitted
+head" got stronger, not weaker. And "3 of 6 clear" became **6 of 11 at the gate and 10 of 11
+shipped**, with all three of the added clearances coming from heads P1 had excluded.
 
 ### What session 6b decides
 
-1. **Three heads clear the conjunction on the declared primary — `fga`, `ast`, `reb` — and
-   four on the fitting-half-confirmed promoted arm, adding `tov`.** `stl` fails validation at
-   both readings of the arm; `ftm|fta` fails both halves.
-2. **Nothing ships.** A cleared gate earns a Stan port in `stan_components`, which is a
-   separate door, exactly as P3's clearance earned the composition a pricing session rather
-   than an adoption. These six sit in the simulator's own draw path (unlike the marginal
-   minutes head), so a port is priceable with `make preseason-contest --groups components`.
-3. **The empirical-Bayes shrink is the right form of the volume term on rates**, and `k` is
-   fitted per head on the fitting half. P1's additive `pre_log_min` is not — it is a tie on
-   every head at both readings.
-4. **Centring is a device for levels, not for deltas in general.** Its scope is now bounded by
-   a measurement rather than by two successes.
-5. **`ftm|fta` is a recorded null at the head's own unit**, and the conversion family is now a
-   null on preseason data in every one of its four heads: P1 nulled three, 6b nulls the fourth.
-6. **P1's screen over-ranked the noisiest head and under-ranked `reb`.** `reb` was P1's
-   *smallest* clearing count head (+0.0016) and is 6b's largest block-to-fit ratio (5.45×);
-   `ftm|fta` was P1's largest and is 6b's only two-sided failure. A ΔR² on a point estimate
-   ranks by signal and a CRPS bar ranks by signal *net of the noise carrying it*.
+1. **Ten of the eleven component rate heads ship the preseason block**, as the volume-shrunk
+   delta plus the four age-split missing indicators — five columns per head, `k` read from the
+   artifact that fitted it. Owner decision 2026-08-15, on the posterior reading.
+2. **`fg3m|fg3a` does not**, on three agreeing instruments, and it is the only measured-worse
+   result in the round. `PRESEASON_EXCLUDE` opts it out of the columns *and* the window cut.
+3. **Four heads ship against the validation half of the bar** — `stl`, `blk`, `fg3m|fg3a`'s
+   siblings `fg2m|fg2a` excepted, plus `ftm|fta` — because they pass rolling on 4,300 rows and
+   cannot be resolved on 706. Same owner decision P2 recorded on the availability head; it is
+   registered as an open decision, not as a clearance.
+4. **A screen's sign is not evidence about the heads it failed.** All five of P1's exclusions
+   were wrong and two of them clear the real bar outright. The screen stays useful as a
+   *filter* and is no longer usable as a *veto*.
+5. **The empirical-Bayes shrink is the right form of the volume term on rates**, and `k` is
+   fitted per head on the fitting half. P1's additive `pre_log_min` is not.
+6. **Centring is a device for levels, not for deltas in general.** Its scope is now bounded by
+   a measurement on eleven heads rather than by two successes.
+7. **`ftm|fta` is a recorded null at the head's own unit** and still clears no floor at any
+   variant — but it ships the block anyway on the rolling half, which is decision 3 and not a
+   claim that the head works.
+8. **`tov`'s variant flips from `log_own` to `log_own_spline`, and so does `reb`'s.** Both are
+   fourth-decimal margins and both were waived explicitly; six of seven count heads now select
+   a spline where four did.
 
 ### What session 6b does not settle
 
-- **Whether a cleared arm survives the posterior.** Every reading here is a plug-in point MLE
-  with no parameter uncertainty. P3's block *grew* under the posterior (−4.789 → −5.911) and
-  4c's retention was 1.040, so the precedent is favourable — but it is a precedent from two
-  other heads and two other likelihoods.
-- **Whether it is worth anything in the contest.** These heads reach the draw as component
-  *rates*, and §7l's precedent is that a head change arriving as shape rather than as order
-  can be a measured null on the board. The instrument exists and is one paired pass.
-- **Whether `stl` and `tov` should ship on the rolling half alone.** That is the open decision
-  P2 registered and did not take, now standing on two more heads. Nothing here re-opens it.
-- **Whether a shrunk delta interacts with the availability block.** Both are fitted
-  independently and the chain multiplies them; no arm crosses the two.
+- **Whether the four rolling-only heads should have shipped.** That is the open decision P2
+  registered and did not take, now standing on four more heads. Nothing here re-opens it, and
+  the four are individually small — together they are **0.36** CRPS of the round's **8.7**.
+- **Whether the contest gain is the rate block specifically.** The 4-key pass differences
+  cleanly against P5's 3-key one on **Gate A**, which is why the components' season-total share
+  is quotable. The *contest* rows do not difference that way: Gate C's `rho` is re-solved per
+  arm, so the two arms' simulated worlds are not the same world.
+- **Whether a shrunk delta interacts with the availability block.** All four groups are fitted
+  independently and the chain multiplies them; no arm crosses any two.
+- ⚠️ **The `reach` block has no `components` row.** `preseason_contest.reach_rows` reports
+  `refit_landed` and `n_features` for availability, minutes and composition only, so the family
+  this round shipped has **no per-head trace in the artifact that prices it**. All four config
+  keys do show 0→1, so the arm name is verified; what is missing is the per-head window/feature
+  evidence that the other three groups carry. Small, and worth closing before the next paired
+  pass — a `reach` row is the cheapest guard against the fourth wiring gap recurring.
+- **Whether `stan.components.preseason: false` is still an exact rollback.** It is for the ten
+  armed heads. For `fg3m|fg3a` it is a no-op by construction, and that is now pinned by a test
+  rather than by this sentence.
 
 ## Why preseason data should help — and where it plausibly won't
 

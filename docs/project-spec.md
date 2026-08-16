@@ -37,8 +37,12 @@ prior-season statistics × current-season preseason statistics.**
 feature — `docs/preseason-plan.md` is the whole of it. Preseason quantities enter as
 **additional columns on existing heads**, difference-coded against the prior-season
 equivalent on each head's own link scale, so that a coefficient of zero recovers the
-pre-2026-08-13 head exactly; the availability and minutes heads carry a block today and
-`stan.availability.preseason: false` / `stan.minutes.preseason: false` are exact rollbacks.
+pre-2026-08-13 head exactly. **Four head groups carry a block today** — availability,
+marginal minutes, the minutes composition (through its prior share rather than a coefficient)
+and **ten of the eleven component rate heads**, the eleventh opted out by
+`stan_components.PRESEASON_EXCLUDE` as the round's one measured-worse result.
+`stan.availability.preseason`, `stan.minutes.preseason`,
+`stan.composition.preseason.adopt` and `stan.components.preseason` are exact rollbacks.
 Three rules ride with it:
 
 - **A preseason quantity is a forecast covariate, never a substitute observation.** Nothing
