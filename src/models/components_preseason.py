@@ -1,4 +1,4 @@
-"""Session 6b — the preseason increment on the five surviving RATE heads, as nested arms.
+"""Session 6b — the preseason increment on every component RATE head, as nested arms.
 
 `make components-preseason`. Three artifacts in `outputs/predictions/`:
 `components_preseason.csv`, `components_preseason_rolling.csv`,
@@ -21,10 +21,16 @@ shrinking one:
 | `reb` | +0.0016 | +0.0036 | -0.0010 |
 | `ftm\\|fta` | +0.0176 (own R², delta-carried) | | |
 
-`blk`, `fta`, `fg2m|fg2a` and `fg3m|fg3a` are P1's recorded nulls and **do not get an arm
-here** — two of them are actively hurt by the block, and `fg3m|fg3a`'s apparent +0.0149 was
-entirely `has_preseason` rather than preseason three-point percentage, which is the split P1's
-attribution columns exist to catch.
+**All eleven heads are armed, and the five P1 left out are the second run's new information.**
+The first pass carried P1's short list alone. That exclusion did not survive the round: the
+screen misranked the heads it *admitted* in both directions — its largest increment
+(`ftm|fta`) is a tie here and its smallest clearing one (`reb`) is the round's biggest
+block-to-fit ratio — and two of the five it excluded were never negative to begin with
+(`fg3m|fg3a` +0.01488 at z = 7.53, excluded because the gain is the shared indicator pair
+rather than preseason 3P%; `fg3a|fga` +0.00467 delta-carried at z = 6.70, better than two
+armed heads). Three heads *do* carry a negative screen — `blk`, `fg2m|fg2a`, `fta` — and a
+permutation z that negative is evidence of **harm** rather than absence of gain, which is a
+claim worth pricing at a paired interval rather than inheriting. See `COUNT_ARMS`.
 
 ## The bar, stated before the run — P1's own "what it does not settle"
 
@@ -117,15 +123,46 @@ from src.models.stan_components import (PREDICTIVE_SAMPLES, SPLINE_KNOTS, _beta_
                                         conversion_variants, count_variants)
 from src.models.stan_utils import crps_from_samples, ks_uniform, pit_from_samples
 
-# P1 decision 2's short list, in the order the gate ranked it. `blk` and `fta` are the
-# recorded count nulls and `fg2m|fg2a` / `fg3m|fg3a` the conversion ones; none of the four
-# appears here, and a head added to this list without a P1 reading would be re-opening a
-# decision rather than executing one.
-COUNT_ARMS = ["ast", "fga", "stl", "tov", "reb"]
-CONVERSION_ARMS = [("ftm", "fta")]
+# ⚙️ **Every component head is armed, since 2026-08-15.** The first run of this module
+# carried P1 decision 2's short list alone — `ast`, `fga`, `stl`, `tov`, `reb` and
+# `ftm|fta` — and the five it left out were left out on P1's ΔR² screen. That exclusion did
+# not survive its own round, for two reasons recorded here rather than in a commit message:
+#
+#   1. **The screen misranked the heads it did admit, in both directions.** Its largest rate
+#      increment (`ftm|fta`, +0.01755 at z = 18.8) is a tie at both readings of this ladder,
+#      and its smallest clearing count head (`reb`, +0.00165) has the round's largest
+#      block-to-fit ratio. A screen that cannot order the heads it passed is not evidence
+#      about the heads it failed.
+#   2. **Two of the five were never negative at all.** `fg3m|fg3a` reads +0.01488 at z = 7.53
+#      — a LARGER ΔR² than four armed heads — and was excluded because the gain is the shared
+#      indicator pair rather than preseason 3P% (own delta −0.00237). `fg3a|fga` reads
+#      +0.00467 delta-carried at z = 6.70, better than `stl` or `tov`, and sat out only
+#      because `ftm|fta` was the standout among conversions.
+#
+# Three heads DO carry a genuinely negative screen — `blk` (−0.00847, z = −3.18), `fg2m|fg2a`
+# (−0.00845, z = −9.44) and `fta` (−0.00161, z = −2.32) — and a permutation z that negative
+# means the real block scores worse out of sample than a SHUFFLED block of the same shape,
+# which is evidence of harm rather than absence of gain. They are armed anyway, because this
+# ladder is the instrument that can price that claim at a paired interval and it costs five
+# minutes: excluding a head on a screen this one has already contradicted is the same error
+# in the other direction. An arm that comes back positive-and-unresolvable is a null; an arm
+# that comes back with an interval clear of zero ON THE WRONG SIDE is the screen confirmed,
+# and either is worth more than the assumption.
+COUNT_ARMS = ["ast", "fga", "stl", "tov", "reb", "blk", "fta"]
+CONVERSION_ARMS = [("ftm", "fta"), ("fg3a", "fga"), ("fg2m", "fg2a"), ("fg3m", "fg3a")]
 
-# P1's recorded nulls, carried as data so the artifact says what was NOT armed and why.
-P1_NULL_HEADS = {"blk": -0.0085, "fta": -0.0016, "fg2m|fg2a": -0.0085, "fg3m|fg3a": 0.0149}
+# P1's screen for every head, as data, so the artifact carries what the gate is being read
+# against. Positive entries were admitted by P1; the three negative ones are the claim this
+# round is testing. `fg3m|fg3a`'s +0.01488 is the trap the attribution split caught — its own
+# delta is −0.00237 and the whole gain is the shared indicator pair.
+P1_SCREEN = {"ast": 0.01223, "fga": 0.00511, "stl": 0.00205, "tov": 0.00170,
+             "reb": 0.00165, "blk": -0.00847, "fta": -0.00161,
+             "ftm|fta": 0.01755, "fg3a|fga": 0.00467, "fg2m|fg2a": -0.00845,
+             "fg3m|fg3a": 0.01488}
+
+# The three whose screen is negative — armed here for the first time, and the heads whose
+# gate reading is the new information in the second run.
+P1_NEGATIVE_HEADS = {h: v for h, v in P1_SCREEN.items() if v < 0}
 
 # The reference every interval is taken against: the shipped variant refit on the covered
 # window with no preseason column at all.
@@ -247,7 +284,7 @@ class Head:
 
 
 def heads() -> list[Head]:
-    """P1's short list as `Head` objects, counts first."""
+    """Every component head as a `Head` object, counts first — see `COUNT_ARMS`."""
     out = [Head(c, "count", c, None, f"pre_d_{c}") for c in COUNT_ARMS]
     out += [Head(f"{m}|{a}", "conversion", m, a, f"pre_d_{m}") for m, a in CONVERSION_ARMS]
     return out
@@ -724,9 +761,15 @@ def run(cfg: dict) -> dict[str, Path]:
     print("\n  Each head's SHIPPED variant, read from stan_component_metrics.csv rather "
           "than hard-coded:")
     print("    " + ", ".join(f"{h} → {v}" for h, v in variants.items()))
-    print(f"  P1's recorded NULLS, which get no arm here: "
-          f"{', '.join(P1_NULL_HEADS)} — two of them are actively hurt by the block and\n  "
-          f"`fg3m|fg3a`'s apparent gain was `has_preseason` rather than preseason 3P%.")
+    print(f"  ALL {len(heads())} component heads are armed. P1's ΔR² screen admitted six of "
+          f"them and its\n  ranking did not survive this ladder in either direction, so the "
+          f"five it excluded are\n  measured rather than assumed. The three carrying a "
+          f"genuinely NEGATIVE screen —\n  "
+          + ", ".join(f"{h} ({v:+.5f})" for h, v in P1_NEGATIVE_HEADS.items())
+          + " — are the claim this run tests:\n  a permutation z that negative says the real "
+            "block scores worse out of sample than a\n  SHUFFLED one, which is evidence of "
+            "harm rather than absence of gain, and this is the\n  instrument that can price "
+            "it at a paired interval.")
 
     # ── the design ───────────────────────────────────────────────────────────
     panel = pd.read_parquet(features_dir / "preseason.parquet")

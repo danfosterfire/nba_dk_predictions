@@ -1166,3 +1166,88 @@ The three favourable precedents are on two other heads and two other likelihoods
 harness at 12 of 13 origins with intervals clear of zero and fail validation — `stl` by
 **+0.0026** — which is the open decision P2 registered and did not take, now standing on two
 more heads. It is a decision about the bar, and the bar's owner is not this entry.
+
+---
+
+## 14. `make stan` throws away the draws it just paid for, and `make posteriors` refits them
+
+**Opened 2026-08-15**, from an owner question during session 6b's port: *don't all the shipped
+models include the train window?* They do. `make stan` fits every head at its shipped variant
+on the training rows, evaluates it, writes metrics and per-row predictions, and **discards the
+coefficient draws**. `make posteriors --window train` then refits precisely that model to
+persist them. The Makefile states the first half as a fact — "`make stan` ... THROWS THE
+COEFFICIENT DRAWS AWAY, so simulating from the joint posterior has meant refitting" — without
+treating it as something to fix.
+
+### The two fits are the same fit, and that is checkable rather than assumed
+
+`stan_utils.sample`'s `label` argument reaches `diagnostics()` only; it never touches
+`model.sample()`. The draws are determined by data, chains, warmup, samples, seed,
+`adapt_delta`, inits and metric, and both call sites read every one of those from the same
+config keys. The design steps that could differ do not: `impute` takes its means and
+`add_spline` its knots from **train** alone, so the transformed fitting frame is identical.
+
+The manifest corroborates it. For every component head whose variant matches,
+`posteriors`' `n_features` is the sweep's minus exactly the five preseason columns, on the
+same **8,630** rows; `fg3m|fg3a`, which carries no block on either side, reads **14** on both.
+
+### What it costs today
+
+| fit window | `make posteriors` | already fitted by `make stan`? |
+|---|---|---|
+| `train` | **4.89 h** — components 2.09 h, composition 2.04 h | **yes, fully duplicated** |
+| `train_val` | 8.31 h | no — different rows, never fitted |
+| `full` | not built | no |
+
+So ~**4.9 h per full re-run** at the train window, or **2.1 h** for a components-only pass —
+which is the pass this project makes most often, since a head change is usually one family.
+Only the **selected** variant is duplicated: the sweep fits three variants per head plus a
+control (43 fits in 6b's run) and `posteriors` refits the 11 winners.
+
+### What to build
+
+1. **Hold each head's fitted model until selection resolves, then persist the winner**
+   through the existing `_finish` / `save` path rather than rebuilding it. Memory is not the
+   obstacle — 33 component models at 4,000 draws and K ≤ 19 is ~20 MB.
+2. **Keep `make posteriors` as the entry point for the other two windows.** This retires the
+   duplicated `train` fits, not the target: `train_val` and `full` are genuinely separate
+   fits, and the design-recipe construction and round-trip verification have to live
+   somewhere regardless.
+3. **Fix the `impute` fragility in the same pass**, because merging the paths either fixes it
+   or exposes it. `impute` creates a `<col>__miss` flag when **either** train or test has a
+   NaN. The sweep passes the full validation frame (773 rows); `posteriors` passes
+   `probe_rows(val)`, a thinned subset. A column with a NaN in `val` but not in the probe
+   subset gives the two paths **different feature lists** for what is supposed to be the same
+   head. It has not bitten — today's counts line up — but a feature list must not depend on
+   the evaluation frame.
+
+### Why this is worth doing beyond the wall clock
+
+The two paths can **silently disagree**, and that is the same shape as the incident
+`docs/preseason-plan.md` P2 records: an artifact carries no record of the code that wrote it,
+so a head selected under one specification and persisted under another produces two internally
+consistent artifacts that describe different models. Session 6b hit the live version — until
+it was wired, `posteriors` built its rows through `component_rates.build_design` and would
+have persisted eleven heads with **no preseason columns** while `stan_component_metrics.csv`
+and the config both said the block was on. Nothing in the repo would have objected. One path
+removes the class of error rather than the instance.
+
+### What would settle it
+
+The persisted draws from a `make stan` run reproducing a `make posteriors --window train`
+artifact **exactly** — same coefficients, same `max_design_error` and `max_prediction_error`
+under the existing round-trip check. That is a bit-for-bit assertion rather than a tolerance,
+because the claim is that the two are the same fit.
+
+### What would falsify it
+
+Any head where the two paths do not reproduce. The `impute` case above is the known candidate
+and would show up as a feature-count mismatch rather than a numerical one. A second candidate
+is any head whose sweep applies a `metric` (`dense_e`) that `posteriors` does not, or vice
+versa — the composition head is the one that passes a metric, so check it first.
+
+### What it does not change
+
+**Nothing about any measured result.** This is plumbing: the same model, fitted once instead
+of twice. No gate, no ladder and no shipped figure moves, which is also what makes it safe to
+do between rounds rather than during one.

@@ -89,18 +89,29 @@ import yaml
 ARMS = ("base", "preseason")
 CAPTURE_DIR = "preseason_arms"
 
-# The three config keys that ARE the block. `--capture` requires all three to agree with the
-# arm name: a pass with two off and one on is neither arm, and it is the shape of mistake
+# The FOUR config keys that ARE the block. `--capture` requires all four to agree with the
+# arm name: a pass with three off and one on is neither arm, and it is the shape of mistake
 # that leaves every number below looking plausible.
+#
+# ⚙️ `stan.components.preseason` joined on 2026-08-15 (session 6b). It is the only one of the
+# four that is not all-or-nothing at the config level — `stan_components.PRESEASON_EXCLUDE`
+# opts `fg3m|fg3a` out on its own measurement — but flipping the key still turns the whole
+# component block off, which is what an arm needs. **This key changes what the delta means:**
+# before 6b, "the block" was availability + minutes + composition, and every recorded figure
+# in P5's close is against that three-key arm. A pass run after this date prices a strictly
+# larger change and is not comparable to P5's row without saying so.
 BLOCK_KEYS = (("stan", "availability", "preseason"),
               ("stan", "minutes", "preseason"),
-              ("stan", "composition", "preseason", "adopt"))
+              ("stan", "composition", "preseason", "adopt"),
+              ("stan", "components", "preseason"))
 KEY_NAMES = tuple(".".join(path) for path in BLOCK_KEYS)
 
 # The heads whose POSTERIOR has to be refitted for an arm. `minutes` is here even though it
 # cannot reach the tensor (see the module docstring) — the arm is the block, not the subset
-# of it that happens to be observable.
-REFIT_GROUPS = ("availability", "minutes", "composition")
+# of it that happens to be observable. `components` DOES reach it: ten of the eleven rate
+# heads carry a block since 6b and every one of them is in the simulator's draw path, which
+# is the first time a preseason arm has been fully observable in this readout.
+REFIT_GROUPS = ("availability", "minutes", "composition", "components")
 
 # The CSVs an arm is captured from — `mixture_value.ARM_TABLES` verbatim, because the two
 # counterfactuals ride the same five-target chain. A missing file means the arm was captured
@@ -584,10 +595,23 @@ def reach_rows(out_dir: Path) -> list[dict]:
                          "the block's trace on availability and minutes; the composition "
                          "blends `w_share` and adds no columns, so its delta is 0 by design"))
     for key in KEY_NAMES:
-        rows.append(_row("reach", "config_key", key,
-                         float(stamps["base"][key].iloc[0]),
-                         float(stamps["preseason"][key].iloc[0]),
-                         "the three keys that ARE the block"))
+        # A key can be ABSENT from an older capture rather than false in it. `base` was
+        # frozen on 2026-08-15 at 02:00, before `stan.components.preseason` existed, so the
+        # column is simply not in its provenance — and reading that as an error would make
+        # a capture unusable the moment the block grows a key, while backfilling the
+        # artifact by hand would put a value into a record of what was observed. Absent is
+        # reported as 0.0 with the reason on the row: the key did not exist at capture
+        # time, so no component head carried a block, which is what 0.0 means here.
+        seen = {arm: (float(stamps[arm][key].iloc[0]) if key in stamps[arm].columns
+                      else float("nan")) for arm in ARMS}
+        note = "the keys that ARE the block"
+        if any(pd.isna(v) for v in seen.values()):
+            absent = [arm for arm, v in seen.items() if pd.isna(v)]
+            note += (f" — NOT RECORDED in {', '.join(absent)}, which predates the key; "
+                     f"no head carried that block when it was captured, so it reads 0.0")
+            seen = {arm: (0.0 if pd.isna(v) else v) for arm, v in seen.items()}
+        rows.append(_row("reach", "config_key", key, seen["base"], seen["preseason"],
+                         note))
     return rows
 
 

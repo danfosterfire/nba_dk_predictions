@@ -306,6 +306,29 @@ stan:
     spline_knots: 5
 
   components:
+    # ── The preseason block, adopted 2026-08-15 (docs/preseason-plan.md session 6b) ──
+    # Five columns appended to every variant of every head: that head's OWN preseason delta
+    # on its own link scale — log1p of a per-36 rate for a count, logit of a percentage for
+    # a conversion — volume-shrunk by min_pre / (min_pre + k) at the k session 6b fitted on
+    # the fitting half, plus the missing-preseason indicator split on P1's age cells.
+    #
+    # ALL ELEVEN heads clear the rolling-origin half of the bar (11-13 of 13 origins,
+    # intervals clear of zero on 4,300 fitting-half rows) and SEVEN also clear validation:
+    # fga, fg3a|fga, reb, ast, fta, tov and fg2m|fg2a. The other four have favourable point
+    # estimates at both readings and validation intervals that reach across zero on 706
+    # rows. No head in the round has an interval clear of zero on the WRONG side.
+    #
+    # The shrink is the form the fitting half chose over P1's additive `pre_log_min`, and k
+    # is READ from components_preseason_shrinkage.csv rather than pinned here, because it is
+    # a fitted quantity. Season-centring is deliberately NOT used, unlike stan.minutes: it
+    # loses on this family, because the compression it corrects is a property of levels and
+    # a per-36 rate has already divided the exposure out.
+    #
+    # `false` is an EXACT rollback to the pre-2026-08-15 heads — it also restores the full
+    # 1997-98 fitting window, which the block cuts to 2004-05 (the panel's first covered
+    # season) so the missing indicator cannot read as an era dummy.
+    preseason: true
+
     # Every head gets a spline variant and the winner is picked on a VALIDATION split,
     # rather than hard-coding "splines on fg3a and blk only". `make component-rates`
     # measured that pattern (+0.030 R^2 on fg3a, +0.041 on blk, <= +0.003 elsewhere) under

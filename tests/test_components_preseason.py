@@ -24,9 +24,11 @@ Eight things are pinned, each of which would move every figure in
 - **the gate needs both halves.** A validation-only pass must not pass — this project has
   twice shipped a block that won validation and shrank 4-6x rolling, and the multiplicity is
   six heads here rather than one;
-- **the armed heads are P1's short list and nothing else.** `blk`, `fta`, `fg2m|fg2a` and
-  `fg3m|fg3a` are recorded nulls; a head added to `COUNT_ARMS` without a P1 reading would be
-  re-opening a decision rather than executing one;
+- **every head the component chain fits gets an arm, and carries its P1 screen as data.**
+  The list widened from P1's six-head short list on 2026-08-15 because the screen misranked
+  the heads it admitted in both directions; what has to stay true is that no head is excluded
+  by assumption and that `P1_NEGATIVE_HEADS` stays derived from `P1_SCREEN` rather than typed
+  twice;
 - **the shipped variant is read, not assumed.** A ladder holding a variant the head does not
   ship has no incumbent in it, so `shipped_variants` raises rather than defaulting.
 """
@@ -346,18 +348,45 @@ def test_the_gate_is_what_earns_a_stan_port():
 
 # ── Scope ─────────────────────────────────────────────────────────────────────
 
-def test_the_armed_heads_are_p1s_short_list_and_nothing_else():
-    """P1 decision 2, as code.
+def test_every_component_head_is_armed_and_carries_its_p1_screen():
+    """The ladder covers the whole head list, and knows what each head's screen said.
 
-    `blk` and `fta` are recorded count nulls (both actively hurt by the block) and
-    `fg2m|fg2a` / `fg3m|fg3a` are the conversion ones — `fg3m|fg3a`'s apparent +0.0149 was
-    entirely `has_preseason` rather than preseason three-point percentage. Arming one of them
-    here would be re-opening a P1 decision rather than executing it.
+    The first run of this module carried P1 decision 2's six-head short list and this test
+    pinned it there. The list widened deliberately on 2026-08-15 — see `COUNT_ARMS` — because
+    the screen misranked the heads it admitted in both directions, so it is not evidence
+    about the heads it failed. What the test pins now is the pair of properties that make the
+    wider run interpretable: **every head the chain fits gets an arm**, so no head is excluded
+    by an assumption, and **every head carries its screen as data**, so the gate is readable
+    against what it is overturning or confirming.
+
+    `P1_NEGATIVE_HEADS` is the claim under test and must stay derived from `P1_SCREEN` rather
+    than typed twice — a hand-maintained second list is how the two would come to disagree.
     """
     armed = {h.name for h in CP.heads()}
-    assert armed == {"ast", "fga", "stl", "tov", "reb", "ftm|fta"}
-    assert not (armed & set(CP.P1_NULL_HEADS))
-    assert set(CP.P1_NULL_HEADS) == {"blk", "fta", "fg2m|fg2a", "fg3m|fg3a"}
+    expected = set(COUNT_HEADS) | {f"{m}|{a}" for m, a in CONVERSION_HEADS}
+    assert armed == expected, "every head the component chain fits must get an arm"
+    assert set(CP.P1_SCREEN) == expected, "every armed head needs its screen recorded"
+    assert CP.P1_NEGATIVE_HEADS == {h: v for h, v in CP.P1_SCREEN.items() if v < 0}
+    assert set(CP.P1_NEGATIVE_HEADS) == {"blk", "fta", "fg2m|fg2a"}
+
+
+def test_the_conversion_arms_use_each_heads_own_prior_rate_column():
+    """`fg3a|fga`'s own rate is the attempt-MIX share, not three-point shooting percentage.
+
+    `stan_components.conversion_variants` carries a long warning about this exact head: the
+    `{made}_pct_lag1` convention resolves to `fg3a_pct_lag1`, which today is `fg3a / fga` —
+    the share — and would silently become shooting accuracy if anyone added a column of that
+    name meaning something else. Arming this head makes that live rather than hypothetical,
+    so the delta the arm carries is checked against the share it is supposed to be.
+    """
+    design = _design(n_per_season=40, seasons=("2019-20",))
+    panel = _panel(design, missing_every=None)
+    out = _attached(design, panel)
+    head = [h for h in CP.heads() if h.name == "fg3a|fga"][0]
+
+    share = panel["fg3a_pre"].to_numpy(dtype=float) / panel["fga_pre"].to_numpy(dtype=float)
+    expected = logit(share) - logit(design["fg3a_pct_lag1"].to_numpy(dtype=float))
+    assert np.allclose(out[head.delta].to_numpy(dtype=float), expected)
 
 
 def test_the_arms_are_all_nested_supersets_of_the_reference():

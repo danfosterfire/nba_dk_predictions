@@ -909,6 +909,116 @@ def test_the_minutes_shared_builder_never_carries_the_preseason_block():
     assert head_features(base, True)[:len(base)] == base
 
 
+def test_the_component_preseason_block_is_per_head_and_on_each_heads_own_link():
+    """Session 6b's shipped block, as a property of the column lists.
+
+    The one thing that cannot be shared across this family: each head's delta is on **its
+    own link** — `log1p` of a per-36 rate for a count, `logit` of a percentage for a
+    conversion — so a module-level `PRESEASON_COLS` in the shape `stan_minutes` uses would
+    put `reb`'s preseason rebounding on `blk`'s linear predictor. The four indicators ARE
+    shared, because a missing preseason row is the same event for every head.
+
+    The shipped delta is the **shrunk** one, which is the opposite of `stan_minutes` on both
+    counts: shrunk rather than raw (the fitting half chose the volume weight over P1's
+    additive term on every head) and uncentred rather than centred (centring loses on this
+    family, because a per-36 rate has already divided the exposure out). Shipping either of
+    those the other way round is a silent reversal of a measured finding.
+    """
+    from src.models.component_rates import CONVERSION_HEADS, COUNT_HEADS
+    from src.models.stan_components import (PRESEASON_EXCLUDE, PRESEASON_MISSING_COLS,
+                                            head_features, head_preseason_cols)
+
+    seen = set()
+    for component in COUNT_HEADS + [m for m, _ in CONVERSION_HEADS]:
+        cols = head_preseason_cols(component, True)
+        if component in PRESEASON_EXCLUDE:
+            assert cols == [], f"{component} is opted out and must carry no block"
+            continue
+        assert cols[0] == f"pre_d_{component}_shrunk"
+        assert cols[1:] == list(PRESEASON_MISSING_COLS)
+        assert cols[0] not in seen, "two heads share a delta column"
+        seen.add(cols[0])
+        # Uncentred, and not the raw unshrunk delta either.
+        assert not cols[0].endswith("_centered")
+        assert f"pre_d_{component}" != cols[0]
+
+    base = ["a", "b", "c"]
+    assert head_features(base, "reb", False) == base
+    assert head_features(base, "reb", True) == base + head_preseason_cols("reb", True)
+    # Suffix, so a persisted recipe's column order is stable when the flag flips.
+    assert head_features(base, "reb", True)[:len(base)] == base
+
+
+def test_fg3m_given_fg3a_is_opted_out_of_the_preseason_block():
+    """The one head 6b measured as WORSE with the block, pinned so it cannot drift back in.
+
+    Ten of eleven heads improve under the posterior at a median retention of 0.991;
+    `fg3m|fg3a` goes the other way on CRPS, NLL and PIT KS at once. Three instruments agree
+    — P1's attribution said its gain was the shared indicator rather than preseason 3P%, 6b's
+    pooled point MLE was already positive, and the posterior control is larger in the same
+    direction. Prior-season 3P% over ~200 attempts beats preseason 3P% over ~15, so the block
+    adds variance and no signal.
+
+    Pinned as a property rather than left to the constant, because "ship the block on every
+    head" is the obvious tidy-up and it would silently undo a measured decision. The exclusion
+    also has to be exhaustive in the other direction: no OTHER head may be opted out without
+    the same evidence, so the set is asserted whole.
+    """
+    from src.models.stan_components import (PRESEASON_EXCLUDE, head_features,
+                                            head_preseason_cols)
+
+    assert PRESEASON_EXCLUDE == frozenset({"fg3m"})
+    assert head_preseason_cols("fg3m", True) == []
+    # The head fits exactly what it fitted before the block existed.
+    base = ["a", "b", "c"]
+    assert head_features(base, "fg3m", True) == base
+    assert head_features(base, "fg3m", True) == head_features(base, "fg3m", False)
+    # And its sibling conversion heads are unaffected.
+    assert head_preseason_cols("ftm", True)
+    assert head_preseason_cols("fg2m", True)
+    assert head_preseason_cols("fg3a", True)
+
+
+def test_the_component_shared_builder_never_carries_the_preseason_block():
+    """`component_rates.build_design` is how `season_terms`, `posteriors`, the substitution
+    sweep and `components_preseason` itself reach their rows. A column that is structurally
+    zero before 2004-05 must not enter any of them by accident, which is why `head_design`
+    is a separate path — the `attach_absence_mix` precedent, third head family over."""
+    import inspect
+
+    from src.models import component_rates
+    from src.models.stan_components import head_design
+
+    source = inspect.getsource(component_rates.build_design)
+    for token in ("pre_d_", "preseason", "has_preseason"):
+        assert token not in source, f"`build_design` reaches for {token}"
+    # And the head's own path is the thing that adds them.
+    assert "attach_preseason" in inspect.getsource(head_design)
+
+
+def test_the_component_control_arm_can_never_be_selected():
+    """The no-preseason control is what the shipped arm is measured against.
+
+    If `_finalize` could select it, a run that exists to *price* the block would silently
+    re-decide it — and `posteriors.selected_specs` would then persist a head with no block
+    while the config flag still said `true`. `stan_minutes.sweep` marks its own the same way.
+    """
+    import pandas as pd
+
+    from src.models.stan_components import CONTROL_SUFFIX, _finalize
+
+    table = pd.DataFrame([
+        {"head": "reb", "variant": "carry_forward", "val_r2": 0.10},
+        {"head": "reb", "variant": "log_own", "val_r2": 0.50},
+        # The control scores BEST and must still lose the `selected` flag.
+        {"head": "reb", "variant": f"log_own{CONTROL_SUFFIX}", "val_r2": 0.99},
+    ])
+    out = _finalize(table, "val_r2", higher_is_better=True)
+    assert out.loc[out["variant"] == "log_own", "selected"].iloc[0]
+    assert not out.loc[out["variant"].str.endswith(CONTROL_SUFFIX), "selected"].iloc[0]
+    assert out.loc[out["variant"].str.endswith(CONTROL_SUFFIX), "is_control"].iloc[0]
+
+
 def test_the_shared_design_builder_never_carries_the_preseason_block():
     """The guard the whole opt-in design rests on, as a property of the column lists.
 
@@ -1233,3 +1343,69 @@ def test_provenance_records_rather_than_raises_outside_a_checkout(tmp_path):
     stamp = code_provenance(tmp_path)
     assert stamp["git_commit"] == ""
     assert stamp["src_digest"] and stamp["written_at"]
+
+
+def test_merge_heads_replaces_only_the_refitted_heads():
+    """`--heads` is a merge, not a hand-patch, and this is the property that makes it sound.
+
+    The eleven heads are fitted separately — the factorization identity the whole module
+    rests on — so a head's rows depend on nothing outside itself and refitting one leaves the
+    other ten bit-identical at a fixed seed. `posteriors.py --groups` is the standing
+    precedent for assembling one artifact from partial runs.
+
+    The safety condition is that selection is **head-local**: `_finalize` picks `selected`
+    within a head's own block, so a merged file cannot carry a stale winner from a comparison
+    that spanned heads.
+    """
+    import pandas as pd
+
+    from src.models.stan_components import merge_heads
+
+    existing = pd.DataFrame([
+        {"head": "reb", "variant": "log_own", "val_r2": 0.95},
+        {"head": "ast", "variant": "log_own", "val_r2": 0.92},
+        {"head": "fg3m|fg3a", "variant": "logit_own_spline", "val_r2": 0.12},
+    ])
+    fresh = pd.DataFrame([
+        {"head": "fg3m|fg3a", "variant": "linear", "val_r2": 0.07},
+        {"head": "fg3m|fg3a", "variant": "logit_own_spline", "val_r2": 0.13},
+    ])
+    out = merge_heads(existing, fresh)
+    # The untouched heads survive verbatim, values included.
+    assert set(out[out["head"] != "fg3m|fg3a"]["head"]) == {"reb", "ast"}
+    assert float(out.loc[out["head"] == "reb", "val_r2"].iloc[0]) == 0.95
+    # The refitted head is fully replaced, not appended to — no stale row survives.
+    block = out[out["head"] == "fg3m|fg3a"]
+    assert len(block) == 2
+    assert set(block["variant"]) == {"linear", "logit_own_spline"}
+    # And an empty/absent baseline is just the fresh rows.
+    assert merge_heads(None, fresh).equals(fresh)
+
+
+def test_the_covered_window_cut_is_per_head_not_family_wide():
+    """A head with no preseason column keeps its full fitting window.
+
+    The cut exists solely because a missing-preseason indicator on a pre-2005 row is an era
+    dummy. A head that carries no such indicator has nothing to protect against, so cutting
+    it discards 2,248 of 8,630 training rows (26%) to buy nothing — which is what a
+    family-wide cut did to `fg3m|fg3a` for one afternoon, while the run printed that it
+    fitted the pre-2026-08-15 head "exactly".
+
+    Heads on different windows is normal rather than a compromise: they are fitted
+    separately, the factorization is exact, and `stan_minutes` (2004-05) already differs
+    from `stan_composition` (1996-97).
+    """
+    import pandas as pd
+
+    from src.models.stan_components import PRESEASON_EXCLUDE, head_fitting_rows
+
+    full = pd.DataFrame({"season": ["1997-98"] * 4 + ["2010-11"] * 4, "x": range(8)})
+    covered = full[full["season"] == "2010-11"]
+
+    # A head that carries the block gets the cut frame...
+    assert len(head_fitting_rows(full, covered, "reb", True)) == len(covered)
+    # ...and an opted-out head keeps everything.
+    excluded = next(iter(PRESEASON_EXCLUDE))
+    assert len(head_fitting_rows(full, covered, excluded, True)) == len(full)
+    # With the block off nobody is cut, which is what makes `false` an exact rollback.
+    assert len(head_fitting_rows(full, covered, "reb", False)) == len(full)

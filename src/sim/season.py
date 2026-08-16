@@ -148,8 +148,7 @@ from src.features.targets import BONUS_GAME_OVERDISPERSION, bonus_part
 from src.models.availability_no_prior import (KEY_LADDERS, PRESEASON_KEY_ARMS,
                                               SHIPPED_LEVEL_ARM, appearance_gap, level_keys,
                                               level_rates, level_tables, primary_team_cells)
-from src.models.component_rates import (CONVERSION_HEADS, COUNT_HEADS, DERIVED_COUNTS,
-                                        build_design as component_build_design)
+from src.models.component_rates import CONVERSION_HEADS, COUNT_HEADS, DERIVED_COUNTS
 from src.models.games_played import (EdgeResampler, allocate_spells, edge_blocks,
                                      layout_tenure)
 from src.models.held_out import TEST_SEASONS, assert_unlocked, selection_split
@@ -157,6 +156,7 @@ from src.models.minutes_unification import rehydrate_composition, shipped_sigma
 from src.models.posteriors import load_all, posteriors_dir, require_window
 from src.models.stan_availability import (FIRST_SEASON, head_design,
                                           restrict_window, role_bins)
+from src.models.stan_components import head_design as component_head_design
 from src.models.stan_composition import (OFFSET_CLIP, draft_numbers, head_frame,
                                          simulate_minutes)
 from src.models.stan_game_length import (forward_cells, posterior_inputs,
@@ -933,9 +933,11 @@ def build_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
     artifacts = load_all(posteriors_dir(cfg, window))
     require_window(artifacts, window)
 
-    targets = pd.read_parquet(features_dir / "component_targets.parquet")
-    design = component_build_design(targets, cfg["data"]["seasons"],
-                                    cfg["data"]["raw_dir"])
+    # `component_head_design`, not `component_rates.build_design` — since 2026-08-15 ten of
+    # the eleven rate heads carry preseason feature columns, and the persisted RECIPE demands
+    # them. The plain builder produces a frame the recipe cannot evaluate, which is what
+    # `PosteriorRecipe._block` raises on rather than silently predicting from a short design.
+    design = component_head_design(cfg)
     assert_season_allowed(season, design)
 
     slots = scoring_slots(features_dir, season)
@@ -1565,9 +1567,7 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
     n_sims = int(n_sims or cfg_sim.get("n_sims", N_SIMS))
     seed = int(SEED if seed is None else seed)
 
-    targets = pd.read_parquet(features_dir / "component_targets.parquet")
-    design = component_build_design(targets, cfg["data"]["seasons"],
-                                    cfg["data"]["raw_dir"])
+    design = component_head_design(cfg)
     seasons = seasons or validation_seasons(design)
 
     print(f"Season simulator — the player x scoring-period x sim tensor")

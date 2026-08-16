@@ -61,13 +61,15 @@ def test_the_simulator_never_loads_the_marginal_minutes_head():
 
 # ── Synthetic builders ────────────────────────────────────────────────────────
 
-def _cfg(tmp_path, availability=True, minutes=True, composition=True) -> dict:
+def _cfg(tmp_path, availability=True, minutes=True, composition=True,
+         components=True) -> dict:
     return {"evaluation": {"predictions_dir": str(tmp_path / "predictions")},
             "data": {"features_dir": str(tmp_path / "features")},
             "sim": {"minutes": {"player_season_sigma": 0.375}},
             "stan": {"availability": {"preseason": availability},
                      "minutes": {"preseason": minutes},
-                     "composition": {"preseason": {"adopt": composition}}}}
+                     "composition": {"preseason": {"adopt": composition}},
+                     "components": {"preseason": components}}}
 
 
 def _sweep(lift: float) -> pd.DataFrame:
@@ -128,6 +130,7 @@ def _write_arm(cfg: dict, arm: str, lift: float, strategy: str = PC.REFERENCE_ST
                    "stan.availability.preseason": on,
                    "stan.minutes.preseason": on,
                    "stan.composition.preseason.adopt": on,
+                   "stan.components.preseason": on,
                    "captured_at": "2026-08-15T09:00:00",
                    "availability_first_season": "2012-13",
                    "minutes_first_season": "2004-05" if on else "1997-98",

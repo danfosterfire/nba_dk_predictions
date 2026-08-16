@@ -501,3 +501,38 @@ def test_no_design_team_minutes_reads_a_share_of_a_fixed_pot(tmp_path):
     assert np.isclose(out["value"], 0.2) and np.isclose(out["bar_value"], 0.2)
     # Per team it is wrong by 0.2 in each direction, which nets to zero and does not cancel.
     assert np.isclose(out["mae"], 0.2) and np.isclose(out["bias"], 0.0)
+
+
+def test_the_simulator_builds_component_rows_through_the_head_design():
+    """The simulator's frame must satisfy the persisted RECIPE, not just the plain design.
+
+    Since 2026-08-15 ten of the eleven rate heads carry preseason feature columns, so a
+    frame from `component_rates.build_design` is missing exactly those columns and
+    `PosteriorRecipe._block` raises rather than predicting from a short design. That guard
+    is what caught this — but the guard only fires at run time, deep in `build_context`,
+    after the availability and composition work is already done.
+
+    This is the third place the same wiring was needed (`stan_components.run`,
+    `posteriors.component_artifacts`, and here) and the only one where the plain builder
+    would have produced a *runnable* frame if the recipe had not demanded its columns. So
+    the import is pinned by parsing: `season.py` must reach the component design through
+    the head's own path and must not import the plain builder under any alias.
+    """
+    import ast
+    import pathlib
+
+    source = pathlib.Path("src/sim/season.py").read_text()
+    tree = ast.parse(source)
+    imported = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            for alias in node.names:
+                imported[alias.asname or alias.name] = node.module
+
+    assert imported.get("component_head_design") == "src.models.stan_components", \
+        "the simulator must build component rows through `stan_components.head_design`"
+    # And the plain builder must not be reachable here under any name.
+    plain = [name for name, mod in imported.items()
+             if mod == "src.models.component_rates" and name.endswith("build_design")]
+    assert not plain, f"`component_rates.build_design` is imported as {plain}"
+    assert "component_build_design" not in source

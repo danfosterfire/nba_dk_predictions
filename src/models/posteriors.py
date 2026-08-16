@@ -539,6 +539,40 @@ def load_all(dest_dir: Path | str, heads: list[str] | None = None
     return {name: load(name, directory) for name in names}
 
 
+def rebuild_manifest(cfg: dict, window: str = FIT_WINDOW) -> Path:
+    """Re-derive the manifest from the artifacts already on disk. Refits nothing.
+
+    The manifest is a *projection* of the artifacts, so it can fall behind them: a column
+    added to `manifest_row` describes every artifact ever written, but only appears on rows
+    written afterwards. That is how `preseason` / `preseason_columns` came to be inside the
+    pickles' `extras` and absent from the CSV — the property was persisted correctly and the
+    readable trace was not.
+
+    Rebuilding is cheap and is also a re-verification: every artifact is loaded **from disk**
+    and round-tripped, so a row here attests to the file rather than to an object that was in
+    memory at fit time. Nothing else in this module can make that claim about an artifact it
+    did not just build.
+    """
+    dest_dir = posteriors_dir(cfg, window)
+    rows = []
+    for name, artifact in load_all(dest_dir).items():
+        dest = dest_dir / f"{name}.pkl"
+        rows.append(manifest_row(artifact, artifact.roundtrip(), dest))
+    out = pd.DataFrame(rows).sort_values("head").reset_index(drop=True)
+    manifest_path = dest_dir / "manifest.csv"
+    out.to_csv(manifest_path, index=False)
+    failed = out[~out["roundtrip_passes"]]
+    print(f"Rebuilt {len(out)} manifest rows from disk → {manifest_path}")
+    if len(failed):
+        print(f"  /!\\  {len(failed)} artifact(s) FAILED the round-trip: "
+              f"{', '.join(failed['head'])}")
+    else:
+        print(f"  every artifact re-loaded and round-tripped clean "
+              f"(max design error {out['max_design_error'].max():.2e}, "
+              f"max prediction error {out['max_prediction_error'].max():.2e})")
+    return manifest_path
+
+
 def require_window(artifacts: dict, window: str = FIT_WINDOW) -> None:
     """Refuse artifacts fitted on a wider window than the caller is allowed to consume.
 
@@ -1004,16 +1038,37 @@ def component_artifacts(cfg: dict, window: str, draws_kept: int):
     n_knots = int(cfg_stan.get("components", {}).get("spline_knots", SPLINE_KNOTS))
     features_dir = Path(cfg["data"]["features_dir"])
 
-    targets = pd.read_parquet(features_dir / "component_targets.parquet")
-    design = build_design(targets, cfg["data"]["seasons"], cfg["data"]["raw_dir"])
-    fit_frame, val = windowed(design, window, test_seasons)
+    # **`head_design`, not `build_design`** — since 2026-08-15 ten of the eleven heads carry
+    # a preseason block, and this generator is the ONLY route by which a fitted head reaches
+    # the simulator. Building the plain design here would persist eleven heads with no
+    # preseason columns while `stan_component_metrics.csv` and the config both said the block
+    # was on, and nothing downstream would object: the recipes would be internally consistent
+    # and simply describe a different model from the one that was selected. That is the
+    # `docs/preseason-plan.md` P2 incident — an artifact carries no record of the code that
+    # wrote it — one layer further down, so `preseason` is stamped into every manifest row
+    # below rather than being inferred from the config at read time.
+    from src.models.stan_components import (covered_fitting_rows, head_design,
+                                            head_features, head_fitting_rows,
+                                            head_preseason_cols)
+
+    preseason = bool(cfg_stan.get("components", {}).get("preseason", True))
+    design = head_design(cfg, preseason)
+    fit_frame_full, val = windowed(design, window, test_seasons)
+    # The covered-window cut, on the FITTING rows only — required by the block, not chosen,
+    # and applied PER HEAD: a head that carries no preseason column has no era dummy to
+    # protect against and keeps its full window. `stan_components.head_fitting_rows` states
+    # the argument; `fg3m|fg3a` is the head it exists for.
+    fit_frame_covered = covered_fitting_rows(fit_frame_full, cfg, preseason)
     probe_raw = probe_rows(val)
     chosen = selected_specs(cfg)
 
     for component in COUNT_HEADS:
         variant = chosen.get(component, "log_own")
-        tr, probe, features = count_variants(fit_frame, probe_raw, component,
-                                             n_knots)[variant]
+        fit_frame = head_fitting_rows(fit_frame_full, fit_frame_covered, component,
+                                      preseason)
+        tr, probe, base_features = count_variants(fit_frame, probe_raw, component,
+                                                  n_knots)[variant]
+        features = head_features(base_features, component, preseason)
         base = [f"{component}_p36_lag1"] + CONTEXT_COLS + BIO_COLS
         steps = _count_steps(fit_frame, tr, variant, features, base,
                              f"{component}_p36_lag1", n_knots)
@@ -1031,9 +1086,12 @@ def component_artifacts(cfg: dict, window: str, draws_kept: int):
             head=component, head_label=component, family="negbinomial",
             response="mean_count", variant=variant, features=features, model=model,
             fit_frame=fit_frame, probe_transformed=probe, probe_raw=probe_raw,
-            steps=steps, builder="src.models.component_rates.build_design",
+            steps=steps, builder="src.models.stan_components.head_design",
             extras={"component": component, "exposure": "total_minutes",
-                    "dispersion": "phi_draws"},
+                    "dispersion": "phi_draws",
+                    "preseason": bool(head_preseason_cols(component, preseason)),
+                    "preseason_columns": "|".join(head_preseason_cols(component,
+                                                                     preseason))},
             window=window, cfg_stan=cfg_stan, draws_kept=draws_kept, seconds=seconds)
 
     for made, attempted in CONVERSION_HEADS:
@@ -1042,8 +1100,10 @@ def component_artifacts(cfg: dict, window: str, draws_kept: int):
         # Conversion heads fit on rows with attempts only — the same filter the head
         # applies internally, applied to the probe so the reference rows are scorable.
         live_probe = probe_raw[probe_raw[attempted].to_numpy(dtype=float) > 0]
-        tr, probe, features = conversion_variants(fit_frame, live_probe, made,
-                                                  attempted, n_knots)[variant]
+        fit_frame = head_fitting_rows(fit_frame_full, fit_frame_covered, made, preseason)
+        tr, probe, base_features = conversion_variants(fit_frame, live_probe, made,
+                                                       attempted, n_knots)[variant]
+        features = head_features(base_features, made, preseason)
         own = f"{made}_pct_lag1"
         base = [own, f"{attempted}_p36_lag1"] + CONTEXT_COLS + BIO_COLS
         steps = _conversion_steps(fit_frame, tr, variant, features, base, own, n_knots)
@@ -1061,9 +1121,11 @@ def component_artifacts(cfg: dict, window: str, draws_kept: int):
             head=f"{made}_given_{attempted}", head_label=label, family="betabinomial",
             response="mean_mu", variant=variant, features=features, model=model,
             fit_frame=fit_frame, probe_transformed=probe, probe_raw=live_probe,
-            steps=steps, builder="src.models.component_rates.build_design",
+            steps=steps, builder="src.models.stan_components.head_design",
             extras={"made": made, "attempted": attempted, "trials": attempted,
-                    "dispersion": "rho_draws"},
+                    "dispersion": "rho_draws",
+                    "preseason": bool(head_preseason_cols(made, preseason)),
+                    "preseason_columns": "|".join(head_preseason_cols(made, preseason))},
             window=window, cfg_stan=cfg_stan, draws_kept=draws_kept, seconds=seconds)
 
 
@@ -1460,6 +1522,22 @@ def manifest_row(artifact: PosteriorArtifact, check: dict, dest: Path) -> dict:
         # rather than something a consumer has to unpickle to discover.
         "player_season_effect": bool(artifact.extras.get("player_season_effect", False)),
         "sigma_u": float(artifact.extras.get("sigma_u", 0.0)),
+        # Same argument as the two above, for the block adopted 2026-08-15: a property that
+        # changes what the head IS belongs on the manifest rather than inside a pickle a
+        # reader has to open. Without it the only trace is implicit — the ten blocked
+        # component heads moved their WINDOW (6,382 rows) and the opted-out `fg3m|fg3a`
+        # moved its COLUMNS (14 features at 8,630 rows) — and each head is invisible in the
+        # other's trace, which is the failure the P5 `reach` block was built after.
+        # **"Carries preseason information", in ANY form** — not "carries preseason
+        # columns", which is the narrower question and the one that reads FALSE on a head
+        # that ships a preseason blend. The three routes in this project are genuinely
+        # different: the availability and component heads take feature columns, the
+        # composition blends into `w_share` and so reaches the OFFSET and the allocation
+        # ORDER without a coefficient anywhere, and an opted-out head takes neither.
+        # `preseason_columns` then says which route, by being empty when there are none.
+        "preseason": bool(artifact.extras.get("preseason", False)
+                          or artifact.extras.get("preseason_blend_k") is not None),
+        "preseason_columns": str(artifact.extras.get("preseason_columns", "")),
         "max_design_error": check["max_design_error"],
         "max_prediction_error": check["max_prediction_error"],
         "roundtrip_passes": check["passes"],
@@ -1592,10 +1670,17 @@ if __name__ == "__main__":
                         help=f"comma-separated subset of {','.join(GROUPS)}")
     parser.add_argument("--draws", type=int, default=None,
                         help="draws kept per head, thinned across the whole posterior")
+    parser.add_argument("--rebuild-manifest", action="store_true",
+                        help="re-derive manifest.csv from the artifacts already on disk, "
+                             "round-tripping each one. Refits nothing; use it when a "
+                             "manifest column is added after the artifacts were written.")
     args = parser.parse_args()
 
     cfg = yaml.safe_load(open("configs/default.yaml"))
     cfg_sim = cfg.get("sim", {})
+    if args.rebuild_manifest:
+        rebuild_manifest(cfg, args.window or str(cfg_sim.get("fit_window", FIT_WINDOW)))
+        raise SystemExit(0)
     _run(cfg,
          window=args.window or str(cfg_sim.get("fit_window", FIT_WINDOW)),
          groups=tuple(g.strip() for g in args.groups.split(",") if g.strip()),
