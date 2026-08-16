@@ -112,6 +112,16 @@ expanding point-in-time average — and it costs 1.9 s, so there is no reason to
 
 ## 2. Finish the fitted `sigma_u` — where the 2026-08-09 session stopped, and why
 
+**→ 2026-08-16: this entry now has a workplan, and the primary route changed.**
+`docs/composition-quadrature-plan.md` supersedes the "what to try next" ladder below:
+rather than making the 2,204-latent posterior affordable, it removes the latents by
+per-unit quadrature (parameters ~35 at any window, `dense_e` back in reach) and grades
+σ by `rho_bin` — motivated by a per-role PIT scratch measurement showing the shared
+σ = 0.375 leaves fringe units 1.73× underdispersed while overdispersing stars at 0.85×.
+A post-blend re-attempt of the latent `ps` arm is also in flight (Gate A: 14.6 h);
+either result feeds that plan's step 4. The ladder below is kept as the record of the
+latent route's cost and failures.
+
 **Everything is built and tested; what is missing is a converged fit.** The capability
 shipped that day: the optional `sigma_u` block in `composition_glm.stan` with `U_n = 0`
 nesting the shipped head exactly, `PlayerSeasonTerm`, the team-context join,
@@ -1229,3 +1239,59 @@ versa — the composition head is the one that passes a metric, so check it firs
 **Nothing about any measured result.** This is plumbing: the same model, fitted once instead
 of twice. No gate, no ladder and no shipped figure moves, which is also what makes it safe to
 do between rounds rather than during one.
+
+---
+
+## 15. A role × season-stage term in the availability layout — parked for nonstationarity
+
+**Parked on arrival, 2026-08-16, and the reason is the regime, not the mechanism.** Drafted
+as Part B of `docs/draw-time-calibration-plan.md` and moved here the same day: **the 2026
+offseason draft-lottery reform penalizes the worst-performing teams, which targets the
+tanking incentive directly** — and tanking is upstream of most of what this term would
+calibrate (veteran shutdowns on eliminated teams, tank-driven rest, late-season rotation
+churn on bad teams). That stacks on a second, smaller break already inside the data: the
+65-game award rule arrived in 2023-24, one of the two validation seasons. So the dynamics
+this term would fit shift substantially in 2026-27 **in a way no training or validation
+season represents**, and a stage gradient calibrated to the old regime is plausibly worse
+than the uniform placement that ships. Even a clean train → validation replication would
+not license shipping it for the 2026-27 draft; that is why this is an entry and not a plan.
+
+### What it would be
+
+`sim.availability.layout = tenure_merge` lays tenure edge blocks by an empirical resample
+and interior spells at **uniform random starts** (`docs/availability-window-plan.md`
+§11/§13, the live doc). Uniform placement cannot carry within-season structure — star
+maintenance rest clustering late, shutdowns, rotations tightening in a playoff race (healthy
+scratches count as missed games in this target). The edges already carry the coarsest
+version: a trailing block *is* a late-season shutdown, and the trailing share rises ~2.5×
+fringe → star while the leading share falls ~4.2× (§13a). The open question is the
+**interior** spells and whatever stage gradient the edges do not absorb.
+
+The contest stake is concentrated, which is what made this worth drafting at all: the
+elimination rounds sit at the end of the season (concluding 4/4, the final scoring periods),
+Round 1 is a zero-consolation knockout, and the layout work already found a 9.1×
+scoring-period-unit understatement once before it shipped. A star whose dead games cluster
+late, laid uniformly, has his P(dead during the elimination periods) understated.
+
+### What to measure, if it is ever un-parked
+
+The measurement gate drafted as step B0, unchanged: extend
+`make availability-exchangeability` with **stage-resolved** recovered_share cells —
+dead-game rate by role × season-stage tercile, dead-period rate by role × scoring-period
+index with the last-4-periods × star cell called out, interior spells separated from edges —
+under the shipped layout, `gp` held at realized. **Read the two validation seasons
+separately**: 2022-23 is peak load management and 2023-24 is the first 65-game-rule season,
+so a pooled gap conflates the regimes. If uniform placement already recovers ≈1 in every
+cell even on old-regime data, the question closes for free and the reform never matters.
+
+If a gap exists, the build is placement-only first (empirical start-position weights by
+role × stage, uniform nesting the shipped layout exactly, `gp` untouched by construction);
+the spell-length-by-stage covariate is a fitted-head change and gets its own priced entry.
+
+### What would un-park it
+
+A season of data under the new lottery regime to check the old-regime gradient against —
+realistically after 2026-27, i.e. after this project's target draft. Or B0 run as pure
+knowledge showing the *shipped* layout already misses stage cells badly on **both**
+validation seasons *in the same direction* despite their regime difference — stability
+across that break is the one old-regime signal that would deserve any weight.

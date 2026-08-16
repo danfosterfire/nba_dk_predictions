@@ -36,6 +36,10 @@ The docs are:
   treated, and the simulator's **availability layout** — where a player's missed games fall, 
   which the head cannot say. Read it before changing any of those, or before pricing a head 
   change with `make strategy-sweep`.
+  - composition-quadrature-plan.md: Workplan for fitting the composition's 
+  per-(player, season) effect by marginalizing the latents with per-unit quadrature, 
+  with a role-graded σ. Read before touching `sigma_u`, the injection constant, or 
+  `composition_glm.stan`'s effect blocks.
   - dashboard-plan.md: The dashboard's charter and pages. The dashboard is a 
   **data-visualization surface**, not a project walkthrough — read this before adding 
   or editing a view.
@@ -47,8 +51,13 @@ The docs are:
   - docs-audit.md: How the two documentation guards work — `make docs-audit` (a gate) 
   and `make dashboard-audit` (a report). Read this before editing a quoted figure or 
   adding a doc to the audit.
+  - draw-time-calibration-plan.md: Workplan for grading the composition's injected 
+  minutes σ by role at simulation time. Read before touching the injection constant.
   - eda-plan.md: Plan and notes for exploratory data analysis and feature 
   reduction. Work completed and mostly archival at this point.
+  - entry-collection-plan.md: Runbook for the first real DK entries — 20 ADP-null 
+  autodrafts plus 5–10 live drafts for pick-log capture, and the two-fit production 
+  schedule they require. Read before entering any contest or fitting for one.
   - facts-archive.md: Known facts, do not re-derive. Refer to this if we 
   re-open model design questions, but it is safe to ignore otherwise.
   - games-played-plan.md: Plan and notes for the games played model. Work 
@@ -88,6 +97,10 @@ The docs are:
   - shot-attempt-basis-plan.md: Plan for updating one of the box-score statistics
   models (fg3a as a beta-binomial rate over the total fga, rather than fg2a and 
   fg3a as separate poisson counts). Work completed, archival.
+  - sim-inputs-plan.md: Workplan for the simulator's calibrated draw inputs — the 
+  consumed-vs-diagnostic inventory, a documentation/dashboard accuracy pass (first), 
+  and four measurement items on the copula, overdispersion and serial structure. 
+  Read before editing how any simulator input is described or consumed.
   - simulations-plan.md: Plan and notes for building the simulations and backtesting 
   drafting strategies under the DK best ball rules.
   - train-validate-test-split.md: Plan and notes for revising the project to 
