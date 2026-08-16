@@ -1,6 +1,18 @@
 
 # Pipeline (run in order)
 
+**Every recipe runs with `PYTHONUNBUFFERED=1`**, set once with `export` at the top of the
+`Makefile` rather than per target. Python buffers stdout whenever it is not writing to a
+terminal, which under `make` is almost always — so without it the progress lines this project
+prints by convention (`f"... {n:,} ... → {dest}"`) appear only when a buffer fills or the
+process exits, and a multi-hour target that is working looks exactly like one that is hung.
+That is not hypothetical: one session had the component ladder, `make posteriors` and `make
+strategy-sweep` all run blind and needed `/usr/bin/sample` to establish the sweep was alive,
+on a day the sweep took 53 minutes against a documented 4.8. It is global rather than a list
+of the slow targets because unbuffered stdout costs the fast ones nothing, and a list is one
+more place to forget a new target. Adopted 2026-08-15, after four sessions of exporting it by
+hand.
+
 ```bash
 python -m src.data.fetch           # pull raw game logs from nba_api
 python -m src.data.preprocess      # clean + add season column → data/processed/game_logs.parquet

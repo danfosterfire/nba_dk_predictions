@@ -1,6 +1,18 @@
 PYTHON := .venv/bin/python
 PIP    := .venv/bin/pip
 
+# Python buffers stdout whenever it is not writing to a terminal, which under `make` is
+# almost always. That turns this project's progress-line convention
+# (`f"... {n:,} ... → {dest}"`) into nothing at all until a buffer fills or the process
+# exits, so a multi-hour target that is working looks exactly like one that is hung — and
+# the long ones here run 45 min to 2.7 h. It has cost real diagnostic time: one session had
+# the component ladder, `posteriors` and `strategy-sweep` all run blind and needed
+# `/usr/bin/sample` to confirm the sweep was alive, on a day the sweep took 53 minutes
+# against the 4.8 the docs quoted. `export` applies it to every recipe rather than to a
+# hand-maintained list of the slow ones, because unbuffered stdout costs the fast targets
+# nothing and a list is one more thing to forget to add a target to.
+export PYTHONUNBUFFERED = 1
+
 .PHONY: venv install fetch preprocess features train evaluate predict test clean \
         season-matrix pca archetypes eda team-context component-targets context-value \
         opponent persistence aging target-profile feature-diagnostics dashboard \
