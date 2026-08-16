@@ -145,6 +145,35 @@ def test_the_emitter_reaches_a_split_only_through_selection_split():
         assert forbidden not in imported
 
 
+def test_component_frames_rebuilds_through_the_preseason_aware_builder():
+    """`component_frames` takes `stan_components.head_design`, never the plain builder.
+
+    The fifth instance of the 6b wiring gap, and the one that got furthest: the emitter
+    rebuilt all eleven heads at 8,630 rows through `component_rates.build_design` while the
+    persisted posteriors were fitted on 6,382 covered-window rows carrying a preseason
+    block. `verify`'s row-count check caught it at run time, so nothing shipped — but a card
+    is the dashboard's only view of a head's coefficients, and a builder that silently drops
+    five columns would have rendered a model nobody fitted.
+
+    Checked on the import graph rather than on a string, the same way the split guard above
+    is: `build_design` under any alias fails, and the three helpers the per-head cut needs
+    have to actually be imported.
+    """
+    source = ast.parse(Path(M.__file__).read_text())
+    frames = next(node for node in ast.walk(source)
+                  if isinstance(node, ast.FunctionDef)
+                  and node.name == "component_frames")
+    imported = {alias.name for node in ast.walk(frames)
+                if isinstance(node, (ast.Import, ast.ImportFrom))
+                for alias in node.names}
+    assert "build_design" not in imported, (
+        "`component_frames` imports the plain `component_rates.build_design`, which carries "
+        "no preseason columns and no covered-window cut — use `stan_components.head_design`")
+    for needed in ("head_design", "covered_fitting_rows", "head_fitting_rows",
+                   "head_features"):
+        assert needed in imported, f"`component_frames` no longer imports `{needed}`"
+
+
 # ── The chain role, pinned against the simulator ──────────────────────────────
 #
 # `HeadSpec.chain_role` is an *interpretation* — "this head is read when a season is

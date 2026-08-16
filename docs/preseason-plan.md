@@ -2197,7 +2197,7 @@ sds of the *across-strategy* spread, and the fourth key moved more strategies fu
 spread grew faster than the reference's own delta. It is a statement about the sweep's
 dispersion and should not be read as an effect size.
 
-### Four wiring gaps, three of which would have shipped a head that was not the head
+### Five wiring gaps, three of which would have shipped a head that was not the head
 
 Recorded because the *pattern* matters more than any one of them: **a head can be selected
 under one specification and persisted under another, with every artifact staying internally
@@ -2214,12 +2214,25 @@ consistent.** Nothing downstream would have contradicted itself.
 - **`covered_fitting_rows`** cut the window family-wide, so the rolled-back `fg3m|fg3a` was
   fitted on **6,382** rows instead of **8,630** — the pre-block columns on the post-block
   window — while the run printed that it had reproduced the pre-block head "exactly".
+- **`model_cards.component_frames`** — found 2026-08-16, when `make model-cards` was re-run to
+  bring the dashboard's model detail pages onto the shipped heads. It rebuilt all eleven heads
+  through `component_rates.build_design`, so every card described a head fitted on the full
+  window with no preseason columns. `model_cards.verify` caught it at run time on its
+  row-count check, naming both counts, so nothing was written.
 
-All four are fixed and pinned by tests, including an AST test that stops `season.py` importing
-the plain builder under any alias. **Wire every consumer, not the ones you happen to be
-reading**: four call sites needed the same change, and they were found by four different
-methods — two by reading, one by a run-time guard, one by checking an output that should have
-contained a column and did not.
+All five are fixed and pinned by tests, including two AST tests — one that stops `season.py`
+importing the plain builder under any alias, and one that holds `component_frames` to
+`head_design` and to the three helpers the per-head cut needs. **Wire every consumer, not the
+ones you happen to be reading**: five call sites needed the same change, and they were found by
+four different methods — two by reading, two by a run-time guard, one by checking an output
+that should have contained a column and did not.
+
+**The fifth one is the argument for the other four's guards.** It was written before the block
+existed and was not touched by the round that shipped it, so no amount of re-reading the 6b
+diff would have surfaced it; what surfaced it was running the target and having a check that
+compares a rebuilt frame against what the posterior recorded. A card is also the *dashboard's*
+only view of a head's coefficients, so this is the one gap whose failure mode was a rendered
+page rather than a refit — which is why the emitter verifies rather than trusts.
 
 ### ⚠️ The six-head ladder this section replaced
 

@@ -428,6 +428,38 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("preseason", "components"),
     ),
     Decision(
+        id="a-cards-frame-is-rebuilt-and-verified-rather-than-trusted",
+        topic="components",
+        claim="`model_cards.component_frames` rebuilds each rate head through "
+              "`stan_components.head_design` and the PER-HEAD covered-window cut, and "
+              "`verify` compares the rebuilt row count against what the posterior recorded "
+              "before anything is written. That check caught a fifth wiring gap.",
+        because="`make model-cards` was re-run on 2026-08-16 to bring the dashboard's model "
+                "detail pages onto the ten heads that shipped the preseason block. The "
+                "emitter still built all eleven through `component_rates.build_design`, so "
+                "every card would have described a head fitted on the full 8,630-row window "
+                "with NO preseason columns, against posteriors fitted on 6,382 covered rows "
+                "carrying five each. `verify`'s row-count check raised naming both counts "
+                "and nothing was written. This is the fifth instance of the pattern "
+                "[[preseason-fg3m-rolled-back]] records four of, and the one that argues "
+                "for the guards: it was written BEFORE the block existed and was untouched "
+                "by the round that shipped it, so re-reading the 6b diff could not have "
+                "surfaced it — running the target with a check that compares a rebuilt "
+                "frame against the artifact's own provenance did. It is also the only one "
+                "of the five whose failure mode was a RENDERED PAGE rather than a refit: a "
+                "card is the dashboard's sole view of a head's coefficients, and the "
+                "dashboard reads artifacts and never refits, so nothing downstream of a "
+                "wrong card would have contradicted it. The cut is per head rather than "
+                "family-wide, so `fg3m|fg3a` cards on its own 7,695-row window. Pinned by "
+                "an AST test that fails on `build_design` under any alias.",
+        status="built",
+        reproduce="make model-cards → outputs/predictions/model_card_index.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-16",
+        date="2026-08-16",
+        tags=("preseason", "components", "dashboard", "method"),
+    ),
+    Decision(
         id="preseason-rate-screen-sign-did-not-survive",
         topic="components",
         claim="A screen's SIGN is not evidence about the heads it failed. P1's "

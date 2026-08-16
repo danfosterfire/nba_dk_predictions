@@ -354,7 +354,8 @@ SECTIONS: tuple[Section, ...] = (
         "night: the best seven by roster slot score each week, and four elimination "
         "rounds cut the field to one.",
         "Nothing can be traded, started or benched afterwards, and all anyone knows on "
-        "draft night is last season's box scores plus this season's rosters and schedule.",
+        "draft night is last season's box scores and this season's preseason ones, plus "
+        "this season's rosters and schedule.",
         Spec(("budget",), _minutes),
     )),
     Section("Methods", (
