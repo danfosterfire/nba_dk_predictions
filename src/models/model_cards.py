@@ -799,7 +799,7 @@ def composition_frames(cfg: dict, artifacts: dict) -> dict[str, HeadFrames]:
             f"the persisted composition was fitted at `{variant}`, an arm from "
             f"`stan_composition.effect_variants` (the player-season effect, the "
             f"team-context block, or both). Its ladder takes the team block and returns a "
-            f"seven-tuple, so `composition_frames` has to call `effect_variants` rather "
+            f"nine-field `EffectArm`, so `composition_frames` has to call `effect_variants` rather "
             f"than `variants` before this head can be carded.")
 
     first_season = str(art.extras.get("first_season")

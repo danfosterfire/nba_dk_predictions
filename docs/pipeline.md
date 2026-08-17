@@ -439,6 +439,32 @@ make composition-effects
                        #   incumbent's record and is quoted by `make docs-audit`. The
                        #   deviation table lands BEFORE any sampling, so an aborted run
                        #   still leaves it.
+                       #   Two further arms since 2026-08-16 — `mq` and `mq_graded`,
+                       #   the same effect MARGINALIZED by per-unit quadrature rather
+                       #   than sampled (docs/composition-quadrature-plan.md). Those
+                       #   keep `dense_e` at every window, because their parameter block
+                       #   is ~35 wide rather than one per unit, and Gate A scales them
+                       #   by rows alone for the same reason.
+                       #   ⚠️ `stan.composition.effects.label` suffixes every artifact
+                       #   this target writes and defaults to "". Set it for any round
+                       #   that is not re-running the 2026-08-09 ladder: `_flush` merges
+                       #   by ARM NAME, and `make docs-audit` re-derives the pilot `base`
+                       #   arm's CRPS from composition_effects_metrics.csv.
+
+make composition-quadrature-check
+                       # does the marginal path compute the integral it claims to, at
+                       #   FULL scale? Production driver → Stan `log_prob` on the real
+                       #   pilot frame (97,587 rows / 2,062 units / 1,487 truncation
+                       #   rows), against an independent numpy evaluation of the same
+                       #   integral written from the data dict alone
+                       #   → outputs/predictions/composition_quadrature_check.csv.
+                       #   NEEDS CmdStan but does NOT sample: two log-posterior
+                       #   evaluations, seconds once the frame is built. RAISES on
+                       #   disagreement. The unit suite checks the same claim on tiny
+                       #   synthetic units; this is the half that cannot live there, and
+                       #   it is the cheapest guard on the one approximation in the whole
+                       #   representation. Run it after any change to
+                       #   composition_glm.stan's `Q > 0` block.
 
 make mixture-value     # what the availability mixture is worth in the CONTEST, as a
                        #   paired counterfactual

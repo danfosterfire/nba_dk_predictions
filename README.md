@@ -471,9 +471,14 @@ predictive sd *narrows*, so it is the mean and the injected σ is untouched. Thr
 target only, and adopting it means a `first_season` of 2004-05 on the head plus `make
 posteriors --groups composition`, which is P5. `docs/preseason-plan.md` sessions 4b–4d.
 
-**So the injection ships**, as `sim.minutes.player_season_sigma = 0.450`, applied by
+**So the injection ships**, as `sim.minutes.player_season_sigma = 0.375`, applied by
 `minutes_unification.rehydrate_composition` — a consumer gets the effect by loading the head
 rather than by remembering to apply it, and 0.0 recovers the un-injected head exactly.
+*(This line read 0.450 until 2026-08-16 and was stale: σ moved to 0.375 on 2026-08-14 when the
+composition's preseason blend made the train and validation grids agree, as the paragraph above
+records. ⚠️ `minutes_unification.SHIPPED_PS_SIGMA` is still **0.450** — it is the fallback used
+only if the config key is absent, so the live value is the config's, but the two disagreeing is
+a trap for the next reader.)*
 
 `composition_glm.stan` also carries the effect as an **optional fitted parameter** (`sigma_u`,
 with `U_n = 0` nesting the shipped head exactly), and `make posteriors` persists its scale and
@@ -485,11 +490,47 @@ is intrinsic to a 2,204-parameter hierarchical posterior rather than a configura
 a fit would still buy is a σ estimated jointly with the coefficients and a predictive that
 integrates over σ's posterior instead of plugging one in.
 
-**Five independent routes agree on the effect size**, which is why a plugged-in σ is
+**Since 2026-08-16 there is a third representation of that same parameter, and unlike the
+second one it converges: marginalize the latents instead of sampling them.** Integrating
+each unit's `u_i` out with per-unit Gauss–Hermite quadrature inside the model block leaves
+**~35 parameters at any window** rather than 2,204 at the pilot and 12,307 at the full one —
+so the funnel cannot exist and `dense_e` is back inside `choose_metric`'s 20×-warmup rule. `Q = 0` nests
+the sampled-latent head exactly and both blocks stay in the file, because they are two routes
+to one posterior. The measured catch is that the node count is a property of the node
+**placement**: fixed nodes are 2.6 nats out at Q = 61, while nodes placed at each unit's own
+Newton-fitted likelihood mode and curvature reach **2.5e-6 nats at Q = 21**.
+
+At probe scale, with the sampled latent refitted beside it on the same 26,039 rows, it reads
+R̂ **1.0138** / min ESS **719** against that arm's **1.1317** / **25**, and the two agree on
+the effect — `sigma_u` **0.47927** marginalized against **0.48095** sampled. Cost is **21.9×**
+the shipped control at Q = 21, and **1.85× the latent arm** — but per-fit wall clock is the
+wrong metric here, because the two arms are not producing the same thing: at **0.898** ESS per
+draw against **0.031**, the marginal arm delivers **15.5×** the effective samples per second.
+Feasibility follows that, not the 1.85×. The pilot window is one arm overnight (**~11.5 h** at
+a 700+300 budget its own sampling efficiency justifies); the **full** window is **~74 h**
+serially, so `reduce_sum` over units is a prerequisite for it rather than an optimization.
+
+The role-graded arm converges better still (R̂ **1.0069**) at the same cost, and its σ grades
+monotonically — **0.609** fringe to **0.291** star, a **2.09×** spread that matches the fitted
+per-game ρ's 1.91× in axis, direction and size.
+
+⛔ **The line is parked as of 2026-08-16, and not on a failed gate — every gate above was
+passing.** Three days of sampler buys a σ that is *estimated* rather than plugged in, but not
+the clean all-posterior simulator: the injected σ is one of five draw-time inputs the simulator
+is *given* rather than fits, so retiring it leaves four. The replacement targets the same
+measured defect for hours instead of days —
+[docs/draw-time-calibration-plan.md](docs/draw-time-calibration-plan.md), grading the injected
+σ by role at draw time, with the fitted values above as its independent reference. The
+quadrature block stays in the file, inert at `Q = 0`.
+`docs/composition-quadrature-plan.md`.
+
+**Six independent routes agree on the effect size**, which is why a plugged-in σ is
 defensible in the meantime: 0.375 (validation CRPS grid), ≈0.41 (calibration — the ratio of
 the head's residual sd to its predictive sd), **0.450** (train CRPS grid, the shipped value),
-0.4776 and 0.4809 (fitted in Stan, non-centred and centred). Two of those share no arithmetic
-with the others.
+0.4776 and 0.4809 (fitted in Stan, non-centred and centred), and **0.4375** (the marginal
+profile above, at fixed `beta` and a shared σ). Two of those share no arithmetic with the
+others, and the last is the only one that does the integral rather than plugging a constant
+in — so it corroborates the size without being a posterior.
 
 **And the constraint is not just a cost — it is a dynamic the contest is sensitive to.** A
 team's season minutes are a fixed pot, so teammates' season totals are negatively correlated:
@@ -858,7 +899,7 @@ concentrated
 entirely in the spline variants. Dropping the test side halved the component fit count from
 74 and cut sampler time from 305.0 to **137.4** minutes *while* raising every selection fit
 to full-length chains — which incidentally fixed the one fit that used to miss its R̂ bar.
-1,766 tests pass (`.venv/bin/python -m pytest tests/`).
+1,880 tests pass (`.venv/bin/python -m pytest tests/`).
 
 ---
 

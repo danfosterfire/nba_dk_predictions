@@ -1,12 +1,66 @@
 # Draw-time calibration plan — grading the injected σ by role
 
-**Opened 2026-08-16. A workplan, not a results doc: nothing here has been built.** Not in
-`make docs-audit`; scratch figures are labelled and earn audited status only when their
-step gets a `make` target. One calibration of a **simulation-time draw input** — no Stan,
-no likelihood change, and the knob nests the shipped behaviour exactly: the composition's
-injected per-(player, season) σ, graded by role. It is the injection-side sibling of
-`docs/composition-quadrature-plan.md`'s graded fitted σ: days rather than weeks, no
-sampler risk, and superseded gracefully if the quadrature fit ships.
+**Opened 2026-08-16.** Not in `make docs-audit`; scratch figures are labelled and earn audited
+status only when their step gets a `make` target. One calibration of a **simulation-time draw
+input** — no Stan, no likelihood change, and the knob nests the shipped behaviour exactly: the
+composition's injected per-(player, season) σ, graded by role.
+
+## 📋 STATUS: NOTHING HERE IS BUILT. Queued for a later session.
+
+**No injection code or config was touched on 2026-08-16.** `sim.minutes.player_season_sigma`
+is still the scalar **0.375**, there is no `player_season_sigma_by_role` key, and
+`minutes_unification.py`, `minutes_window.py` and `src/sim/` are unmodified. The one
+injection-adjacent change that session made is `PlayerSeasonTerm.shift` learning to take a
+`(draws × n_sigma)` σ — **backwards-compatible by construction and pinned by a test**: a scalar
+or one-column σ broadcasts to every unit, which is the arithmetic it already did, and the
+shipped injection passes a 1-D block. So the plumbing below is ready and the shipped behaviour
+is unchanged.
+
+### What the next session does, in order
+
+1. §Steps 1 — extend `player_season_effect_sweep` and `estimate_sigma_on_train` to a per-unit
+   σ: `sigma_vec[unit_bin][codes]` in place of the scalar, reusing `PlayerSeasonTerm._unit_bins`
+   for the lookup rather than minting a second one. Sweep coordinate-wise, one refinement pass,
+   confirm the optima are stable.
+2. §Steps 2 — per-bucket optima on the fitting half, confirmed on validation, with the ship
+   rule already written there (agree to a grid step, or the bucket keeps the shared 0.375).
+3. §Steps 3 — wire `sim.minutes.player_season_sigma_by_role`, promote the per-role PIT table to
+   a `make` target so §The evidence stops being scratch, and re-read the two recorded trade
+   measurements at the graded values.
+
+Then the gates and falsifiers below, unchanged.
+
+## ⬆️ PROMOTED 2026-08-16: this is now the line of work, not the sibling
+
+This was written as the injection-side twin of `docs/composition-quadrature-plan.md`'s graded
+*fitted* σ, to be "superseded gracefully if the quadrature fit ships". **The quadrature line was
+parked the same day** — on cost against reach rather than a failed gate — so the supersession
+will not happen and this is the plan that runs. The parking rationale is in that document's
+header; the short version is that a fitted σ costs ~74 h at the full window and still leaves
+four other draw-time inputs the simulator is *given* rather than fits, so it does not deliver
+the all-posterior simulator that would have justified the fitting time.
+
+**Two things the quadrature session leaves behind make this cheaper than when it was written,
+and one of them changes a falsifier:**
+
+1. ✅ **The unit → bin σ lookup is BUILT AND TESTED.** "The one code touch outside the sweep
+   modules … shared with the quadrature plan's step 6 and built once" — it is built.
+   `PlayerSeasonTerm` carries `sigma_draws` as `(draws × n_sigma)` and resolves each unit's bin
+   off `rho_bin`; a one-column or scalar σ broadcasts, so the shipped injection is unchanged
+   arithmetic; `rehydrate_composition` passes a graded block through unflattened; and
+   `tests/test_stan_composition.py` pins both the shift and that rehydration seam. Step 3's
+   plumbing is therefore mostly done and what remains is the config key and the sweep.
+2. ✅ **A converged fitted graded σ now exists as an independent reference** — **0.60898**
+   fringe / **0.51013** bench / **0.46440** starter / **0.29075** star, from an `mq_graded` fit
+   at probe scale with R̂ 1.0069 and min ESS 683 (`docs/composition-quadrature-plan.md` §8).
+   ⚠️ **This weakens, but does not settle, the leading falsifier below.** "Per-bucket optima
+   come back flat at ~0.375" is now unlikely on prior evidence: a *fitted* σ on the same
+   `rho_bin` axis spans **2.09×** and is monotone in role. It is not proof — the fit is one
+   season, and a fitted likelihood-scale σ and a draw-time calibration σ answer different
+   questions (what the data support against what makes the season-unit predictive calibrated).
+   **Treat it as a shape to check the grid against, never as the values to ship**: reading the
+   fitted numbers into the config without running the grid would import a probe-scale estimate
+   into a production draw input, which is the sort of shortcut this repo has been bitten by.
 
 (A second half drafted alongside this — a role × season-stage term in the availability
 layout — was moved the same day to `docs/potential-to-dos.md` §15 and **parked**: the 2026
@@ -78,13 +132,17 @@ it once, both consumers use it).
 ### Falsifiers
 
 - **Per-bucket optima come back flat at ~0.375** → the per-role miss is not σ-fixable (it
-  is the skew residue); record the null and leave the scalar.
+  is the skew residue); record the null and leave the scalar. ⚠️ Now unlikely on prior
+  evidence (see the promotion note above: a converged fitted σ spans 2.09× on this axis), so
+  a flat result is *more* interesting rather than less — it would mean the likelihood and the
+  season-unit predictive want different things, which is worth a paragraph and not a shrug.
 - **Coordinate-wise sweeps do not stabilize** → the team-constraint coupling is stronger
   than expected; the honest instrument is then a small joint grid over (fringe, star) with
   the middle interpolated, before concluding anything.
-- If the quadrature fit ships a graded `sigma_u_draws`, this part's constants retire — but
-  its per-bucket grid optima remain useful as the per-bucket extension of the "five
-  independent routes" check on the fitted values.
+- ~~If the quadrature fit ships a graded `sigma_u_draws`, this part's constants retire~~ —
+  **withdrawn 2026-08-16**: the quadrature line is parked, so nothing supersedes these
+  constants and the comparison runs the other way. The fitted values are a *reference* for the
+  grid optima, not a replacement for them.
 
 ---
 

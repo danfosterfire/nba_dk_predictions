@@ -36,10 +36,10 @@ The docs are:
   treated, and the simulator's **availability layout** — where a player's missed games fall, 
   which the head cannot say. Read it before changing any of those, or before pricing a head 
   change with `make strategy-sweep`.
-  - composition-quadrature-plan.md: Workplan for fitting the composition's 
-  per-(player, season) effect by marginalizing the latents with per-unit quadrature, 
-  with a role-graded σ. Read before touching `sigma_u`, the injection constant, or 
-  `composition_glm.stan`'s effect blocks.
+  - composition-quadrature-plan.md: Fitting the composition's per-(player, season) 
+  effect by marginalizing the latents with per-unit quadrature. **Built and measured, 
+  then PARKED** on cost against reach. Read before touching `sigma_u` or 
+  `composition_glm.stan`'s effect blocks, or before reviving it.
   - dashboard-plan.md: The dashboard's charter and pages. The dashboard is a 
   **data-visualization surface**, not a project walkthrough — read this before adding 
   or editing a view.
@@ -52,7 +52,8 @@ The docs are:
   and `make dashboard-audit` (a report). Read this before editing a quoted figure or 
   adding a doc to the audit.
   - draw-time-calibration-plan.md: Workplan for grading the composition's injected 
-  minutes σ by role at simulation time. Read before touching the injection constant.
+  minutes σ by role at simulation time. **The next scheduled line of work; nothing in 
+  it is built yet.** Read before touching the injection constant.
   - eda-plan.md: Plan and notes for exploratory data analysis and feature 
   reduction. Work completed and mostly archival at this point.
   - entry-collection-plan.md: Runbook for the first real DK entries — 20 ADP-null 
