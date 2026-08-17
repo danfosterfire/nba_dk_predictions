@@ -428,6 +428,38 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("preseason", "components"),
     ),
     Decision(
+        id="a-cards-frame-is-rebuilt-and-verified-rather-than-trusted",
+        topic="components",
+        claim="`model_cards.component_frames` rebuilds each rate head through "
+              "`stan_components.head_design` and the PER-HEAD covered-window cut, and "
+              "`verify` compares the rebuilt row count against what the posterior recorded "
+              "before anything is written. That check caught a fifth wiring gap.",
+        because="`make model-cards` was re-run on 2026-08-16 to bring the dashboard's model "
+                "detail pages onto the ten heads that shipped the preseason block. The "
+                "emitter still built all eleven through `component_rates.build_design`, so "
+                "every card would have described a head fitted on the full 8,630-row window "
+                "with NO preseason columns, against posteriors fitted on 6,382 covered rows "
+                "carrying five each. `verify`'s row-count check raised naming both counts "
+                "and nothing was written. This is the fifth instance of the pattern "
+                "[[preseason-fg3m-rolled-back]] records four of, and the one that argues "
+                "for the guards: it was written BEFORE the block existed and was untouched "
+                "by the round that shipped it, so re-reading the 6b diff could not have "
+                "surfaced it — running the target with a check that compares a rebuilt "
+                "frame against the artifact's own provenance did. It is also the only one "
+                "of the five whose failure mode was a RENDERED PAGE rather than a refit: a "
+                "card is the dashboard's sole view of a head's coefficients, and the "
+                "dashboard reads artifacts and never refits, so nothing downstream of a "
+                "wrong card would have contradicted it. The cut is per head rather than "
+                "family-wide, so `fg3m|fg3a` cards on its own 7,695-row window. Pinned by "
+                "an AST test that fails on `build_design` under any alias.",
+        status="built",
+        reproduce="make model-cards → outputs/predictions/model_card_index.csv",
+        source="docs/preseason-plan.md",
+        reviewed="2026-08-16",
+        date="2026-08-16",
+        tags=("preseason", "components", "dashboard", "method"),
+    ),
+    Decision(
         id="preseason-rate-screen-sign-did-not-survive",
         topic="components",
         claim="A screen's SIGN is not evidence about the heads it failed. P1's "
@@ -4726,6 +4758,113 @@ REGISTRY: tuple[Decision, ...] = (
         source="docs/simulations-plan.md",
         reviewed="2026-08-09",
         date="2026-08-09",
+        tags=("architecture", "cost"),
+    ),
+    Decision(
+        id="the-player-season-effect-has-a-third-representation",
+        topic="minutes",
+        claim="**The player-season effect can be MARGINALIZED instead of sampled**, by "
+              "integrating each unit's latent out with per-unit Gauss-Hermite quadrature "
+              "inside the model block. The posterior then carries **~35 parameters at any "
+              "window** rather than 2,204 at the pilot and 12,307 at the full one — which "
+              "is what makes a full-window fitted `sigma_u` reachable at all. Built and "
+              "tested 2026-08-16, and **at probe scale it CONVERGES where the sampled "
+              "latent does not** — R-hat **1.0138**, min ESS **719**, 0 divergences, "
+              "`sigma_u` **0.4793**. Not yet fitted at the pilot window.",
+        because="[[the-player-season-effect-costs-12x]] established that the cost of the "
+                "sampled latent is intrinsic to adding 605+ unit parameters to this "
+                "likelihood rather than a configuration mistake, and that three sampler-side "
+                "remedies all failed. Marginalizing removes the parameters instead of tuning "
+                "the geometry around them, and it is exact in structure: given the data the "
+                "likelihood factorizes by unit, so the joint marginal is a product of "
+                "independent 1-D integrals and the ONLY approximation is the numerical rule. "
+                "**The rule is the whole question, and step 0 measured it.** On the 2,062 "
+                "pilot-window training units that carry a likelihood row, worst per-unit "
+                "error in the marginal log-likelihood over sigma in [0.1, 1.0]: fixed "
+                "Gauss-Hermite nodes are **2.6 nats** out at Q = 61 and never converge, "
+                "while nodes placed at each unit's own Newton-fitted likelihood mode and "
+                "curvature reach **2.5e-6 nats at Q = 21**. **The node count is a property "
+                "of the PLACEMENT, not of the integrand** — the same integral, two "
+                "placements, seven orders of magnitude apart — and the plan's own proposed "
+                "centering rule (a shrunken deviation plus a rough information count) needed "
+                "Q ~ 31, close enough to its stated abandon-threshold that a worse rule would "
+                "have killed a method that works. The centre and scale are DATA (solved once "
+                "in the driver, at the head's own no-fit floor, so placement never gives the "
+                "head a dependence on the artifact it exists to replace) combined with the "
+                "current `sigma_u` in closed form, which is a differentiable change of "
+                "variables and not an inner optimization. `Q = 0` nests the shipped head "
+                "exactly and the sampled-latent block stays in the file, because the two are "
+                "representations of one posterior. **A free sixth route to the effect size "
+                "falls out**: profiling the marginal over sigma at fixed theta puts the mode "
+                "at **0.4375**, inside the five routes on record (0.375 / ~0.41 / 0.450 / "
+                "0.4776 / 0.4809) and nearest the calibration route — and it is the only one "
+                "of the six that does the integral rather than plugging a constant in. Read "
+                "it as corroboration: it is a profile at fixed theta with a shared sigma, "
+                "not a posterior. **Two structural facts came out of building it**, both now "
+                "pinned by tests: 142 of 2,204 units carry no likelihood row at all (every "
+                "row a team-game's deterministic remainder) and contribute nothing; and a "
+                "unit whose likelihood is flat in `u` has no mode, so Newton walks off — "
+                "measured at 21.2 on a two-row synthetic unit — which the first "
+                "implementation here made catastrophic by flooring the curvature UP to prior "
+                "strength and thereby keeping the wandered mode, putting the integral 0.77 "
+                "nats wrong. That bug was found by the brute-force test and by nothing else; "
+                "it is invisible at the pilot window, where no unit is flat. "
+                "**And the gate that decides the whole item passed at probe scale, against "
+                "the latent arm run beside it.** On one training season (26,039 rows, 605 "
+                "units, 200 + 200 x 4 chains) `mq` reads R-hat **1.0138**, min ESS **719**, 0 "
+                "divergences and 0 treedepth-saturated draws; `ps` on the SAME rows in the "
+                "SAME run reads **1.1317**, ESS **25** and 19 saturated. That is the third "
+                "failure for the latent arm (1.0948 / ESS 35 in 2026-08-09's Gate A, 1.25204 "
+                "/ ESS 13 in the post-blend re-attempt) and the first pass for anything. The "
+                "`base` control reproduces its own recorded figures (124 s against 125 s, "
+                "R-hat 1.0172 against 1.0172), so this is the same machine those readings "
+                "came from. **The two agree on the effect**: `sigma_u` **0.47927** "
+                "marginalized against **0.48095** sampled, a 0.35% gap between completely "
+                "different machinery, inside the pair 2026-08-09 recorded and inside the five "
+                "routes — [[the-player-season-effect-costs-12x]]'s replication arriving from a "
+                "third direction. Read it as corroboration of the SIZE, since `ps` is "
+                "under-converged. **Cost is 21.9x the control at Q = 21**, so per-node "
+                "overhead beyond the likelihood is a few percent. ⚠️ `mq` is **1.85x** `ps` "
+                "on one season and quoting that alone would mislead: the marginal arm is not "
+                "cheaper here, it is cheaper AT THE WINDOW THAT MATTERS, because its cost "
+                "scales with rows alone while the latent arm's scales with rows AND units — "
+                "605 here, 2,204 at the pilot, 12,307 at the full window. The consequence is a "
+                "schedule one: the three-arm pilot ladder prices past its 24 h budget and Gate "
+                "A will abort it, so the arms run one at a time (`_flush` merges by arm name, "
+                "which is what makes that safe). "
+                "**The graded arm is the second result and it is not a null.** `mq_graded` "
+                "converges BETTER than the shared arm (R-hat **1.0069**, ESS 683) at the same "
+                "cost, and its sigma grades monotonically by role: **0.60898** fringe, "
+                "0.51013 bench, 0.46440 starter, **0.29075** star — a **2.09x** spread against "
+                "a posterior sd of 0.0168, so the end bins are ~19 sds apart rather than "
+                "resolution noise. That is the same axis, direction and size as the fitted "
+                "per-game `rho` on this head (0.14019 -> 0.0735171, **1.91x**, see "
+                "[[composition-shared-rho-is-role-graded]]) and as the per-role PIT of the "
+                "INJECTED constant — three instruments, one gradient. ⚠️ It says sigma "
+                "genuinely differs by role and the head can estimate it; it does NOT say "
+                "grading helps, because this probe fits and does not score. Gate P2 — "
+                "season-unit CRPS and the fringe PIT tail — needs the pilot ladder. "
+                "⛔ **PARKED 2026-08-16 by owner decision, and NOT on a failed gate** — every "
+                "gate above was passing. The full window is ~74 h serially for one arm even at "
+                "the trimmed 700+300 budget its own sampling efficiency justifies, and three "
+                "days of sampler buys a sigma that is estimated rather than plugged in WITHOUT "
+                "buying the clean all-posterior simulator: the injected sigma is one of five "
+                "draw-time inputs the simulator is *given* rather than fits, so retiring it "
+                "leaves four. Partway there is not worth the fitting time. The replacement is "
+                "[[the-injected-sigma-is-graded-by-role]] — same measured defect, hours "
+                "instead of days, no sampler. Nothing is ripped out: `Q = 0` nests the shipped "
+                "head exactly, the block is inert when off, and `make "
+                "composition-quadrature-check` plus twelve tests guard it. Two things carry "
+                "forward and make the replacement cheaper than when it was written: the "
+                "unit -> bin sigma lookup is built and tested, and the fitted graded sigma is "
+                "an independent reference for that work's grid optima.",
+        status="built",
+        reproduce="make composition-quadrature-check → "
+                  "outputs/predictions/composition_quadrature_check.csv, "
+                  "tests/test_stan_composition.py, src/stan/composition_glm.stan",
+        source="docs/composition-quadrature-plan.md",
+        reviewed="2026-08-16",
+        date="2026-08-16",
         tags=("architecture", "cost"),
     ),
     Decision(

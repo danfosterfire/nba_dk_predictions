@@ -709,14 +709,23 @@ def minutes_frames(cfg: dict, artifacts: dict) -> dict[str, HeadFrames]:
 def component_frames(cfg: dict, artifacts: dict) -> dict[str, HeadFrames]:
     """The seven negative-binomial counts and four beta-binomial conversions.
 
-    One `build_design` for all eleven, because it is the same frame; the ladder differs per
+    One `head_design` for all eleven, because it is the same frame; the ladder differs per
     head. The conversion heads' `attempted > 0` filter is applied here so the histograms
     describe the rows the head saw, while `n_frame` keeps the unfiltered count the manifest
     recorded — see `HeadFrames`.
+
+    **`head_design`, not `build_design`, and the covered-window cut applied PER HEAD.** Since
+    2026-08-15 ten of the eleven heads carry a preseason block and fit from 2004-05, while
+    `fg3m|fg3a` is opted out by `stan_components.PRESEASON_EXCLUDE` and keeps its full window
+    (docs/preseason-plan.md session 6b). Building the plain design here rebuilt all eleven at
+    8,630 rows against posteriors fitted on 6,382, which `verify` caught — the fifth instance
+    of 6b's wiring gap, and the reason that check compares row counts rather than trusting
+    that two modules agree about what a head's frame is.
     """
-    from src.models.component_rates import CONVERSION_HEADS, COUNT_HEADS, build_design
-    from src.models.stan_components import (SPLINE_KNOTS, conversion_variants,
-                                            count_variants)
+    from src.models.component_rates import CONVERSION_HEADS, COUNT_HEADS
+    from src.models.stan_components import (PRESEASON, SPLINE_KNOTS, conversion_variants,
+                                            count_variants, covered_fitting_rows,
+                                            head_design, head_features, head_fitting_rows)
 
     wanted = set(COUNT_HEADS) | {f"{made}_given_{att}" for made, att in CONVERSION_HEADS}
     if not wanted & set(artifacts):
@@ -724,18 +733,22 @@ def component_frames(cfg: dict, artifacts: dict) -> dict[str, HeadFrames]:
     test_seasons = _test_seasons(cfg)
     n_knots = int(cfg.get("stan", {}).get("components", {})
                   .get("spline_knots", SPLINE_KNOTS))
-    targets = pd.read_parquet(Path(cfg["data"]["features_dir"])
-                              / "component_targets.parquet")
-    design = build_design(targets, cfg["data"]["seasons"], cfg["data"]["raw_dir"])
-    train, val = _split_pair(design, test_seasons)
+    preseason = bool(cfg.get("stan", {}).get("components", {})
+                     .get("preseason", PRESEASON))
+    train_full, val = _split_pair(head_design(cfg, preseason), test_seasons)
+    # The cut lands on the FITTING rows only, exactly as `posteriors.component_artifacts`
+    # applies it — validation is scored on every covered row either way.
+    train_covered = covered_fitting_rows(train_full, cfg, preseason)
 
     out = {}
     for component in COUNT_HEADS:
         art = artifacts.get(component)
         if art is None:
             continue
-        tr, va, features = count_variants(train, val, component,
-                                          n_knots)[art.recipe.variant]
+        train = head_fitting_rows(train_full, train_covered, component, preseason)
+        tr, va, base_features = count_variants(train, val, component,
+                                               n_knots)[art.recipe.variant]
+        features = head_features(base_features, component, preseason)
         out[component] = _frames(component, train, val, tr, va, art.recipe.features,
                                  ladder_features=features)
 
@@ -744,8 +757,12 @@ def component_frames(cfg: dict, artifacts: dict) -> dict[str, HeadFrames]:
         art = artifacts.get(head)
         if art is None:
             continue
-        tr, va, features = conversion_variants(train, val, made, attempted,
-                                               n_knots)[art.recipe.variant]
+        train = head_fitting_rows(train_full, train_covered, made, preseason)
+        tr, va, base_features = conversion_variants(train, val, made, attempted,
+                                                    n_knots)[art.recipe.variant]
+        features = head_features(base_features, made, preseason)
+        # The live filter is taken on the head's OWN fitting rows, not the uncut frame — a
+        # mask built from `train_full` would be the wrong length for a head that was cut.
         live_tr = train[attempted].to_numpy(dtype=float) > 0
         live_va = val[attempted].to_numpy(dtype=float) > 0
         out[head] = _frames(head, train[live_tr], val[live_va], tr[live_tr], va[live_va],
@@ -782,7 +799,7 @@ def composition_frames(cfg: dict, artifacts: dict) -> dict[str, HeadFrames]:
             f"the persisted composition was fitted at `{variant}`, an arm from "
             f"`stan_composition.effect_variants` (the player-season effect, the "
             f"team-context block, or both). Its ladder takes the team block and returns a "
-            f"seven-tuple, so `composition_frames` has to call `effect_variants` rather "
+            f"nine-field `EffectArm`, so `composition_frames` has to call `effect_variants` rather "
             f"than `variants` before this head can be carded.")
 
     first_season = str(art.extras.get("first_season")

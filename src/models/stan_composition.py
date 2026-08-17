@@ -85,10 +85,12 @@ Usage:
 import pickle
 import zlib
 from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
 import yaml
+from scipy.special import betaln, gammaln, roots_hermite
 from scipy.stats import betabinom
 
 from src.eda.availability import with_lags
@@ -163,6 +165,54 @@ MAX_REDRAWS = 50
 # and the stick-breaking offset.
 UNIT_KEYS = ["player_id", "season"]
 
+# ── The marginal (quadrature) representation of the same effect ───────────────
+# `docs/composition-quadrature-plan.md`. Step 0's measurement, on the 2,062 pilot-window
+# units that carry a likelihood row, of the WORST per-unit error in the marginal
+# log-likelihood over sigma in [0.1, 1.0] — nodes placed at the no-fit floor and scored at
+# the converged theta, which is the drift this driver actually faces:
+#
+#   scheme                             Q=11      Q=15      Q=21      Q=25      Q=41    Q=61
+#   fixed nodes (the plan's first)        —         —    9.3e+0        —    4.1e+0  2.6e+0
+#   this rule, inflate 1.0             2.6e+0   8.5e-1   7.6e-2   7.4e-3        —       —
+#   this rule, inflate 1.2 (SHIPPED)   8.3e-1   6.0e-2   2.5e-6   4.9e-7        —       —
+#   this rule, inflate 1.6             1.2e-2   3.1e-3   4.4e-4   1.1e-4        —       —
+#
+# Two things follow. The node count is a property of the PLACEMENT and not of the integrand
+# — the same integral is 2.6 nats out at Q = 61 badly placed and 2.5e-6 at Q = 21 well
+# placed, which is why `unit_laplace` is worth solving properly. And the tolerance the
+# shipped pair clears (2.5e-6 nats on the worst unit, 2.3e-6 pooled over all 2,062, against
+# per-unit log-likelihoods of order 100) is far under anything NUTS can resolve.
+#
+# ⚠️ `GH_INFLATE` is NOT a "wider is safer" knob and treating it as one makes the rule worse
+# — see the 1.6 row, which is two orders of magnitude off the 1.2 row at every Q. Too-wide
+# nodes step over a narrow spike exactly as badly as too-narrow ones miss its tails. 1.2 is
+# a measured interior optimum, not a margin.
+Q_NODES = 21
+GH_INFLATE = 1.2
+
+# Newton's step count and finite-difference width for the per-unit mode and curvature.
+# Both are DRIVER-side constants on a 1-D concave-ish problem solved once at fixed data;
+# nothing here enters a Stan gradient, so accuracy is nearly free.
+LAPLACE_ITERS = 40
+LAPLACE_H = 1e-3
+
+# Guard rails on the fitted mode, and they are load-bearing rather than defensive.
+#
+# A unit with two rows and a dispersed likelihood is nearly FLAT in `u`, so its mode is not
+# identified and Newton walks off — measured at 21.2 on a synthetic two-row unit. Left alone
+# that misplaces the nodes catastrophically: at sigma = 0.65 the centre lands at 6.29 with a
+# spread of 0.65, so every node sits in the far tail and the integral is 0.77 nats wrong
+# against a dense grid.
+#
+# The fix is to let an uninformative unit BE uninformative. `CURV_MIN` is a floor at
+# essentially zero rather than at prior strength, so `prec = curv + 1/sigma^2` collapses to
+# the prior, the centre shrinks to ~0 and the nodes become the prior's own — which is the
+# right placement for a unit the data says nothing about. Flooring curvature *up* to the
+# prior's precision instead (the first thing tried here) keeps the wandered mode and is
+# exactly how the misplacement above happened.
+CURV_MIN = 1e-8
+MODE_CLIP = 10.0
+
 # Half-normal scale on `sigma_u`, on the LINEAR PREDICTOR scale. Deliberately loose. The
 # two data-implied figures `make minutes-unification` reports are a log-ratio sd of 0.284
 # and a logit-share sd of 0.493, and the injection sweep's CRPS optimum sat at 0.375-0.45 —
@@ -225,7 +275,8 @@ def choose_metric(n_params: int, warmup: int = 1000,
     return "dense_e" if warmup >= draws_per_param * n_params else "diag_e"
 
 
-def announce_metric(n_features: int, n_rho: int, warmup: int, n_units: int = 0) -> str:
+def announce_metric(n_features: int, n_rho: int, warmup: int, n_units: int = 0,
+                    n_sigma: int = 0) -> str:
     """The metric an arm will get, printed **before** the sampler starts.
 
     ⚠️ **A cost cliff, not a preference, and it is invisible in the artifact until the fit
@@ -251,7 +302,7 @@ def announce_metric(n_features: int, n_rho: int, warmup: int, n_units: int = 0) 
     different modules for one day and the copy in `composition_preseason_fit` had no `U_n`
     term, so it would have promised `dense_e` to an arm that structurally cannot get it.
     """
-    n_params = n_features + 1 + n_rho + n_units
+    n_params = n_features + 1 + n_rho + n_units + n_sigma
     metric = choose_metric(n_params, warmup)
     print(f"    {n_params:,} parameters, {warmup} warmup draws → {metric}")
     if metric != "dense_e":
@@ -305,8 +356,15 @@ class PlayerSeasonTerm:
     """
 
     def __init__(self, enabled: bool = False, scale: float = U_SD_SCALE,
-                 seed: int = 42, stream: str = "", centered: bool = False):
+                 seed: int = 42, stream: str = "", centered: bool = False,
+                 sampled: bool = True):
         self.enabled = bool(enabled)
+        # Whether the LATENTS go to NUTS. `False` with `enabled=True` is the marginal
+        # representation: `QuadratureTerm` supplies the likelihood, this class still owns
+        # `sigma_u` and the predictive, and Stan is handed the `U_n = 0` block — which the
+        # model rejects seeing alongside `Q > 0`, deliberately, since the two are
+        # alternatives rather than layers.
+        self.sampled = bool(sampled)
         self.scale, self.seed, self.stream = float(scale), int(seed), str(stream)
         # Same model, different coordinates for NUTS to walk. Non-centred by default because
         # the funnel it avoids produces WRONG answers where the centred form's failure mode
@@ -325,8 +383,11 @@ class PlayerSeasonTerm:
         """The `U_n` / `unit_idx` / `u_sd_scale` keys. Stan has no optional data, so the
         disabled block is passed too — with `U_n = 0` and every index 0, which the model
         never reads."""
-        if not self.enabled:
-            self.n_units = 0
+        if not self.enabled or not self.sampled:
+            # The unit count is still recorded when the effect is on but marginalized, so
+            # `summary` reports the same thing under both representations.
+            self.n_units = (int(unit_codes(train).max()) + 1
+                            if self.enabled and len(train) else 0)
             return {"U_n": 0, "unit_idx": [0] * len(train),
                     "u_sd_scale": float(self.scale), "u_centered": 0}
         codes = unit_codes(train)
@@ -335,18 +396,40 @@ class PlayerSeasonTerm:
                 "u_sd_scale": float(self.scale), "u_centered": int(self.centered)}
 
     def absorb(self, fit) -> None:
-        """Keep the `sigma_u` draws; `u_z` is deliberately never stored."""
+        """Keep the `sigma_u` draws; `u_z` is deliberately never stored.
+
+        Kept **two-dimensional**, `(draws x n_sigma)`, for the reason `rho_draws` already is:
+        the graded and shared arms then take one downstream path and `n_sigma = 1` is the
+        shared model exactly rather than a special case somebody has to remember.
+        """
         if not self.enabled:
             self.sigma_draws = np.zeros(0)
             return
         draws = np.atleast_1d(fit.stan_variable("sigma_u"))
-        self.sigma_draws = np.asarray(draws).reshape(len(draws), -1)[:, 0]
+        self.sigma_draws = np.asarray(draws).reshape(len(draws), -1)
+
+    @staticmethod
+    def _unit_bins(frame: pd.DataFrame, codes: np.ndarray, n_units: int) -> np.ndarray:
+        """Each unit's 0-based sigma bin, read off the row column it is graded over.
+
+        `rho_bin` is a function of `w_share`, which is a (player, season) quantity — so it
+        is constant within a unit by construction and the first row's value IS the unit's.
+        """
+        if "rho_bin" not in frame.columns or not n_units:
+            return np.zeros(n_units, dtype=int)
+        order = np.argsort(codes, kind="stable")
+        first = np.searchsorted(codes[order], np.arange(n_units))
+        return frame["rho_bin"].to_numpy(dtype=int)[order][first] - 1
 
     def shift(self, frame: pd.DataFrame, idx: np.ndarray) -> np.ndarray:
         """`(rows x draws)` fresh `sigma_u * z`, shared across a unit's rows per draw.
 
         `idx` is the same thinned posterior-draw index `_eta_base` used, so the sigma
         applied to a column is the sigma of the draw whose `alpha` and `beta` built it.
+
+        With a graded `sigma_u` each unit takes the sigma of **its own** bin. A scalar or
+        one-column `sigma_draws` — the shipped injection, and every artifact written before
+        2026-08-16 — broadcasts to every unit, which is the same arithmetic as before.
         """
         idx = np.asarray(idx)
         if not self.enabled or self.sigma_draws.size == 0:
@@ -354,20 +437,267 @@ class PlayerSeasonTerm:
         codes = unit_codes(frame)
         n_units = int(codes.max()) + 1 if len(codes) else 0
         z = self._rng().standard_normal(size=(n_units, len(idx)))
-        return self.sigma_draws[idx][None, :] * z[codes, :]
+        sigma = self.sigma_draws
+        if sigma.ndim == 1:
+            sigma = sigma[:, None]
+        if sigma.shape[1] == 1:
+            per_unit = sigma[idx, 0][None, :]                 # broadcast over units
+        else:
+            per_unit = sigma[idx][:, self._unit_bins(frame, codes, n_units)].T
+        return (per_unit * z)[codes, :]
 
     def summary(self) -> dict:
         if not self.enabled or self.sigma_draws.size == 0:
             return {"ps_effect": False, "sigma_u": 0.0, "sigma_u_sd": 0.0,
                     "sigma_u_lo": 0.0, "sigma_u_hi": 0.0, "n_units": 0,
                     "u_parameterization": "none"}
-        lo, hi = np.percentile(self.sigma_draws, [2.5, 97.5])
-        return {"ps_effect": True,
-                "sigma_u": float(self.sigma_draws.mean()),
-                "sigma_u_sd": float(self.sigma_draws.std(ddof=1)),
-                "sigma_u_lo": float(lo), "sigma_u_hi": float(hi),
-                "n_units": int(self.n_units),
-                "u_parameterization": "centered" if self.centered else "non_centered"}
+        draws = self.sigma_draws
+        if draws.ndim == 1:
+            draws = draws[:, None]
+        # The headline stays the mean over bins, so a shared-sigma arm reports exactly what
+        # it always did and the gate code needs no special case; the per-bin columns are
+        # additive and are what the graded-vs-shared contrast is read from.
+        pooled = draws.mean(axis=1)
+        lo, hi = np.percentile(pooled, [2.5, 97.5])
+        out = {"ps_effect": True,
+               "sigma_u": float(pooled.mean()),
+               "sigma_u_sd": float(pooled.std(ddof=1)),
+               "sigma_u_lo": float(lo), "sigma_u_hi": float(hi),
+               "n_units": int(self.n_units),
+               "u_parameterization": "centered" if self.centered else "non_centered"}
+        if draws.shape[1] > 1:
+            for b in range(draws.shape[1]):
+                out[f"sigma_u_bin{b + 1}"] = float(draws[:, b].mean())
+        return out
+
+
+# ── The marginal representation: quadrature over each unit's effect ───────────
+
+def gauss_hermite(q: int) -> tuple[np.ndarray, np.ndarray]:
+    """Abscissae and `log(w) + x^2` for `int e^{-x^2} g(x) dx ~ sum_q w_q g(x_q)`.
+
+    The `e^{x^2}` is folded into the weight here rather than in Stan because it is data and
+    because the two factors overflow and underflow in opposite directions — carrying them
+    separately into a log-space accumulation is how a node quietly becomes a NaN.
+    """
+    x, w = roots_hermite(int(q))
+    return x, np.log(w) + x ** 2
+
+
+def _unit_arrays(train: pd.DataFrame) -> dict:
+    """The unit-major view of the likelihood rows: order, offsets, bins.
+
+    Rows carrying likelihood are the non-`is_last` ones. A unit whose every row is a
+    deterministic remainder carries **no likelihood at all** and is simply absent — 142 of
+    2,204 at the pilot window — which is correct rather than a hole: its marginal is
+    `int phi(z) dz = 1` and contributes nothing to the target.
+    """
+    codes = unit_codes(train)
+    live = np.flatnonzero(train["is_last"].to_numpy(dtype=int) == 0)
+    order = live[np.argsort(codes[live], kind="stable")]
+    unit_of_row = codes[order]
+    _, first, lens = np.unique(unit_of_row, return_index=True, return_counts=True)
+    bins = (train["rho_bin"].to_numpy(dtype=int)[order][first]
+            if "rho_bin" in train.columns else np.ones(len(first), dtype=int))
+    return {"rows": order, "starts": first, "lens": lens, "bins": bins,
+            "unit_of_row": np.repeat(np.arange(len(first)), lens)}
+
+
+def _unit_loglik(u: np.ndarray, eta0: np.ndarray, y: np.ndarray, m: np.ndarray,
+                 s: np.ndarray, starts: np.ndarray, unit_of_row: np.ndarray
+                 ) -> np.ndarray:
+    """`(n_units x nodes)` summed beta-binomial log-pmf at per-unit shifts `u`.
+
+    The driver's own copy of the model block's inner sum, used **only** to place the nodes.
+    It omits the feasibility-bound normalization that 1.7% of rows carry, and that is a
+    deliberate approximation rather than an oversight: the placement has to absorb the whole
+    drift from the no-fit floor to the converged posterior (a mode shift of order 0.5), which
+    step 0 measured Q = 21 handling at 2.5e-6 nats. A 1.7%-of-rows normalization is a far
+    smaller perturbation than the one the node count is already sized for.
+    """
+    eta = eta0[:, None] + u[unit_of_row, :]
+    p = 0.5 * (1.0 + np.tanh(0.5 * np.clip(eta, -400.0, 400.0)))
+    a = s[:, None] * p
+    b = s[:, None] * (1.0 - p)
+    ll = (gammaln(m + 1.0)[:, None] - gammaln(y + 1.0)[:, None]
+          - gammaln(m - y + 1.0)[:, None]
+          + betaln(y[:, None] + a, (m - y)[:, None] + b) - betaln(a, b))
+    return np.add.reduceat(ll, starts, axis=0)
+
+
+def unit_laplace(eta0: np.ndarray, y: np.ndarray, m: np.ndarray, s: np.ndarray,
+                 starts: np.ndarray, unit_of_row: np.ndarray,
+                 iters: int = LAPLACE_ITERS, h: float = LAPLACE_H
+                 ) -> tuple[np.ndarray, np.ndarray]:
+    """Per-unit mode and curvature of the log-likelihood in `u`, by safeguarded Newton.
+
+    **This is where the node count comes from, and it is worth doing properly.** Step 0
+    measured the same integral needing Q > 61 under fixed nodes, Q ~ 31 under the plan's
+    "shrunken deviation + rough information" rule, and Q = 21 under this one. It is solved
+    once, at fixed data, in the driver — a better constant, not an inner optimization, and
+    it never enters a Stan gradient.
+
+    Both outputs are **sigma-free**: they describe the LIKELIHOOD alone, and the model block
+    combines them with the current `sigma_u` in closed form. That is what lets one placement
+    stay accurate wherever the sampler takes sigma — step 0 checked 0.1 through 1.0.
+    """
+    n_units = len(starts)
+    mode = np.zeros(n_units)
+    probe = np.array([-h, 0.0, h])
+
+    def at(u):
+        return _unit_loglik(u, eta0, y, m, s, starts, unit_of_row)
+
+    for _ in range(int(iters)):
+        ll = at(mode[:, None] + probe[None, :])
+        grad = (ll[:, 2] - ll[:, 0]) / (2 * h)
+        curv = (ll[:, 2] - 2 * ll[:, 1] + ll[:, 0]) / h ** 2
+        # A raw Newton step where the local curvature is not negative would run uphill
+        # forever; those units get a bounded gradient step instead.
+        concave = curv < -1e-10
+        step = np.clip(np.where(concave, -grad / np.where(concave, curv, -1.0),
+                                np.sign(grad) * 0.1), -1.0, 1.0)
+        better = at((mode + step)[:, None])[:, 0] >= ll[:, 1]
+        for _ in range(3):
+            if better.all():
+                break
+            step = np.where(better, step, 0.5 * step)
+            better = at((mode + step)[:, None])[:, 0] >= ll[:, 1]
+        # Clipped every iteration, not once at the end: a nearly-flat unit accepts a long
+        # run of tiny improvements and drifts, and a mode of 21 on the logit scale is a
+        # likelihood with no maximum rather than a player who played 21 logits more.
+        mode = np.clip(np.where(better, mode + step, mode), -MODE_CLIP, MODE_CLIP)
+        if np.abs(np.where(better, step, 0.0)).max() < 1e-9:
+            break
+
+    ll = at(mode[:, None] + probe[None, :])
+    curvature = -(ll[:, 2] - 2 * ll[:, 1] + ll[:, 0]) / h ** 2
+    # A unit whose likelihood is flat or indefinite in `u` is one the data says nothing
+    # about. Say so: a ~zero curvature makes `prec` the prior's own precision, which shrinks
+    # the centre to 0 and puts the nodes exactly where an uninformative unit wants them.
+    weak = ~(curvature > CURV_MIN)
+    return np.where(weak, 0.0, mode), np.where(weak, CURV_MIN, curvature)
+
+
+class QuadratureTerm:
+    r"""The per-(player, season) effect, MARGINALIZED rather than sampled.
+
+    `PlayerSeasonTerm` above hands the `u_i` to NUTS and hands back `sigma_u`. This hands
+    NUTS **nothing**: each unit's `u_i` is integrated out inside the model block by
+    Gauss-Hermite quadrature, so the posterior carries ~35 parameters at *any* fitting
+    window instead of 2,204 at the pilot and 12,307 at the full one. Three things follow,
+    and they are the whole case for the representation:
+
+    * the funnel that made `ps` a hard geometry cannot exist, because there is no latent;
+    * `dense_e` — which `choose_metric` grants only at warmup >= 20 x parameters, and which
+      this head's own probe measures at ~10x the wall clock of `diag_e` — comes back;
+    * the full window becomes reachable, and the full-window sigma is the one that would
+      actually ship.
+
+    The cost is `Q` evaluations of the likelihood per gradient instead of one. That is the
+    trade the plan is: `Q = 21` against a parameter block that never converged.
+
+    **Disabled by default**, in which case `data` returns the `Q = 0` block and the head is
+    the model that existed before this class, exactly — the same device `PlayerSeasonTerm`
+    and `stan_utils.YearTerm` use.
+
+    The fitted `sigma_u` is per **sigma bin** from day one (`n_sigma = 1` nests the shared
+    model). The bins are the head's own `rho_bin` — quantiles of `w_share`, already assigned
+    per row and constant within a unit — because the injection's own per-role calibration
+    found a ~2x gradient in what sigma wants, on the same axis and in the same direction as
+    the fitted per-game `rho`. Reusing that column rather than minting a second one keeps
+    "which bin is this player in" a single fact.
+    """
+
+    def __init__(self, enabled: bool = False, nodes: int = Q_NODES,
+                 inflate: float = GH_INFLATE, n_sigma: int = 1,
+                 scale: float = U_SD_SCALE):
+        self.enabled = bool(enabled)
+        self.nodes = int(nodes)
+        self.inflate = float(inflate)
+        self.n_sigma = int(n_sigma)
+        self.scale = float(scale)
+        self.n_units = 0
+        self.placement: dict = {}
+
+    def data(self, train: pd.DataFrame) -> dict:
+        """The `Q` / `gh_*` / `u_*` keys. Stan has no optional data, so the disabled block
+        is passed too — with `Q = 0` and every array empty, which the model never reads."""
+        if not self.enabled:
+            self.n_units = 0
+            return {"Q": 0, "gh_x": [], "gh_log_w": [], "n_unit": 0, "u_start": [],
+                    "u_len": [], "u_bin": [], "u_center": [], "u_curv": [],
+                    "gh_inflate": self.inflate, "n_sigma": 1, "n_umap": 0, "u_row": []}
+
+        arrays = _unit_arrays(train)
+        rows = arrays["rows"]
+        # Placed at the head's OWN NO-FIT FLOOR — eta = the stick-breaking offset, which is
+        # alpha = beta = 0. Deliberately not read off a fitted posterior: placement changes
+        # accuracy and never the estimand, so the only thing a fitted reference would buy is
+        # a silent dependence on the artifact this head exists to replace.
+        eta0 = train["logit_prior"].to_numpy(dtype=float)[rows]
+        y = train["y"].to_numpy(dtype=float)[rows]
+        m = train["m"].to_numpy(dtype=float)[rows]
+        rho = _floor_dispersion_by_bin(train)
+        bin_of_row = (train["rho_bin"].to_numpy(dtype=int)[rows] - 1
+                      if "rho_bin" in train.columns else np.zeros(len(rows), dtype=int))
+        s = (1 - rho[bin_of_row]) / rho[bin_of_row]
+
+        center, curv = unit_laplace(eta0, y, m, s, arrays["starts"], arrays["unit_of_row"])
+        gh_x, gh_log_w = gauss_hermite(self.nodes)
+        self.n_units = len(arrays["starts"])
+        self.placement = {"center": center, "curv": curv, "rho_floor": rho}
+        n_bins = max(1, min(self.n_sigma, int(arrays["bins"].max())))
+        # An EMPTY sigma bin is not a small problem. It would be sampled straight from its
+        # half-normal prior, land in the artifact looking like a fitted quantity, and be
+        # applied at predict time to whichever units fall in it there. The bins are train
+        # quantiles of `w_share`, so all four are populated by construction — which is
+        # exactly why a violation means something upstream changed rather than that the
+        # window is small.
+        present = set(np.minimum(arrays["bins"], n_bins).tolist())
+        missing = sorted(set(range(1, n_bins + 1)) - present)
+        if missing:
+            raise ValueError(
+                f"sigma bins {missing} carry no player-season unit, so their `sigma_u` "
+                f"would be sampled from the prior and persisted as if it were fitted. "
+                f"Check `rho_bin_edges` against this window's `{RHO_BIN_COL}`.")
+        return {
+            "Q": self.nodes,
+            "gh_x": gh_x.tolist(),
+            "gh_log_w": gh_log_w.tolist(),
+            "n_unit": self.n_units,
+            "u_start": (arrays["starts"] + 1).astype(int).tolist(),
+            "u_len": arrays["lens"].astype(int).tolist(),
+            "u_bin": (np.minimum(arrays["bins"], n_bins)).astype(int).tolist(),
+            "u_center": center.tolist(),
+            "u_curv": curv.tolist(),
+            "gh_inflate": self.inflate,
+            "n_sigma": n_bins,
+            "n_umap": len(rows),
+            "u_row": (rows + 1).astype(int).tolist(),
+        }
+
+
+def _floor_dispersion_by_bin(train: pd.DataFrame) -> np.ndarray:
+    """Per-bin dispersion of the no-fit floor — the `rho` the node placement assumes.
+
+    Fitted on the floor's own training steps, exactly as `FloorComposition` does, so the
+    placement needs no posterior. It only has to be roughly right: `rho` enters the
+    curvature through `1 / (1 + (m-1) rho)`, and the node count is already sized for a much
+    larger perturbation than getting it a little wrong.
+    """
+    live = train[train["is_last"] == 0]
+    p = 1.0 / (1.0 + np.exp(-live["logit_prior"].to_numpy(dtype=float)))
+    y = live["y"].to_numpy(dtype=int)
+    m = live["m"].to_numpy(dtype=int)
+    if "rho_bin" not in live.columns:
+        return np.array([fit_dispersion(y, m, p)])
+    bins = live["rho_bin"].to_numpy(dtype=int)
+    out = []
+    for b in range(1, int(bins.max()) + 1):
+        take = bins == b
+        out.append(fit_dispersion(y[take], m[take], p[take]) if take.any() else RHO_INIT)
+    return np.maximum(np.asarray(out, dtype=float), RHO_MIN)
 
 
 # ── Frame construction ────────────────────────────────────────────────────────
@@ -894,6 +1224,27 @@ def attach_team_context(train: pd.DataFrame, val: pd.DataFrame, block: pd.DataFr
     return tr, te, list(cols) + [TEAM_MISSING], {**coverage, "team_means": means}
 
 
+class EffectArm(NamedTuple):
+    """One arm of `effect_variants`, named so the ladder stops being read by index.
+
+    A `NamedTuple` rather than a dataclass deliberately: it still unpacks positionally and
+    still slices, so `built[arm][:6]` and the existing `built[a][5]` keep working while new
+    call sites can say `built[a].quadrature`. The tuple grew from seven fields to nine when
+    the marginal representation landed, and nine positional fields is where an index becomes
+    a bug waiting to happen.
+    """
+
+    train: pd.DataFrame
+    val: pd.DataFrame
+    features: list[str]
+    dispersed: int
+    n_rho: int
+    player_season_effect: bool
+    centered: bool
+    quadrature: bool
+    n_sigma: int
+
+
 def effect_variants(train: pd.DataFrame, val: pd.DataFrame, block: pd.DataFrame,
                     base_variant: str = "betabinom_ot_graded", n_bins: int = RHO_BINS
                     ) -> tuple[dict, dict]:
@@ -912,6 +1263,8 @@ def effect_variants(train: pd.DataFrame, val: pd.DataFrame, block: pd.DataFrame,
     | `team` | shipped + team context | — | — |
     | `ps_team` | shipped + team context | `sigma_u` | non-centred |
     | `ps_centered` | shipped | `sigma_u` | **centred** |
+    | `mq` | shipped | `sigma_u`, **marginalized** | quadrature, shared sigma |
+    | `mq_graded` | shipped | `sigma_u` per `rho_bin`, marginalized | quadrature |
 
     `ps_centered` is the same model as `ps` in different coordinates, so it is a *sampler*
     arm rather than a modelling one — it is in the ladder because the two are not
@@ -920,18 +1273,31 @@ def effect_variants(train: pd.DataFrame, val: pd.DataFrame, block: pd.DataFrame,
     the same posterior, and any difference between them is Monte Carlo error or a
     convergence failure.
 
-    Returns `{arm: (train, val, features, dispersed, n_rho, player_season_effect, centered)}`
-    and the join's coverage report.
+    **`mq` stands in the same relation to `ps`** — same posterior, third representation —
+    and the same rule applies with one addition: `mq` and `ps` disagreeing is a *bug*, not a
+    result, and `docs/composition-quadrature-plan.md` step 4 exists to check it before any
+    metric is read. What `mq` is actually for is the two things `ps` cannot do at all:
+    converge, and reach the full window. `mq_graded` is the only arm here that is a
+    different model from anything above it.
+
+    Returns
+    `{arm: (train, val, features, dispersed, n_rho, player_season_effect, centered,
+      quadrature, n_sigma)}` and the join's coverage report.
     """
     tr, te, feats, dispersed, n_rho = variants(train, val, n_bins)[base_variant]
     tr_t, te_t, team_feats, coverage = attach_team_context(tr, te, block)
     with_team = list(feats) + team_feats
     return ({
-        "base": (tr, te, list(feats), dispersed, n_rho, False, False),
-        "ps": (tr, te, list(feats), dispersed, n_rho, True, False),
-        "team": (tr_t, te_t, with_team, dispersed, n_rho, False, False),
-        "ps_team": (tr_t, te_t, list(with_team), dispersed, n_rho, True, False),
-        "ps_centered": (tr, te, list(feats), dispersed, n_rho, True, True),
+        "base": EffectArm(tr, te, list(feats), dispersed, n_rho, False, False, False, 1),
+        "ps": EffectArm(tr, te, list(feats), dispersed, n_rho, True, False, False, 1),
+        "team": EffectArm(tr_t, te_t, with_team, dispersed, n_rho, False, False, False, 1),
+        "ps_team": EffectArm(tr_t, te_t, list(with_team), dispersed, n_rho, True, False,
+                             False, 1),
+        "ps_centered": EffectArm(tr, te, list(feats), dispersed, n_rho, True, True,
+                                 False, 1),
+        "mq": EffectArm(tr, te, list(feats), dispersed, n_rho, False, False, True, 1),
+        "mq_graded": EffectArm(tr, te, list(feats), dispersed, n_rho, False, False, True,
+                               n_bins),
     }, coverage)
 
 
@@ -1056,14 +1422,24 @@ class StanComposition:
                  predictive_samples: int = PREDICTIVE_SAMPLES,
                  player_season_effect: bool = False,
                  u_sd_scale: float = U_SD_SCALE, u_centered: bool = False,
-                 metric: str | None = None):
+                 metric: str | None = None, quadrature: bool = False,
+                 q_nodes: int = Q_NODES, gh_inflate: float = GH_INFLATE,
+                 n_sigma: int = 1):
         self.features, self.dispersed, self.l2, self.name = features, dispersed, l2, name
         self.n_rho = int(n_rho)
         self.chains, self.warmup, self.samples, self.seed = chains, warmup, samples, seed
         self.predictive_samples = predictive_samples
+        if player_season_effect and quadrature:
+            raise ValueError("the sampled latent and the marginal quadrature are two "
+                             "representations of the same effect — enable one")
         # Disabled by default, so every existing caller builds the head that shipped.
-        self.ps = PlayerSeasonTerm(player_season_effect, u_sd_scale, seed, stream=name,
-                                   centered=u_centered)
+        # `ps` carries the effect at PREDICT time under both representations: the fitted
+        # `sigma_u` lands in the same place either way, and a fresh `z` per (unit, draw) is
+        # what the predictive integrates over regardless of how sigma was estimated.
+        self.ps = PlayerSeasonTerm(player_season_effect or quadrature, u_sd_scale, seed,
+                                   stream=name, centered=u_centered,
+                                   sampled=not quadrature)
+        self.quad = QuadratureTerm(quadrature, q_nodes, gh_inflate, n_sigma, u_sd_scale)
         # None = let `choose_metric` size it; a string forces it, which is what a probe
         # comparing the two metrics on identical data needs.
         self.metric = metric
@@ -1074,7 +1450,7 @@ class StanComposition:
         (X,), self.scaler = standardized(train, [train], self.features)
         arrays = ragged_arrays(train)
         return {
-            **self.ps.data(train),
+            **self.ps.data(train), **self.quad.data(train),
             "G": len(arrays["starts"]), "P": len(train), "K": X.shape[1],
             "start": (arrays["starts"] + 1).tolist(),
             "len": arrays["lens"].tolist(),
@@ -1107,6 +1483,11 @@ class StanComposition:
             # `normal(0, sigma_u)` and a zero scale is not a starting point.
             inits["u_z"] = np.zeros(data["U_n"]).tolist()
             inits["sigma_u"] = [0.3]
+        elif data["Q"]:
+            # No latents to initialize — the whole point. Every bin starts at the same 0.3,
+            # so the graded arm's init is the shared arm's and any spread it reports is
+            # fitted rather than seeded.
+            inits["sigma_u"] = [0.3] * int(data["n_sigma"])
 
         model = compile_model(MODEL)
         # dense_e, not the default diagonal metric: measured on the one-season probe,
@@ -1121,14 +1502,18 @@ class StanComposition:
         # the arithmetic. This matters because treedepth saturation — 791 of 800 draws on
         # the `ps_no_rho` diagnostic under `diag_e` — is precisely what the dense metric
         # fixed on this head before the effect existed.
+        # The marginal representation adds `n_sigma` parameters and NOT `U_n` of them,
+        # which is the whole reason `dense_e` is reachable for it at any window.
         metric = self.metric or choose_metric(
-            int(data["K"]) + 1 + data["n_rho"] + int(data["U_n"]), self.warmup)
+            int(data["K"]) + 1 + data["n_rho"] + int(data["U_n"])
+            + (int(data["n_sigma"]) if data["Q"] else 0), self.warmup)
         fit, self.diagnostics = sample(
             model, data, chains=self.chains, warmup=self.warmup,
             samples=self.samples, seed=self.seed, label=self.name, inits=inits,
             metric=metric)
         self.diagnostics["metric"] = metric
         self.diagnostics["parameterization"] = (
+            f"marginal_q{data['Q']}" if data["Q"] else
             "none" if not data["U_n"] else
             ("centered" if data["u_centered"] else "non_centered"))
         warn_if_unconverged(self.diagnostics)

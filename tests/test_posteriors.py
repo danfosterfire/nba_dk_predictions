@@ -678,7 +678,7 @@ def test_the_composition_team_recipe_reproduces_the_ladders_own_columns():
 
     train, probe = frame.iloc[:150], frame.iloc[150:]
     built, _ = effect_variants(train, probe, block, "betabinom_ot_graded", RHO_BINS)
-    tr, te, features, _, _, _, _ = built["team"]
+    tr, te, features = built["team"].train, built["team"].val, built["team"].features
     steps = P._composition_steps(train, tr, features, OWN, RHO_BIN_COL, RHO_BINS,
                                  team_block=block)
 

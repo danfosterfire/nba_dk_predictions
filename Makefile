@@ -34,7 +34,7 @@ export PYTHONUNBUFFERED = 1
         stan-substitution season-terms games-played stan-games-played \
         stan-game-length posteriors model-cards minutes-unification minutes-window \
         minutes-preseason composition-effects composition-preseason \
-        composition-preseason-fit \
+        composition-preseason-fit composition-quadrature-check \
         scoring-periods draft-pool simulate-season weekly-scores bracket draft-sim \
         draft-sim-need draft-room draft-room-prep strategy-sweep strategy-sweep-need \
         pick-log-stake mixture-value preseason-contest final-evaluation
@@ -548,6 +548,19 @@ minutes-preseason:
 # `make docs-audit` re-derives eleven quoted figures from it.
 composition-effects:
 	$(PYTHON) -m src.models.composition_effects
+
+# Does the marginal (quadrature) path compute the integral it claims to, at FULL
+# scale? Two log-posterior evaluations on the real pilot frame — 97,587 rows, 2,062
+# player-season units, every truncation row — against an independent numpy evaluation
+# of the same integral. No sampling: seconds once the frame is built.
+#
+# The unit suite checks the same claim on tiny synthetic units, which is where it
+# belongs and is what caught the flat-unit placement bug. This is the one that cannot
+# live there, and it is the cheapest possible guard on the ONE approximation in the
+# whole representation. Run it after any change to `composition_glm.stan`'s Q > 0
+# block, and before reading a metric off any `mq` arm.
+composition-quadrature-check:
+	$(PYTHON) -m src.models.composition_quadrature_check
 
 # Session 4b of docs/preseason-plan.md, gate 1. `w_share` enters this head THREE ways — as
 # the feature OWN, as the offset (`logit_prior`), and as the allocation ORDER (`order_frame`)

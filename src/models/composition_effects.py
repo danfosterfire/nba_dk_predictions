@@ -56,6 +56,18 @@ on CRPS: the two have the same posterior, so any difference between them is Mont
 error or a convergence failure, and the only thing worth comparing is the cost and the
 diagnostics.
 
+**`mq` and `mq_graded` are the third representation** (`docs/composition-quadrature-plan.md`,
+opened 2026-08-16): the same effect with each unit's latent INTEGRATED OUT by Gauss-Hermite
+quadrature inside the model block, so the posterior never contains one. `mq` bears the same
+relation to `ps` that `ps_centered` does — same posterior, different route, and a
+disagreement between them is a bug rather than a result, which `_report_gates` checks
+explicitly before any metric is worth reading. What it buys is what `ps` has twice failed to
+deliver: a *converged* fit, and a parameter block (~35) that does not grow with the window,
+which is the only way the full-window sigma — the one that would actually ship — gets
+estimated. `mq_graded` is the one genuinely new model here: sigma per `rho_bin` rather than
+shared, motivated by the injection's own per-role calibration finding a ~2x gradient in what
+sigma wants across roles.
+
 Usage:
     python -m src.models.composition_effects
 """
@@ -68,14 +80,18 @@ import pandas as pd
 import yaml
 
 from src.models.held_out import selection_split
-from src.models.stan_composition import (GROUP_KEYS, PILOT_FIRST_SEASON, TEAM_COLS,
-                                         TEST_SEASONS, UNIT_KEYS, FloorComposition,
-                                         StanComposition, announce_metric,
-                                         composition_frame, effect_variants, score_samples,
-                                         team_context)
+from src.models.stan_composition import (GH_INFLATE, GROUP_KEYS, PILOT_FIRST_SEASON,
+                                         Q_NODES, TEAM_COLS, TEST_SEASONS, UNIT_KEYS,
+                                         FloorComposition, StanComposition,
+                                         announce_metric, composition_frame,
+                                         effect_variants, score_samples, team_context)
 from src.models.stan_utils import diagnostics_frame
 
 ARMS = ("base", "ps", "ps_team", "team")
+
+# The arms that carry the effect at all, by either representation — what P2/P3/P5 are read
+# over. `mq`/`mq_graded` marginalize it; `ps`/`ps_team` sample it.
+EFFECT_ARMS = ("ps", "ps_team", "ps_centered", "mq", "mq_graded")
 
 # The incumbent's published per-team-game CRPS, which Gate P3 forbids regressing past. A
 # constant rather than a re-read, because the incumbent is not refitted here and the figure
@@ -87,6 +103,23 @@ INCUMBENT_CRPS = 4.4945
 INJECTED_SIGMA = (0.375, 0.45)
 
 SEED = 0
+
+
+def artifact_stem(label: str) -> str:
+    """`composition_effects[_label]` — a BUILD GATE rather than tidiness.
+
+    `make docs-audit` re-derives the pilot `base` arm's per-team-game CRPS (**4.45614**) from
+    `outputs/predictions/composition_effects_metrics.csv`, and `_flush` merges by arm name —
+    so a later round writing `base` there under a different offset, window or ladder would
+    answer a different question under that figure's name and the audit would fail on a
+    bookkeeping change. It is the same guard `composition_preseason_fit.artifact_stem`
+    carries one module over, and for the same reason: the round that measured a number and
+    the round that reuses its name must not be able to collide.
+
+    An empty label restores the original paths exactly, which is what keeps re-running the
+    2026-08-09 ladder a config edit rather than a code edit.
+    """
+    return "composition_effects" + (f"_{label}" if label else "")
 
 # Gate A's correction factor. This head's own Gate A read 12.8 h against an actual 20.9 h at
 # the full window — a 1.63x miss — because per-row cost is superlinear in rows: more data
@@ -303,17 +336,25 @@ def probe_effects(train: pd.DataFrame, built: dict, cfg_stan: dict, iters: dict,
     # Whichever random-effect arm the run actually plans to fit, not `ps` by name: a ladder
     # that swapped in `ps_centered` would otherwise be sized by the parameterization it is
     # not using, which is the one thing this probe exists to measure.
-    probe_arm = next((a for a in arms if built[a][5]), "ps")
-    tr, _, feats, dispersed, n_rho, _, centered = built[probe_arm]
-    tr = tr[tr["season"] == last].reset_index(drop=True)
+    probe_arm = next((a for a in arms
+                      if built[a].player_season_effect or built[a].quadrature), "ps")
+    arm = built[probe_arm]
+    tr = arm.train[arm.train["season"] == last].reset_index(drop=True)
 
-    model = StanComposition(feats, dispersed, n_rho, name=f"probe/{probe_arm}-one-season",
+    model = StanComposition(arm.features, arm.dispersed, arm.n_rho,
+                            name=f"probe/{probe_arm}-one-season",
                             chains=int(cfg_stan.get("chains", 4)),
                             seed=int(cfg_stan.get("seed", 42)),
                             warmup=int(cfg_stan.get("probe_warmup", 200)),
                             samples=int(cfg_stan.get("probe_samples", 200)),
-                            player_season_effect=True,
-                            u_centered=centered).fit(tr)
+                            player_season_effect=arm.player_season_effect,
+                            u_centered=arm.centered, quadrature=arm.quadrature,
+                            q_nodes=int(cfg_stan.get("composition", {}).get("effects", {})
+                                        .get("quadrature", {}).get("nodes", Q_NODES)),
+                            gh_inflate=float(cfg_stan.get("composition", {})
+                                             .get("effects", {}).get("quadrature", {})
+                                             .get("inflate", GH_INFLATE)),
+                            n_sigma=arm.n_sigma).fit(tr)
     seconds = float(model.diagnostics["wall_clock_s"])
 
     probe_units = tr.groupby(UNIT_KEYS, sort=False).ngroups
@@ -326,8 +367,16 @@ def probe_effects(train: pd.DataFrame, built: dict, cfg_stan: dict, iters: dict,
     # Rows drive the likelihood, units drive the parameter block; the geometric mean of the
     # two is the honest middle between "cost is linear in rows" (which ignores 12,307 new
     # parameters) and "linear in parameters" (which ignores a 631k-row likelihood).
-    scale = float(np.sqrt(row_scale * unit_scale)) * iter_scale
-    n_effect_arms = sum(bool(built[a][5]) for a in arms)
+    #
+    # **The marginal arm is scaled by ROWS ALONE, and that is the whole point of it.** Its
+    # parameter block is ~35 wide at every window, so units buy it no cost at all and folding
+    # a 5.6x unit scale into its extrapolation would charge it for the exact thing it was
+    # built to stop paying. Getting this wrong would price `mq` at the full window as if it
+    # were `ps`, which is the comparison the item exists to settle.
+    scale = (row_scale if arm.quadrature else float(np.sqrt(row_scale * unit_scale))
+             ) * iter_scale
+    n_effect_arms = sum(bool(built[a].player_season_effect or built[a].quadrature)
+                        for a in arms)
     n_plain_arms = len(arms) - n_effect_arms
     # The plain arms keep `dense_e` and are the cheap ones; charge them at a quarter of a
     # random-effect arm rather than at zero.
@@ -336,7 +385,9 @@ def probe_effects(train: pd.DataFrame, built: dict, cfg_stan: dict, iters: dict,
           f"({last}) in {seconds:.0f}s at {model.diagnostics['metric']}, "
           f"{model.diagnostics['parameterization']}\n"
           f"    -> sweep extrapolates to {hours:.1f}h "
-          f"(rows x{row_scale:.1f}, units x{unit_scale:.1f}, iters x{iter_scale:.1f}, "
+          f"(rows x{row_scale:.1f}, units x{unit_scale:.1f}"
+          f"{' — NOT charged, the marginal arm is ~35 params at any window'
+             if arm.quadrature else ''}, iters x{iter_scale:.1f}, "
           f"x{PROBE_MISS:.2f} for the measured under-prediction)")
     if hours > max_hours:
         raise RuntimeError(
@@ -393,10 +444,12 @@ def run(cfg: dict) -> dict[str, Path]:
              "samples": int(eff.get("samples", cfg_stan.get("select_samples", 500)))}
     max_hours = float(eff.get("max_extrapolated_hours", 12.0))
     seed = int(cfg_stan.get("seed", 42))
+    stem = artifact_stem(str(eff.get("label", "") or ""))
 
     print("Composition effects — the per-(player, season) random effect and the team block")
     print(f"  window: {first_season} on; arms: {', '.join(arms)}; "
           f"{iters['warmup']}+{iters['samples']} x {cfg_stan.get('chains', 4)} chains")
+    print(f"  writing {stem}_*.csv → {out_dir}")
 
     frame = composition_frame(cfg)
     windowed = frame[frame["season"] >= first_season].reset_index(drop=True)
@@ -428,7 +481,7 @@ def run(cfg: dict) -> dict[str, Path]:
     print(dev.round(4).to_string(index=False))
     # Written before anything samples. It needs no fit at all, it is the artifact that
     # replaces the plan doc's scratch prose, and a run aborted by Gate A must still leave it.
-    dev_dest = out_dir / "composition_effects_deviation.csv"
+    dev_dest = out_dir / f"{stem}_deviation.csv"
     dev.to_csv(dev_dest, index=False)
     print(f"Saved {len(dev):,} deviation rows → {dev_dest}")
 
@@ -441,7 +494,7 @@ def run(cfg: dict) -> dict[str, Path]:
           f"`design_missing` "
           f"({coverage['team_missing_and_design_missing']:.1%} of rows carry both).")
 
-    diag_dest = out_dir / "composition_effects_diagnostics.csv"
+    diag_dest = out_dir / f"{stem}_diagnostics.csv"
     diag_dest.unlink(missing_ok=True)
     probe = probe_effects(train, built, cfg_stan, iters, max_hours, arms)
     # Flushed the moment Gate A returns, not at the end of a run that is hours long. The
@@ -458,27 +511,38 @@ def run(cfg: dict) -> dict[str, Path]:
 
     # NOT unlinked: `_flush` merges by arm, so re-running a subset leaves the arms it is
     # not fitting in place. A random-effect arm is hours and the arms are independent.
-    game_dest = out_dir / "composition_effects_metrics.csv"
-    season_dest = out_dir / "composition_effects_season.csv"
+    game_dest = out_dir / f"{stem}_metrics.csv"
+    season_dest = out_dir / f"{stem}_season.csv"
+
+    quad_cfg = eff.get("quadrature", {})
+    q_nodes = int(quad_cfg.get("nodes", Q_NODES))
+    gh_inflate = float(quad_cfg.get("inflate", GH_INFLATE))
 
     rows, season_rows, diagnostics = [], [], []
     for arm in arms:
-        tr, te, feats, dispersed, n_rho, ps, centered = built[arm]
-        print(f"\n  fitting `{arm}` — {len(feats)} features, "
-              f"player-season effect {'ON' if ps else 'off'}"
-              f"{' (centred)' if centered else ''}")
+        spec = built[arm]
+        tr, te, feats, n_rho = spec.train, spec.val, spec.features, spec.n_rho
+        how = ("MARGINALIZED by quadrature" if spec.quadrature
+               else "sampled" if spec.player_season_effect else "off")
+        print(f"\n  fitting `{arm}` — {len(feats)} features, player-season effect {how}"
+              f"{' (centred)' if spec.centered else ''}"
+              f"{f', Q={q_nodes}, {spec.n_sigma} sigma bin(s)' if spec.quadrature else ''}")
         # Before the sampler, not after it. This block sat one warmup draw under the
         # `dense_e` cliff for four days and nothing said so — the metric only reaches the
         # artifact after the fit whose cost it decides.
-        announce_metric(len(feats), n_rho,
-                        iters["warmup"],
-                        tr.groupby(UNIT_KEYS, sort=False).ngroups if ps else 0)
+        announce_metric(len(feats), n_rho, iters["warmup"],
+                        (tr.groupby(UNIT_KEYS, sort=False).ngroups
+                         if spec.player_season_effect else 0),
+                        spec.n_sigma if spec.quadrature else 0)
         started = time.perf_counter()
-        model = StanComposition(feats, dispersed, n_rho, name=f"effects/{arm}",
+        model = StanComposition(feats, spec.dispersed, n_rho, name=f"effects/{arm}",
                                 chains=int(cfg_stan.get("chains", 4)), seed=seed,
-                                predictive_samples=keep, player_season_effect=ps,
+                                predictive_samples=keep,
+                                player_season_effect=spec.player_season_effect,
                                 u_sd_scale=float(eff.get("u_sd_scale", 1.0)),
-                                u_centered=centered, **iters).fit(tr)
+                                u_centered=spec.centered, quadrature=spec.quadrature,
+                                q_nodes=q_nodes, gh_inflate=gh_inflate,
+                                n_sigma=spec.n_sigma, **iters).fit(tr)
         diagnostics.append(model.diagnostics)
         _flush_frame(diag_dest, diagnostics_frame([model.diagnostics]))
         samples = model.predict_samples(te, seed)
@@ -562,13 +626,24 @@ def _report_gates(table: pd.DataFrame, season: pd.DataFrame) -> None:
         a, b = float(by_arm.loc["ps", "sigma_u"]), float(by_arm.loc["ps_team", "sigma_u"])
         print(f"  P4 ps_team: sigma_u {b:.4f} against ps's {a:.4f} "
               f"({'PASS — the block explains part of the deviation' if b < a else 'FAIL — a block that improves CRPS without shrinking sigma_u is explaining something else'})")
-    for arm in ("ps", "ps_team"):
+    for arm in EFFECT_ARMS:
         if arm in by_arm.index and bool(by_arm.loc[arm, "ps_effect"]):
             s = float(by_arm.loc[arm, "sigma_u"])
             near = INJECTED_SIGMA[0] * 0.5 <= s <= INJECTED_SIGMA[1] * 2.0
-            print(f"  P5 {arm:>8}: sigma_u {s:.4f} against the injection's "
+            bins = sorted(c for c in by_arm.columns if c.startswith("sigma_u_bin"))
+            graded = ("" if not bins else "  per bin: " + ", ".join(
+                f"{by_arm.loc[arm, c]:.4f}" for c in bins))
+            print(f"  P5 {arm:>10}: sigma_u {s:.4f} against the injection's "
                   f"{INJECTED_SIGMA[0]}-{INJECTED_SIGMA[1]} "
-                  f"({'PASS' if near else 'CHECK — a wide disagreement with a measurement on the same rows is a bug until explained'})")
+                  f"({'PASS' if near else 'CHECK — a wide disagreement with a measurement on the same rows is a bug until explained'})"
+                  f"{graded}")
+    # The correctness check the whole representation rests on: `mq` and `ps` are the SAME
+    # posterior by two routes, so a disagreement is a bug and not a finding.
+    if {"ps", "mq"} <= set(by_arm.index):
+        a, b = float(by_arm.loc["ps", "sigma_u"]), float(by_arm.loc["mq", "sigma_u"])
+        agree = abs(a - b) <= 0.05 * max(a, b)
+        print(f"  AGREEMENT ps/mq: sigma_u {a:.4f} sampled against {b:.4f} marginalized "
+              f"({'PASS' if agree else 'FAIL — two representations of one posterior must agree; do not read the metrics'})")
 
 
 if __name__ == "__main__":

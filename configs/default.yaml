@@ -469,6 +469,33 @@ stan:
       # per-team-game unit, which the deviation regression does not reach. Put `ps_team`
       # back if `ps` passes P2 and the team block is wanted in the shipped arm.
       arms: [base, ps, team]
+      # ── The MARGINAL representation — docs/composition-quadrature-plan.md ──
+      # `mq` and `mq_graded` are `ps` with the latents integrated out per unit by
+      # Gauss-Hermite quadrature instead of handed to NUTS. The posterior then carries ~35
+      # parameters at ANY window rather than 2,204 here and 12,307 at the full one, which
+      # buys three things `ps` cannot have: no funnel, `dense_e` back within
+      # `choose_metric`'s 20x-warmup rule, and a full-window fit at all.
+      #
+      # `nodes` and `inflate` are step 0's measurement and NOT preferences. On 2,062 pilot
+      # units over sigma in [0.1, 1.0], worst per-unit error in the marginal log-likelihood:
+      # fixed nodes need Q > 61 (still 2.6 nats out), the plan's moment rule Q ~ 31, and the
+      # Newton-placed rule this driver uses **2.5e-6 nats at Q = 21**.
+      #
+      # ⚠️ `inflate` is not a safety margin and raising it makes accuracy WORSE. Too-wide
+      # nodes step over a narrow spike as badly as too-narrow ones miss its tails: at Q = 21,
+      # 2.5e-6 at inflate 1.2 against 3.9e-5 at 1.4 and 4.4e-4 at 1.6. 1.2 is a measured
+      # interior optimum.
+      quadrature:
+        nodes: 21
+        inflate: 1.2
+      # Artifact stem suffix, and it is a BUILD GATE rather than tidiness — the same device
+      # `stan.composition.preseason.label` carries. `make docs-audit` re-derives the
+      # 2026-08-09 pilot `base` arm's per-team-game CRPS (4.45614) from
+      # `composition_effects_metrics.csv`, and `_flush` merges by ARM NAME — so a quadrature
+      # round writing its own `base` there would answer a different question under that
+      # figure's name and fail the audit on a bookkeeping change. Empty restores the
+      # 2026-08-09 paths exactly.
+      label: ""
       # ⚠️ RAISED FROM 500 ON 2026-08-13, and 500 was NOT the cheaper setting.
       # `choose_metric` grants `dense_e` only when warmup >= 20 x parameters. `base` is 25
       # features + intercept + 4 dispersion bins = 30 and `team` is 36, so both needed 600

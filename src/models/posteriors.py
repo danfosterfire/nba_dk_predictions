@@ -1204,8 +1204,9 @@ def composition_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorAr
     if team_block:
         block = team_context(Path(cfg["data"]["features_dir"]))
         arm = "ps_team" if ps_effect else "team"
-        tr, probe, features, dispersed, n_rho, _, _ = effect_variants(
-            fit_frame, probe_raw, block, variant, RHO_BINS)[0][arm]
+        built = effect_variants(fit_frame, probe_raw, block, variant, RHO_BINS)[0][arm]
+        tr, probe, features = built.train, built.val, built.features
+        dispersed, n_rho = built.dispersed, built.n_rho
         variant = f"{variant}+{arm}"
     else:
         tr, probe, features, dispersed, n_rho = variants(fit_frame, probe_raw,

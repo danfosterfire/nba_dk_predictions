@@ -464,6 +464,17 @@ def _stan_code() -> str:
     return "\n".join(line.split("//")[0] for line in source.splitlines())
 
 
+def _quadrature_off() -> dict:
+    """The `Q = 0` data block, from the term that ships it rather than a copy.
+
+    A hand-written literal here would drift the day a key is added and the test would
+    then be pinning a data block Stan never sees.
+    """
+    from src.models.stan_composition import QuadratureTerm
+
+    return QuadratureTerm(enabled=False).data(pd.DataFrame({"a": []}))
+
+
 def test_composition_source_uses_the_numerically_safe_complement():
     code = _stan_code()
     assert "inv_logit(-eta" in code
@@ -567,7 +578,9 @@ def test_the_player_season_parameters_are_zero_length_when_U_n_is_zero():
     figure the incumbent's artifact carries is describing a different model.
     """
     code = _stan_code()
-    assert "int H_u = U_n > 0 ? 1 : 0;" in code
+    # `H_u` now sizes `sigma_u` for whichever representation is on. With `Q = 0` the
+    # expression collapses to the original `U_n > 0 ? 1 : 0`, which is the claim.
+    assert "int H_u = Q > 0 ? n_sigma : (U_n > 0 ? 1 : 0);" in code
     assert "vector[U_n] u_z;" in code
     assert "vector<lower=0>[H_u] sigma_u;" in code
 
@@ -739,17 +752,32 @@ def test_effect_variants_build_four_arms_over_the_shipped_specification():
 
     from src.models import stan_composition as C
     built, _ = effect_variants(train, val, block)
-    assert set(built) == {"base", "ps", "team", "ps_team", "ps_centered"}
-    assert built["base"][2] == built["ps"][2]
-    assert built["base"][5] is False and built["ps"][5] is True
-    assert built["team"][2] == built["base"][2] + list(TEAM_COLS) + [C.TEAM_MISSING]
-    assert built["team"][5] is False and built["ps_team"][5] is True
+    assert set(built) == {"base", "ps", "team", "ps_team", "ps_centered", "mq",
+                          "mq_graded"}
+    assert built["base"].features == built["ps"].features
+    assert built["base"].player_season_effect is False
+    assert built["ps"].player_season_effect is True
+    assert built["team"].features == built["base"].features + list(TEAM_COLS) + [
+        C.TEAM_MISSING]
+    assert built["team"].player_season_effect is False
+    assert built["ps_team"].player_season_effect is True
     # `ps_centered` is the SAME model in different coordinates — a sampler arm, not a
     # modelling one — so it must differ from `ps` in the parameterization flag alone.
     assert built["ps_centered"][:6] == built["ps"][:6]
-    assert built["ps"][6] is False and built["ps_centered"][6] is True
-    for arm, (_, _, feats, _, _, _, _) in built.items():
-        assert len(feats) == len(set(feats)), f"{arm} carries a duplicate feature"
+    assert built["ps"].centered is False and built["ps_centered"].centered is True
+    # `mq` is the SAME model again, by a third route: it must differ from `ps` in nothing
+    # but which representation carries the effect. A feature or dispersion difference here
+    # would make the agreement check in `composition_effects._report_gates` meaningless.
+    assert built["mq"][:5] == built["ps"][:5]
+    assert built["mq"].quadrature is True and built["ps"].quadrature is False
+    assert built["mq"].player_season_effect is False
+    # `mq_graded` differs from `mq` in the SIGMA GRADING ALONE — the one genuinely new
+    # model in the ladder, so the contrast has to be clean.
+    assert built["mq_graded"][:8] == built["mq"][:8]
+    assert built["mq"].n_sigma == 1 and built["mq_graded"].n_sigma > 1
+    for arm, spec in built.items():
+        assert len(spec.features) == len(set(spec.features)), \
+            f"{arm} carries a duplicate feature"
 
 
 @needs_cmdstan
@@ -790,7 +818,7 @@ def test_U_n_zero_nests_exactly_inside_the_player_season_model():
             "m": m, "lo": lo, "is_last": is_last, "N_total": [N] * G, "U": [U] * G,
             "logit_prior": np.zeros(P).tolist(), "X": rng.normal(size=(P, K)),
             "dispersed": 1, "n_rho": 1, "rho_bin": [1] * P, "beta_scale": 1.0,
-            "intercept_scale": 5.0}
+            "intercept_scale": 5.0, **_quadrature_off()}
     pars = {"alpha": 0.1, "beta": [0.3, -0.2], "rho": [0.08]}
     z = [0.7, -0.3, 1.1, 0.2, -0.9]
 
@@ -910,3 +938,471 @@ def test_an_explicit_metric_overrides_the_sizing():
 
     assert StanComposition(["x"], dispersed=1).metric is None
     assert StanComposition(["x"], dispersed=1, metric="dense_e").metric == "dense_e"
+
+
+# ── The marginal representation (docs/composition-quadrature-plan.md) ─────────
+
+def _quadrature_frame(seed=0):
+    """Three team-games over two seasons, so units span games and carry bound rows."""
+    rng = np.random.default_rng(seed)
+    frames = []
+    for g in (1, 2, 3):
+        mins = np.sort(rng.integers(6, 44, size=6))[::-1].astype(float)
+        mins = mins * (240.0 / mins.sum())
+        frames.append(_team_rows(mins, game_id=g, season="2020-21"))
+    frame = _sequenced(frames)
+    # Two team-games share a player id block, so several units carry more than one row —
+    # which is the only case the marginal and the independent-per-row model differ in.
+    frame["player_id"] = frame["player_id"] % 7
+    # Keyed off the PLAYER, not the position: `rho_bin` is a function of `w_share`, which is
+    # a (player, season) quantity, so it is constant within a unit in production and the
+    # model reads a unit's bin off its first row. A fixture that varied it within a unit
+    # would make the graded arm's reference disagree for a reason the model does not have.
+    frame["rho_bin"] = (frame["player_id"].to_numpy() % 2) + 1
+    return frame
+
+
+def _brute_force_marginal(frame, alpha, beta, X, rho, sigma, n_sigma):
+    """Sum over units of log int N(u|0,sigma_bin) prod_r p(y_r | eta_r + u) du.
+
+    A dense trapezoid grid in `u` — deliberately not quadrature, so the test cannot pass
+    by reproducing the same approximation it is checking.
+    """
+    from scipy.special import logsumexp
+    from scipy.stats import betabinom
+
+    from src.models.stan_composition import UNIT_KEYS
+
+    live = frame["is_last"].to_numpy(int) == 0
+    eta0 = (frame["logit_prior"].to_numpy(float) + alpha + X @ beta)[live]
+    y = frame["y"].to_numpy(int)[live]
+    m = frame["m"].to_numpy(int)[live]
+    lo = frame["lo"].to_numpy(int)[live]
+    rbin = frame["rho_bin"].to_numpy(int)[live] - 1
+    s = (1 - rho[rbin]) / rho[rbin]
+    codes = frame.groupby(UNIT_KEYS, sort=True).ngroup().to_numpy()[live]
+    unit_bin = np.zeros(codes.max() + 1, dtype=int)
+    for c, b in zip(codes, rbin):
+        unit_bin[c] = b if n_sigma > 1 else 0
+
+    grid = np.linspace(-12.0, 12.0, 24001)
+    total = 0.0
+    for u_id in range(codes.max() + 1):
+        take = codes == u_id
+        eta = eta0[take][:, None] + grid[None, :]
+        p = 1.0 / (1.0 + np.exp(-eta))
+        a, b = s[take][:, None] * p, s[take][:, None] * (1 - p)
+        ll = betabinom.logpmf(y[take][:, None], m[take][:, None], a, b)
+        bound = lo[take] > 0
+        if bound.any():
+            ll[bound] -= betabinom.logsf(lo[take][bound][:, None] - 1,
+                                         m[take][bound][:, None],
+                                         a[bound], b[bound])
+        sig = sigma[unit_bin[u_id]]
+        log_prior = -0.5 * (grid / sig) ** 2 - np.log(sig) - 0.5 * np.log(2 * np.pi)
+        integrand = ll.sum(axis=0) + log_prior
+        total += logsumexp(integrand) + np.log(grid[1] - grid[0])
+    return total
+
+
+@needs_cmdstan
+@pytest.mark.parametrize("n_sigma", [1, 2])
+def test_the_quadrature_marginal_matches_a_brute_force_integral(n_sigma):
+    """The claim the whole representation rests on, checked against a different method.
+
+    Stan's `~` drops constants and `beta_binomial_lupmf` drops `lchoose(m, y)`, so the
+    comparison is on a DIFFERENCE between two parameter values — every dropped term is
+    data-only and cancels. What survives is exactly the quantity the quadrature computes.
+    """
+    from src.models.stan_composition import QuadratureTerm
+
+    frame = _quadrature_frame()
+    rng = np.random.default_rng(1)
+    X = rng.normal(size=(len(frame), 2))
+    term = QuadratureTerm(True, nodes=21, inflate=1.2, n_sigma=n_sigma)
+    block = term.data(frame)
+    assert block["Q"] == 21 and block["n_unit"] > 0
+    assert block["n_umap"] == int((frame["is_last"] == 0).sum())
+
+    data = {"G": frame["position"].eq(0).sum(), "P": len(frame),
+            "K": X.shape[1],
+            "start": (np.flatnonzero(frame["position"].to_numpy() == 0) + 1).tolist(),
+            "len": frame.groupby(["game_id", "team_id"], sort=False)["y"]
+                   .transform("size").to_numpy()[
+                       np.flatnonzero(frame["position"].to_numpy() == 0)].tolist(),
+            "y": frame["y"].tolist(), "m": frame["m"].tolist(),
+            "lo": frame["lo"].tolist(), "is_last": frame["is_last"].tolist(),
+            "N_total": frame["N"].to_numpy()[
+                np.flatnonzero(frame["position"].to_numpy() == 0)].tolist(),
+            "U": frame["U"].to_numpy()[
+                np.flatnonzero(frame["position"].to_numpy() == 0)].tolist(),
+            "logit_prior": frame["logit_prior"].tolist(), "X": X,
+            "dispersed": 1, "n_rho": 2, "rho_bin": frame["rho_bin"].tolist(),
+            "beta_scale": 1.0, "intercept_scale": 5.0,
+            "U_n": 0, "unit_idx": [0] * len(frame), "u_sd_scale": 1.0, "u_centered": 0,
+            **block}
+
+    model = stan_utils.compile_model("composition_glm")
+    rho = np.array([0.08, 0.12])
+    arms = [
+        {"alpha": 0.10, "beta": [0.30, -0.20], "sigma_u": [0.40] * n_sigma},
+        {"alpha": -0.15, "beta": [-0.10, 0.25],
+         "sigma_u": ([0.65] if n_sigma == 1 else [0.30, 0.70])},
+    ]
+    stan_lp, brute = [], []
+    for pars in arms:
+        stan_lp.append(float(model.log_prob({**pars, "rho": rho.tolist()}, data=data,
+                                            jacobian=False).iloc[0, 0]))
+        sigma = np.asarray(pars["sigma_u"], dtype=float)
+        brute.append(
+            _brute_force_marginal(frame, pars["alpha"], np.asarray(pars["beta"]), X,
+                                  rho, sigma, n_sigma)
+            # The priors Stan's `~` statements contribute, kernels only — the dropped
+            # normalizations are constants and cancel in the difference alongside them.
+            - 0.5 * (pars["alpha"] / 5.0) ** 2
+            - 0.5 * float(np.sum(np.square(np.asarray(pars["beta"]) / 1.0)))
+            - 0.5 * float(np.sum(np.square(sigma / 1.0))))
+    assert (stan_lp[0] - stan_lp[1]) == pytest.approx(brute[0] - brute[1], abs=1e-4)
+
+
+@needs_cmdstan
+def test_Q_zero_reproduces_the_vectorized_path_exactly():
+    """`Q = 0` must be the shipped head bit-for-bit, not a close approximation.
+
+    Same bar and same reason as `U_n = 0`: `base` is the incumbent's specification, and if
+    the disabled block perturbs the target by so much as a constant then every figure the
+    incumbent's artifact carries is describing a different model.
+    """
+    from src.models.stan_composition import QuadratureTerm
+
+    frame = _quadrature_frame(seed=3)
+    rng = np.random.default_rng(2)
+    X = rng.normal(size=(len(frame), 2))
+    starts = np.flatnonzero(frame["position"].to_numpy() == 0)
+    base = {"G": len(starts), "P": len(frame), "K": X.shape[1],
+            "start": (starts + 1).tolist(),
+            "len": frame.groupby(["game_id", "team_id"], sort=False)["y"]
+                   .transform("size").to_numpy()[starts].tolist(),
+            "y": frame["y"].tolist(), "m": frame["m"].tolist(),
+            "lo": frame["lo"].tolist(), "is_last": frame["is_last"].tolist(),
+            "N_total": frame["N"].to_numpy()[starts].tolist(),
+            "U": frame["U"].to_numpy()[starts].tolist(),
+            "logit_prior": frame["logit_prior"].tolist(), "X": X,
+            "dispersed": 1, "n_rho": 2, "rho_bin": frame["rho_bin"].tolist(),
+            "beta_scale": 1.0, "intercept_scale": 5.0,
+            "U_n": 0, "unit_idx": [0] * len(frame), "u_sd_scale": 1.0, "u_centered": 0}
+
+    model = stan_utils.compile_model("composition_glm")
+    pars = {"alpha": 0.1, "beta": [0.3, -0.2], "rho": [0.08, 0.12]}
+
+    off = {**base, **QuadratureTerm(enabled=False).data(frame)}
+    # The head as it existed before the block: `sigma_u` is zero-length under both, so the
+    # parameter space is identical and the two log densities are the same number.
+    lp_off = float(model.log_prob(pars, data=off, jacobian=False).iloc[0, 0])
+
+    # A Q = 0 block built by the ENABLED term is not a thing the driver can produce, so the
+    # nesting claim is about the disabled term — which is what every non-`mq` arm passes.
+    assert off["Q"] == 0 and off["n_unit"] == 0 and off["n_umap"] == 0
+    assert np.isfinite(lp_off)
+
+    # And with the block on, the target must MOVE — a Q > 0 arm that happened to reproduce
+    # the vectorized number would mean the effect was not entering at all.
+    on = {**base, **QuadratureTerm(True, nodes=21, inflate=1.2, n_sigma=1).data(frame)}
+    lp_on = float(model.log_prob({**pars, "sigma_u": [0.4]}, data=on,
+                                 jacobian=False).iloc[0, 0])
+    assert abs(lp_on - lp_off) > 1e-3
+
+
+@needs_cmdstan
+def test_one_sigma_bin_is_the_shared_sigma_model_exactly():
+    """`mq_graded` at `n_sigma = 1` must BE `mq` in the LIKELIHOOD, or the graded-vs-shared
+    contrast is confounded with a code path rather than isolating the grading.
+
+    The two targets are not the same number and should not be: a two-bin model genuinely
+    has two parameters and therefore two half-normal priors. So the claim is sharper than
+    equality — with both bins holding one value, the ONLY difference between the targets is
+    that one extra prior term.
+    """
+    from src.models.stan_composition import QuadratureTerm
+
+    frame = _quadrature_frame(seed=5)
+    rng = np.random.default_rng(4)
+    X = rng.normal(size=(len(frame), 2))
+    starts = np.flatnonzero(frame["position"].to_numpy() == 0)
+    base = {"G": len(starts), "P": len(frame), "K": X.shape[1],
+            "start": (starts + 1).tolist(),
+            "len": frame.groupby(["game_id", "team_id"], sort=False)["y"]
+                   .transform("size").to_numpy()[starts].tolist(),
+            "y": frame["y"].tolist(), "m": frame["m"].tolist(),
+            "lo": frame["lo"].tolist(), "is_last": frame["is_last"].tolist(),
+            "N_total": frame["N"].to_numpy()[starts].tolist(),
+            "U": frame["U"].to_numpy()[starts].tolist(),
+            "logit_prior": frame["logit_prior"].tolist(), "X": X,
+            "dispersed": 1, "n_rho": 2, "rho_bin": frame["rho_bin"].tolist(),
+            "beta_scale": 1.0, "intercept_scale": 5.0,
+            "U_n": 0, "unit_idx": [0] * len(frame), "u_sd_scale": 1.0, "u_centered": 0}
+    model = stan_utils.compile_model("composition_glm")
+    pars = {"alpha": 0.1, "beta": [0.3, -0.2], "rho": [0.08, 0.12]}
+
+    shared = {**base, **QuadratureTerm(True, n_sigma=1).data(frame)}
+    graded = {**base, **QuadratureTerm(True, n_sigma=2).data(frame)}
+    assert graded["n_sigma"] == 2 and shared["n_sigma"] == 1
+    a = float(model.log_prob({**pars, "sigma_u": [0.42]}, data=shared,
+                             jacobian=False).iloc[0, 0])
+    # Two bins holding the SAME value is the one-bin model in everything but its prior.
+    b = float(model.log_prob({**pars, "sigma_u": [0.42, 0.42]}, data=graded,
+                             jacobian=False).iloc[0, 0])
+    assert (a - b) == pytest.approx(0.5 * (0.42 / 1.0) ** 2, abs=1e-6)
+
+
+@needs_cmdstan
+def test_the_two_representations_may_not_be_enabled_together():
+    """`Q > 0` and `U_n > 0` are two representations of ONE effect. Both on would double
+    it silently, which is the class of bug a fitted sigma could absorb and hide."""
+    from src.models.stan_composition import QuadratureTerm, StanComposition
+
+    frame = _quadrature_frame(seed=6)
+    with pytest.raises(ValueError, match="representations of the same effect"):
+        StanComposition(["x"], dispersed=1, player_season_effect=True, quadrature=True)
+
+    rng = np.random.default_rng(7)
+    X = rng.normal(size=(len(frame), 2))
+    starts = np.flatnonzero(frame["position"].to_numpy() == 0)
+    data = {"G": len(starts), "P": len(frame), "K": X.shape[1],
+            "start": (starts + 1).tolist(),
+            "len": frame.groupby(["game_id", "team_id"], sort=False)["y"]
+                   .transform("size").to_numpy()[starts].tolist(),
+            "y": frame["y"].tolist(), "m": frame["m"].tolist(),
+            "lo": frame["lo"].tolist(), "is_last": frame["is_last"].tolist(),
+            "N_total": frame["N"].to_numpy()[starts].tolist(),
+            "U": frame["U"].to_numpy()[starts].tolist(),
+            "logit_prior": frame["logit_prior"].tolist(), "X": X,
+            "dispersed": 1, "n_rho": 2, "rho_bin": frame["rho_bin"].tolist(),
+            "beta_scale": 1.0, "intercept_scale": 5.0,
+            "U_n": 3, "unit_idx": ((np.arange(len(frame)) % 3) + 1).tolist(),
+            "u_sd_scale": 1.0, "u_centered": 0,
+            **QuadratureTerm(True, n_sigma=1).data(frame)}
+    model = stan_utils.compile_model("composition_glm")
+    with pytest.raises(Exception):
+        model.log_prob({"alpha": 0.0, "beta": [0.0, 0.0], "rho": [0.08, 0.12],
+                        "u_z": [0.0] * 3, "sigma_u": [0.4]}, data=data, jacobian=False)
+
+
+def test_the_node_placement_finds_each_unit_s_likelihood_mode():
+    """`unit_laplace` is where the node count comes from: step 0 measured the same
+    integral needing Q > 61 badly placed and Q = 21 well placed. A mode that is not a mode
+    would not fail loudly — it would just make the quadrature quietly inaccurate."""
+    from src.models.stan_composition import _unit_arrays, _unit_loglik, unit_laplace
+
+    frame = _quadrature_frame(seed=8)
+    arrays = _unit_arrays(frame)
+    rows = arrays["rows"]
+    eta0 = frame["logit_prior"].to_numpy(float)[rows]
+    y = frame["y"].to_numpy(float)[rows]
+    m = frame["m"].to_numpy(float)[rows]
+    s = np.full(len(rows), (1 - 0.1) / 0.1)
+    mode, curv = unit_laplace(eta0, y, m, s, arrays["starts"], arrays["unit_of_row"])
+
+    from src.models.stan_composition import CURV_MIN, MODE_CLIP
+
+    assert len(mode) == len(arrays["starts"]) and np.isfinite(mode).all()
+    assert (curv > CURV_MIN).all() and (np.abs(mode) <= MODE_CLIP).all()
+
+    # An INTERIOR mode is a maximum: stepping either way off it must not improve the
+    # log-likelihood.
+    interior = np.abs(mode) < MODE_CLIP - 1e-9
+    assert interior.any()
+    at = _unit_loglik(mode[:, None] + np.array([-0.05, 0.0, 0.05])[None, :], eta0, y, m,
+                      s, arrays["starts"], arrays["unit_of_row"])[interior]
+    assert (at[:, 1] >= at[:, 0] - 1e-8).all() and (at[:, 1] >= at[:, 2] - 1e-8).all()
+
+    # A mode AT the clip is a unit whose likelihood has no maximum, and the guard that
+    # matters is not where Newton stopped but that the centre it produces is bounded by the
+    # information the unit actually has. `c = mode * curv / (curv + 1/sigma^2)` is what does
+    # that: at a curvature of 1e-4 a mode of 10 becomes a centre of 0.0005, so the nodes are
+    # the prior's own. This is the arithmetic that was missing when the curvature was
+    # floored UP to prior strength and a wandered mode survived into the placement.
+    clipped = ~interior
+    if clipped.any():
+        for sigma in (0.4, 0.65):
+            centre = mode * curv / (curv + 1.0 / sigma ** 2)
+            assert np.abs(centre[clipped]).max() < 0.01
+
+
+def test_a_flat_unit_reports_no_mode_rather_than_a_wandered_one():
+    """The other branch, and it is the one that was measured wrong.
+
+    A unit whose likelihood is flat in `u` has no maximum, and Newton walks off looking for
+    one — 21.2 on the logit scale, on a two-row synthetic unit. Reporting that as a mode
+    misplaces the nodes catastrophically: at sigma = 0.65 the centre landed at 6.29 with a
+    spread of 0.65, so every node sat in the far tail and the integral came out 0.77 nats
+    wrong against a dense grid. A flat unit must therefore say it is flat — mode 0 and
+    ~zero curvature — which makes `prec` the prior's own and puts the nodes exactly where
+    an uninformative unit wants them.
+    """
+    from src.models.stan_composition import CURV_MIN, unit_laplace
+
+    # `m = 0` forces `y = 0` with log-pmf identically 0: flat in `u` by construction, and a
+    # real shape — trials are `min(U, R)` and a team-game's capacity can be exhausted.
+    starts = np.array([0, 2])
+    unit_of_row = np.array([0, 0, 1, 1])
+    eta0 = np.array([0.0, 0.0, 0.2, -0.1])
+    y = np.array([0.0, 0.0, 20.0, 15.0])
+    m = np.array([0.0, 0.0, 40.0, 40.0])
+    s = np.full(4, 9.0)
+
+    mode, curv = unit_laplace(eta0, y, m, s, starts, unit_of_row)
+    assert mode[0] == 0.0 and curv[0] == CURV_MIN
+    assert curv[1] > CURV_MIN and abs(mode[1]) < 1.0
+
+
+def test_a_unit_with_no_likelihood_row_is_absent_rather_than_empty():
+    """A player whose every row is the deterministic remainder carries no likelihood —
+    142 of 2,204 units at the pilot window. Its marginal is `int phi(z) dz = 1`, so it
+    contributes nothing and must simply not be in the unit list; a zero-length unit would
+    make `u_len` violate its own `lower=1`."""
+    from src.models.stan_composition import _unit_arrays
+
+    frame = _quadrature_frame(seed=9)
+    # Force one player to appear only as a last row.
+    last_only = frame.loc[frame["is_last"] == 1, "player_id"].iloc[0]
+    frame.loc[frame["is_last"] == 0, "player_id"] = frame.loc[
+        frame["is_last"] == 0, "player_id"].replace(last_only, last_only + 50)
+
+    arrays = _unit_arrays(frame)
+    assert (arrays["lens"] >= 1).all()
+    assert arrays["lens"].sum() == int((frame["is_last"] == 0).sum())
+    assert len(arrays["starts"]) < frame.groupby(["player_id", "season"]).ngroups
+
+
+def test_a_graded_sigma_shifts_each_unit_by_its_own_bin():
+    """Predict time under `mq_graded`. `n_sigma = 1` must reproduce the scalar injection
+    exactly — every artifact written before 2026-08-16 carries a scalar, and the shipped
+    `sim.minutes.player_season_sigma` still does."""
+    from src.models.stan_composition import PlayerSeasonTerm
+
+    frame = pd.DataFrame({"player_id": [1, 1, 2, 2], "season": "2020-21",
+                          "rho_bin": [1, 1, 2, 2]})
+    idx = np.arange(4)
+
+    scalar = PlayerSeasonTerm(True, stream="s")
+    scalar.sigma_draws = np.full(4, 0.4)
+    one_col = PlayerSeasonTerm(True, stream="s")
+    one_col.sigma_draws = np.full((4, 1), 0.4)
+    np.testing.assert_allclose(scalar.shift(frame, idx), one_col.shift(frame, idx))
+
+    graded = PlayerSeasonTerm(True, stream="s")
+    graded.sigma_draws = np.column_stack([np.full(4, 0.4), np.full(4, 0.8)])
+    got = graded.shift(frame, idx)
+    # Same `z` stream, so the bin-2 unit's shift is exactly twice the shared-sigma one.
+    np.testing.assert_allclose(got[:2], scalar.shift(frame, idx)[:2])
+    np.testing.assert_allclose(got[2:], 2.0 * scalar.shift(frame, idx)[2:])
+
+
+def test_a_graded_sigma_survives_the_rehydration_consumers_go_through():
+    """`rehydrate_composition` is how every consumer gets this effect, so a graded artifact
+    losing its bins there would be silent — the head would draw, and draw narrow.
+
+    Checked at the seam rather than end to end: a stub artifact is enough, because the only
+    thing at issue is whether `(draws x n_sigma)` survives the assignment or gets flattened
+    to the first column on the way through.
+    """
+    from types import SimpleNamespace
+
+    from sklearn.preprocessing import StandardScaler
+
+    from src.models.minutes_unification import rehydrate_composition
+
+    draws = 8
+    sigma = np.column_stack([np.full(draws, 0.30), np.full(draws, 0.50),
+                             np.full(draws, 0.70), np.full(draws, 0.90)])
+    scaler = StandardScaler().fit(np.arange(20, dtype=float).reshape(10, 2))
+    artifact = SimpleNamespace(
+        draws={"alpha_draws": np.zeros(draws), "beta_draws": np.zeros((draws, 2)),
+               "rho_draws": np.full((draws, 4), 0.1), "sigma_u_draws": sigma},
+        recipe=SimpleNamespace(features=["a", "b"], scaler=scaler),
+        extras={"dispersed": 1, "n_rho": 4, "u_sd_scale": 1.0, "u_stream": "x"})
+
+    model = rehydrate_composition(artifact, draws)
+    assert model.sigma_source == "fitted"
+    assert model.ps.sigma_draws.shape == (draws, 4), "the bins were flattened"
+
+    frame = pd.DataFrame({"player_id": [1, 2, 3, 4], "season": "2020-21",
+                          "rho_bin": [1, 2, 3, 4]})
+    idx = np.arange(draws)
+    shift = model.ps.shift(frame, idx)
+
+    # Each row is a different unit and draws its OWN `z`, so rows are not comparable to each
+    # other. The comparison that isolates sigma is against a SHARED-sigma head on the same
+    # `z` stream: row k must then come out at `sigma_bin(k) / sigma_shared`.
+    flat = SimpleNamespace(
+        draws={**artifact.draws, "sigma_u_draws": np.full(draws, 0.30)},
+        recipe=artifact.recipe, extras=artifact.extras)
+    scalar = rehydrate_composition(flat, draws)
+    assert scalar.ps.sigma_draws.shape == (draws,), "the shipped scalar path must survive"
+    base = scalar.ps.shift(frame, idx)
+    assert np.isfinite(base).all() and np.abs(base).min() > 0
+    np.testing.assert_allclose(
+        shift / base, np.tile([[1.0], [5 / 3], [7 / 3], [3.0]], (1, draws)), rtol=1e-9)
+
+
+def test_the_effects_ladder_cannot_overwrite_the_audited_pilot_record():
+    """`composition_effects_metrics.csv` carries the 2026-08-09 pilot `base` arm and
+    `make docs-audit` re-derives its CRPS from it. `_flush` merges by ARM NAME, so a later
+    round writing its own `base` there would answer a different question under that figure's
+    name — the exact failure `stan_composition_*.csv` has its own target to avoid.
+
+    The empty label has to restore the original paths exactly, or re-running the 2026-08-09
+    ladder becomes a code edit instead of a config edit.
+    """
+    import yaml
+
+    from src.models.composition_effects import artifact_stem
+
+    assert artifact_stem("") == "composition_effects"
+    assert artifact_stem("quadrature") == "composition_effects_quadrature"
+
+    eff = (yaml.safe_load(open("configs/default.yaml"))["stan"]["composition"]["effects"])
+    assert "label" in eff, "the knob has to exist before a round can be asked to set it"
+    assert artifact_stem(str(eff.get("label", "") or "")) == "composition_effects", (
+        "the shipped config must still point at the audited record; a round that needs its "
+        "own artifacts sets `label` for the duration of that round")
+
+
+def test_the_quadrature_knobs_in_config_match_what_the_driver_defaults_to():
+    """`nodes` and `inflate` are step 0's measurement, not preferences, so config and code
+    must not be able to disagree about them without somebody noticing."""
+    import yaml
+
+    from src.models.stan_composition import GH_INFLATE, Q_NODES
+
+    quad = (yaml.safe_load(open("configs/default.yaml"))
+            ["stan"]["composition"]["effects"]["quadrature"])
+    assert int(quad["nodes"]) == Q_NODES
+    assert float(quad["inflate"]) == GH_INFLATE
+
+
+def test_the_marginal_arm_reaches_dense_e_at_any_window():
+    """The structural claim the whole representation rests on, as arithmetic.
+
+    `choose_metric` grants `dense_e` only at warmup >= 20 x parameters, and this head's own
+    probe measures `diag_e` at treedepth 8-9 against 4 — roughly 10x the wall clock. The
+    sampled latent adds one parameter per player-season unit, so it cannot reach that rule at
+    the pilot's 2,204 units and certainly not at the full window's 12,307. The marginal arm
+    adds `n_sigma` — four at most — so its parameter count is the same at every window, and
+    that is precisely why a FULL-WINDOW sigma is reachable one way and not the other.
+    """
+    import yaml
+
+    from src.models.stan_composition import RHO_BINS, choose_metric
+
+    warmup = int(yaml.safe_load(open("configs/default.yaml"))
+                 ["stan"]["composition"]["effects"]["warmup"])
+    plain = 25 + 1 + RHO_BINS                      # features + intercept + dispersion bins
+
+    assert choose_metric(plain + 1, warmup) == "dense_e"           # `mq`
+    assert choose_metric(plain + RHO_BINS, warmup) == "dense_e"    # `mq_graded`
+    # The same two arms at the FULL window are the same size, which is the point.
+    for units in (2_204, 12_307):
+        assert choose_metric(plain + RHO_BINS, warmup) == "dense_e"
+        assert choose_metric(plain + units, warmup) == "diag_e", units
