@@ -5048,6 +5048,125 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("architecture", "head"),
     ),
     Decision(
+        id="the-injected-sigma-is-graded-by-role",
+        topic="minutes",
+        claim="**The injected per-(player, season) sigma is graded by role from 2026-08-16**: "
+              "`sim.minutes.player_season_sigma_by_role = [0.600, 0.375, 0.375, 0.300]` over "
+              "the composition's own `rho_bin` (fringe → star), a **2.00x** spread. A single "
+              "value was missing in **both directions at once** — at the shared 0.375 fringe "
+              "player-seasons were still **1.73x** under-dispersed while stars were "
+              "**over**-dispersed at **0.86x** — because the raw season-total deficit is "
+              "nearly role-flat (4.42 fringe to 3.84 star at sigma = 0) but a constant "
+              "**logit-scale** sigma lands unevenly once it has been through the allocation "
+              "and summed to a season.",
+        because="`docs/draw-time-calibration-plan.md` §9. Selection reads the fitting half: "
+                "each bucket's CRPS grid was searched coordinate-wise on the last two "
+                "TRAINING seasons (1,145 player-seasons) and the identical search run on "
+                "validation (1,111) only to compare, with the ship rule written before the "
+                "numbers — a bucket ships its train optimum when the two agree to a grid "
+                "step (0.075) and keeps the shared 0.375 when they do not. All four agreed, "
+                "so all four ship train's value, and **two of the four do not move**: the "
+                "shipped change is fringe 0.375 → 0.600 and star 0.375 → 0.300. Both "
+                "searches were stable on the second pass and **neither moved a single bucket "
+                "off its shared-grid starting point**, so the team-constraint coupling the "
+                "plan budgeted a refinement pass for does not reach the optimum at this "
+                "resolution. Gates: fringe `sd_ratio` **1.7276 → 1.2757** and its low PIT "
+                "tail **0.1535 → 0.0833** against a nominal 0.05; star `sd_ratio` 0.8601 → "
+                "**1.0444**; pooled season CRPS 115.5349 → **114.8514**; against the marginal "
+                "head on the 742 rows both cover the recorded win widens from −5.9112 "
+                "[−10.3858, −1.5014] to **−6.4504 [−10.9991, −2.0419]**; team-season total sd "
+                "across draws stays exactly **0**, asserted rather than assumed. ⚠️ One "
+                "blemish kept rather than smoothed: the star bucket's PIT KS drifts 0.0719 → "
+                "0.0833 while its `sd_ratio` improves — CRPS rewards sharpness, so the grid "
+                "settles below the variance-matching value. **Independent corroboration**: "
+                "the quadrature line's converged FITTED sigma on the same axis reads 0.60898 "
+                "/ 0.51013 / 0.46440 / 0.29075 at a 2.09x spread "
+                "([[quadrature-marginalizes-the-latents-and-converges]]); the two ENDS agree "
+                "to within a grid step and the spread within 5%, from machinery sharing no "
+                "arithmetic. The nesting is the config schema: delete the key and the draw is "
+                "bit-for-bit the pre-2026-08-16 one, which was checked by re-running "
+                "`make minutes-unification` through the refactored path to a byte-identical "
+                "artifact.",
+        status="settled",
+        unblocks="the simulator's minutes draw, which was re-run end to end in the same "
+                 "session (make simulate-season bracket draft-sim strategy-sweep) with the "
+                 "pre-graded strategy_*.csv retained first",
+        reproduce="make minutes-role-sigma → outputs/predictions/minutes_role_sigma.csv",
+        source="docs/draw-time-calibration-plan.md",
+        reviewed="2026-08-16",
+        date="2026-08-16",
+        tags=("architecture", "simulation"),
+    ),
+    Decision(
+        id="the-four-calibrated-simulator-inputs-were-not-four-and-not-all-inputs",
+        topic="simulations",
+        claim="**\"The four calibrated simulator inputs\" was wrong in three ways at once, "
+              "and it was the framing in `README.md`, in `dashboard/inputs.py` and on the "
+              "page the dashboard renders from it.** Two of the named four are "
+              "**diagnostics** the draw never reads — the game-level minutes dispersion "
+              "(superseded as an input by decision, since the composition fits its own "
+              "role-graded rho and only one can govern a draw) and the ten-game block "
+              "variance inflation (never imposed; the serial structure the draw has is "
+              "*produced* by the season-constant frailties). And the **injected "
+              "per-(player, season) sigma**, which is read on every minutes draw the "
+              "simulator makes, was not on the list at all. What the draw consumes is "
+              "**three** numbers — the residual copula, the per-game bonus overdispersion "
+              "(double duty as the copula's inversion scale) and the injected sigma — plus "
+              "Gate C's `rho` at the contest layer.",
+        because="`docs/sim-inputs-plan.md` item 1, which put the accuracy pass FIRST "
+                "deliberately: the stale frame had already cost real time when a reader had "
+                "to reverse-engineer from `sim/season.py` which values are actually "
+                "consumed. The fix is structural rather than prose — `inputs.Calibrated` "
+                "carries a `role` and a `where`, the page renders two groups from one table "
+                "so a row cannot fall out of both, and tests pin the partition and the "
+                "membership of each group. The injected sigma's value is read from "
+                "`minutes_unification.csv`'s `shipped_configuration` row rather than from "
+                "config, because nothing in `dashboard/` may import `src/` — and that row "
+                "only began reaching the artifact on 2026-08-16 "
+                "([[the-injected-sigma-is-graded-by-role]]). It renders as its per-role "
+                "vector, never as a mean over buckets, for the same reason the model card's "
+                "scalar column stays the shared rung: a mean of a graded quantity is a "
+                "number nothing selected. The **sigma** is left out of the three-window "
+                "panel deliberately — it is a config constant rather than an artifact "
+                "measured per window, and three identical rows would claim it had been "
+                "measured three times.",
+        status="built",
+        reproduce="make minutes-unification → outputs/predictions/minutes_unification.csv",
+        source="docs/sim-inputs-plan.md",
+        reviewed="2026-08-16",
+        date="2026-08-16",
+        tags=("dashboard", "simulation", "provenance"),
+    ),
+    Decision(
+        id="the-shipped-sigma-constant-had-drifted-off-config",
+        topic="minutes",
+        claim="**`minutes_unification.SHIPPED_PS_SIGMA` read 0.450 while "
+              "`sim.minutes.player_season_sigma` read 0.375**, from 2026-08-14 to "
+              "2026-08-16. Nothing misbehaved — the constant is only the fallback for a "
+              "missing config key, and config carried the key on every path — so the "
+              "**behaviour was correct the whole time and only the record was wrong**. "
+              "Corrected to 0.375, with a test that reads `configs/default.yaml` and pins "
+              "the two together so they cannot drift again.",
+        because="σ moved 0.450 → 0.375 when the composition took its preseason blend "
+                "([[the-injected-sigma-moves-to-0.375-with-the-blended-head]]) and the "
+                "module constant was not followed. **The reader it misleads is the one it "
+                "can least afford to**: whoever opens that module to change the injection, "
+                "which is exactly what `docs/draw-time-calibration-plan.md` sends the next "
+                "session there to do. A stale fallback is the cheapest possible provenance "
+                "failure to fix and the most expensive kind to reason from, because nothing "
+                "downstream fails — the same shape as README quoting 0.450 for the shipped "
+                "injection until the same day.",
+        status="settled",
+        # The artifact witness is the sweep's own `shipped_configuration` row, which reads
+        # the config value rather than the module constant — the disagreement was invisible
+        # precisely because that row was always right.
+        reproduce="make minutes-unification → outputs/predictions/minutes_unification.csv",
+        source="docs/draw-time-calibration-plan.md",
+        reviewed="2026-08-16",
+        date="2026-08-16",
+        tags=("provenance",),
+    ),
+    Decision(
         id="the-p5-chain-re-run-reads-higher-and-cannot-attribute-it",
         topic="drafting",
         claim="**The P5 chain was re-run end to end on 2026-08-14 and every readout improved.** "
@@ -6844,10 +6963,19 @@ REGISTRY: tuple[Decision, ...] = (
                 "simulator loads. Thirteen of the twenty heads expose `predict_samples` and "
                 "are called directly, with the minutes and composition heads going through "
                 "`minutes_unification`'s existing rehydrators rather than a second copy — "
-                "so the composition is drawn **with the shipped "
-                "`sim.minutes.player_season_sigma = 0.450`**, which is what every other "
-                "consumer gets, and `player_season_sigma` is an index column so a page can "
-                "say so. The other seven never draw at all: availability, the three "
+                "so the composition is drawn **with the shipped injected σ**, which is what "
+                "every other consumer gets, and it is an index column so a page can say so. "
+                "⚠️ **Two things about that column moved after this entry was written.** The "
+                "value was 0.450 here, became 0.375 on 2026-08-14, and since 2026-08-16 the "
+                "shipped injection is a per-role VECTOR "
+                "([[the-injected-sigma-is-graded-by-role]]) — so the card carries two "
+                "columns: `player_season_sigma` deliberately stays the SHARED rung the "
+                "grading was selected against (which is what the page's sweep block is "
+                "about, and what a test pins against the train grid's own optimum), and "
+                "`player_season_sigma_by_role` carries what actually reaches the draw. A "
+                "mean over four buckets in the first column would have been a number nothing "
+                "selected, printed where a selected one belongs. The other seven never draw "
+                "at all: availability, the three "
                 "games-played binomial heads and overtime onset score through an explicit "
                 "pmf and the two beta-geometric heads through a log-likelihood, so there is "
                 "nothing to call and `family_draws` takes the per-draw parameters from the "

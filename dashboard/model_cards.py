@@ -1516,6 +1516,26 @@ def shipped_sigma(index: pd.DataFrame | None) -> float | None:
     return value if np.isfinite(value) else None
 
 
+def shipped_sigma_by_role(index: pd.DataFrame | None) -> list[float] | None:
+    """The per-role injection the draw actually uses, or `None` when it is shared.
+
+    Since 2026-08-16 `sim.minutes.player_season_sigma_by_role` grades the injection over the
+    composition's own `rho_bin` (`docs/draw-time-calibration-plan.md`), while
+    `shipped_sigma` above stays the SHARED rung the grading was selected against — which is
+    what the sweep block on this page is about. Both are read from the card rather than
+    typed, and a page showing only the first would describe a draw nobody makes.
+    """
+    if index is None or index.empty or "player_season_sigma_by_role" not in index:
+        return None
+    row = index[index["head"] == HEAD_COMPOSITION]
+    if row.empty:
+        return None
+    cell = str(row["player_season_sigma_by_role"].iloc[0] or "").strip()
+    if not cell or cell.lower() == "nan":
+        return None
+    return [float(part) for part in cell.split("|")]
+
+
 #: How close a grid sigma has to be to the shipped one to be labelled as it. The grid is
 #: written at three decimals and the index at two, so an equality test on floats is the one
 #: way this label can silently stop appearing.

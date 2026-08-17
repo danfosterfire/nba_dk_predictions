@@ -33,6 +33,7 @@ export PYTHONUNBUFFERED = 1
         stan-components stan-composition \
         stan-substitution season-terms games-played stan-games-played \
         stan-game-length posteriors model-cards minutes-unification minutes-window \
+        minutes-role-sigma \
         minutes-preseason composition-effects composition-preseason \
         composition-preseason-fit composition-quadrature-check \
         scoring-periods draft-pool simulate-season weekly-scores bracket draft-sim \
@@ -504,6 +505,20 @@ model-cards:
 # against. No CmdStan.
 minutes-unification:
 	$(PYTHON) -m src.models.minutes_unification
+
+# docs/draw-time-calibration-plan.md: grade `sim.minutes.player_season_sigma` by role. The
+# scalar wins pooled and lands unevenly once it has been through the allocation — fringe
+# player-seasons are still 1.73x under-dispersed at the shipped value while stars are
+# over-dispersed at 0.85x — so this runs the same grid one role bucket at a time, on the
+# composition's own `rho_bin`.
+#
+# A DRAW-TIME calibration: no sampler, no head refitted, no likelihood touched, and the
+# knob nests (an absent `player_season_sigma_by_role` leaves the scalar in charge).
+# Selection reads the fitting half — the per-bucket optima are searched on the last two
+# TRAINING seasons and the identical search is run on validation only so the two can be
+# compared. Needs `make posteriors`. ~15 min, no CmdStan.
+minutes-role-sigma:
+	$(PYTHON) -m src.models.minutes_role_sigma
 
 # The fitting-window x dispersion ladder for the MARGINAL minutes head — the same question
 # `make availability-window` asked one head over, and the one `docs/availability-window-

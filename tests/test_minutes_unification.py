@@ -433,6 +433,77 @@ def test_the_sweep_marks_the_fitted_sigma_apart_from_the_injected_grid():
     assert '"fitted"' in source and '"injected_grid"' in source
 
 
+# ── Grading the injection by role ─────────────────────────────────────────────
+
+def test_a_scalar_sigma_is_the_one_bin_model_rather_than_a_special_case():
+    """`docs/draw-time-calibration-plan.md`'s nesting claim, at the arithmetic that carries
+    it: a constant vector must be the scalar, not merely close to it."""
+    bins = np.array([0, 1, 2, 3, 1, 0])
+    np.testing.assert_array_equal(MU.unit_sigma(0.375, bins), np.full(6, 0.375))
+    np.testing.assert_array_equal(MU.unit_sigma(np.full(MU.N_ROLE_BINS, 0.375), bins),
+                                  MU.unit_sigma(0.375, bins))
+
+    graded = np.array([0.6, 0.5, 0.4, 0.3])
+    np.testing.assert_array_equal(MU.unit_sigma(graded, bins),
+                                  np.array([0.6, 0.5, 0.4, 0.3, 0.5, 0.6]))
+
+
+def test_a_sigma_vector_of_the_wrong_length_raises_rather_than_broadcasting():
+    """Silently recycling three values over four buckets would produce a plausible table
+    describing a grading nobody chose."""
+    with pytest.raises(ValueError, match="one value per role bin"):
+        MU.unit_sigma(np.array([0.5, 0.4, 0.3]), np.array([0, 1, 2, 3]))
+
+
+def test_the_injected_shock_is_bit_identical_between_a_scalar_and_a_constant_vector():
+    """The claim the whole graded round rests on: every figure the shared-sigma grid wrote
+    before 2026-08-16 reproduces exactly, so the new code path is not a re-measurement.
+
+    Checked on the linear predictor `simulate_minutes` is handed, because that is the only
+    place sigma enters — everything downstream is the head's own allocation.
+    """
+    seen = []
+
+    def spy(frame, eta, rho, seed):
+        seen.append(np.array(eta, copy=True))
+        return np.zeros((eta.shape[1], eta.shape[0]))
+
+    frame = pd.DataFrame({"player_id": [1, 1, 2, 2, 3], "season": "2022-23"})
+    codes = MU.unit_codes(frame)
+    eta_base = np.arange(15, dtype=float).reshape(5, 3)
+
+    original = MU.simulate_minutes
+    MU.simulate_minutes = spy
+    try:
+        MU.injected_games(frame, eta_base, None, codes, 0.375, z_seed=7)
+        MU.injected_games(frame, eta_base, None, codes, np.full(MU.N_ROLE_BINS, 0.375),
+                          z_seed=7, bins=np.array([0, 3, 2]))
+    finally:
+        MU.simulate_minutes = original
+
+    assert len(seen) == 2
+    np.testing.assert_array_equal(seen[0], seen[1])
+    assert not np.array_equal(seen[0], eta_base), "the shock never reached the predictor"
+
+
+def test_role_bins_refuses_a_frame_the_recipe_never_binned():
+    """`PlayerSeasonTerm._unit_bins` answers all-zeros without `rho_bin`, which is right for
+    a scalar broadcasting over units and wrong for a graded sweep — that would fit one
+    shared sigma four times and report it as a gradient."""
+    frame = pd.DataFrame({"player_id": [1, 2], "season": "2022-23"})
+    with pytest.raises(KeyError, match="rho_bin"):
+        MU.role_bins(frame, MU.unit_codes(frame), 2)
+
+
+def test_role_bins_reads_each_units_own_bin_and_is_ordered_by_unit_code():
+    """The returned vector indexes `season_totals`' columns, so an ordering that follows the
+    frame rather than the codes would grade the wrong players."""
+    frame = pd.DataFrame({"player_id": [30, 10, 20, 10], "season": "2022-23",
+                          "rho_bin": [4, 1, 2, 1]})
+    codes = MU.unit_codes(frame)
+    np.testing.assert_array_equal(MU.role_bins(frame, codes, 3), [0, 1, 3])
+
+
 # ── The shipped injected sigma ────────────────────────────────────────────────
 
 def test_the_shipped_sigma_comes_from_config_with_a_documented_default():
@@ -442,6 +513,21 @@ def test_the_shipped_sigma_comes_from_config_with_a_documented_default():
     assert MU.shipped_sigma({}) == MU.SHIPPED_PS_SIGMA
     assert MU.shipped_sigma({"sim": {"minutes": {"player_season_sigma": 0.3}}}) == 0.3
     assert MU.shipped_sigma({"sim": {"minutes": {"player_season_sigma": 0.0}}}) == 0.0
+
+
+def test_the_module_fallback_agrees_with_the_shipped_config_value():
+    """A fallback that disagrees with config is correct and still a trap.
+
+    `SHIPPED_PS_SIGMA` only fires when `sim.minutes.player_season_sigma` is absent, so a
+    stale one changes no behaviour — which is exactly why it went unnoticed for two days
+    after sigma moved 0.450 -> 0.375 on 2026-08-14, leaving the module constant reading one
+    value while every simulator draw used another. The reader it misleads is whoever opens
+    this module to change the injection.
+    """
+    import yaml
+
+    cfg = yaml.safe_load(open("configs/default.yaml"))
+    assert MU.shipped_sigma(cfg) == MU.SHIPPED_PS_SIGMA
 
 
 def test_an_injected_sigma_makes_the_effect_live_on_the_rehydrated_head():

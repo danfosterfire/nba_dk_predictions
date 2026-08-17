@@ -13,6 +13,13 @@ the prediction-time constraint no per-game lag is *available* at prediction time
 "**would a simulator that draws games independently misstate the spread of a simulated
 season**", which is what the draft-strategy layer consumes.
 
+⚠️ **What this module writes is a DIAGNOSTIC, not a simulator input**, and saying so here is
+the point: nothing in `src/sim/` reads `serial_correlation.csv`. The block inflation is a
+target Gate A scores the drawn tensor against, and the serial structure the draw actually has
+is *produced* by the season-constant per-(player, season) σ shocks
+(`sim.minutes.player_season_sigma_by_role`). Earlier prose in this repo described the 2.43×
+as "consumed"; `docs/sim-inputs-plan.md` carries the consumed-vs-diagnostic inventory.
+
 Two statistics, because they answer different halves of that:
 
 **Lag-k autocorrelation of Pearson residuals.** Residuals are taken against each

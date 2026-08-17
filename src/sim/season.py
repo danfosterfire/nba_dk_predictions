@@ -152,7 +152,7 @@ from src.models.component_rates import CONVERSION_HEADS, COUNT_HEADS, DERIVED_CO
 from src.models.games_played import (EdgeResampler, allocate_spells, edge_blocks,
                                      layout_tenure)
 from src.models.held_out import TEST_SEASONS, assert_unlocked, selection_split
-from src.models.minutes_unification import rehydrate_composition, shipped_sigma
+from src.models.minutes_unification import rehydrate_composition, shipped_injection
 from src.models.posteriors import load_all, posteriors_dir, require_window
 from src.models.stan_availability import (FIRST_SEASON, head_design,
                                           restrict_window, role_bins)
@@ -859,7 +859,7 @@ def _sim_one(s: int, ctx: dict) -> dict:
     eta = (ctx["eta_base"][player, draw]
            + row_overtimes[rows] * ctx["eta_per_overtime"][player, draw]
            + clipped * ctx["eta_per_clip"][player, draw]
-           + ctx["ps_sigma"][draw] * z[player])
+           + (ctx["player_ps_sigma"][draw] * z)[player])
 
     frame = pd.DataFrame({
         "position": position, "k_players": np.repeat(lens, lens),
@@ -1037,11 +1037,20 @@ def build_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
 
     comp_art = artifacts["composition"]
     comp_model = rehydrate_composition(comp_art, comp_art.n_draws,
-                                       injected_sigma=shipped_sigma(cfg))
+                                       injected_sigma=shipped_injection(cfg))
     eta = composition_eta(comp_art, comp_model, players)
     ps_sigma = (np.asarray(comp_model.ps.sigma_draws, dtype=float)
                 if comp_model.ps.enabled else np.zeros(comp_art.n_draws))
-    row_rho_bin = comp_art.recipe.transform(players)["rho_bin"].to_numpy(np.int64)[row_player]
+    player_rho_bin = comp_art.recipe.transform(players)["rho_bin"].to_numpy(np.int64)
+    row_rho_bin = player_rho_bin[row_player]
+    # The injected sigma as `(draws x players)`, resolved ONCE here rather than inside the
+    # per-draw loop. A shared sigma stays `(draws x 1)` and broadcasts, which is the same
+    # arithmetic it always did; a graded one — `sim.minutes.player_season_sigma_by_role`,
+    # `docs/draw-time-calibration-plan.md` — gathers each player's own bucket. Doing it here
+    # means the draw loop has one expression for both, and means a graded artifact cannot
+    # reach the loop as a scalar and silently draw the fringe bucket's sigma for everyone.
+    player_ps_sigma = (ps_sigma[:, player_rho_bin - 1] if ps_sigma.ndim == 2
+                       else ps_sigma[:, None])
 
     dur_mu, dur_kappa = spell_shape(artifacts["gp_duration"], avail[present])
     layout_name, layout_tenure_on, layout_overflow = layout_arm(cfg)
@@ -1104,7 +1113,8 @@ def build_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
             np.int64)],
         "eta_base": eta["base"], "eta_per_overtime": eta["per_overtime"],
         "eta_per_clip": eta["per_clip"], "affine_error": eta["affine_error"],
-        "ps_sigma": ps_sigma, "sigma_source": comp_model.sigma_source,
+        "ps_sigma": ps_sigma, "player_ps_sigma": player_ps_sigma,
+        "sigma_source": comp_model.sigma_source,
         "comp_rho": comp_model.rho_draws,
         "rates": rates, "phi": rates["phi"], "rho": rates["rho"],
         "length_draws": posterior_inputs(artifacts["game_length_ot"],
@@ -1540,6 +1550,12 @@ def save_tensor(sim: dict, ctx: dict, dest: Path) -> Path:
         n_posterior_draws=np.array(ctx["n_draws"]),
         seed=np.array(ctx["seed"]),
         player_season_sigma=np.array(float(ctx["ps_sigma"].mean())),
+        # The per-role vector beside the scalar mean, for the reason the layout name and the
+        # composition variant are here: a graded injection changes the tensor materially and
+        # a mean over four buckets is not something a consumer can tell apart from a shared
+        # sigma of the same value. One column when the injection is shared.
+        player_season_sigma_by_role=np.atleast_1d(
+            np.asarray(ctx["ps_sigma"], dtype=float).mean(axis=0)),
         sigma_source=np.array(ctx["sigma_source"]),
         composition_variant=np.array(ctx["composition_variant"]),
         # The availability layout belongs beside the composition variant and the injected
@@ -1589,9 +1605,12 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
               f"{ctx['n_blocks']:,} team-games and {ctx['n_games']:,} games; "
               f"{ctx['n_players']:,} rostered players, {ctx['n_units']:,} of them "
               f"scorable")
+        by_role = np.atleast_1d(np.asarray(ctx["ps_sigma"], dtype=float).mean(axis=0))
         print(f"  minutes: composition @ {ctx['composition_variant']} with a "
               f"per-(player, season) effect, sigma "
-              f"{float(ctx['ps_sigma'].mean()):.3f} ({ctx['sigma_source']})")
+              + (f"{float(by_role[0]):.3f}" if by_role.size == 1
+                 else " / ".join(f"{v:.3f}" for v in by_role))
+              + f" ({ctx['sigma_source']})")
         nd = ctx["no_design_availability"]
         print(f"  availability: the head where it has a row; where it does not, an "
               f"expanding-window empirical rate\n"

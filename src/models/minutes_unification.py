@@ -65,8 +65,8 @@ import yaml
 
 from src.models.held_out import selection_split
 from src.models.posteriors import load, posteriors_dir, require_window
-from src.models.stan_composition import (GROUP_KEYS, PILOT_FIRST_SEASON,
-                                         StanComposition, head_frame,
+from src.models.stan_composition import (GROUP_KEYS, PILOT_FIRST_SEASON, RHO_BINS,
+                                         PlayerSeasonTerm, StanComposition, head_frame,
                                          simulate_minutes)
 from src.models.stan_minutes import PRESEASON as MINUTES_PRESEASON
 from src.models.stan_minutes import FloorMinutes, StanMinutes
@@ -106,9 +106,23 @@ TRAIN_SIGMA_SEASONS = 2
 
 # The shipped injected effect size, if config does not say otherwise. Estimated on TRAIN by
 # `estimate_sigma_on_train`, which is what removes the injection's one load-bearing caveat —
-# the validation grid's 0.375 was read off the split it is scored against. Five independent
-# routes land in [0.375, 0.481]: two CRPS grids, the calibration target, and two Stan fits.
-SHIPPED_PS_SIGMA = 0.450
+# a sigma read off validation would be read off the split it is scored against. Six
+# independent routes land in [0.375, 0.481]: two CRPS grids, the calibration target, two Stan
+# fits and the marginal profile.
+#
+# ⚠️ **This is a FALLBACK for a missing config key, not the shipped value** — the shipped
+# value is `sim.minutes.player_season_sigma`, read by `shipped_sigma` — but the two have to
+# AGREE, and a test pins that they do. They disagreed from 2026-08-14 (when the composition's
+# preseason blend moved sigma 0.450 -> 0.375 and this constant was not followed) to
+# 2026-08-16. Nothing misbehaved, because config carries the key on every path that matters;
+# what it cost was a reader of this module seeing 0.450 and a simulator drawing 0.375.
+SHIPPED_PS_SIGMA = 0.375
+
+# The role axis the injection may be graded over — the composition head's OWN `rho_bin`,
+# train quantiles of `w_share`. Reused rather than re-cut, so "role" means the same thing in
+# the fitted per-game dispersion, in the fitted `sigma_u` and in the injected constant, and
+# a table from one can be read against a table from another.
+N_ROLE_BINS = RHO_BINS
 
 # Smallest roster a teammate correlation is taken over. Below four players the mean pairwise
 # correlation of a fixed-sum block is dominated by the constraint's own -1/(K-1).
@@ -153,8 +167,49 @@ def shipped_sigma(cfg: dict) -> float:
                  .get("player_season_sigma", SHIPPED_PS_SIGMA))
 
 
-def rehydrate_composition(artifact, keep: int,
-                          injected_sigma: float | None = None) -> StanComposition:
+def shipped_sigma_by_role(cfg: dict) -> np.ndarray | None:
+    """`sim.minutes.player_season_sigma_by_role`, or `None` when the scalar is in charge.
+
+    **Absent is the nesting**, and it is the config schema rather than a code branch: a key
+    that is not there leaves `shipped_sigma` deciding, which is bit-for-bit the pre-2026-08-16
+    draw. `docs/draw-time-calibration-plan.md`.
+
+    A wrong-length list raises. Four buckets is the composition's own `rho_bin` count, and a
+    three-element list would otherwise be recycled by `unit_sigma` into a grading nobody
+    chose.
+    """
+    raw = (cfg.get("sim", {}).get("minutes", {}).get("player_season_sigma_by_role"))
+    if raw is None:
+        return None
+    vec = np.asarray(raw, dtype=float).ravel()
+    if vec.size != N_ROLE_BINS:
+        raise ValueError(f"sim.minutes.player_season_sigma_by_role needs one value per role "
+                         f"bin ({N_ROLE_BINS}, the composition's `rho_bin`); got {vec.size}")
+    return vec
+
+
+def format_role_sigma(sigma) -> str:
+    """A sigma as one cell — `""` when it is shared, `0.6|0.45|0.375|0.3` when it is graded.
+
+    Empty rather than the scalar for the shared case, so a consumer reading the column can
+    tell "no grading" from "a grading that happens to be flat" without comparing four floats.
+    """
+    arr = np.atleast_1d(np.asarray(sigma, dtype=float)).ravel()
+    return "" if arr.size == 1 else "|".join(f"{s:.4g}" for s in arr)
+
+
+def shipped_injection(cfg: dict):
+    """The sigma every consumer draws with — the graded vector if config carries one.
+
+    One resolver rather than each consumer choosing, because the failure this whole round
+    opened on was a second place that could hold a different answer. `sim/season.py`,
+    `model_cards.py` and the gate in `minutes_role_sigma` all come through here.
+    """
+    by_role = shipped_sigma_by_role(cfg)
+    return shipped_sigma(cfg) if by_role is None else by_role
+
+
+def rehydrate_composition(artifact, keep: int, injected_sigma=None) -> StanComposition:
     """A `StanComposition` carrying the artifact's draws, at its selected arm.
 
     `rho_draws` is (draws x n_rho) even at n_rho = 1, so the graded and shared arms take the
@@ -171,10 +226,15 @@ def rehydrate_composition(artifact, keep: int,
 
     The stream is restored from the artifact when one is fitted, so the rehydrated head draws
     the same `z` sequence the fitted one would.
+
+    `injected_sigma` may be a scalar or one value per role bin. The graded form is stored as
+    `(draws x n_sigma)`, which `PlayerSeasonTerm.shift` already resolves per unit off
+    `rho_bin`; the scalar form stays 1-D, so nothing that consumed it before sees a new shape.
     """
     sigma_u = artifact.draws.get("sigma_u_draws")
-    injected = float(injected_sigma or 0.0)
-    enabled = sigma_u is not None or injected > 0
+    injected = np.atleast_1d(np.asarray(0.0 if injected_sigma is None else injected_sigma,
+                                        dtype=float)).ravel()
+    enabled = sigma_u is not None or float(injected.max()) > 0
     model = StanComposition(list(artifact.recipe.features),
                             int(artifact.extras["dispersed"]),
                             int(artifact.extras["n_rho"]),
@@ -188,12 +248,14 @@ def rehydrate_composition(artifact, keep: int,
         model.ps.sigma_draws = np.asarray(sigma_u)
         model.ps.stream = str(artifact.extras.get("u_stream", model.ps.stream))
         model.sigma_source = "fitted"
-    elif injected > 0:
+    elif float(injected.max()) > 0:
         # A constant across draws, which is exactly what "plug in sigma-hat" means and is
         # the honest difference from a fit: no posterior on sigma, so the predictive does
-        # not integrate over its uncertainty.
-        model.ps.sigma_draws = np.full(len(model.alpha_draws), injected)
-        model.sigma_source = "injected"
+        # not integrate over its uncertainty. Graded or not, it is still plugged in.
+        n = len(model.alpha_draws)
+        model.ps.sigma_draws = (np.full(n, float(injected[0])) if injected.size == 1
+                                else np.tile(injected, (n, 1)))
+        model.sigma_source = "injected" if injected.size == 1 else "injected_by_role"
     else:
         model.sigma_source = "none"
     if model.dispersed:
@@ -332,6 +394,85 @@ def unit_codes(frame: pd.DataFrame) -> np.ndarray:
     return frame.groupby(UNIT_KEYS, sort=True).ngroup().to_numpy()
 
 
+def role_bins(frame: pd.DataFrame, codes: np.ndarray, n_units: int) -> np.ndarray:
+    """Each unit's 0-based role bin — `PlayerSeasonTerm._unit_bins`, not a second copy.
+
+    `frame` is the **transformed** design frame, because `rho_bin` is written by the
+    recipe's `bins` step and is not on the raw one; `codes` come from the raw frame, which
+    the transform leaves row-aligned. The bins are ordered by unit code, so the returned
+    vector indexes `season_totals`' columns directly.
+
+    Raises rather than defaulting when the column is missing. `_unit_bins` returns all-zeros
+    there, which is the right answer for a *scalar* sigma broadcasting over units and the
+    wrong one here — a graded sweep that silently collapsed every unit into bin 1 would
+    still run, still produce a plausible table, and be measuring one shared sigma four
+    times.
+    """
+    if "rho_bin" not in frame.columns:
+        raise KeyError("the design frame carries no `rho_bin`, so the injection cannot be "
+                       "graded by role — transform through the artifact's own recipe, "
+                       "whose `bins` step writes it")
+    return PlayerSeasonTerm._unit_bins(frame, codes, n_units)
+
+
+def unit_sigma(sigma, bins: np.ndarray) -> np.ndarray:
+    """Per-unit sigma from either a scalar or one value per role bin.
+
+    **A scalar is not a special case, it is the one-bin model**, and the arithmetic proves
+    it: a constant vector multiplied into the shock matrix is bit-for-bit the scalar
+    multiply it replaces, so every figure the shared-sigma grid ever wrote reproduces
+    exactly. That is the same nesting `rho_draws` and `sigma_draws` already carry one level
+    down, and it is what lets `sim.minutes.player_season_sigma` and its by-role twin share
+    one draw path.
+    """
+    arr = np.atleast_1d(np.asarray(sigma, dtype=float))
+    if arr.size == 1:
+        return np.full(len(bins), float(arr[0]))
+    if arr.size != N_ROLE_BINS:
+        raise ValueError(f"a graded sigma needs one value per role bin ({N_ROLE_BINS}); "
+                         f"got {arr.size}")
+    return arr[bins]
+
+
+def injected_games(frame: pd.DataFrame, eta_base: np.ndarray, rho, codes: np.ndarray,
+                   sigma, z_seed: int, bins: np.ndarray | None = None,
+                   seed: int = SEED) -> np.ndarray:
+    """`(draws x player-games)` minutes with `sigma` injected per (player, season).
+
+    The per-game layer of `injected_totals`, split out because two consumers need the draws
+    *before* they are collapsed to a season: the team-sum constraint check, which has to sum
+    by team-game rather than by player, and anything reading the allocation itself.
+    """
+    n_units, n_draws = int(codes.max()) + 1, eta_base.shape[1]
+    if bins is None:
+        bins = np.zeros(n_units, dtype=int)
+    z = np.random.default_rng(z_seed).normal(size=(n_units, n_draws))
+    eta = eta_base + (unit_sigma(sigma, bins)[:, None] * z)[codes, :]
+    return simulate_minutes(frame, eta, rho, seed)
+
+
+def injected_totals(frame: pd.DataFrame, raw: pd.DataFrame, eta_base: np.ndarray,
+                    rho, codes: np.ndarray, sigma, z_seed: int,
+                    bins: np.ndarray | None = None, seed: int = SEED) -> np.ndarray:
+    """`(draws x units)` season totals with `sigma` injected per (player, season).
+
+    One standard normal per unit per posterior draw, **shared across that unit's games**,
+    added to the linear predictor and re-run through the head's own sequential allocation —
+    so the team total stays exact and the cap still binds. `sigma` is a scalar or one value
+    per role bin; `unit_sigma` makes those one path.
+
+    `z_seed` is fixed by the caller and reused at every grid point on purpose: common random
+    numbers across arms is what makes a CRPS curve over sigma smooth enough to read an
+    optimum off, and what makes two sigma vectors differing in one bin differ *only* there.
+
+    `bins` is optional because a scalar sigma does not need it — the shared-sigma grids call
+    this without one, and reproduce their pre-2026-08-16 figures to the bit.
+    """
+    games = injected_games(frame, eta_base, rho, codes, sigma, z_seed, bins, seed)
+    totals, _ = season_totals(games, raw)
+    return totals
+
+
 def player_season_effect_sweep(model, frame: pd.DataFrame, raw: pd.DataFrame,
                                realized: np.ndarray, keep_rows: np.ndarray,
                                y: np.ndarray, crps_reference: np.ndarray,
@@ -373,9 +514,8 @@ def player_season_effect_sweep(model, frame: pd.DataFrame, raw: pd.DataFrame,
 
     rows = []
     for sigma, source in grid:
-        rng = np.random.default_rng(seed + 7)
-        eta = eta_base + float(sigma) * rng.normal(size=(n_units, n_draws))[codes, :]
-        totals, _ = season_totals(simulate_minutes(frame, eta, rho, seed), raw)
+        totals = injected_totals(frame, raw, eta_base, rho, codes, sigma,
+                                 z_seed=seed + 7, seed=seed)
         scored = totals[:, keep_rows]
         crps = crps_from_samples(scored, y)
         delta = paired_bootstrap(crps, crps_reference)
@@ -421,9 +561,8 @@ def estimate_sigma_on_train(model, artifact, composition_train: pd.DataFrame,
 
     rows = []
     for sigma in sigmas:
-        rng = np.random.default_rng(seed + 11)
-        eta = eta_base + float(sigma) * rng.normal(size=(n_units, n_draws))[codes, :]
-        totals, _ = season_totals(simulate_minutes(frame, eta, rho, seed), raw)
+        totals = injected_totals(frame, raw, eta_base, rho, codes, sigma,
+                                 z_seed=seed + 11, seed=seed)
         rows.append({
             "arm": "composition_sum_plus_player_season_effect", "unit": "ps_sigma_on_train",
             "sigma": float(sigma), "sigma_source": "train_grid",
@@ -686,12 +825,17 @@ def run(cfg: dict) -> dict[str, Path]:
     rows.append(teammate_coupling(mins_totals, mins_units, composition_val,
                                   "minutes_head"))
 
-    table = pd.DataFrame(rows)
-    table["fit_window"] = window
+    # ⚠️ The frame for the PRINT only. The artifact is built at the end, after every row is
+    # in `rows` — which it was not until 2026-08-16: `table` used to be materialized here and
+    # saved unchanged at the bottom, so the `shipped_configuration` row appended 100 lines
+    # below was computed, printed, and silently dropped. The artifact has therefore never
+    # carried a row saying which sigma actually ships, which is the one row a reader would
+    # look for and the same class of failure as `SHIPPED_PS_SIGMA` drifting off config.
+    season_frame = pd.DataFrame(rows)
     shown = ["arm", "n", "crps_minutes", "mae_minutes", "r2_minutes", "bias_minutes",
              "pit_ks", "predictive_sd"]
     print("\nSeason-total minutes, validation (CRPS and MAE in minutes, lower is better):")
-    print(table.loc[table["unit"] == "season_total", shown].round(4)
+    print(season_frame.loc[season_frame["unit"] == "season_total", shown].round(4)
           .to_string(index=False))
 
     print(f"\n  Paired bootstrap over {len(common):,} player-seasons, "
@@ -793,15 +937,20 @@ def run(cfg: dict) -> dict[str, Path]:
     # stays the UN-injected head deliberately: it is the control every claim here is
     # measured against, and the figures README and docs-audit quote.
     shipped = shipped_sigma(cfg)
+    by_role = shipped_sigma_by_role(cfg)
     row = next((r for r in sweep if abs(r["sigma"] - shipped) < 1e-9), None)
     table_extra = {"arm": "shipped_configuration", "unit": "ps_effect_shipped",
                    "sigma": shipped, "sigma_source": "config",
+                   "sigma_by_role": format_role_sigma(shipped if by_role is None
+                                                      else by_role),
                    "n": len(common), "n_draws": keep}
     if row is not None:
         table_extra.update({k: row[k] for k in
                             ("crps_minutes", "mae_minutes", "pit_ks", "predictive_sd",
                              "crps_delta", "ci_lo", "ci_hi", "verdict")})
-        print(f"\n  SHIPPED: sim.minutes.player_season_sigma = {shipped:.3f}, estimated on "
+        label = ("SHIPPED" if by_role is None
+                 else "THE SHARED-SIGMA REFERENCE, no longer what ships")
+        print(f"\n  {label}: sim.minutes.player_season_sigma = {shipped:.3f}, estimated on "
               f"TRAIN.\n    validation CRPS {row['crps_minutes']:.2f} against the marginal "
               f"head's {float(crps_mins.mean()):.2f} "
               f"({row['crps_delta']:+.2f} [{row['ci_lo']:+.2f}, {row['ci_hi']:+.2f}] — "
@@ -810,6 +959,19 @@ def run(cfg: dict) -> dict[str, Path]:
               f"{rows[1]['predictive_sd']:.1f} un-injected.\n    `rehydrate_composition` "
               f"applies it, so a consumer gets it by loading the head rather than by "
               f"remembering to.")
+    if by_role is not None:
+        # ⚠️ Every sigma row above is a SHARED-sigma row, and since 2026-08-16 the shipped
+        # injection is graded. Saying so here rather than quietly letting the shared rung
+        # keep the word "shipped" is the same discipline the `clears_floor` branch is: this
+        # module writes the artifact, so a stale sentence in it is one level below anything
+        # `make docs-audit` can see.
+        print(f"\n  ⚠️ THE SHIPPED INJECTION IS GRADED BY ROLE and this grid is not it: "
+              f"sim.minutes.\n  player_season_sigma_by_role = "
+              f"[{', '.join(f'{s:.3f}' for s in by_role)}] over the composition's own "
+              f"`rho_bin`\n  (fringe, bench, starter, star). The shared rung above is the "
+              f"reference it was selected against;\n  `make minutes-role-sigma` "
+              f"(outputs/predictions/minutes_role_sigma.csv) is the shipped readout, and\n"
+              f"  deleting that config key restores this row's arm exactly.")
     rows.append(table_extra)
 
     if fitted_sigma:
@@ -845,6 +1007,8 @@ def run(cfg: dict) -> dict[str, Path]:
           f"stacking (a same-team pair's minutes are\n  anti-correlated, not independent) "
           f"and on handcuffing (a hedge that exists only if the\n  model carries the sign).")
 
+    table = pd.DataFrame(rows)
+    table["fit_window"] = window
     dest = out_dir / "minutes_unification.csv"
     table.to_csv(dest, index=False)
     print(f"\nSaved {len(table):,} unification rows → {dest}")

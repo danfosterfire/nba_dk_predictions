@@ -11,11 +11,15 @@ pages draw posteriors, and none of these four families is one.
    dashboard that is an operational alarm rather than a result — a gap in the calendar is
    not a worse measurement, it is a day that no longer exists — so it is drawn at the top of
    the block and states plainly which gaps can still be closed.
-3. **The four calibrated simulator inputs.** Each is *given* to the simulator rather than
-   scored by it, and each carries a `fit_window`. The page shows the window instead of
-   hiding it, because which window to consume is decided by what the number will be scored
-   against, and the differences are small enough that consuming the wrong one would never
-   announce itself.
+3. **The calibrated numbers, split by whether the draw reads them.** ⚠️ Until 2026-08-16
+   this said "the four calibrated simulator inputs", and it was wrong in three ways: two of
+   the four are **diagnostics** the draws are scored against rather than given, and the
+   injected per-(player, season) sigma — consumed on every minutes draw — was not listed at
+   all. Five rows in two groups now, each carrying where it enters the draw or what it is
+   checked against. The three windowed ones still show their `fit_window` instead of hiding
+   it, because which window to consume is decided by what the number will be scored against,
+   and the differences are small enough that consuming the wrong one would never announce
+   itself. `docs/sim-inputs-plan.md`.
 4. **The availability layout.** Added 2026-08-12, and the only input here that is not a
    number. The availability head draws *how many* games a player misses and cannot say
    *where* they fall, because games played is invariant to the arrangement — so the layout
@@ -82,12 +86,16 @@ def load_layout() -> dict[str, pd.DataFrame] | None:
 
 @st.cache_data(show_spinner="Reading the calibrated simulator inputs…")
 def load_calibrated() -> dict[str, pd.DataFrame] | None:
-    """The four artifacts, each from the target that calibrated it."""
+    """The five artifacts, each from the target that calibrated it."""
     wanted = (("residual", eda_dir() / inputs.RESIDUAL_FILE, inputs.MAKE_RESIDUAL),
               ("serial", eda_dir() / inputs.SERIAL_FILE, inputs.MAKE_SERIAL),
               ("bonus", eda_dir() / inputs.BONUS_FILE, inputs.MAKE_BONUS),
               ("dispersion", predictions_dir() / inputs.DISPERSION_FILE,
-               inputs.MAKE_DISPERSION))
+               inputs.MAKE_DISPERSION),
+              # The injected sigma's `shipped_configuration` row. Fifth because it is the
+              # one consumed number that is a config constant rather than a measurement.
+              ("unification", predictions_dir() / inputs.MIN_UNIF_FILE,
+               inputs.MAKE_MIN_UNIF))
     frames = {}
     for key, path, target in wanted:
         frame = optional(path, target=target)
@@ -266,15 +274,42 @@ def calibrated_block(frames: dict, window: str, th: dict) -> None:
     panel = inputs.window_panel(frames)
     widest_label, widest = inputs.widest_relative_spread(panel)
 
-    for col, row in zip(st.columns(len(table)), table.itertuples(index=False)):
-        col.metric(row.label, row.text, help=f"{row.unit} — {row.what}")
+    # ⚠️ Two groups, not one row of five. This block showed "the four calibrated simulator
+    # inputs" until 2026-08-16, which put a number the draw never reads beside one it reads
+    # on every player-game and left the injected sigma off the page entirely. The split is
+    # the correction: `role` comes from `inputs.CALIBRATED` so the page cannot disagree with
+    # the pure layer about which is which, and `where` is on every tile because "consumed"
+    # is only meaningful if a reader can see the seam it enters at.
+    consumed = inputs.by_role(table, inputs.CONSUMED)
+    diagnostic = inputs.by_role(table, inputs.DIAGNOSTIC)
+
+    st.markdown("**Consumed by the draw** — change one and the tensor changes.")
+    for col, row in zip(st.columns(len(consumed)), consumed.itertuples(index=False)):
+        col.metric(row.label, row.text,
+                   help=f"{row.unit} — {row.what}\n\n**Enters at:** {row.where}")
+
+    st.markdown("**Diagnostic only** — measured, reported, and never imposed.")
+    for col, row in zip(st.columns(len(diagnostic)), diagnostic.itertuples(index=False)):
+        col.metric(row.label, row.text,
+                   help=f"{row.unit} — {row.what}\n\n**Checked by:** {row.where}")
+    st.caption(
+        "**The distinction is the block.** All five are calibrated; only three are *inputs*. "
+        "A diagnostic is a target the drawn value is scored against — the game-level minutes "
+        "dispersion lost input status by an explicit decision, because the composition fits "
+        "its own role-graded rho and only one of the two can govern a draw, and the block "
+        "inflation was never imposed at all: the serial structure the draw has is *produced* "
+        "by the season-constant frailties. The injected sigma is the one that was missing "
+        "from this page while being read on every minutes draw the simulator makes.")
 
     st.plotly_chart(
         fig_metric_facets(inputs.window_facets(panel), th, inputs.WINDOW_SLOTS,
                           columns=2),
         width="stretch", key="windows", config={"displayModeBar": False})
     st.caption(
-        f"**Each input at all three fit windows, which is the point of the block.** The "
+        f"**Each windowed number at all three fit windows, which is the point of the "
+        f"block.** The injected sigma is absent here deliberately — it is a config constant "
+        f"rather than an artifact measured per window, and three identical rows would imply "
+        f"it had been measured three times. The "
         f"windows differ by two seasons out of thirty, so the largest of the four — "
         f"{widest_label} — moves by **{widest:.1%}** across them and the rest by less. That "
         f"is exactly why the window has to be *chosen* rather than defaulted into: a number "

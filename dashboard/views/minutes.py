@@ -206,6 +206,22 @@ def sigma_block(cards: dict, row: pd.Series, th: dict) -> None:
         "the composition's**, whichever head the selector has open: the marginal head "
         "appears only as the baseline the gap is measured against, and takes no effect.")
 
+    by_role = mc.shipped_sigma_by_role(cards["index"])
+    if by_role is not None:
+        # ⚠️ Every rung below is a SHARED-σ rung and the shipped injection is graded, so the
+        # block would otherwise describe a draw nobody makes. Said here rather than left to
+        # the reader for the same reason the σ tile is read from the card and not typed.
+        st.info(
+            "**The shipped injection is graded by role**, and this block is the shared-σ "
+            "sweep it was selected against. `sim.minutes.player_season_sigma_by_role` = "
+            + ", ".join(f"`{s:.3f}`" for s in by_role)
+            + " over the composition's own `rho_bin` (fringe → star). A constant "
+              "*logit-scale* σ lands unevenly once it has been through the allocation and "
+              "summed to a season — at the shared value fringe player-seasons were still "
+              "1.73× under-dispersed while stars were **over**-dispersed at 0.86× — so "
+              "each bucket's optimum was searched on the training seasons and confirmed on "
+              "validation. `make minutes-role-sigma`.")
+
     if at_shipped is not None:
         marginal_ks = mc.season_reading(unification, mc.HEAD_MARGINAL, "pit_ks")
         marginal_sd = mc.season_reading(unification, mc.HEAD_MARGINAL, "predictive_sd")
