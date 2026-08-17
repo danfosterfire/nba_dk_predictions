@@ -10,10 +10,17 @@ a page: **none of them is a fitted coefficient, and every one of them is load-be
 2. **The capture programs** — four archives, three of them perishable. This is the only
    block on the dashboard that is an operational alarm rather than a result: a missing day
    is not a worse measurement, it is a day that no longer exists.
-3. **The four calibrated simulator inputs** — the residual copula, the game-level minutes
-   dispersion, the ten-game block variance inflation and the bonus overdispersion. Each is
-   *given* to the simulator rather than scored by it, each carries a `fit_window`, and the
-   page shows the window rather than hiding it.
+3. **The calibrated numbers, split by whether the draw actually reads them.** ⚠️ This block
+   said "the four calibrated simulator inputs" until 2026-08-16 and that framing was wrong in
+   three ways at once: **two of the four are diagnostics** the draws are *checked against*
+   rather than given (the game-level minutes dispersion, by an explicit decision that the
+   composition's fitted role-graded rho owns it; and the ten-game block inflation, which is
+   produced by the season-constant frailties rather than imposed), and the injected
+   per-(player, season) sigma — which *is* consumed, on every minutes draw the simulator
+   makes — was **not on the list at all**. Five rows now, in two groups, each saying where it
+   enters the draw or what it is checked against. The three that carry a `fit_window` still
+   show it rather than hiding it; the sigma does not, because it is a config constant rather
+   than an artifact measured per window. `docs/sim-inputs-plan.md`.
 4. **The availability layout** — where a player's missed games fall, which the availability
    head cannot say because games played is invariant to the arrangement. The one input here
    that is not a number, and the one whose diagnostic is at the scoring period rather than
@@ -51,6 +58,12 @@ RESIDUAL_FILE = "residual_correlation.csv"
 SERIAL_FILE = "serial_correlation.csv"
 BONUS_FILE = "bonus_calibration.csv"
 DISPERSION_FILE = "stan_minutes_dispersion.csv"
+# The injected sigma's own home. Read for the `shipped_configuration` row, which is the one
+# place an artifact records what `sim.minutes.player_season_sigma{,_by_role}` is set to —
+# this package may not import `src/`, so config is not readable from here and an artifact is
+# the only honest source. That row reached the file on 2026-08-16; before then it was
+# computed, printed and dropped.
+MIN_UNIF_FILE = "minutes_unification.csv"
 LAYOUT_FILE = "availability_exchangeability.csv"
 LAYOUT_PROFILE_FILE = "availability_clustering.csv"
 
@@ -60,6 +73,7 @@ MAKE_RESIDUAL = "make residual-correlation"
 MAKE_SERIAL = "make serial-correlation"
 MAKE_BONUS = "make component-targets"
 MAKE_DISPERSION = "make stan-minutes"
+MAKE_MIN_UNIF = "make minutes-unification"
 MAKE_LAYOUT = "make availability-exchangeability"
 
 #: The availability layout `sim.availability.layout` ships — `src/sim/season.py::LAYOUT_ARMS`.
@@ -453,10 +467,18 @@ def gap_table(calendar: pd.DataFrame) -> pd.DataFrame:
         drop=True)
 
 
-# ── The four calibrated simulator inputs ──────────────────────────────────────
+# ── The calibrated numbers: consumed by the draw, or diagnostic ───────────────
+
+#: The two roles, and the distinction the block exists to make. CONSUMED means the draw
+#: reads the number — change it and the tensor changes. DIAGNOSTIC means the number is
+#: measured and reported and the draw never sees it; it is a target the draws are scored
+#: against. Both are "calibrated" and only one is an input, which is precisely what the old
+#: "four calibrated simulator inputs" framing lost.
+CONSUMED, DIAGNOSTIC = "consumed", "diagnostic"
+
 
 class Calibrated(NamedTuple):
-    """One number the simulator is *given* rather than one it is scored on."""
+    """One calibrated number, and whether the draw actually reads it."""
 
     key: str
     label: str
@@ -465,6 +487,13 @@ class Calibrated(NamedTuple):
     unit: str
     what: str
     fmt: str
+    role: str
+    #: Where it enters the draw (CONSUMED) or what it is checked against (DIAGNOSTIC).
+    where: str
+    #: Whether it is measured per `fit_window`. False for the injected sigma, which is a
+    #: config constant — so it is shown in the inventory and left out of the window panel
+    #: rather than given three identical rows that would imply it had been measured thrice.
+    windowed: bool = True
 
 
 CALIBRATED: tuple[Calibrated, ...] = (
@@ -473,31 +502,57 @@ CALIBRATED: tuple[Calibrated, ...] = (
         target=MAKE_RESIDUAL, unit="mean r, count block",
         what="Cross-component dependence left after the shared minutes draw, imposed as a "
              "Gaussian copula on the seven count heads' per-game frailties.",
-        fmt="{:+.4f}"),
+        fmt="{:+.4f}", role=CONSUMED,
+        where="`sim/season.count_copula` inverts it to the frailty scale, then correlates "
+              "the per-game lognormal frailties."),
     Calibrated(
         key="block_inflation", label="Block variance inflation", artifact=SERIAL_FILE,
         target=MAKE_SERIAL, unit="× binomial, ten-game blocks",
         what="How much more a ten-game block of minutes varies than independent draws "
-             "would — the serial dependence between games, and the reason sequential "
-             "structure goes on minutes and nowhere else.",
-        fmt="{:.4f}×"),
+             "would. **A diagnostic, never imposed** — the serial dependence the draw has "
+             "is *produced* by the season-constant per-(player, season) frailties, which "
+             "carry most of it, rather than read from this number.",
+        fmt="{:.4f}×", role=DIAGNOSTIC,
+        where="Gate A reports the drawn value against this target; nothing reads it."),
     Calibrated(
         key="bonus_overdispersion", label="Bonus overdispersion", artifact=BONUS_FILE,
         target=MAKE_BONUS, unit="frailty variance, player-game",
         what="The variance of the shared per-game frailty that makes the double-double "
              "threshold fire at the realized rate. Unit-specific: ~0.10 at the season "
              "unit, ~0.025 at the player-game unit the simulator draws at.",
-        fmt="{:.4f}"),
+        fmt="{:.4f}", role=CONSUMED,
+        where="Two roles, one mechanism: it is the variance of the count heads' per-game "
+              "frailties AND the scale the copula above is inverted at."),
     Calibrated(
         key="minutes_dispersion", label="Game-level minutes dispersion",
         artifact=DISPERSION_FILE, target=MAKE_DISPERSION, unit="× binomial, per game",
         what="Within-player-season per-game overdispersion of minutes against the "
              "player's own mean. A **diagnostic** the composition's draws are checked "
-             "against, not an input to them.",
-        fmt="{:.3f}×"),
+             "against, not an input to them — superseded as an input by decision, because "
+             "the composition fits its own role-graded rho and only one of the two can "
+             "govern a draw.",
+        fmt="{:.3f}×", role=DIAGNOSTIC,
+        where="Gate A reports the drawn value against this target; the composition's own "
+              "fitted rho is what the draw uses."),
+    Calibrated(
+        key="player_season_sigma", label="Injected per-(player, season) sigma",
+        artifact=MIN_UNIF_FILE, target=MAKE_MIN_UNIF, unit="logit-scale sd, per unit",
+        what="The season-level spread the composition cannot manufacture from draws that "
+             "are iid across games. Graded by role since 2026-08-16 — a constant "
+             "logit-scale sigma left fringe player-seasons 1.73x under-dispersed while "
+             "stars were over-dispersed at 0.86x.",
+        fmt="{:.3f}", role=CONSUMED, windowed=False,
+        where="`minutes_unification.rehydrate_composition` puts `sigma * z` on the linear "
+              "predictor once per (player, season) per draw, shared across that player's "
+              "games, and re-runs the head's own allocation."),
 )
 
 CALIBRATED_BY_KEY = {c.key: c for c in CALIBRATED}
+
+#: The subset the window panel covers. Not `CALIBRATED` — the injected sigma is a config
+#: constant, so it has no per-window reading and three identical rows would claim it had
+#: been measured three times.
+WINDOWED = tuple(c for c in CALIBRATED if c.windowed)
 
 
 def copula_components(residual: pd.DataFrame, window: str = SAFE_WINDOW,
@@ -643,8 +698,33 @@ def minutes_dispersion(dispersion: pd.DataFrame,
     return out.reset_index(drop=True)
 
 
+def injected_sigma(unification: pd.DataFrame) -> tuple[float, list[float]]:
+    """`(shared sigma, per-role vector)` from the artifact's `shipped_configuration` row.
+
+    The vector is empty when the injection is shared, which is how a reader tells "not
+    graded" from "a grading that happens to be flat". Parsed from the `sigma_by_role` cell
+    rather than recomputed, because this package may not import `src/` and the config it
+    would need to read lives there.
+    """
+    row = unification[unification["unit"] == "ps_effect_shipped"]
+    if row.empty:
+        return float("nan"), []
+    shared = float(row["sigma"].iloc[0])
+    cell = str(row["sigma_by_role"].iloc[0] or "").strip() if "sigma_by_role" in row else ""
+    graded = ([float(part) for part in cell.split("|")]
+              if cell and cell.lower() != "nan" else [])
+    return shared, graded
+
+
 def _window_value(frames: dict, key: str, window: str) -> float:
-    """One calibrated input's value at one window, from whichever artifact owns it."""
+    """One calibrated number's value at one window, from whichever artifact owns it.
+
+    The injected sigma is not windowed, so it answers with its mean over role buckets at
+    every window and `window_panel` leaves it out entirely.
+    """
+    if key == "player_season_sigma":
+        shared, graded = injected_sigma(frames["unification"])
+        return float(sum(graded) / len(graded)) if graded else shared
     if key == "copula":
         return copula_mean(frames["residual"], window)
     if key == "block_inflation":
@@ -661,16 +741,39 @@ def _window_value(frames: dict, key: str, window: str) -> float:
             else float("nan"))
 
 
+def calibrated_text(frames: dict, spec: Calibrated, value: float) -> str:
+    """The metric's display string — the graded sigma as its vector, everything else as one
+    number. A mean over four role buckets is a value nothing selected, so it is never what
+    the tile shows."""
+    if spec.key == "player_season_sigma":
+        _, graded = injected_sigma(frames["unification"])
+        if graded:
+            return " / ".join(spec.fmt.format(v) for v in graded)
+    return spec.fmt.format(value)
+
+
 def calibrated_table(frames: dict, window: str = SAFE_WINDOW) -> pd.DataFrame:
-    """The four inputs at one window: what each is, its value, and where it comes from."""
+    """Every calibrated number at one window, carrying its ROLE and where it enters.
+
+    One table rather than two, with `role` as a column, so a caller that groups them cannot
+    disagree with a caller that does not — and so a row can never be silently dropped from
+    one group without appearing in the other.
+    """
     rows = []
     for spec in CALIBRATED:
         value = _window_value(frames, spec.key, window)
         rows.append({"key": spec.key, "label": spec.label, "value": value,
-                     "text": spec.fmt.format(value), "unit": spec.unit,
+                     "text": calibrated_text(frames, spec, value), "unit": spec.unit,
                      "artifact": spec.artifact, "target": spec.target,
-                     "what": spec.what, "fit_window": window})
+                     "what": spec.what, "role": spec.role, "where": spec.where,
+                     "windowed": spec.windowed,
+                     "fit_window": window if spec.windowed else ""})
     return pd.DataFrame(rows)
+
+
+def by_role(table: pd.DataFrame, role: str) -> pd.DataFrame:
+    """One role's rows, in `CALIBRATED` order. The page's two sections come from here."""
+    return table[table["role"] == role].reset_index(drop=True)
 
 
 def window_panel(frames: dict, windows: tuple[str, ...] = FIT_WINDOWS) -> pd.DataFrame:
@@ -683,6 +786,8 @@ def window_panel(frames: dict, windows: tuple[str, ...] = FIT_WINDOWS) -> pd.Dat
     """
     rows = []
     for spec in CALIBRATED:
+        if not spec.windowed:
+            continue
         values = {w: _window_value(frames, spec.key, w) for w in windows}
         finite = [v for v in values.values() if v == v]
         span = (max(finite) - min(finite)) if finite else float("nan")

@@ -1667,7 +1667,7 @@ whole four-round structure: 2020-21 has **no Round 4 at all** (0 games in slot 1
 > visible in the mean.
 
 **The season-total bias is a weekly bias, and it used to be front-loaded.** Gate A reads
-**−11.0438** to **−73.4** dk_pts on a season and this says where it comes from: about −1.5 a
+**−9.95234** to **−73.4** dk_pts on a season and this says where it comes from: about −1.5 a
 week, now spread evenly across them. Pooled over the two validation seasons the per-period bias
 runs **−1.54649** in week 1, **−2.51388** in week 2, **−1.77884** in week 3, **−1.01348** by
 week 13 and **−0.755881** by week 17. (Before the *component* heads took their preseason block

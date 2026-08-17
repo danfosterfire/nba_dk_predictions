@@ -240,6 +240,25 @@ make minutes-unification
                        #   what makes the injection shippable: sigma_train = 0.450 against
                        #   the validation grid's 0.375.
 
+make minutes-role-sigma
+                       # grades the injected per-(player, season) sigma by ROLE, over the
+                       #   composition's own `rho_bin` → outputs/predictions/
+                       #   minutes_role_sigma.csv. A DRAW-TIME calibration: no sampler, no
+                       #   head refitted, ~13 min of numpy over the persisted posteriors.
+                       #   A single sigma was missing in BOTH directions at once — at the
+                       #   shared 0.375 fringe player-seasons were still 1.73x
+                       #   under-dispersed while stars were OVER-dispersed at 0.86x — so
+                       #   each bucket's CRPS grid is searched coordinate-wise on the last
+                       #   two TRAINING seasons and confirmed on validation, which never
+                       #   chooses. Ships [0.600, 0.375, 0.375, 0.300], a 2.00x spread;
+                       #   two of the four buckets keep the shared value. Fringe sd_ratio
+                       #   1.7276 -> 1.2757 and the win against the marginal head widens
+                       #   to -6.4504 [-10.9991, -2.0419]. Deleting
+                       #   `sim.minutes.player_season_sigma_by_role` restores the
+                       #   pre-2026-08-16 draw bit-for-bit. It also PRINTS a warning when
+                       #   config and the search disagree, since the search re-derives the
+                       #   vector and never reads the key.
+
 make minutes-window    # the marginal minutes head's fitting window x dispersion ladder,
                        #   the same question `make availability-window` asked one head
                        #   over → outputs/predictions/minutes_window_era.csv,

@@ -186,12 +186,22 @@ discipline is not clean:
   (persistence splitting on attempts vs conversions, "shrink conversion percentages hard",
   minutes weighting, and the shot-attempt reparameterization itself). That is model design
   informed by data that includes the test window, and no split guard can see it.
-- **The four numbers the simulator will consume as direct inputs are calibrated per fit
-  window**, because they are *given* to the simulator rather than scored by it: the residual
-  copula, the game-level minutes dispersion, the block variance inflation and the bonus
-  overdispersion. Their artifacts carry a `fit_window` column and the consumers default to
-  `train_val`; the full-window figures move by less than the precision they are quoted at,
-  which is why the leak would never have announced itself. **A third window, `train`, was
+- **The numbers the simulator is *given* rather than scored on are calibrated per fit
+  window.** ⚠️ **This bullet said "the four numbers the simulator will consume as direct
+  inputs" until 2026-08-16 and named the wrong four**, which is a correction worth keeping
+  rather than a typo: two of them — the game-level minutes dispersion and the ten-game block
+  variance inflation — are **diagnostics**, measured and reported and never read by a draw,
+  and the injected per-(player, season) σ, which *is* read on every minutes draw, was not on
+  the list at all. What the draw actually consumes is **three** numbers plus one at the
+  contest layer: the residual copula, the per-game bonus overdispersion (which does double
+  duty as the copula's inversion scale), the injected σ — graded by role since 2026-08-16 —
+  and Gate C's `rho` below. `docs/sim-inputs-plan.md` holds the inventory and the dashboard's
+  "Inputs beyond the heads" page draws it split by role.
+
+  The windowed three carry a `fit_window` column and the consumers default to `train_val`;
+  the full-window figures move by less than the precision they are quoted at,
+  which is why the leak would never have announced itself. The injected σ is not among them —
+  it is a config constant, not an artifact measured per window. **A third window, `train`, was
   added 2026-08-08**, because `train_val` is clean for a *test*-split readout and not for a
   *validation* one: it contains 2022-23 and 2023-24, which is exactly what the realized
   backtest scores against. Which window to consume is decided by what the number will be
@@ -471,14 +481,37 @@ predictive sd *narrows*, so it is the mean and the injected σ is untouched. Thr
 target only, and adopting it means a `first_season` of 2004-05 on the head plus `make
 posteriors --groups composition`, which is P5. `docs/preseason-plan.md` sessions 4b–4d.
 
-**So the injection ships**, as `sim.minutes.player_season_sigma = 0.375`, applied by
-`minutes_unification.rehydrate_composition` — a consumer gets the effect by loading the head
-rather than by remembering to apply it, and 0.0 recovers the un-injected head exactly.
-*(This line read 0.450 until 2026-08-16 and was stale: σ moved to 0.375 on 2026-08-14 when the
-composition's preseason blend made the train and validation grids agree, as the paragraph above
-records. ⚠️ `minutes_unification.SHIPPED_PS_SIGMA` is still **0.450** — it is the fallback used
-only if the config key is absent, so the live value is the config's, but the two disagreeing is
-a trap for the next reader.)*
+**So the injection ships**, applied by `minutes_unification.rehydrate_composition` — a
+consumer gets the effect by loading the head rather than by remembering to apply it, and 0.0
+recovers the un-injected head exactly.
+
+**And since 2026-08-16 it is graded by role**, because one number was missing in *both*
+directions at once: at the shared σ fringe player-seasons were still **1.73×**
+under-dispersed while stars were **over**-dispersed at **0.86×**. The raw season-total
+deficit is nearly role-flat (4.42 fringe to 3.84 star at σ = 0) — what is not flat is where a
+constant *logit-scale* σ lands after it has been through the allocation and summed to a
+season. `sim.minutes.player_season_sigma_by_role = [0.600, 0.375, 0.375, 0.300]` over the
+composition's own `rho_bin`, a **2.00×** spread, with `player_season_sigma = 0.375` kept as
+the shared rung the grading was selected against. Each bucket's grid was searched
+coordinate-wise on the **training** seasons and confirmed on validation, all four agreed to a
+grid step, and **two of the four did not move** — the shipped change is fringe and star.
+Fringe `sd_ratio` goes **1.7276 → 1.2757** and its low PIT tail **0.1535 → 0.0833**, and the
+star bucket comes back the other way, **0.8601 → 1.0444**; the win against the marginal head
+widens from **−5.9112 [−10.3858, −1.5014]** to **−6.4504 [−10.9991, −2.0419]**; the
+team-season total's sd across draws stays exactly 0. Independent
+corroboration: the quadrature line's converged *fitted* σ on the same axis reads 0.60898 /
+0.51013 / 0.46440 / 0.29075 at a 2.09× spread, so two instruments sharing no arithmetic agree
+on both **ends** to within a grid step. Deleting the config key restores the pre-2026-08-16
+draw bit-for-bit. `make minutes-role-sigma`,
+[docs/draw-time-calibration-plan.md](docs/draw-time-calibration-plan.md).
+
+*(Two provenance corrections closed the same day, both of the "correct behaviour, wrong
+record" kind. This line read σ = 0.450 until 2026-08-16 and was stale — σ moved to 0.375 on
+2026-08-14 when the composition's preseason blend made the train and validation grids agree.
+And `minutes_unification.SHIPPED_PS_SIGMA` read 0.450 while config read 0.375 for two days;
+it is the fallback for a missing key, so nothing misbehaved and the live value was always
+the config's, but the reader it misleads is the one about to change the injection. It is
+0.375 now and a test reads `configs/default.yaml` to keep the two together.)*
 
 `composition_glm.stan` also carries the effect as an **optional fitted parameter** (`sigma_u`,
 with `U_n = 0` nesting the shipped head exactly), and `make posteriors` persists its scale and
@@ -523,6 +556,14 @@ measured defect for hours instead of days —
 σ by role at draw time, with the fitted values above as its independent reference. The
 quadrature block stays in the file, inert at `Q = 0`.
 `docs/composition-quadrature-plan.md`.
+
+✅ **That replacement was built, measured and shipped the same day, and it vindicated the
+parking twice over.** It cost 13 minutes of numpy against the quadrature arm's three days,
+and the two agree: 0.600 / 0.375 / 0.375 / 0.300 from the draw-time grid against 0.609 /
+0.510 / 0.464 / 0.291 fitted, both **ends** within a grid step and the spread 2.00× against
+2.09×. So the fitted σ's remaining value is the two things a plugged-in constant still cannot
+do — estimate σ jointly with `beta`, and integrate the predictive over σ's posterior — and
+neither is the reason the gradient was worth having. See the injection section above.
 
 **Six independent routes agree on the effect size**, which is why a plugged-in σ is
 defensible in the meantime: 0.375 (validation CRPS grid), ≈0.41 (calibration — the ratio of
@@ -637,10 +678,14 @@ readout; the specification is pinned by measurements rather than guesses:
   shared by both teams.
 - **Minutes come from both heads, and that is measured rather than assumed**
   (`make minutes-unification`): the per-game allocation and its role-graded dispersion from
-  the composition, the season-level **spread** from the marginal head, and the **2.43×**
-  ten-game block variance inflation from `make serial-correlation` for serial dependence
-  between games. The **4.65×** game-level figure is a *diagnostic* to check the composition's
-  draws against, not an input to them.
+  the composition, and the season-level **spread** from the marginal head, injected as a
+  per-(player, season) σ that has been **graded by role** since 2026-08-16
+  (`make minutes-role-sigma`). ⚠️ **Both block-inflation figures are diagnostics and this
+  bullet used to imply otherwise**: the **2.43×** ten-game figure from
+  `make serial-correlation` is a *target*, not something the draw reads — the serial
+  structure the simulator has is *produced* by those season-constant σ shocks — and the
+  **4.65×** game-level figure is likewise a check on the composition's draws rather than an
+  input to them.
 - **Sequential structure goes on minutes and nowhere else.** There is no shooting hot hand:
   both field-goal conversion heads are measured nulls, so those eleven heads stay collapsed.
 - **Bonus overdispersion is unit-specific** — 0.10 at the season unit, **0.025** at the
@@ -842,8 +887,8 @@ season-total sd, against +0.6% from shared coefficient uncertainty.
 
 **The drafting edge is large in the simulated world and the realized readout cannot confirm
 it — which is the result, not a caveat.** `make strategy-sweep`. Against a symmetric-field
-null, the arm that ships lifts its Round-1 advance probability by **0.230387** in the 600k
-Shootaround's simulated worlds and by **0.197293** on the two validation seasons replayed
+null, the arm that ships lifts its Round-1 advance probability by **0.236915** in the 600k
+Shootaround's simulated worlds and by **0.199380** on the two validation seasons replayed
 against realized box scores. ~~⚠️ That is **not** attributable to the preseason block, because
 four things moved in one pass and the previous `strategy_*.csv` was overwritten.~~ ✅ **Closed
 2026-08-15 by a paired counterfactual** (`make preseason-contest`), which refits **all four**
@@ -866,6 +911,25 @@ and both of 2023-24's staying below the bar, is not support for "draft different
 field"; it is a single cell crossing a threshold. The conclusion stands and the count does
 not.
 
+⚠️ **Both headline numbers moved on 2026-08-16 when the injected σ was graded by role, and
+neither move is evidence for the grading.** The pair read 0.230387 / 0.197293 before the
+chain was re-run. On the **simulated** side that is not a comparison at all: Gate C's `rho` is
+solved per arm and moved 0.362309 → **0.358192** and 0.311690 → **0.317198**, so the two runs
+score in different worlds — the caveat §2 already carries. On the **realized** side, which
+*is* comparable because both arms face the same box scores, the shipped strategy improves in
+only **4 of 10** season × tournament cells at a mean of **−0.0027**, and the +0.002087 at the
+600k is one season up (0.131040 → 0.144217) and one down (0.263546 → 0.254543). The `adp`
+control moved **exactly 0.000000**, as it must — an ADP board does not read our tensor. **So
+the contest layer neither confirms nor contradicts the graded σ**, which is the expected
+result at N = 2 seasons and is why that calibration was decided at the season unit where it
+was measured. `docs/draw-time-calibration-plan.md` §9.
+
+One consequence for the paragraph above: `preseason_block_contest.csv` is a **captured** pair
+(`captured_at` 2026-08-15) and today's chain re-run did not touch it, so every figure it
+carries still describes what it measured. But its `preseason` arm is no longer the shipped
+chain — re-taking that counterfactual against today's arm would be a fresh two-pass run, and
+nothing here has done it.
+
 *(Superseded by the component block's chain re-run on 2026-08-15, and kept beside the
 corrections: the simulated lift read **0.2358** and the realized **0.204098**; the P5
 counterfactual's realized delta at the 600k was **+0.102767** across 10 of 10 cells with an
@@ -883,8 +947,10 @@ curve carries none, degrading fastest in the elite region), and against a *stipu
 value for shape, so the fitted pure-ADP field is the harder opponent and stays shipped.
 On the execution axis, submitting our best feasible ranking to DK's own autodraft is
 identical to clicking it under DK's 8G/8F/3C caps — and beats the uncapped click by
-**+0.000303134** (600k, resolved) — while giving up **0.0706785** of simulated lift against the
-shipped per-pick objective, which no static board can express. The 30-second-clock
+**+0.00128856** (600k, resolved) — while giving up **0.0602481** of simulated lift against the
+shipped per-pick objective, which no static board can express. *(Those two read +0.000303134
+and 0.0706785 before the 2026-08-16 chain re-run; both are simulated-side figures, so the
+per-arm `rho` caveat above applies to them as well.)* The 30-second-clock
 fallback is safe; the objective is the half worth defending. See
 [docs/simulations-plan.md](docs/simulations-plan.md), "The field with lineup reasoning,
 and the execution axis".

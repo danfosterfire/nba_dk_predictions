@@ -1541,9 +1541,10 @@ def _rehydrated(head: str, art, cfg: dict, keep: int):
 
         return rehydrate_minutes(art, keep)
     if head == "composition":
-        from src.models.minutes_unification import rehydrate_composition, shipped_sigma
+        from src.models.minutes_unification import (rehydrate_composition,
+                                                     shipped_injection)
 
-        return rehydrate_composition(art, keep, injected_sigma=shipped_sigma(cfg))
+        return rehydrate_composition(art, keep, injected_sigma=shipped_injection(cfg))
     return None
 
 
@@ -2067,14 +2068,24 @@ def predictive_tables(head: str, art, frames: HeadFrames, cfg: dict,
     finite_band = [b for b in band.values() if np.isfinite(b)]
     gated = [b for split, b in band.items()
              if np.isfinite(b) and counts[split][0] >= BAND_MIN_ROWS]
-    sigma = 0.0
+    sigma, sigma_by_role = 0.0, ""
     if head == "composition":
         # Recorded rather than implied: the shipped head a consumer loads carries the
         # injected per-(player, season) effect, so the ribbon does too, and a page comparing
         # this card against `stan_composition_metrics.csv` has to be able to see that.
-        from src.models.minutes_unification import shipped_sigma
+        from src.models.minutes_unification import (format_role_sigma, shipped_injection,
+                                                    shipped_sigma)
 
+        # ⚠️ `player_season_sigma` stays the SHARED value even when the shipped injection is
+        # graded, and that is deliberate rather than an oversight. It is the rung of
+        # `minutes_unification`'s own grid that the grading was selected against, and the
+        # dashboard's block — and a test — read it as exactly that. A mean over four buckets
+        # would be a number nothing selected, printed where a selected one belongs, which is
+        # the failure mode this whole session opened on.
         sigma = float(shipped_sigma(cfg))
+        # What actually reaches the draw. Empty when the injection is shared, so a consumer
+        # can tell "not graded" from "a grading that happens to be flat".
+        sigma_by_role = format_role_sigma(shipped_injection(cfg))
     gated_ks = [ks_mc[split] for split in ks_mc
                 if np.isfinite(ks_mc[split]) and counts[split][0] >= BAND_MIN_ROWS]
     return {
@@ -2097,6 +2108,7 @@ def predictive_tables(head: str, art, frames: HeadFrames, cfg: dict,
             "ecdf_band_mc": max(finite_band) if finite_band else float("nan"),
             "ecdf_band_gated": bool(gated),
             "player_season_sigma": sigma,
+            "player_season_sigma_by_role": sigma_by_role,
             # The quantile half. Both splits' distances ship because both are read on the
             # page — unlike `predictive_bias`, which is one gate collapsed to its worst
             # split — and `quantile_ks_mc` is the only bar here, on the draw budget rather
@@ -2229,7 +2241,7 @@ def index_row(head: str, art, frames: HeadFrames, check: dict,
             ("fitted_source", ""),
             ("predictive_check", ""), ("predictive_bias", float("nan")),
             ("ecdf_band_mc", float("nan")), ("ecdf_band_gated", False),
-            ("player_season_sigma", 0.0),
+            ("player_season_sigma", 0.0), ("player_season_sigma_by_role", ""),
             ("quantile_scope", ""), ("quantile_reason", ""),
             ("quantile_ks_train", float("nan")),
             ("quantile_ks_validation", float("nan")),

@@ -193,7 +193,25 @@ one NUTS walks slowly, and no configuration tried changes that.
 priced the trade.** Measured at σ = 0.450 against σ = 0: the mean pairwise teammate
 correlation weakens from **−0.0509 to −0.0388** (the constraint forces −0.0664), while the
 team's season total stays **exactly fixed** — 0.0000 predictive sd on complete team-game
-blocks at both. The dilution is real and confined to the single-team *subset*, which is
+blocks at both.
+
+✅ **Re-read 2026-08-16 at the shipped values, which is `docs/draw-time-calibration-plan.md`
+step 3's own deliverable, and grading recovers about a quarter of the dilution.** On the same
+963 single-team validation player-seasons, `make minutes-role-sigma`:
+
+| arm | mean pairwise teammate r |
+|---|---|
+| un-injected (σ = 0) | **−0.0504** |
+| shared σ = 0.375 | −0.0392 |
+| **graded [0.600, 0.375, 0.375, 0.300]** | **−0.0422** |
+| what a fixed team sum forces | −0.0664 |
+
+The dilution is 0.0112 at the shared value and **0.0082** graded, so **27%** of it comes back
+— for free, from a change made for a different reason. The mechanism is the obvious one: the
+buckets whose σ *fell* (star) dilute less, and a star's minutes are what a stack is usually
+built around. The trade is still unpriced in the unit that matters — only the strategy sweep
+can say whether stacking and handcuffing care — and the σ = 0.450 row above is kept because it
+is the reading the original entry was written against. The dilution is real and confined to the single-team *subset*, which is
 what a 2–3 player stack is, and it is a property of **having** a per-player-season effect
 rather than of injecting one — a fitted `sigma_u` draws independent `u_z` too and would
 dilute identically. Stacking and handcuffing sit on one side of that trade and the

@@ -697,6 +697,56 @@ sim:
   minutes:
     player_season_sigma: 0.375
 
+    # ── GRADED BY ROLE, shipped 2026-08-16 ──────────────────────────────────
+    # One sigma per bucket of the composition's OWN `rho_bin` — train quantiles of
+    # `w_share`, the same axis its fitted per-game dispersion is graded over — in the order
+    # fringe, bench, starter, star. `make minutes-role-sigma`,
+    # docs/draw-time-calibration-plan.md.
+    #
+    # **When this key is absent, `player_season_sigma` above is in charge and the draw is
+    # bit-for-bit the pre-2026-08-16 one.** The nesting is the config schema itself; delete
+    # these four lines to roll back exactly. `minutes_unification.shipped_injection` is the
+    # one resolver every consumer comes through, so there is no second place that can hold
+    # a different answer.
+    #
+    # WHY a shared value was wrong: the raw season-total deficit is nearly role-flat (an
+    # sd_ratio of 4.42 fringe to 3.84 star at sigma = 0), but a constant **logit-scale**
+    # sigma lands unevenly once it has been through the allocation and summed to a season.
+    # At the shared 0.375 fringe player-seasons were still 1.73x under-dispersed while stars
+    # were OVER-dispersed at 0.86x — one number missing in both directions at once.
+    #
+    # HOW these four were chosen. The per-bucket CRPS grid was searched coordinate-wise on
+    # the last two TRAINING seasons (1,145 player-seasons) and the identical search was run
+    # on validation (1,111) only to compare; validation never chose. Both searches were
+    # stable on their second pass and neither moved off its shared-grid starting point, so
+    # the buckets are effectively uncoupled. All four buckets agreed to one grid step
+    # (0.075), so all four ship their train optimum — a bucket that disagreed would have
+    # kept 0.375, and `minutes_role_sigma.ship_rule` is that rule as code:
+    #
+    #   bucket    train   validation   ships
+    #   fringe    0.600   0.525        0.600
+    #   bench     0.375   0.450        0.375     (unchanged from the shared value)
+    #   starter   0.375   0.300        0.375     (unchanged from the shared value)
+    #   star      0.300   0.300        0.300
+    #
+    # WHAT IT BUYS, on validation: fringe sd_ratio 1.7276 -> 1.2757 and its low PIT tail
+    # 0.1535 -> 0.0833 against a nominal 0.05; star sd_ratio 0.8601 -> 1.0444; pooled season
+    # CRPS 115.5349 -> 114.8514 over 1,111 units, and against the marginal head on the 742
+    # rows both cover -5.9112 -> **-6.4504 [-10.9991, -2.0419]**. The team-season total's sd
+    # across draws stays exactly 0 — a per-unit shock re-allocates minutes WITHIN a
+    # team-game, so grading it cannot touch the constraint, and `make minutes-role-sigma`
+    # asserts that rather than assuming it. One blemish recorded rather than smoothed: the
+    # star bucket's PIT KS drifts 0.0719 -> 0.0833 while its sd_ratio improves.
+    #
+    # ⚠️ These are DRAW-TIME calibration values and not estimates of a likelihood-scale
+    # parameter. The quadrature line fitted the same quantity in Stan at 0.60898 / 0.51013 /
+    # 0.46440 / 0.29075 (2.09x spread, `docs/composition-quadrature-plan.md` §8) — the two
+    # ENDS agree to within a grid step from completely different machinery, which is
+    # corroboration of the gradient's size and direction. It is not a source of values, and
+    # reading those four numbers in here instead would import a probe-scale one-season
+    # estimate into a production draw input.
+    player_season_sigma_by_role: [0.600, 0.375, 0.375, 0.300]
+
   # ── The availability layout ───────────────────────────────────────────────
   # WHERE the missed games fall, given how many there are. The availability head cannot
   # say — `gp` is invariant to the arrangement — so this is chosen at draw time, and it is

@@ -21,7 +21,7 @@ pass first means every later measurement is written against a correct map.
 |---|---|---|---|---|
 | residual copula, count block | matrix, per `fit_window` | `src/eda/residual_correlation.py` → `residual_correlation.csv`, minutes-conditioned | `sim/season.count_copula` inverts it to the **frailty** scale (see below), then correlates the per-game lognormal frailties | Gate A `cross_component_correlation` diagnostic |
 | per-game overdispersion `v = 0.025` | `targets.BONUS_GAME_OVERDISPERSION` | `make component-targets`, calibrated to zero bias on the realized per-game bonus rate | variance of those same frailties, **and** the scale of the copula inversion — one mechanism, two roles | Gate A **gated** bonus-rate comparison |
-| injected σ = 0.375 | `sim.minutes.player_season_sigma` | train CRPS grid (`minutes_unification`), post-blend grids agree at 0.375 | `rehydrate_composition` → per-(player, season) logit shift | the injection sweep; per-role PIT (scratch today, a `make` target under two open plans) |
+| injected σ, **graded by role** — 0.600 / 0.375 / 0.375 / 0.300 | `sim.minutes.player_season_sigma_by_role`, with `player_season_sigma = 0.375` the shared rung it was selected against | per-bucket train CRPS grid (`minutes_role_sigma`), confirmed on validation; **shipped 2026-08-16** | `rehydrate_composition` → per-(player, season) logit shift, each unit at its own `rho_bin`'s σ | `make minutes-role-sigma` — the per-role PIT is a target now, not scratch |
 | Gate C `rho` (contest layer, not this doc's scope) | solved per season **per arm** | `sim/draft.py` bisection against the realized skill gap | the ADP field's rank-noise rotation | `docs/preseason-plan.md` P5/6b carries its caveat |
 
 **Diagnostics only — measured, reported, never imposed:**
@@ -74,6 +74,27 @@ season-unit total is roughly right (pooled sd_ratio 1.19, per-role PIT scratch m
 2026-08-16). The draw structure has only two timescales — iid per-game and season-constant —
 and the data's minutes ACF decays ("slow role change plus short-range shocks",
 `serial_correlation.py`).
+
+⚠️ **Two corrections from 2026-08-16, and the first one is to this paragraph.** The
+1.40–1.54 above was already stale when it was written: the Gate A artifact on disk read block
+inflation **1.7285** (2022-23) and **1.5283** (2023-24) before anything changed, so the gap
+to 2.42 was smaller than this item is specified against on one season and not the other.
+
+Second, grading the injected σ by role (`docs/draw-time-calibration-plan.md`) moved both
+diagnostics and **did not move them together**, which is worth knowing because co-movement is
+this item's own gate:
+
+| diagnostic | target | 2022-23 pre → post | 2023-24 pre → post |
+|---|---|---|---|
+| block inflation | 2.4167 | 1.7285 → **1.8104** | 1.5283 → 1.5309 |
+| game-level dispersion | 4.7163 | 7.4985 → **7.5867** | 7.3001 → 7.3745 |
+
+Block inflation improved on one season and stood still on the other; dispersion moved *away*
+from target on both. Raising the fringe bucket's season-constant variance adds serial
+structure and per-game spread at once, so a σ change cannot separate the two — which is
+precisely the argument for this item's AR(1), a mechanism that **redistributes** variance
+rather than adding it. **Re-measure before building**: the curve is now read under a graded
+σ, and both endpoints have moved.
 
 **Measure first**: block inflation at block lengths 5/10/20/40 plus the lag ACF, per fit
 window, through `serial_correlation`'s own machinery — the *curve*, not the ten-game point.

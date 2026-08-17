@@ -180,6 +180,12 @@ GL_PPC = "outputs/predictions/stan_game_length_ppc.csv"
 # minutes-unification`. One row per arm plus one paired-bootstrap row, which is why the
 # delta columns are blank on the arm rows and vice versa.
 MIN_UNIF = "outputs/predictions/minutes_unification.csv"
+# The injected sigma GRADED BY ROLE — `make minutes-role-sigma`. Long over
+# (arm, unit, split, role_bin): the shared-sigma profile, the coordinate-search iterations,
+# the three-arm role readout (uninjected / shipped scalar / graded) and the head-to-head.
+# The `unit` filter is load-bearing on every lookup for the reason it is on `MIN_UNIF` — the
+# same arm names appear under `role_profile` and `role_readout` at overlapping sigmas.
+ROLE_SIGMA = "outputs/predictions/minutes_role_sigma.csv"
 # The marginal head's window x dispersion ladder — `make minutes-window`. The era file
 # carries two row shapes in one table: per-season cells (`block` blank) and pooled era
 # blocks (`season` blank), so a lookup keyed on one axis can never hit the other.
@@ -1767,6 +1773,84 @@ def _carry_bias_claims(doc: str,
             add(_c(quoted, SEASON_BIAS, lambda: float("nan"),
                    f"retired held-out carry-forward bias: {label}", doc=doc,
                    historical=True))
+    return C
+
+
+def _role_sigma_claims(doc: str) -> list[Claim]:
+    """The injected sigma graded by role — `make minutes-role-sigma`, shipped 2026-08-16.
+
+    A shared builder for the same reason `_minutes_unification_claims` is: `README.md` and
+    `docs/draw-time-calibration-plan.md` carry the same block, and the plan doc joins the
+    audit as soon as it is added to `_DOCS`. Today it has one caller.
+
+    **The per-role readout is claimed at all three arms**, not just the shipped one. The
+    finding is that the raw deficit is nearly role-FLAT at `sigma = 0` while the shipped
+    scalar's residual is not, and that sentence goes stale if either end moves — so the
+    control is an audited row rather than a remembered one.
+    """
+    C: list[Claim] = []
+    READOUT, H2H = "role_readout", "head_to_head"
+
+    def readout(column: str, arm: str, role: str) -> float:
+        return cell(ROLE_SIGMA, column, arm=arm, unit=READOUT, split="validation",
+                    role=role)
+
+    def gate(column: str, arm: str) -> float:
+        return cell(ROLE_SIGMA, column, arm=arm, unit=H2H, split="validation")
+
+    def add(quoted, actual, label, **kw):
+        C.append(_c(quoted, ROLE_SIGMA, actual, label, doc=doc, **kw))
+
+    # The shipped vector itself, bucket by bucket — read off the graded arm's own rows, so
+    # a config edit that never reached a re-run cannot pass.
+    for role, quoted in (("fringe", "0.600"), ("bench", "0.375"),
+                         ("starter", "0.375"), ("star", "0.300")):
+        add(quoted, lambda r=role: readout("sigma_scalar", "graded", r),
+            f"the shipped injected sigma for the {role} bucket")
+    add("2.00", lambda: (readout("sigma_scalar", "graded", "fringe")
+                         / readout("sigma_scalar", "graded", "star")),
+        "the graded sigma's fringe-to-star spread")
+
+    # The shared rung, read from `minutes_unification.csv`'s OWN `shipped_configuration`
+    # row rather than from the role artifact. That row is claimed here because until
+    # 2026-08-16 it was computed, printed and then dropped — `table` was materialized before
+    # it was appended — so the artifact carried no record of which sigma ships. A claim on it
+    # fails the build if it ever falls out again.
+    C.append(_c("0.375", MIN_UNIF,
+                lambda: cell(MIN_UNIF, "sigma", arm="shipped_configuration",
+                             unit="ps_effect_shipped"),
+                "the shared rung the grading was selected against, from the artifact's own "
+                "shipped-configuration row", doc=doc))
+
+    # The defect: role-flat at sigma = 0, and NOT role-flat at the shared 0.375.
+    add("4.42", lambda: readout("sd_ratio", "uninjected", "fringe"),
+        "fringe season-total sd_ratio with no injection")
+    add("3.84", lambda: readout("sd_ratio", "uninjected", "star"),
+        "star season-total sd_ratio with no injection — the deficit is nearly role-flat")
+    add("1.7276", lambda: readout("sd_ratio", "shipped_scalar", "fringe"),
+        "fringe sd_ratio at the shared sigma — still under-dispersed")
+    add("0.8601", lambda: readout("sd_ratio", "shipped_scalar", "star"),
+        "star sd_ratio at the shared sigma — over-dispersed, the other direction")
+
+    # What grading buys, on the bucket it was worst for.
+    add("1.2757", lambda: readout("sd_ratio", "graded", "fringe"),
+        "fringe sd_ratio at the graded sigma")
+    add("1.0444", lambda: readout("sd_ratio", "graded", "star"),
+        "star sd_ratio at the graded sigma")
+    add("0.1535", lambda: readout("pit_tail_lo", "shipped_scalar", "fringe"),
+        "fringe low PIT tail at the shared sigma, against a nominal 0.05")
+    add("0.0833", lambda: readout("pit_tail_lo", "graded", "fringe"),
+        "fringe low PIT tail at the graded sigma")
+
+    # Gate 2, both arms — "the recorded win widens" is the claim, so both sides are claimed.
+    add("−5.9112", lambda: gate("crps_delta", "shipped_scalar"),
+        "shared sigma against the marginal head, season CRPS")
+    add("−10.3858", lambda: gate("ci_lo", "shipped_scalar"), "that arm's interval, lower")
+    add("−1.5014", lambda: gate("ci_hi", "shipped_scalar"), "that arm's interval, upper")
+    add("−6.4504", lambda: gate("crps_delta", "graded"),
+        "graded sigma against the marginal head, season CRPS")
+    add("−10.9991", lambda: gate("ci_lo", "graded"), "the graded interval, lower")
+    add("−2.0419", lambda: gate("ci_hi", "graded"), "the graded interval, upper")
     return C
 
 
@@ -4801,6 +4885,7 @@ def _readme() -> list[Claim]:
 
     # ── results: the two minutes heads at the season unit ─────────────────────
     C.extend(_minutes_unification_claims(README))
+    C.extend(_role_sigma_claims(README))
 
     # ── results: substitution and season terms ────────────────────────────────
     # The README's claim used to be that the gain *replicates across splits*. Gate 0 is
@@ -4863,11 +4948,13 @@ def _readme() -> list[Claim]:
     def shipped(column: str) -> float:
         return cell(STRATEGY_SHIPPED, column, tournament="600k_shootaround")
 
-    add("0.230387", STRATEGY_SHIPPED, lambda: shipped("sim_lift"),
+    add("0.236915", STRATEGY_SHIPPED, lambda: shipped("sim_lift"),
         "shipped arm's simulated advance lift, 600k")
-    add("0.197293", STRATEGY_SHIPPED, lambda: shipped("realized_lift"),
+    add("0.199380", STRATEGY_SHIPPED, lambda: shipped("realized_lift"),
         "shipped arm's realized advance lift, 600k")
-    for quoted in ("0.2358", "0.204098"):
+    # Superseded by the 2026-08-16 graded-sigma chain re-run. Held for the record because
+    # the README argues FROM the pair moving — and from neither move being attributable.
+    for quoted in ("0.230387", "0.197293", "0.2358", "0.204098"):
         add(quoted, STRATEGY_SHIPPED, lambda: float("nan"),
             f"shipped arm's advance lift before the component block: {quoted}",
             historical=True)
@@ -4894,7 +4981,7 @@ def _readme() -> list[Claim]:
     add("0.306", SHIPPED_NEED,
         lambda: cell(SHIPPED_NEED, "sim_lift", tournament="600k_shootaround"),
         "shipped arm's simulated lift against the stipulated need-aware field, 600k")
-    add("+0.000303134", STRATEGY_PAIRED,
+    add("+0.00128856", STRATEGY_PAIRED,
         lambda: cell(STRATEGY_PAIRED, "gap", tournament="600k_shootaround",
                      metric="p_advance", baseline="blend_a30",
                      strategy="autodraft_blend_a30"),
@@ -4908,10 +4995,10 @@ def _readme() -> list[Claim]:
                     & (frame["strategy"] == arm)]
         return float(hit["lift_vs_null"].mean()) if len(hit) else float("nan")
 
-    add("0.0706785", STRATEGY_SHIPPED,
+    add("0.0602481", STRATEGY_SHIPPED,
         lambda: shipped("sim_lift") - sweep_mean_lift("autodraft_blend_a30"),
         "lift given up by autodrafting instead of the shipped objective, 600k")
-    for quoted in ("+0.00841967", "0.105298"):
+    for quoted in ("+0.000303134", "0.0706785", "+0.00841967", "0.105298"):
         add(quoted, STRATEGY_SHIPPED, lambda: float("nan"),
             f"execution-axis reading before the component block: {quoted}",
             historical=True)
@@ -5902,7 +5989,7 @@ def _weekly() -> list[Claim]:
              f"pre-layout weekly bias profile, {quoted}", doc=SIMS, historical=True)
           for quoted in ("−5.28", "−4.99", "−3.27", "−1.08", "−0.70")],
         # Gate A's own season-total bias, so the weekly row is read against it.
-        _c("−11.0438", SIM_GATE_A, lambda: _season_total_bias(largest=True),
+        _c("−9.95234", SIM_GATE_A, lambda: _season_total_bias(largest=True),
            "smallest season-total bias", doc=SIMS),
         # The same row's earlier readings, kept in the prose because the bullet's argument is
         # that a −69 dk_pts fault dwarfs everything measured on the head since. They are

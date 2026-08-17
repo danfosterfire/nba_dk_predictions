@@ -848,15 +848,34 @@ def test_the_shipped_sweep_is_convex_in_survival_so_the_drawn_line_is_conservati
     """The measurement the page prints beside the reference line, on the real artifact.
 
     Proportional is 1. Anything above it means the break-even lift the chart draws sits
-    *above* the lift a real break-even needs, which is the direction to err in. The bar
-    is the median per tier plus an overwhelming share of rows — not every row — because
-    an arm sitting close to the null has a near-zero log-survival denominator and its
-    ratio is noise: the five-structure sweep's one sub-proportional row (of 240) is the
-    `adp` arm at `50k_four_pt_play` in 2022-23, elasticity 0.81 at a +0.047 lift.
+    *above* the lift a real break-even needs, which is the direction to err in.
+
+    ⚠️ **Re-pointed 2026-08-16, and the old docstring was wrong about its own evidence.**
+    It claimed "one sub-proportional row (of 240), the `adp` arm at `50k_four_pt_play` in
+    2022-23, elasticity 0.81" — the artifact it was written against actually held **two**,
+    at `20k_spin_move` and `88k_alley_oop`, and neither was the row named. The test passed
+    anyway because the two landed in *different* tournaments, and a `>= 0.97` share at
+    n = 48 means "at most one row per tier". So the bar was not measuring an overwhelming
+    share; it was measuring how the sub-proportional rows happened to be distributed, and
+    it broke when the graded-σ chain re-run put two of three in the same tier.
+
+    What the page actually relies on is claimed instead: **every tier's median is above
+    proportional**, and **pooled across all 240 rows an overwhelming share is** — which is
+    what "an overwhelming share of rows, not every row" always meant. A per-tier floor stays,
+    loose enough that one row's tournament cannot flip it and tight enough that a tier going
+    bad still fails.
+
+    The three sub-proportional rows are not the near-the-null noise the old docstring
+    described: two sit at `88k_alley_oop`, the one-entry 216-survivor structure where
+    survival and payout necessarily move together, at lifts of +0.22 and +0.25.
     """
     out = strategy.payout_elasticity(_artifact(strategy.SWEEP_FILE))
     assert (out["median_elasticity"] > 1.0).all()
-    assert (out["share_above_proportional"] >= 0.97).all()
+
+    pooled = float((out["share_above_proportional"] * out["n_rows"]).sum()
+                   / out["n_rows"].sum())
+    assert pooled >= 0.97, f"pooled share above proportional fell to {pooled:.4f}"
+    assert (out["share_above_proportional"] >= 0.90).all()
 
 
 def test_the_contest_summary_chains_the_advance_rates_into_a_final_reach():
@@ -928,14 +947,17 @@ def test_arms_are_ordered_by_their_mean_lift_across_seasons_not_by_the_first_row
 def test_the_two_tiers_get_their_own_arm_ordering():
     """Each tier's panel must be computed from that tier's own rows, not a fixed order.
 
-    ⚠️ **Re-pointed 2026-08-14.** This used to assert the two tiers' `α` ORDERINGS differ,
-    on the docstring "they do" — true of the chain as it stood, and false after the
-    2026-08-14 re-run, where both tiers rank α 50 > 70 > 30 > 85 > 15. That agreement is a
-    property of the data rather than a bug, and it points the same way as Gate D's 0-of-6:
-    the tiers are not selecting differently. So the test now pins what it was always trying
-    to prove — that the panel is *derived per tier* — against the arm VALUES, which still
-    differ (max |Δlift| 0.047, and 20k_spin_move is uniformly higher). Asserting the
-    orderings match instead would pin today's coincidence the other way round.
+    ⚠️ **Re-pointed twice now, and the second time is the lesson.** It first asserted the two
+    tiers' `α` ORDERINGS *differ*; the 2026-08-14 re-run made them agree, so it was flipped to
+    assert they *match*; the 2026-08-16 graded-σ re-run made them differ again (`blend_a30`
+    and `blend_a50` swap at the top, on mean lifts of 0.1754/0.1710 against 0.1908/0.1927 —
+    the top two are near-tied on both tiers, so the order is a coin flip either way).
+
+    **An ordering was never the property this test is about.** Both flips pinned a
+    coincidence, in opposite directions, while the docstring claimed to be testing that the
+    panel is *derived per tier*. So it now asserts exactly that and nothing else: the same
+    arm SET reaches both tiers (they sweep one ladder), and the derived VALUES differ (the
+    cut is per tier). Both survive whichever way the near-tie falls.
     """
     sweep = _artifact(strategy.SWEEP_FILE)
     lifts = {}
@@ -945,7 +967,8 @@ def test_the_two_tiers_get_their_own_arm_ordering():
         lifts[tier] = (panel[panel["strategy"].isin(arms)]
                        .groupby("strategy")["lift_vs_null"].mean().reindex(arms))
     a, b = (lifts[t] for t in strategy.TARGET_TIERS)
-    assert list(a.index) == list(b.index), "the same arms should appear on both tiers"
+    assert set(a.index) == set(b.index), "the same arms should appear on both tiers"
+    b = b.reindex(a.index)
     assert not np.allclose(a.to_numpy(), b.to_numpy()), (
         "both tiers produced identical lifts — the panel is not being cut per tier")
 
@@ -3721,7 +3744,7 @@ def _calendar() -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def _calibrated() -> dict[str, pd.DataFrame]:
-    """The four artifacts, at three windows, with the components' kinds carried."""
+    """The five artifacts, at three windows, with the components' kinds carried."""
     counts = ["fga", "reb"]
     conversions = ["fg3a|fga", "fg3m|fg3a"]
     kinds = {**{c: "count" for c in counts}, **{c: "conversion" for c in conversions}}
@@ -3757,8 +3780,16 @@ def _calibrated() -> dict[str, pd.DataFrame]:
         dispersion.append({"metric": "game_level_rho", "fit_window": window,
                            "rho": 0.078, "implied_overdispersion": 4.65 + 0.03 * shift,
                            "n_player_games": 700000.0, "note": ""})
+    # The injected sigma's home, carrying the one row the page reads. Graded, because the
+    # shared case is the one that would pass a broken parser by accident.
+    unification = pd.DataFrame([
+        {"arm": "composition_sum", "unit": "season_total", "sigma": float("nan"),
+         "sigma_by_role": ""},
+        {"arm": "shipped_configuration", "unit": "ps_effect_shipped", "sigma": 0.375,
+         "sigma_by_role": "0.6|0.375|0.375|0.3"}])
     return {"residual": pd.DataFrame(residual), "serial": pd.DataFrame(serial),
-            "bonus": pd.DataFrame(bonus), "dispersion": pd.DataFrame(dispersion)}
+            "bonus": pd.DataFrame(bonus), "dispersion": pd.DataFrame(dispersion),
+            "unification": unification}
 
 
 # ── Block 1 · what point-in-time safety costs ─────────────────────────────────
@@ -3955,12 +3986,73 @@ def test_every_calibrated_input_reads_at_every_window_and_moves_almost_not_at_al
     number consumed at the wrong one would never announce itself in the output."""
     frames = _calibrated()
     panel = inputs.window_panel(frames)
-    assert len(panel) == len(inputs.CALIBRATED) * len(inputs.FIT_WINDOWS)
+    # `WINDOWED`, not `CALIBRATED`: the injected sigma is a config constant with no
+    # per-window reading, and it is left out of this panel deliberately.
+    assert len(panel) == len(inputs.WINDOWED) * len(inputs.FIT_WINDOWS)
+    assert "player_season_sigma" not in set(panel["key"])
     assert set(panel["fit_window"]) == set(inputs.FIT_WINDOWS)
     assert panel["value"].notna().all()
     assert (panel["relative_spread"] < 0.10).all()
     label, spread = inputs.widest_relative_spread(panel)
     assert label in set(panel["label"]) and 0.0 <= spread < 0.10
+
+
+def test_every_calibrated_number_declares_whether_the_draw_reads_it():
+    """The correction this block exists for since 2026-08-16.
+
+    The page said "the four calibrated simulator inputs" and the phrase was wrong three
+    ways: two of the four are diagnostics the draw never reads, and the injected
+    per-(player, season) sigma — read on every minutes draw the simulator makes — was not
+    listed at all. A row with no `role` would put it back in the undifferentiated list.
+    """
+    assert {c.role for c in inputs.CALIBRATED} == {inputs.CONSUMED, inputs.DIAGNOSTIC}
+    consumed = {c.key for c in inputs.CALIBRATED if c.role == inputs.CONSUMED}
+    diagnostic = {c.key for c in inputs.CALIBRATED if c.role == inputs.DIAGNOSTIC}
+    assert consumed == {"copula", "bonus_overdispersion", "player_season_sigma"}
+    assert diagnostic == {"block_inflation", "minutes_dispersion"}
+    # Every row says where it enters or what checks it — "consumed" is only meaningful if
+    # the seam is nameable.
+    assert all(c.where.strip() for c in inputs.CALIBRATED)
+
+
+def test_the_two_role_groups_partition_the_table_with_nothing_dropped():
+    """The page renders two groups from one table, so a row that fell out of both would be
+    invisible on screen rather than obviously missing."""
+    table = inputs.calibrated_table(_calibrated(), inputs.SIM_WINDOW)
+    consumed = inputs.by_role(table, inputs.CONSUMED)
+    diagnostic = inputs.by_role(table, inputs.DIAGNOSTIC)
+    assert len(consumed) + len(diagnostic) == len(table) == len(inputs.CALIBRATED)
+    assert set(consumed["key"]) | set(diagnostic["key"]) == set(table["key"])
+    assert not (set(consumed["key"]) & set(diagnostic["key"]))
+
+
+def test_the_injected_sigma_is_read_from_the_artifact_and_shown_as_its_vector():
+    """`dashboard/` may not import `src/`, so config is unreadable here and the artifact's
+    `shipped_configuration` row is the only honest source. A graded sigma must render as its
+    vector: a mean over four role buckets is a value nothing selected."""
+    frames = _calibrated()
+    shared, graded = inputs.injected_sigma(frames["unification"])
+    assert shared == 0.375
+    assert graded == [0.6, 0.375, 0.375, 0.3]
+
+    row = inputs.calibrated_table(frames, inputs.SIM_WINDOW).set_index("key").loc[
+        "player_season_sigma"]
+    assert row["text"] == "0.600 / 0.375 / 0.375 / 0.300"
+    assert row["fit_window"] == "", "the sigma is not measured per window"
+
+
+def test_a_shared_injected_sigma_reports_no_vector_at_all():
+    """Empty rather than four copies of one number, so "not graded" is distinguishable from
+    "a grading that happens to be flat" — and so deleting the config key is visible here."""
+    unification = pd.DataFrame([{"arm": "shipped_configuration",
+                                 "unit": "ps_effect_shipped", "sigma": 0.375,
+                                 "sigma_by_role": ""}])
+    shared, graded = inputs.injected_sigma(unification)
+    assert shared == 0.375 and graded == []
+    frames = {**_calibrated(), "unification": unification}
+    row = inputs.calibrated_table(frames, inputs.SIM_WINDOW).set_index("key").loc[
+        "player_season_sigma"]
+    assert row["text"] == "0.375"
 
 
 def test_the_two_windows_the_page_names_are_the_two_the_code_actually_uses():
@@ -3989,7 +4081,7 @@ def test_the_window_facets_reshape_into_the_builder_the_minutes_page_already_has
     assert facets["reference"].isna().all()          # none of these has a target value
     fig = charts.fig_metric_facets(facets, theme.theme("light"), inputs.WINDOW_SLOTS,
                                    columns=2)
-    assert len(fig.data) == len(inputs.CALIBRATED)
+    assert len(fig.data) == len(inputs.WINDOWED)
     for trace in fig.data:
         assert len(set(trace.marker.color)) == 2     # the simulator's window, and gray
 

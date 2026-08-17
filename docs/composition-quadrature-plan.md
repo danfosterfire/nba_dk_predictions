@@ -29,6 +29,16 @@ sampler**, and the honest read of §8 is that the marginal representation makes 
 draw time. Hours rather than days, no sampler, and it targets the same measured defect (a
 constant logit-scale σ leaves fringe 1.73× underdispersed and stars 0.85× over).
 
+✅ **Built, measured and shipped the same day (2026-08-16), in 13.3 minutes of numpy.** It
+ships `[0.600, 0.375, 0.375, 0.300]` — a **2.00×** spread against §8's fitted **2.09×**, with
+both **ends** inside one grid step of the fitted values (0.60898 fringe, 0.29075 star). Two
+instruments sharing no arithmetic, at the same size and direction. The middle two buckets
+come out lower than the fit, which is what a CRPS objective does against a variance-matching
+one. **That corroborates the parking**: the gradient this line discovered was worth having
+and did not need the sampler to deliver it, so what a fitted `sigma_u` still uniquely buys is
+narrower than it looked — σ estimated jointly with `beta`, and a predictive that integrates
+over σ's posterior instead of plugging one in.
+
 **Two things from this session carry into that work and are the reason it is now cheaper than
 when it was written:**
 

@@ -51,9 +51,10 @@ The docs are:
   - docs-audit.md: How the two documentation guards work — `make docs-audit` (a gate) 
   and `make dashboard-audit` (a report). Read this before editing a quoted figure or 
   adding a doc to the audit.
-  - draw-time-calibration-plan.md: Workplan for grading the composition's injected 
-  minutes σ by role at simulation time. **The next scheduled line of work; nothing in 
-  it is built yet.** Read before touching the injection constant.
+  - draw-time-calibration-plan.md: Grading the composition's injected minutes σ by role at 
+  simulation time — the search, the ship rule, and the per-role calibration readout. 
+  **Built, measured and shipped 2026-08-16.** Read before touching either injection key or 
+  before quoting a per-role calibration figure.
   - eda-plan.md: Plan and notes for exploratory data analysis and feature 
   reduction. Work completed and mostly archival at this point.
   - entry-collection-plan.md: Runbook for the first real DK entries — 20 ADP-null 
