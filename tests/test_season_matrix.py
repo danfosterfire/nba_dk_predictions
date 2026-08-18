@@ -1,4 +1,5 @@
 import pandas as pd
+from src.data.fetch import nbastats_dir
 from src.eda.season_matrix import (
     _is_rate,
     _read_shot_locations,
@@ -32,7 +33,8 @@ def _base_csv(raw_dir, season: str, players: list[dict]) -> None:
             "NBA_FANTASY_PTS": 33.0, "DD2": 5, "TD3": 0, "WNBA_FANTASY_PTS": 33.0,
             "TEAM_COUNT": 1, "GP_RANK": i + 1, "MIN_RANK": i + 1,
         })
-    pd.DataFrame(rows).to_csv(raw_dir / f"player_stats_base_{_slugged(season)}.csv", index=False)
+    pd.DataFrame(rows).to_csv(
+        nbastats_dir(raw_dir) / f"player_stats_base_{_slugged(season)}.csv", index=False)
 
 
 def _game_logs_csv(raw_dir, season: str, players: list[dict]) -> None:
@@ -45,7 +47,8 @@ def _game_logs_csv(raw_dir, season: str, players: list[dict]) -> None:
                 "PTS": p.get("pts", 20.0), "REB": p.get("reb", 5.0), "AST": p.get("ast", 4.0),
                 "STL": 1.0, "BLK": 0.0, "TOV": 2.0, "FG3M": 2.0,
             })
-    pd.DataFrame(rows).to_csv(raw_dir / f"game_logs_{_slugged(season)}.csv", index=False)
+    pd.DataFrame(rows).to_csv(
+        nbastats_dir(raw_dir) / f"game_logs_{_slugged(season)}.csv", index=False)
 
 
 def _tracking_csv(raw_dir, season: str, players: list[dict]) -> None:
@@ -55,12 +58,13 @@ def _tracking_csv(raw_dir, season: str, players: list[dict]) -> None:
         "TEAM_ABBREVIATION": "LAL", "GP": p["gp"], "W": 40, "L": 20, "MIN": p["min"],
         "DRIVES": 10.0, "DRIVE_FGM": 3.0, "DRIVE_FGA": 6.0, "DRIVE_FG_PCT": 0.5,
     } for p in players]
-    pd.DataFrame(rows).to_csv(raw_dir / f"player_tracking_drives_{_slugged(season)}.csv", index=False)
+    pd.DataFrame(rows).to_csv(
+        nbastats_dir(raw_dir) / f"player_tracking_drives_{_slugged(season)}.csv", index=False)
 
 
 def _make_raw(tmp_path, seasons: list[str], players: list[dict], tracking_from: int = 2013):
     raw = tmp_path / "raw"
-    raw.mkdir()
+    nbastats_dir(raw).mkdir(parents=True)
     for s in seasons:
         _base_csv(raw, s, players)
         _game_logs_csv(raw, s, players)
@@ -157,7 +161,7 @@ def test_shot_locations_multiindex_flattening(tmp_path):
 
 def test_shot_location_columns_land_lowercased_and_prefixed(tmp_path):
     raw = _make_raw(tmp_path, ["2023-24"], PLAYERS)
-    (raw / "player_shot_locations_2023_24.csv").write_text(
+    (nbastats_dir(raw) / "player_shot_locations_2023_24.csv").write_text(
         ",,Restricted Area\nPLAYER_ID,PLAYER_NAME,FGA\n101,Qualified Starter,6.0\n"
     )
     matrix, _ = build_tier("A", ["2023-24"], raw)
@@ -243,7 +247,7 @@ def test_all_stat_columns_are_float_not_object(tmp_path):
          "MIN": 2.4, "PTS": 3.0, "FG_PCT": 0.5},
         {"PLAYER_ID": 102, "PLAYER_NAME": "Qualified Rotation", "GROUP_SET": "Overall",
          "MIN": 0.0, "PTS": 0.0, "FG_PCT": 0.0},
-    ]).to_csv(raw / "player_clutch_2023_24.csv", index=False)
+    ]).to_csv(nbastats_dir(raw) / "player_clutch_2023_24.csv", index=False)
 
     matrix, _ = build_tier("A", ["2023-24"], raw)
     assert matrix["clu_pts"].dtype == float
@@ -273,7 +277,7 @@ def test_backfilled_per_mode_from_manifest_is_applied(tmp_path):
         "PLAYER_ID": 101, "PLAYER_NAME": "Qualified Starter", "TEAM_ID": 1, "NICKNAME": "Q",
         "TEAM_ABBREVIATION": "LAL", "AGE": 27.0, "GP": gp, "W": 40, "L": 20, "W_PCT": 0.667,
         "MIN": min_pg * gp, "DEF_RATING": 110.0, "STL": stl_pg * gp, "DEF_WS": 0.07 * gp,
-    }]).to_csv(raw / "player_stats_defense_2023_24.csv", index=False)
+    }]).to_csv(nbastats_dir(raw) / "player_stats_defense_2023_24.csv", index=False)
     pd.DataFrame([{"family": "player_stats_defense", "season": "2023-24",
                    "per_mode": "Totals", "rows": 1}]).to_csv(raw / "_fetch_manifest.csv", index=False)
 

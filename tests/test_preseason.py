@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.data.fetch import _season_type_slug, _slug
+from src.data.fetch import _season_type_slug, _slug, nbastats_dir
 from src.data.preprocess import (
     ALL_SEASON_TYPES,
     PLAYOFFS,
@@ -44,8 +44,10 @@ def _row(player_id: int, team_id: int, game: int, day: int, minutes: float,
 
 
 def _write(tmp_path, rows: list[dict], season: str = SEASON) -> None:
+    dest = nbastats_dir(tmp_path)
+    dest.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(rows).to_csv(
-        tmp_path / f"game_logs_pre_season_{_slug(season)}.csv", index=False)
+        dest / f"game_logs_pre_season_{_slug(season)}.csv", index=False)
 
 
 def _four_game_preseason() -> list[dict]:
@@ -80,7 +82,8 @@ def test_load_raw_all_excludes_preseason(tmp_path):
     """`all` means every type that can be a TARGET ROW. `src/features/game_length.py`
     reads it, and would otherwise absorb ~70 exhibition games a season."""
     reg = pd.DataFrame([_row(1, HOME, 0, 20, 30.0)])
-    reg.to_csv(tmp_path / f"game_logs_{_slug(SEASON)}.csv", index=False)
+    nbastats_dir(tmp_path).mkdir(parents=True, exist_ok=True)
+    reg.to_csv(nbastats_dir(tmp_path) / f"game_logs_{_slug(SEASON)}.csv", index=False)
     _write(tmp_path, [_row(9, HOME, 0, 4, 30.0)])
 
     for season_type in (REGULAR_SEASON, ALL_SEASON_TYPES):

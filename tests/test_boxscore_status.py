@@ -1,4 +1,5 @@
 import pandas as pd
+from src.data.fetch import nbastats_dir
 
 from src.eda.availability import decomposition
 from src.data.boxscore_status import (
@@ -50,7 +51,9 @@ def _status_rows(team_id: int, player_id: int,
 def _write_log(tmp_path, rows: list[dict]):
     df = pd.DataFrame(rows)
     df["GAME_DATE"] = pd.to_datetime(df["GAME_DATE"])
-    df.to_csv(tmp_path / f"game_logs_{SEASON.replace('-', '_')}.csv", index=False)
+    dest = nbastats_dir(tmp_path)
+    dest.mkdir(parents=True, exist_ok=True)
+    df.to_csv(dest / f"game_logs_{SEASON.replace('-', '_')}.csv", index=False)
 
 
 # ── The comment vocabulary ────────────────────────────────────────────────────
@@ -185,7 +188,8 @@ def test_season_availability_carries_the_decomposition_and_its_coverage(tmp_path
 def test_load_status_dedupes_a_doubly_appended_chunk(tmp_path):
     """A hard kill can leave a flush appended twice; a player has one status per game."""
     status = _status_rows(1, 7, {0: ("played", ""), 1: ("inactive", "")})
-    dest = tmp_path / "boxscore_status_2021_22.csv"
+    nbastats_dir(tmp_path).mkdir(parents=True, exist_ok=True)
+    dest = nbastats_dir(tmp_path) / "boxscore_status_2021_22.csv"
     pd.concat([status, status], ignore_index=True).to_csv(dest, index=False)
     assert len(load_status(SEASON, tmp_path)) == 2
 
@@ -194,7 +198,7 @@ def test_season_game_ids_reads_regular_season_and_playoffs(tmp_path):
     _write_log(tmp_path, _team_season(1, 3))
     playoffs = pd.DataFrame(_team_season(1, 2))
     playoffs["GAME_ID"] = [40000001, 40000002]
-    playoffs.to_csv(tmp_path / "game_logs_playoffs_2021_22.csv", index=False)
+    playoffs.to_csv(nbastats_dir(tmp_path) / "game_logs_playoffs_2021_22.csv", index=False)
     ids = season_game_ids(SEASON, tmp_path)
     assert "0040000001" in ids and "0000001000" in ids
     assert len(ids) == 5

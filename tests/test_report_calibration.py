@@ -1,4 +1,5 @@
 import pandas as pd
+from src.data.fetch import nbastats_dir
 
 from src.eda.report_calibration import (
     DESIGNATIONS,
@@ -30,12 +31,14 @@ def _log(rows: list[dict]) -> pd.DataFrame:
 
 
 def _write_game_log(tmp_path, rows: list[dict]):
-    from src.data.fetch import _slug
+    from src.data.fetch import _slug, nbastats_dir
     base = {"PLAYER_ID": 1, "PLAYER_NAME": "Anchor Man", "TEAM_ID": 1610612749,
             "TEAM_NAME": "Milwaukee Bucks", "TEAM_ABBREVIATION": "MIL",
             "GAME_ID": "0022500001", "GAME_DATE": "2026-01-10T00:00:00"}
     frame = pd.DataFrame([{**base, **r} for r in rows])
-    frame.to_csv(tmp_path / f"game_logs_{_slug(SEASON)}.csv", index=False)
+    dest = nbastats_dir(tmp_path)
+    dest.mkdir(parents=True, exist_ok=True)
+    frame.to_csv(dest / f"game_logs_{_slug(SEASON)}.csv", index=False)
 
 
 def _write_status(tmp_path, rows: list[dict]):
@@ -43,7 +46,9 @@ def _write_status(tmp_path, rows: list[dict]):
             "player_id": 1, "player_name": "Anchor Man", "status": "played",
             "comment": "", "reason": "", "start_position": "", "min": "30:00"}
     frame = pd.DataFrame([{**base, **r} for r in rows])
-    frame.to_csv(tmp_path / f"boxscore_status_{SEASON.replace('-', '_')}.csv", index=False)
+    dest = nbastats_dir(tmp_path)
+    dest.mkdir(parents=True, exist_ok=True)
+    frame.to_csv(dest / f"boxscore_status_{SEASON.replace('-', '_')}.csv", index=False)
 
 
 def _joined(tmp_path, log_rows, status_rows, game_rows=None):

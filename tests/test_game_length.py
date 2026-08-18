@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from src.data.fetch import nbastats_dir
 
 from src.features.game_length import (
     LENGTH_GRID,
@@ -137,10 +138,12 @@ def test_game_length_covers_both_season_types(tmp_path):
     """Unlike the fitting frames, this one wants playoff games: length is a property of
     the game, and `prior_playoff_minutes` needs a denominator."""
     cols = ["GAME_ID", "TEAM_ID", "MIN"]
+    dest = nbastats_dir(tmp_path)
+    dest.mkdir(parents=True, exist_ok=True)
     pd.DataFrame([{"GAME_ID": "g1", "TEAM_ID": 1, "MIN": 24.0}])[cols].to_csv(
-        tmp_path / "game_logs_2021_22.csv", index=False)
+        dest / "game_logs_2021_22.csv", index=False)
     pd.DataFrame([{"GAME_ID": "p1", "TEAM_ID": 1, "MIN": 24.0}])[cols].to_csv(
-        tmp_path / "game_logs_playoffs_2021_22.csv", index=False)
+        dest / "game_logs_playoffs_2021_22.csv", index=False)
 
     logs = load_game_logs(tmp_path)
     assert set(logs["season"]) == {"2021-22"}

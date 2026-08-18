@@ -18,6 +18,7 @@ export PYTHONUNBUFFERED = 1
         opponent persistence aging target-profile feature-diagnostics dashboard \
         dashboard-audit dashboard-config docs-audit \
         availability availability-profile injury-reports injuries daily-capture \
+        draft-boards draft-boards-tile draft-boards-status \
         boxscore-status availability-model availability-window \
         availability-weighting availability-regime availability-exchangeability \
         availability-no-prior availability-absence availability-preseason \
@@ -117,6 +118,20 @@ adp-status:
 	$(PYTHON) -m src.data.adp_draftkings --status
 	@echo
 	$(PYTHON) -m src.data.adp_fantasypros --status
+
+# Draft-board screenshots -> the validated 12-entrant pick log
+# (docs/draft-board-ingestion-plan.md). `draft-boards` validates every transcription
+# against its manifest-recorded ranking file and writes data/features/draft_pick_log.parquet,
+# failing loudly on any unresolved cell. `draft-boards-tile` writes the read-protocol crops
+# for boards not yet transcribed.
+draft-boards:
+	$(PYTHON) -m src.data.draft_boards
+
+draft-boards-tile:
+	$(PYTHON) -m src.data.draft_boards --tile
+
+draft-boards-status:
+	$(PYTHON) -m src.data.draft_boards --status
 
 features:
 	$(PYTHON) -m src.features.encode
@@ -628,7 +643,7 @@ composition-preseason-fit:
 # from 2017-18 on, and older seasons get a derivation that reproduces it exactly on all
 # nine seasons that publish one. Owns three edge cases once — a postponed game scores in
 # the period it is PLAYED in, the NBA Cup final scores nowhere, and the all-star gap
-# breaks week adjacency without moving a Monday. Schedules cache to data/raw, so a
+# breaks week adjacency without moving a Monday. Schedules cache to data/raw/nbastats, so a
 # rebuild does not need the endpoint; `REFRESH=1` re-pulls them.
 scoring-periods:
 	$(PYTHON) -m src.features.scoring_periods $(if $(REFRESH),--refresh,)

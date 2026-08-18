@@ -5,6 +5,8 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
+from src.data.fetch import nbastats_dir
+
 
 KEEP_COLS = [
     "PLAYER_ID",
@@ -184,9 +186,9 @@ def load_raw(raw_dir: str | Path, season_type: str = REGULAR_SEASON,
 
     wanted = ({REGULAR_SEASON, PLAYOFFS} if season_type == ALL_SEASON_TYPES
               else {season_type})
-    raw_dir = Path(raw_dir)
+    logs_dir = nbastats_dir(raw_dir)
     frames = []
-    for f in sorted(raw_dir.glob("game_logs_*.csv")):
+    for f in sorted(logs_dir.glob("game_logs_*.csv")):
         kind, season = _parse_log_filename(f.stem)
         if kind not in wanted:
             continue
@@ -196,7 +198,7 @@ def load_raw(raw_dir: str | Path, season_type: str = REGULAR_SEASON,
         frames.append(df)
     if not frames:
         raise FileNotFoundError(
-            f"No {season_type} game log CSVs found in {raw_dir}")
+            f"No {season_type} game log CSVs found in {logs_dir}")
     return pd.concat(frames, ignore_index=True)
 
 

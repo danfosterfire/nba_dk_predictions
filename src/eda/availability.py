@@ -56,7 +56,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from src.data.fetch import _slug
+from src.data.fetch import _slug, nbastats_dir
 from src.eda.feature_diagnostics import above_null
 from src.eda.persistence import demean_within, pair_weights, weighted_corr
 from src.data.preprocess import PLAYOFFS
@@ -131,7 +131,7 @@ def load_ages(seasons: list[str], raw_dir: str | Path) -> pd.DataFrame:
     """Player age per season, off the bio family. 100% coverage in practice."""
     frames = []
     for season in seasons:
-        path = Path(raw_dir) / f"player_bio_stats_{_slug(season)}.csv"
+        path = nbastats_dir(raw_dir) / f"player_bio_stats_{_slug(season)}.csv"
         if not path.exists():
             continue
         df = pd.read_csv(path, low_memory=False)

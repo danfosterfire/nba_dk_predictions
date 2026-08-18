@@ -65,11 +65,13 @@ def _games(n_players: int = 60, seed: int = 0) -> pd.DataFrame:
 def _write_bios(tmp_path, n_players: int = 60):
     """`load_ages` reads `player_bio_stats_<slug>.csv`; without it every row's age is NaN
     and `build_design` drops the entire design."""
-    from src.data.fetch import _slug
+    from src.data.fetch import _slug, nbastats_dir
+    dest = nbastats_dir(tmp_path)
+    dest.mkdir(parents=True, exist_ok=True)
     for season in SEASONS:
         pd.DataFrame({"PLAYER_ID": range(n_players),
                       "AGE": [22 + (i % 14) for i in range(n_players)]}).to_csv(
-            tmp_path / f"player_bio_stats_{_slug(season)}.csv", index=False)
+            dest / f"player_bio_stats_{_slug(season)}.csv", index=False)
     return tmp_path
 
 

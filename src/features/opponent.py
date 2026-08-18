@@ -41,7 +41,7 @@ import pandas as pd
 import yaml
 from sklearn.decomposition import PCA
 
-from src.data.fetch import _slug
+from src.data.fetch import _slug, nbastats_dir
 from src.data.preprocess import compute_dk_pts
 from src.features.targets import COMPONENTS, DK_WEIGHTS
 
@@ -82,7 +82,7 @@ def _is_team_rate(col: str) -> bool:
 
 def read_team_family(family: str, season: str, raw_dir: str | Path) -> pd.DataFrame | None:
     """One team family for one season, keyed on TEAM_ID with the kept columns only."""
-    path = Path(raw_dir) / f"{family}_{_slug(season)}.csv"
+    path = nbastats_dir(raw_dir) / f"{family}_{_slug(season)}.csv"
     if not path.exists():
         return None
     df = pd.read_csv(path)
@@ -225,7 +225,7 @@ def load_player_games(seasons: list[str], raw_dir: str | Path) -> pd.DataFrame:
     """Player-game rows with opponent, home flag, dk_pts and per-36 component rates."""
     frames = []
     for season in seasons:
-        path = Path(raw_dir) / f"game_logs_{_slug(season)}.csv"
+        path = nbastats_dir(raw_dir) / f"game_logs_{_slug(season)}.csv"
         if not path.exists():
             continue
         gl = pd.read_csv(path, usecols=lambda c: c in GAME_LOG_COLS)

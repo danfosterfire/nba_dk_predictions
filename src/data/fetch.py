@@ -1,4 +1,4 @@
-"""Pull all available player and team data from nba_api and persist to data/raw/."""
+"""Pull all available player and team data from nba_api and persist to data/raw/nbastats/."""
 
 import time
 from pathlib import Path
@@ -54,6 +54,25 @@ PLAYER_STAT_PER_MODES = ["PerGame", "Totals", "Per100Possessions", "PerMinute"]
 # Records which per_mode each player_stats file was actually fetched with, so
 # downstream loaders can normalize counting stats to a common basis.
 MANIFEST_NAME = "_fetch_manifest.csv"
+
+# The nba_api dump lives in its own subdirectory of `raw_dir`. Its siblings in the parent
+# are the four capture archives that are NOT backfillable — injury_reports/, injuries/,
+# adp/, dk_draft_rankings/ — plus the hand-placed tournament CSVs, and keeping the ~790
+# fetched season files out of that directory is what makes the parent legible.
+#
+# EVERY path to a fetched season CSV goes through `nbastats_dir`, and this constant is the
+# only place the subdirectory is named. Functions still take `raw_dir` — the parent — and
+# join it themselves, so `cfg["data"]["raw_dir"]` keeps meaning `data/raw` everywhere and
+# a module that reads both (boxscore_status, season_matrix, report_calibration) needs one
+# argument rather than two. The two manifests are deliberately NOT under it: they are
+# metadata about the fetch, they sit beside the other archives on disk, and `_record_fetch`
+# and `boxscore_status._append_manifest` write them to the parent.
+NBASTATS_SUBDIR = "nbastats"
+
+
+def nbastats_dir(raw_dir: str | Path) -> Path:
+    """The subdirectory of `raw_dir` holding the per-season nba_api CSVs."""
+    return Path(raw_dir) / NBASTATS_SUBDIR
 
 # Earliest start-year for endpoints that weren't always available.
 # Seasons before these years are skipped rather than attempted and errored.
@@ -176,7 +195,7 @@ def fetch_season_game_logs(season: str, output_dir: str | Path = "data/raw",
     """
     output_dir = Path(output_dir)
     suffix = "" if season_type == "Regular Season" else f"_{_season_type_slug(season_type)}"
-    dest = output_dir / f"game_logs{suffix}_{_slug(season)}.csv"
+    dest = nbastats_dir(output_dir) / f"game_logs{suffix}_{_slug(season)}.csv"
     if _skip_or_fetch(dest, f"game_logs/{season_type} {season}"):
         return dest
     df = playergamelogs.PlayerGameLogs(
@@ -197,11 +216,11 @@ def fetch_team_rosters(season: str, output_dir: str | Path = "data/raw",
     actually played that year, and everything stays keyed on `team_id`.
     """
     output_dir = Path(output_dir)
-    dest = output_dir / f"team_rosters_{_slug(season)}.csv"
+    dest = nbastats_dir(output_dir) / f"team_rosters_{_slug(season)}.csv"
     if _skip_or_fetch(dest, f"team_rosters {season}"):
         return dest
 
-    log_path = output_dir / f"game_logs_{_slug(season)}.csv"
+    log_path = nbastats_dir(output_dir) / f"game_logs_{_slug(season)}.csv"
     if not log_path.exists():
         print(f"  Skipping team_rosters for {season} (no game log to read teams from)")
         return dest
@@ -217,7 +236,7 @@ def fetch_team_rosters(season: str, output_dir: str | Path = "data/raw",
             print(f"  ERROR fetching roster for team {team_id} in {season}: {exc}")
             continue
         # The endpoint's own SEASON is the start year ("2023"); overwrite it with the
-        # project's season key so this file joins to everything else in data/raw.
+        # project's season key so this file joins to everything else in the nba_api dump.
         df["SEASON"] = season
         frames.append(df)
         if i < len(team_ids) - 1:
@@ -240,7 +259,7 @@ def fetch_player_stats(season: str, output_dir: Path, measure_type: str = "Base"
     """
     slug = measure_type.lower().replace(" ", "_")
     family = f"player_stats_{slug}"
-    dest = output_dir / f"{family}_{_slug(season)}.csv"
+    dest = nbastats_dir(output_dir) / f"{family}_{_slug(season)}.csv"
     if _skip_or_fetch(dest, f"player_stats/{measure_type} {season}"):
         return dest
 
@@ -266,7 +285,7 @@ def fetch_player_stats(season: str, output_dir: Path, measure_type: str = "Base"
 
 def fetch_player_bio_stats(season: str, output_dir: Path) -> Path:
     """LeagueDashPlayerBioStats — age, height, weight, experience, draft info."""
-    dest = output_dir / f"player_bio_stats_{_slug(season)}.csv"
+    dest = nbastats_dir(output_dir) / f"player_bio_stats_{_slug(season)}.csv"
     if _skip_or_fetch(dest, f"player_bio_stats {season}"):
         return dest
     df = leaguedashplayerbiostats.LeagueDashPlayerBioStats(
@@ -279,7 +298,7 @@ def fetch_player_bio_stats(season: str, output_dir: Path) -> Path:
 
 def fetch_player_shot_locations(season: str, output_dir: Path) -> Path:
     """LeagueDashPlayerShotLocations — FGA/FGM by zone (RA, paint, mid-range, corners, above break)."""
-    dest = output_dir / f"player_shot_locations_{_slug(season)}.csv"
+    dest = nbastats_dir(output_dir) / f"player_shot_locations_{_slug(season)}.csv"
     # This family alone writes a two-row (MultiIndex) header.
     if _skip_or_fetch(dest, f"player_shot_locations {season}", header_rows=2):
         return dest
@@ -293,7 +312,7 @@ def fetch_player_shot_locations(season: str, output_dir: Path) -> Path:
 
 def fetch_player_pt_shot(season: str, output_dir: Path) -> Path:
     """LeagueDashPlayerPtShot — shot breakdown by type (dribble-off, catch-and-shoot, etc.)."""
-    dest = output_dir / f"player_pt_shot_{_slug(season)}.csv"
+    dest = nbastats_dir(output_dir) / f"player_pt_shot_{_slug(season)}.csv"
     if _skip_or_fetch(dest, f"player_pt_shot {season}"):
         return dest
     df = leaguedashplayerptshot.LeagueDashPlayerPtShot(
@@ -306,7 +325,7 @@ def fetch_player_pt_shot(season: str, output_dir: Path) -> Path:
 
 def fetch_player_clutch(season: str, output_dir: Path) -> Path:
     """LeagueDashPlayerClutch — stats in clutch situations (last 5 min, ≤5 pts)."""
-    dest = output_dir / f"player_clutch_{_slug(season)}.csv"
+    dest = nbastats_dir(output_dir) / f"player_clutch_{_slug(season)}.csv"
     if _skip_or_fetch(dest, f"player_clutch {season}"):
         return dest
     df = leaguedashplayerclutch.LeagueDashPlayerClutch(
@@ -319,7 +338,7 @@ def fetch_player_clutch(season: str, output_dir: Path) -> Path:
 
 def fetch_hustle_stats(season: str, output_dir: Path) -> Path:
     """LeagueHustleStatsPlayer — contested shots, deflections, charges drawn, loose balls."""
-    dest = output_dir / f"player_hustle_{_slug(season)}.csv"
+    dest = nbastats_dir(output_dir) / f"player_hustle_{_slug(season)}.csv"
     if _skip_or_fetch(dest, f"player_hustle {season}"):
         return dest
     df = leaguehustlestatsplayer.LeagueHustleStatsPlayer(
@@ -332,7 +351,7 @@ def fetch_hustle_stats(season: str, output_dir: Path) -> Path:
 
 def fetch_player_estimated_metrics(season: str, output_dir: Path) -> Path:
     """PlayerEstimatedMetrics — estimated plus/minus, off/def ratings (EPM-style)."""
-    dest = output_dir / f"player_estimated_metrics_{_slug(season)}.csv"
+    dest = nbastats_dir(output_dir) / f"player_estimated_metrics_{_slug(season)}.csv"
     if _skip_or_fetch(dest, f"player_estimated_metrics {season}"):
         return dest
     df = playerestimatedmetrics.PlayerEstimatedMetrics(
@@ -349,7 +368,7 @@ def fetch_pt_stats(season: str, output_dir: Path, pt_measure_type: str) -> Path:
                              Drives, Passing, ElbowTouch, PostTouch, PaintTouch
     """
     slug = pt_measure_type.lower()
-    dest = output_dir / f"player_tracking_{slug}_{_slug(season)}.csv"
+    dest = nbastats_dir(output_dir) / f"player_tracking_{slug}_{_slug(season)}.csv"
     if _skip_or_fetch(dest, f"player_tracking/{pt_measure_type} {season}"):
         return dest
     df = leaguedashptstats.LeagueDashPtStats(
@@ -370,7 +389,7 @@ def fetch_team_stats(season: str, output_dir: Path, measure_type: str = "Base") 
     measure_type options: Base, Advanced, Defense, Four Factors, Misc, Scoring, Opponent
     """
     slug = measure_type.lower().replace(" ", "_")
-    dest = output_dir / f"team_stats_{slug}_{_slug(season)}.csv"
+    dest = nbastats_dir(output_dir) / f"team_stats_{slug}_{_slug(season)}.csv"
     if _skip_or_fetch(dest, f"team_stats/{measure_type} {season}"):
         return dest
     df = leaguedashteamstats.LeagueDashTeamStats(
@@ -384,7 +403,7 @@ def fetch_team_stats(season: str, output_dir: Path, measure_type: str = "Base") 
 
 def fetch_team_estimated_metrics(season: str, output_dir: Path) -> Path:
     """TeamEstimatedMetrics — estimated pace, off/def ratings for each team."""
-    dest = output_dir / f"team_estimated_metrics_{_slug(season)}.csv"
+    dest = nbastats_dir(output_dir) / f"team_estimated_metrics_{_slug(season)}.csv"
     if _skip_or_fetch(dest, f"team_estimated_metrics {season}"):
         return dest
     df = teamestimatedmetrics.TeamEstimatedMetrics(
@@ -400,6 +419,7 @@ def fetch_all_for_season(season: str, output_dir: str | Path = "data/raw", delay
     """Fetch every supported data type for one season, respecting rate limits."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    nbastats_dir(output_dir).mkdir(parents=True, exist_ok=True)
 
     year = _season_start_year(season)
     tasks: list[tuple[str, callable]] = []

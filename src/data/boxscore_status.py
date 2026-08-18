@@ -62,7 +62,7 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
-from src.data.fetch import _season_start_year, _slug
+from src.data.fetch import _season_start_year, _slug, nbastats_dir
 
 DELAY = 0.6
 FLUSH_EVERY = 25
@@ -125,7 +125,7 @@ def season_game_ids(season: str, raw_dir: str | Path) -> list[str]:
     ids: set[str] = set()
     for name in (f"game_logs_{_slug(season)}.csv",
                  f"game_logs_playoffs_{_slug(season)}.csv"):
-        path = raw_dir / name
+        path = nbastats_dir(raw_dir) / name
         if not path.exists():
             continue
         col = pd.read_csv(path, usecols=["GAME_ID"], low_memory=False)["GAME_ID"]
@@ -237,7 +237,7 @@ def fetch_game_status(game_id: str, season: str, use_v3: bool | None = None,
 # ── Artifacts ─────────────────────────────────────────────────────────────────
 
 def status_path(season: str, raw_dir: str | Path) -> Path:
-    return Path(raw_dir) / f"boxscore_status_{_slug(season)}.csv"
+    return nbastats_dir(raw_dir) / f"boxscore_status_{_slug(season)}.csv"
 
 
 def done_game_ids(season: str, raw_dir: str | Path) -> set[str]:

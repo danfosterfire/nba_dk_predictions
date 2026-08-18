@@ -133,7 +133,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from src.data.fetch import _season_start_year, _slug
+from src.data.fetch import _season_start_year, _slug, nbastats_dir
 from src.features.adp import assert_point_in_time, training_rows
 from src.features.team_context import season_start_roster
 
@@ -224,7 +224,7 @@ def load_rosters(seasons: list[str], raw_dir: str | Path) -> pd.DataFrame:
     """
     frames = []
     for season in seasons:
-        path = Path(raw_dir) / f"team_rosters_{_slug(season)}.csv"
+        path = nbastats_dir(raw_dir) / f"team_rosters_{_slug(season)}.csv"
         if not path.exists():
             continue
         df = pd.read_csv(path, usecols=lambda c: c in ROSTER_COLS)
@@ -762,7 +762,7 @@ def run(cfg: dict) -> Path:
     print("  position sources: "
           + ", ".join(f"{k[4:]} {int(v):,}" for k, v in mix.items() if v))
     fallback = int(mix.get("pos_dk_board_carry", 0) + mix.get("pos_dk_board", 0))
-    have_2026 = (Path(cfg["data"]["raw_dir"]) / "team_rosters_2026_27.csv").exists()
+    have_2026 = (nbastats_dir(cfg["data"]["raw_dir"]) / "team_rosters_2026_27.csv").exists()
     print(f"    {fallback:,} rows resolved from a DK board. `commonteamroster` has not "
           "been fetched for 2026-27" if not have_2026 else
           f"    {fallback:,} rows resolved from a DK board")

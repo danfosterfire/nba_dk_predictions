@@ -3,10 +3,14 @@
 **Opened 2026-08-16, decided the same day: 20 ADP-null autodrafts plus 5–10 live drafts on
 top, all at the $1 tier.** An operational runbook, not a results doc; not in
 `make docs-audit`. The working contest is the **$1 `15k_and_one`** (the stated likely tier —
-confirm against the actual 2026 contest lineup when the lobby opens). Budget $25–30. No
-entry has been made yet; when the first one is, the decision registry gets its entry and
-the `no tournaments entered` framing in docs and memory gets updated — that framing has
-drifted once before and was scrubbed on 2026-08-11.
+confirm against the actual 2026 contest lineup when the lobby opens). Budget $25–30.
+**The first entries are in — 2026-08-16 and 2026-08-17, two of the 20 ADP-null autodraft
+pods, both in the $1 `NBA Best Ball $15K And-One [150 Entry Max]`** — which confirms the
+assumed $1 tier exists in the 2026 lineup. The decision registry carries the entry and the
+`no tournaments entered` framing in docs and memory is updated accordingly (that framing
+had drifted once before and was scrubbed on 2026-08-11). Both pick logs are captured and
+validated — `docs/draft-board-ingestion-plan.md` is the capture workflow, which closes
+this plan's "capture pre-step".
 
 ## The design, and why
 
@@ -79,10 +83,11 @@ not model updates.
 
 ## Before the first entry — the capture pre-step
 
-Define the pick-log artifact before entering, not after: one row per pick — pod/contest id,
-entry timestamp, seat, pick number, drafter seat, player, and **which ranking our seat used
-(board version/date, auto vs live)** — landed under `data/raw/` beside the other capture
-programs. The DK draft room is login-gated with no archive, so whatever is not captured at
+✅ **Built 2026-08-17 — `docs/draft-board-ingestion-plan.md`.** The artifact is one row
+per pick — draft date, contest, seat, entrant, pick number, resolved player id, and **which
+ranking our seat used (`ranking_file` in the boards manifest, auto vs live)** — landed under
+`data/raw/adp_autodrafted_boards_<year>/` beside the other capture programs and pooled into
+`data/features/draft_pick_log.parquet` by `make draft-boards`. The DK draft room is login-gated with no archive, so whatever is not captured at
 draft time is gone; that is the same deadline logic the ADP capture already lives under.
 Provenance rule: a pod whose ranking version is unrecorded is uninterpretable — record it
 at entry time, per pod.

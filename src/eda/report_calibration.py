@@ -47,7 +47,7 @@ import pandas as pd
 import yaml
 
 from src.data.boxscore_status import load_status, pad_game_id
-from src.data.fetch import _slug
+from src.data.fetch import _slug, nbastats_dir
 from src.data.injury_reports import load_log
 
 # The five participation designations, ordered from least to most likely to play. The
@@ -143,7 +143,7 @@ def game_index(seasons: list[str], raw_dir: str | Path) -> pd.DataFrame:
     for season in seasons:
         for name in (f"game_logs_{_slug(season)}.csv",
                      f"game_logs_playoffs_{_slug(season)}.csv"):
-            path = raw_dir / name
+            path = nbastats_dir(raw_dir) / name
             if not path.exists():
                 continue
             cols = ["GAME_ID", "GAME_DATE", "TEAM_NAME", "TEAM_ID"]
