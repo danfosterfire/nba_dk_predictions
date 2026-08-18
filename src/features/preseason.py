@@ -62,7 +62,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from src.data.fetch import _season_start_year, _slug
+from src.data.fetch import _season_start_year, _slug, nbastats_dir
 from src.data.preprocess import compute_dk_pts
 from src.features.adp import season_start_dates
 from src.features.team_context import season_start_rosters
@@ -112,7 +112,7 @@ def read_preseason_log(season: str, raw_dir: str | Path) -> pd.DataFrame:
     `preseason_coverage` counts what gets dropped and a reader that drops silently
     cannot be audited. `clean_rows` is the filter.
     """
-    path = Path(raw_dir) / f"game_logs_pre_season_{_slug(season)}.csv"
+    path = nbastats_dir(raw_dir) / f"game_logs_pre_season_{_slug(season)}.csv"
     if not path.exists():
         return pd.DataFrame()
     df = pd.read_csv(path, usecols=lambda c: c in LOG_COLS, low_memory=False)

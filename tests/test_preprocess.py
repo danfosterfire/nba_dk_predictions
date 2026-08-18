@@ -1,5 +1,6 @@
 import pandas as pd
 import pytest
+from src.data.fetch import nbastats_dir
 from src.data.preprocess import (
     ALL_SEASON_TYPES,
     FIT_WINDOWS,
@@ -69,8 +70,10 @@ def test_clean_parses_home_flag():
 
 def _write_logs(tmp_path, n_games: int = 30):
     """A regular-season and a playoff log for the same season, as fetch writes them."""
+    dest = nbastats_dir(tmp_path)
+    dest.mkdir(parents=True, exist_ok=True)
     for name in ("game_logs_2021_22.csv", "game_logs_playoffs_2021_22.csv"):
-        _make_df(n_games=n_games).to_csv(tmp_path / name, index=False)
+        _make_df(n_games=n_games).to_csv(dest / name, index=False)
 
 
 def test_filename_parsing_strips_the_playoffs_prefix():
@@ -110,7 +113,9 @@ def test_unknown_season_type_raises_rather_than_returning_nothing(tmp_path):
 
 
 def test_missing_files_for_a_valid_season_type_raise(tmp_path):
-    _make_df().to_csv(tmp_path / "game_logs_2021_22.csv", index=False)
+    dest = nbastats_dir(tmp_path)
+    dest.mkdir(parents=True, exist_ok=True)
+    _make_df().to_csv(dest / "game_logs_2021_22.csv", index=False)
     with pytest.raises(FileNotFoundError, match="playoffs"):
         load_raw(tmp_path, season_type=PLAYOFFS)
 

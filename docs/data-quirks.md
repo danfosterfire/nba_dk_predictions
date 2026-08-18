@@ -21,6 +21,24 @@
   drops players below `data.min_games` (786,765 raw rows → 731,906). Fine for per-player
   analysis; wrong for anything that aggregates a whole team-game, which is why
   `game_length.py` reads raw.
+- **The nba_api dump lives in `data/raw/nbastats/`, not in `data/raw/` itself** (moved
+  2026-08-17). The parent holds the things `make fetch` does *not* write and cannot
+  re-create: the four capture archives that are not backfillable (`injury_reports/`,
+  `injuries/`, `adp/`, `dk_draft_rankings/`), the hand-placed tournament CSVs, and the two
+  manifests. ~790 season files were drowning that out.
+  - **`cfg["data"]["raw_dir"]` still means `data/raw` — the parent — everywhere.** Nothing
+    in the config or in any caller changed. What changed is that every path to a fetched
+    season CSV now goes through `fetch.nbastats_dir(raw_dir)`, which is the **only** place
+    the subdirectory is named. Functions join it themselves rather than taking a second
+    argument, so the three modules that read both sides (`boxscore_status`,
+    `season_matrix`, `report_calibration`) still take one `raw_dir`.
+  - **The two manifests are deliberately outside it.** `_fetch_manifest.csv` and
+    `_boxscore_status_manifest.csv` are metadata *about* the fetch, they sit beside the
+    other archives, and `fetch._record_fetch` / `boxscore_status._append_manifest` write
+    them to the parent. `season_matrix.load_manifest` reads from the parent to match.
+  - A new reader that forgets the join fails loudly with `FileNotFoundError` naming the
+    directory it looked in, not silently with an empty frame — every raw reader in the
+    repo raises on no-files-found.
 - `player_shot_locations` has a **two-row MultiIndex header**; every other family is flat.
 - Empty `LeagueDashPlayerStats` responses are **poisoned server-side cache entries** keyed
   on the full query, not rate limiting. Backoff does not help; cycling `per_mode_detailed`
@@ -115,7 +133,7 @@
   contaminate a frame silently.** `make preseason` (`src/features/preseason.py` →
   `data/features/preseason.parquet`, `outputs/eda/preseason_coverage.csv`) — see
   `docs/preseason-plan.md`.
-  - **A new file prefix in `data/raw/` is a pseudo-season waiting to happen.** This is the
+  - **A new file prefix in `data/raw/nbastats/` is a pseudo-season waiting to happen.** This is the
     playoffs bug of 2026-07-29 in a second costume, and worse: `_parse_log_filename` does
     not merely invent the label `pre-season-2023-24`, it also returns `REGULAR_SEASON`, so
     unrecognized rows arrive in the **default** frame rather than an opt-in one. Prefixes

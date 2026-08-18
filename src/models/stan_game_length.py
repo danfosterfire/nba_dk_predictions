@@ -76,7 +76,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from src.data.fetch import _season_start_year, _slug
+from src.data.fetch import _season_start_year, _slug, nbastats_dir
 from src.features.game_length import OVERTIME_MINUTES, REGULATION_MINUTES
 from src.models.games_played import (KAPPA_MAX, KAPPA_MIN, MU_MAX, MU_MIN,
                                      beta_geometric_logpmf, beta_shapes)
@@ -175,7 +175,7 @@ def matchup_gaps(cfg: dict, seasons: list[str]) -> pd.DataFrame:
     raw = Path(cfg["data"]["raw_dir"])
     ratings = {}
     for season in seasons:
-        path = raw / f"team_estimated_metrics_{_slug(season)}.csv"
+        path = nbastats_dir(raw) / f"team_estimated_metrics_{_slug(season)}.csv"
         if not path.exists():
             continue
         frame = pd.read_csv(path, usecols=["TEAM_ID", "E_NET_RATING"])
@@ -184,7 +184,7 @@ def matchup_gaps(cfg: dict, seasons: list[str]) -> pd.DataFrame:
     rows = []
     for season in seasons:
         prior = ratings.get(_previous_season(season))
-        path = raw / f"game_logs_{_slug(season)}.csv"
+        path = nbastats_dir(raw) / f"game_logs_{_slug(season)}.csv"
         if prior is None or not path.exists():
             continue
         pairs = (pd.read_csv(path, usecols=["GAME_ID", "TEAM_ID"])

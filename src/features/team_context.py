@@ -45,7 +45,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from src.data.fetch import _slug
+from src.data.fetch import _slug, nbastats_dir
 from src.eda.archetypes import assign_archetypes
 
 KEYS = ["player_id", "season"]
@@ -102,7 +102,7 @@ def season_start_roster(season: str, raw_dir: str | Path,
     minutes, while a season-long cut admits February signings who were never known
     pre-season.
     """
-    path = Path(raw_dir) / f"game_logs_{_slug(season)}.csv"
+    path = nbastats_dir(raw_dir) / f"game_logs_{_slug(season)}.csv"
     if not path.exists():
         return pd.DataFrame(columns=["player_id", "season", "team_abbreviation"])
 

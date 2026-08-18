@@ -36,8 +36,10 @@ def _game_log(rows: list[dict]) -> pd.DataFrame:
 
 
 def _write_log(tmp_path, season: str, rows: list[dict]):
-    from src.data.fetch import _slug
-    _game_log(rows).to_csv(tmp_path / f"game_logs_{_slug(season)}.csv", index=False)
+    from src.data.fetch import _slug, nbastats_dir
+    dest = nbastats_dir(tmp_path)
+    dest.mkdir(parents=True, exist_ok=True)
+    _game_log(rows).to_csv(dest / f"game_logs_{_slug(season)}.csv", index=False)
 
 
 def _team_season(team_id: int, n_games: int, start_day: int = 1) -> list[dict]:
@@ -312,9 +314,11 @@ def test_serial_structure_reports_the_geometric_null_beside_the_observed_spells(
 # ── Playoff workload: a feature of S-1, never a row to fit ────────────────────
 
 def _playoff_log(tmp_path, season: str, rows: list[dict]):
-    from src.data.fetch import _slug
+    from src.data.fetch import _slug, nbastats_dir
+    dest = nbastats_dir(tmp_path)
+    dest.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(rows).to_csv(
-        tmp_path / f"game_logs_playoffs_{_slug(season)}.csv", index=False)
+        dest / f"game_logs_playoffs_{_slug(season)}.csv", index=False)
 
 
 def _po_rows(player_id: int, n_games: int, minutes: float, season: str = "2021-22"):

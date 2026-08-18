@@ -628,7 +628,7 @@ composition-preseason-fit:
 # from 2017-18 on, and older seasons get a derivation that reproduces it exactly on all
 # nine seasons that publish one. Owns three edge cases once — a postponed game scores in
 # the period it is PLAYED in, the NBA Cup final scores nowhere, and the all-star gap
-# breaks week adjacency without moving a Monday. Schedules cache to data/raw, so a
+# breaks week adjacency without moving a Monday. Schedules cache to data/raw/nbastats, so a
 # rebuild does not need the endpoint; `REFRESH=1` re-pulls them.
 scoring-periods:
 	$(PYTHON) -m src.features.scoring_periods $(if $(REFRESH),--refresh,)

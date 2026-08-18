@@ -575,9 +575,35 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("capture", "preseason"),
     ),
     Decision(
+        id="nbastats-subdirectory",
+        topic="data",
+        claim="The nba_api dump lives in `data/raw/nbastats/`; `raw_dir` still means the "
+              "parent `data/raw`, and every path to a fetched season CSV goes through "
+              "`fetch.nbastats_dir(raw_dir)`.",
+        because="The parent holds the things `make fetch` does not write and cannot "
+                "re-create — the four non-backfillable capture archives "
+                "(`injury_reports/`, `injuries/`, `adp/`, `dk_draft_rankings/`), the "
+                "hand-placed tournament CSVs, and the two manifests — and ~790 season "
+                "files were drowning them out. Routing through one helper rather than "
+                "repointing `raw_dir` is what keeps that split legible: the config and "
+                "all ~40 call sites are unchanged, the subdirectory is named in exactly "
+                "one place, and the three modules that read both sides "
+                "(`boxscore_status`, `season_matrix`, `report_calibration`) still take a "
+                "single `raw_dir`. The manifests stay in the parent deliberately — they "
+                "are metadata about the fetch, not fetched data. A reader that forgets "
+                "the join fails loudly, since every raw reader raises on no-files-found.",
+        status="settled",
+        reproduce="make fetch → data/raw/nbastats/game_logs_*.csv, "
+                  "data/raw/_fetch_manifest.csv",
+        source="docs/data-quirks.md",
+        reviewed="2026-08-17",
+        date="2026-08-17",
+        tags=("capture",),
+    ),
+    Decision(
         id="preseason-season-type-guard",
         topic="data",
-        claim="A new game-log prefix in data/raw/ must be registered in "
+        claim="A new game-log prefix in data/raw/nbastats/ must be registered in "
               "`preprocess._LOG_PREFIXES`, and `load_raw(\"all\")` means regular plus "
               "playoffs — never the preseason.",
         because="This is the 2026-07-29 playoffs pseudo-season bug in a second costume, "

@@ -207,7 +207,7 @@ make scoring-periods   # one row per (season, game_id): its scoring period and i
                        #   derivation that reproduces it on 10,749 of 10,749 games.
                        #   Owns three edge cases once — a postponed game scores in the
                        #   period PLAYED, the NBA Cup final scores nowhere, and the
-                       #   all-star gap moves no Monday. Schedules cache to data/raw, so
+                       #   all-star gap moves no Monday. Schedules cache to data/raw/nbastats, so
                        #   a rebuild needs no network; REFRESH=1 re-pulls them.
 
 make draft-pool        # the board: one row per (season, player) with team, DK position

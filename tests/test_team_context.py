@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from src.data.fetch import nbastats_dir
 
 from src.features.team_context import (
     RELIABILITY_MINUTES,
@@ -97,7 +98,9 @@ def _write_game_logs(tmp_path, rows: list[dict], season="2023-24") -> None:
         "GAME_DATE": f"2023-10-{r['day']:02d}T00:00:00",
         "MIN": r.get("min", 20.0),
     } for r in rows])
-    df.to_csv(tmp_path / f"game_logs_{season.replace('-', '_')}.csv", index=False)
+    dest = nbastats_dir(tmp_path)
+    dest.mkdir(parents=True, exist_ok=True)
+    df.to_csv(dest / f"game_logs_{season.replace('-', '_')}.csv", index=False)
 
 
 def test_season_start_roster_uses_first_appearance_team(tmp_path):

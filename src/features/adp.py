@@ -45,6 +45,7 @@ from src.data.adp_draftkings import (
     _prefix_match,
     _reversed_key,
 )
+from src.data.fetch import nbastats_dir
 from src.data.preprocess import REGULAR_SEASON, _parse_log_filename
 
 # Season start dates come from the game logs rather than a hardcoded calendar, because the
@@ -78,7 +79,7 @@ def season_start_dates(raw_dir: str | Path) -> dict[str, str]:
     captures are point-in-time safe.
     """
     starts: dict[str, str] = {}
-    for path in sorted(Path(raw_dir).glob(_GAMELOG_GLOB)):
+    for path in sorted(nbastats_dir(raw_dir).glob(_GAMELOG_GLOB)):
         if _parse_log_filename(path.stem)[0] != REGULAR_SEASON:
             continue
         try:

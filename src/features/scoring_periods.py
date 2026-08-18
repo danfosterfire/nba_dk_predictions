@@ -71,7 +71,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from src.data.fetch import _slug
+from src.data.fetch import _slug, nbastats_dir
 
 # The column the period is assigned from. Named rather than inlined because the whole
 # "played, not scheduled" rule is this one choice, and a future forward-schedule consumer
@@ -115,7 +115,7 @@ def week_bounds(dates: pd.Series) -> tuple[pd.Series, pd.Series]:
 # ── The schedule, cached ──────────────────────────────────────────────────────
 
 def schedule_path(season: str, raw_dir: str | Path) -> Path:
-    return Path(raw_dir) / f"schedule_{_slug(season)}.csv"
+    return nbastats_dir(raw_dir) / f"schedule_{_slug(season)}.csv"
 
 
 def fetch_schedule(season: str, raw_dir: str | Path,

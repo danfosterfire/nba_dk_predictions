@@ -26,7 +26,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from src.data.fetch import MANIFEST_NAME, _season_start_year, _slug
+from src.data.fetch import MANIFEST_NAME, _season_start_year, _slug, nbastats_dir
 from src.data.preprocess import compute_dk_pts
 
 
@@ -184,7 +184,7 @@ def read_family(fam: Family, season: str, raw_dir: Path) -> pd.DataFrame | None:
     Returns columns keyed on PLAYER_ID with every kept stat prefixed, already
     converted to per-36 where applicable.
     """
-    path = raw_dir / f"{fam.name}_{_slug(season)}.csv"
+    path = nbastats_dir(raw_dir) / f"{fam.name}_{_slug(season)}.csv"
     if not path.exists():
         return None
 
@@ -211,7 +211,7 @@ def read_identity(season: str, raw_dir: Path, min_gp: int, min_minutes: float) -
     `TEAM_ABBREVIATION` is the player's *last* team — the season files carry one
     row per player, so a traded player's earlier teams are not represented here.
     """
-    path = raw_dir / f"{BASE_FAMILY.name}_{_slug(season)}.csv"
+    path = nbastats_dir(raw_dir) / f"{BASE_FAMILY.name}_{_slug(season)}.csv"
     if not path.exists():
         return pd.DataFrame()
 
@@ -276,7 +276,7 @@ def build_target(seasons: list[str], raw_dir: Path) -> pd.DataFrame:
     """
     frames = []
     for season in seasons:
-        path = raw_dir / f"game_logs_{_slug(season)}.csv"
+        path = nbastats_dir(raw_dir) / f"game_logs_{_slug(season)}.csv"
         if not path.exists():
             continue
         gl = pd.read_csv(path, usecols=lambda c: c in GAME_LOG_COLS)

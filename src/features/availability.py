@@ -56,7 +56,7 @@ import yaml
 
 from src.data.boxscore_status import load_status as load_boxscore_status
 from src.data.boxscore_status import pad_game_id
-from src.data.fetch import _season_start_year, _slug
+from src.data.fetch import _season_start_year, _slug, nbastats_dir
 from src.data.preprocess import PLAYOFFS, load_raw
 
 # Columns needed off the raw game log. Everything else is rank noise.
@@ -89,7 +89,7 @@ def team_schedule(season: str, raw_dir: str | Path) -> pd.DataFrame:
     Keyed on `team_id`, never `team_abbreviation` — the abbreviation has 36 categories
     to the id's 30 and splits relocated franchises from their own history.
     """
-    path = Path(raw_dir) / f"game_logs_{_slug(season)}.csv"
+    path = nbastats_dir(raw_dir) / f"game_logs_{_slug(season)}.csv"
     if not path.exists():
         return pd.DataFrame(columns=["season", "team_id", "game_id",
                                      "game_date", "team_game_index"])
@@ -195,7 +195,7 @@ def attach_workload(seasons_frame: pd.DataFrame, playoffs: pd.DataFrame,
 
 
 def _read_logs(season: str, raw_dir: str | Path) -> pd.DataFrame:
-    path = Path(raw_dir) / f"game_logs_{_slug(season)}.csv"
+    path = nbastats_dir(raw_dir) / f"game_logs_{_slug(season)}.csv"
     if not path.exists():
         return pd.DataFrame()
     gl = pd.read_csv(path, usecols=lambda c: c in LOG_COLS, low_memory=False)
