@@ -9892,4 +9892,57 @@ REGISTRY: tuple[Decision, ...] = (
         date="2026-08-15",
         tags=("preseason", "drafting", "simulator"),
     ),
+    Decision(
+        id="draft-board-pick-log-capture",
+        topic="data",
+        claim="Real-pod pick logs are captured as board screenshots at draft close and "
+              "transcribed by a two-pass image-read protocol whose output must survive a "
+              "deterministic validator — every abbreviated cell resolving to exactly one "
+              "same-team same-position player in the manifest-recorded ranking file, the "
+              "snake arithmetic holding twice over, the header's per-seat G/F/C counts "
+              "balancing, and no player appearing twice — before it reaches "
+              "`draft_pick_log.parquet`. A hand-written transcription goes through the "
+              "identical validator, so the automation is reversible per board.",
+        because="The stress test on the two trial boards is the evidence for the shape of "
+                "the workflow: a single whole-image read is NOT reliable (it misread Klay "
+                "Thompson's position at cell 13.1), while the tiled two-pass protocol "
+                "produced 0 disagreements across 2 × 192 cells and both boards validated "
+                "green on the first run, with Spearman 0.979/0.987 against same-date ADP "
+                "and the ADP-null seat agreeing 16/16 with cap-aware best-available on "
+                "both — a whole-board integrity check, since availability at each of our "
+                "picks depends on every opponent pick before it. Name resolution is "
+                "near-deterministic by construction: the full 942-player rankings "
+                "universe holds exactly 2 ambiguous pairs under (initial, last-prefix, "
+                "team, position), and DK's own rendering separates both. The board is a "
+                "login-gated surface with no archive, so capture-at-draft-close is a "
+                "deadline, not a preference.",
+        status="built",
+        reproduce="make draft-boards → data/features/draft_pick_log.parquet",
+        source="docs/draft-board-ingestion-plan.md",
+        reviewed="2026-08-17",
+        date="2026-08-17",
+        tags=("capture", "drafting"),
+    ),
+    Decision(
+        id="first-real-entries",
+        topic="drafting",
+        claim="The first real contest entries are in: 2026-08-16 and 2026-08-17, two of "
+              "the planned 20 ADP-null autodraft pods, both in the $1 `NBA Best Ball "
+              "$15K And-One [150 Entry Max]` — confirming the $1 tier the entry plan "
+              "assumed exists in the 2026 lineup. Both pick logs are captured and "
+              "validated, and the seat executed the uploaded DK-ADP board 16/16 at both "
+              "drafts, which is the ADP-null design working as specified.",
+        because="`docs/entry-collection-plan.md` spends the autodraft budget near the "
+                "typical region of board states, where our seat IS the shipped opponent "
+                "model and the eleven others' deviations read cleanly. The 16/16 "
+                "best-available agreement doubles as a live verification of the "
+                "'autodraft equals capped click' equivalence the live-draft fallback "
+                "leans on.",
+        status="built",
+        reproduce="make draft-boards → data/features/draft_pick_log.parquet",
+        source="docs/entry-collection-plan.md",
+        reviewed="2026-08-17",
+        date="2026-08-16",
+        tags=("drafting", "capture"),
+    ),
 )

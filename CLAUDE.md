@@ -51,6 +51,11 @@ The docs are:
   - docs-audit.md: How the two documentation guards work — `make docs-audit` (a gate) 
   and `make dashboard-audit` (a report). Read this before editing a quoted figure or 
   adding a doc to the audit.
+  - draft-board-ingestion-plan.md: Turning draft-board screenshots into the validated
+  12-entrant pick log — the capture rules, the two-pass read protocol, and the
+  validator. Read before transcribing a new board or touching `make draft-boards`.
+  **When the user says new boards landed (~weekly), start with `make
+  draft-boards-status` and follow this doc's protocol for each board it flags.**
   - draw-time-calibration-plan.md: Grading the composition's injected minutes σ by role at 
   simulation time — the search, the ship rule, and the per-role calibration readout. 
   **Built, measured and shipped 2026-08-16.** Read before touching either injection key or 
