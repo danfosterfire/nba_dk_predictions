@@ -74,7 +74,8 @@ The docs are:
   - minutes-composition-plan.md: Plan and notes for the production version of 
   the minutes-played model. Work completed and mostly archival at this point.
   - minutes-window-plan.md: The marginal minutes head's fitting window and dispersion, 
-  and what they do to the composition's injected σ. Read it before changing either, or 
+  what they do to the composition's injected σ, and (§6) the full season-unit 
+  head-to-head between the two minutes heads. Read it before changing either knob, or 
   before re-opening whether the marginal head can be retired.
   - model-cards-plan.md: The contract between the fitted heads and the dashboard's 
   model detail pages — what `make model-cards` writes, the rules the emitter inherits, 

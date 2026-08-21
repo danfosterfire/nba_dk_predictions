@@ -362,3 +362,65 @@ rows has risen in each of the last four measured seasons, from 0.1563 (2019-20) 
 period that includes the trough and predicts two seasons that are past it. If the reversion
 continues, the window's *sign* flips — and the two held-out seasons are exactly where that
 would first be visible, which is a reason to look at it once, at the end, rather than now.
+
+---
+
+## 6. The season-unit head-to-head, in full — moved here from `README.md` 2026-08-20
+
+*The overview used to carry this readout and now quotes only its headline; the full figures
+live here, beside the ladder that motivates them. `make minutes-unification` writes every
+one, and `src/docs_audit.py` re-derives them from `minutes_unification.csv` and fails the
+build on drift. All figures are the 2026-08-14+ reading — both heads carrying their
+preseason blocks and σ at 0.375.*
+
+**Both minutes heads ship, and the head-to-head settled which half each one owns.** Scored
+at the season unit on the 742 validation player-seasons both heads cover, the composition
+now *beats* the marginal head on the mean: MAE **184.541** against **190.21**, R²
+**0.902836** against **0.8947**. Its bias is **7.9673** against **−11.91** — the two miss in
+opposite directions, and the composition's is the larger of the two in absolute terms. The
+composition also covers **1,111** validation player-seasons against the marginal head's 742:
+the **369** rookies and low-minute players the `≥ 200 prior minutes` filter drops, who are
+draftable.
+
+**What the marginal head still owns is the season-level spread.** Summed composition draws
+give a season-total predictive sd of **60.5757** minutes against the marginal head's
+**277.23** — **4.58×** too narrow, CRPS **155.941** against **136.60**, a paired-bootstrap
+gap of **+19.3382 [+13.0465, +25.8738]** — because draws that are iid across games cannot
+manufacture season-level heterogeneity. The composition does clear the season-unit no-fit
+carry-forward floor (**161.29**) on the same draws that clear its own per-team-game floor
+decisively, but PIT KS **0.331968** against the floor's 0.1242 is what separates "clears the
+floor on CRPS" from "carries the right spread". A head is only a model at the unit it was
+scored at.
+
+**The gap is a missing parameter, not a ceiling.** A league-wide season term has 0.000000%
+of the residual variance to reach against a head that allocates every minute in the league;
+a **per-(player, season)** effect is not shared, and injecting one into the existing
+posterior — `σ·z` per player-season per draw, shared across that player's games, re-run
+through the head's own allocation — moves the season-total predictive sd from 60.58 to
+**237.911** at σ = **0.375** and the CRPS to **130.692**, which **beats** the marginal head
+(**−5.91125 [−10.3858, −1.50137]**) while keeping the team constraint exact, at season-unit
+calibration effectively identical to it: PIT KS **0.0665499** against the marginal head's
+**0.0668**. MAE barely moves, so the injection buys spread and not fit. At the previously
+shipped σ = 0.450 the injected arm instead **ties** the marginal head (**−4.16592 [−8.4861,
++0.0114191]**, PIT KS **0.0952291**).
+
+**σ = 0.375 is corroborated on disjoint rows.** The validation grid was re-run on the last
+two *training* seasons (**1,145** player-seasons), and on the preseason-blended head **both
+grids put the optimum at 0.375** (train CRPS **108.834** at 0.450 against its own optimum,
+validation **132.437** at 0.450 against **130.692** at 0.375). Two grids on disjoint rows
+agreeing exactly is why σ moved from 0.450 to 0.375 on 2026-08-14: its *input* changed,
+rather than the constant being re-decided — consistent with §4's finding 1. Since 2026-08-16
+the injected σ is graded by role (0.600 / 0.375 / 0.375 / 0.300 over the composition's own
+`rho_bin`); `docs/draw-time-calibration-plan.md` §9 carries that readout and its gates.
+
+**And the fixed-pot constraint is a dynamic the contest is sensitive to.** A team's season
+minutes are a fixed sum over its roster, so teammates' season totals are negatively
+correlated: a fixed sum over K players forces mean pairwise r = −1/(K−1), which at the
+measured **16.05**-player roster size is **−0.0664**. Over the **963** single-team
+validation player-seasons the composition sits on it at **−0.0503828**; the marginal head
+reads **+0.0007** — a null — and puts a **946.1**-minute predictive sd on a team season
+total that is physically fixed, where the composition's team-season sd across draws is
+exactly **0.00**. That is invisible in every marginal metric and lands on two strategy axes
+directly: a same-team stack's minutes are *anti*-correlated rather than independent, and
+handcuffing a starter with his backup is a hedge that exists only if the model carries the
+sign.

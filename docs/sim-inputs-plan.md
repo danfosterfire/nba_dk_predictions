@@ -33,7 +33,8 @@ pass first means every later measurement is written against a correct map.
 | cross-component correlation | the copula's own target | mean abs cell error 0.015–0.019, bar 0.0216 | within bar; max cell ~0.07 |
 
 The `fit_window` discipline rides with all of these: which window to consume is decided by
-what the number will be scored against, never by which is widest (`README.md` §2).
+what the number will be scored against, never by which is widest — the rule the
+`simulator-inputs-calibrate-on-train-plus-validation` decision records.
 
 ---
 

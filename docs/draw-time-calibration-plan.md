@@ -271,6 +271,11 @@ directly in the readout below, where the shipped starter and star buckets sit sl
 | shipped scalar | star | 189 | 117.0694 | 242.80 | 0.8601 | 0.0719 | 0.0476 | 0.0159 |
 | **graded** | star | 189 | **115.7028** | 199.14 | **1.0444** | 0.0833 | 0.0688 | 0.0370 |
 
+The raw season-total deficit stays nearly role-flat on the audited rows — `sd_ratio`
+**4.42** fringe to **3.84** star at σ = 0 (the scratch table above read 3.83 on its earlier
+pass) — so what the grading corrects is where a constant logit-scale σ lands after the
+allocation, not a role-graded deficit.
+
 **Gate 1 — fringe and bench move toward 1 without degrading starter/star: PASSES, with one
 blemish recorded rather than smoothed.** Fringe is the whole result: `sd_ratio` 1.7276 →
 **1.2757**, its low PIT tail 0.1535 → **0.0833** against a nominal 0.05, and PIT KS 0.1925 →
@@ -353,7 +358,7 @@ grading.**
 The **simulated** side is not a comparison across these two runs at all. Gate C's `rho` is
 solved by bisection *per arm* against that arm's own realized skill gap, and it moved
 0.362309 → **0.358192** (2022-23) and 0.311690 → **0.317198** (2023-24). The two runs
-therefore score in different worlds — the caveat `README.md` §2 already carries about
+therefore score in different worlds — the caveat `docs/preseason-plan.md` P5 records about
 `sim_lift`, firing exactly as documented.
 
 The **realized** side *is* comparable, because both arms are scored against the same box

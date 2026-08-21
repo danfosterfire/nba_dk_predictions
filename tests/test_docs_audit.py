@@ -298,7 +298,8 @@ def test_every_audited_doc_has_its_own_builder():
     for build, doc in [(A._availability, A.AVAIL), (A._composition, A.COMP),
                        (A._predictions, A.PRED), (A._adp, A.ADP),
                        (A._readme, A.README), (A._shot_basis, A.SHOT),
-                       (A._train_validate_test, A.SPLIT)]:
+                       (A._train_validate_test, A.SPLIT),
+                       (A._draw_time, A.DRAW)]:
         claims = build()
         assert claims, doc
         assert {c.doc for c in claims} == {doc}, doc
@@ -320,12 +321,14 @@ def test_the_established_facts_builder_spans_exactly_its_declared_docs():
 def test_the_readme_claims_every_section_that_quotes_a_figure():
     """The README is the most-read and least-maintained doc in the repo, so the guard
     worth having is that every headline section reaches an artifact — not merely that
-    the easy ones do. A section losing its claims is otherwise invisible."""
+    the easy ones do. A section losing its claims is otherwise invisible.
+
+    Condensed 2026-08-20: the overview now quotes only headline figures, and the
+    detailed readouts are claimed from the plan docs that own them — so the pinned set
+    here is the headline set, not the old several-hundred-claim sweep."""
     artifacts = {c.artifact for c in A._readme()}
-    for required in (A.VARIANCE, A.GAME_LEN, A.CONTEXT_A, A.OPPONENT_A, A.SERIAL,
-                     A.BONUS, A.DIAGNOSTICS, A.METRICS, A.SEASON_TOTAL, A.RATES,
-                     A.STAN_C_M, A.STAN_C_S, A.COMP_M, A.COMP_RHO, A.TERM_M,
-                     A.PROFILE, A.TARGET, A.ROSTER_A, A.TOURNAMENTS):
+    for required in (A.VARIANCE, A.GAME_LEN, A.SEASON_TOTAL, A.RATES, A.COMP_M,
+                     A.MIN_UNIF, A.STRATEGY_SWEEP, A.STRATEGY_SHIPPED, A.TOURNAMENTS):
         assert required in artifacts, required
 
 

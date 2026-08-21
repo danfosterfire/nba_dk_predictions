@@ -3150,8 +3150,8 @@ def test_every_component_basis_is_anchored_to_a_real_design_family():
 
 
 def test_the_shipped_component_ladder_still_has_one_head_below_its_floor():
-    """`ftm|fta` failing its floor is quoted in `README.md` and drawn on the page. If a
-    refit ever fixes it, the caption that says so has to move with it."""
+    """`ftm|fta` failing its floor is recorded in `docs/predictions-plan.md` and drawn on
+    the page. If a refit ever fixes it, the caption that says so has to move with it."""
     metrics = _card(model_cards.COMPONENT_METRICS_FILE)
     board = model_cards.floor_board(metrics, _card(model_cards.INDEX_FILE))
     assert len(board) == len(model_cards.CLASSES["components"].heads)

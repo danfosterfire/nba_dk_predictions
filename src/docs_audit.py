@@ -113,6 +113,7 @@ SHOT = "docs/shot-attempt-basis-plan.md"
 README = "README.md"
 GAMES = "docs/games-played-plan.md"
 MWIN = "docs/minutes-window-plan.md"        # the marginal minutes head's window ladder
+DRAW = "docs/draw-time-calibration-plan.md"  # the role-graded injected σ readout (§9)
 # The availability head's window / season-term / dispersion / likelihood round. Only its
 # §7l block is claimed — the paired contest counterfactual — because that is the section
 # with a live artifact behind it. The ladders in §3-§7 write their own CSVs and are a
@@ -1313,8 +1314,9 @@ LADDER_ROWS = [("gbm", "9.876", "14.20", "0.381", "0.070", "20.1"),
 
 # The retired held-out ladder, listed per doc because each quotes a different slice of it:
 # the plan doc carries the whole table, `docs/model-development-notes.md` the CRPS row plus
-# the pre-block figures, and `README.md` and `docs/train-validate-test-split.md` only the
-# CRPS row. A union list would presence-check figures into docs
+# the pre-block figures, and `docs/train-validate-test-split.md` only the
+# CRPS row (`README.md` dropped the ladder in the 2026-08-20 condensation). A union
+# list would presence-check figures into docs
 # that never had them, which reports a stale claim where nothing is stale.
 LADDER_HISTORICAL = ("10.795", "10.888", "10.896", "13.614", "15.39", "15.41", "18.94",
                      "0.283", "0.262", "0.275", "−0.084", "0.096", "0.079", "0.103",
@@ -1330,7 +1332,7 @@ def _availability_ladder_claims(doc: str, scope: str = "table",
                                 ) -> list[Claim]:
     """The availability model ladder and the paired interval that settles it.
 
-    Shared between `docs/model-development-notes.md`, `README.md`,
+    Shared between `docs/model-development-notes.md`,
     `docs/availability-plan.md` and `docs/train-validate-test-split.md` for the reason
     `_season_total_claims` is: four docs quote one artifact, and a block going stale in one
     while staying current in another is the failure this file has already caught twice.
@@ -1392,11 +1394,10 @@ def _availability_ladder_claims(doc: str, scope: str = "table",
     return C
 
 
-# The notes quote the CRPS row, the pre-block figures and the workload note; `README.md`
-# and `docs/train-validate-test-split.md` quote only the CRPS row.
+# The notes quote the CRPS row, the pre-block figures and the workload note;
+# `docs/train-validate-test-split.md` quotes only the CRPS row.
 LADDER_HISTORICAL_NOTES = ("10.795", "10.888", "10.896", "13.614", "10.914", "10.98",
                             "11.04", "−0.152", "10,361", "911", "0.268")
-LADDER_HISTORICAL_README = ("10.795", "10.888", "10.896", "13.614")
 
 
 # The playoff/mileage block, on VALIDATION since 2026-08-08. Unlike the ladder beside it
@@ -1779,9 +1780,9 @@ def _carry_bias_claims(doc: str,
 def _role_sigma_claims(doc: str) -> list[Claim]:
     """The injected sigma graded by role — `make minutes-role-sigma`, shipped 2026-08-16.
 
-    A shared builder for the same reason `_minutes_unification_claims` is: `README.md` and
-    `docs/draw-time-calibration-plan.md` carry the same block, and the plan doc joins the
-    audit as soon as it is added to `_DOCS`. Today it has one caller.
+    A shared builder for the same reason `_minutes_unification_claims` is. `README.md`
+    carried the same block until the 2026-08-20 condensation; the one caller today is
+    `_draw_time`, which claims the readout from `docs/draw-time-calibration-plan.md` §9.
 
     **The per-role readout is claimed at all three arms**, not just the shipped one. The
     finding is that the raw deficit is nearly role-FLAT at `sigma = 0` while the shipped
@@ -1857,11 +1858,11 @@ def _role_sigma_claims(doc: str) -> list[Claim]:
 def _minutes_unification_claims(doc: str) -> list[Claim]:
     """The season-unit head-to-head between the two minutes heads, claimable from any doc.
 
-    A shared builder for the same reason `_regime_claims` and `_season_term_claims` are: the
-    block is quoted in `README.md` and in `docs/simulations-plan.md`, and "current in one and
-    stale in the other" is the failure that has already happened twice here. The plan doc is
-    not in the audit yet — build item 11 adds it — so today this has one caller and the
-    second is why it is a function.
+    A shared builder for the same reason `_regime_claims` and `_season_term_claims` are:
+    "current in one doc and stale in the other" is the failure that has already happened
+    twice here. `README.md` quoted the block in full until the 2026-08-20 condensation
+    moved it to `docs/minutes-window-plan.md` §6, whose builder is the one caller today;
+    the shape survives so a second doc quoting the block can claim it again.
 
     The verdict-bearing pair is claimed from **both** sides of each comparison rather than
     only from the gap, because a headline that quotes 170.06 against 144.35 and a gap of
@@ -4227,6 +4228,27 @@ def _established_facts() -> list[Claim]:
     add("0.1231", BONUS,
         lambda: bonus("player_season", 0.0, "realized_mean_bonus"),
         "realized bonus")
+    # The shipped constants against their fitted optima — moved from `README.md` in the
+    # 2026-08-20 condensation, kept because a re-calibration that moves an optimum away
+    # from the shipped constant should fail here rather than pass silently.
+    add("0.10", BONUS,
+        lambda: _windowed(BONUS, "overdispersion", analysis="fitted",
+                          unit="player_season"),
+        "the shipped season-unit constant, against its fitted optimum")
+    add("0.025", BONUS,
+        lambda: _windowed(BONUS, "overdispersion", analysis="fitted",
+                          unit="player_game"),
+        "the shipped game-unit constant, against its fitted optimum")
+
+    # ── the deprioritized sequence trunk ──────────────────────────────────────
+    # Moved from `README.md` in the 2026-08-20 condensation; the notes quote the pair.
+    into(NOTES)
+    add("0.0059", DIAGNOSTICS,
+        lambda: cell(DIAGNOSTICS, "delta_sequence", analysis="sequence_ablation"),
+        "sequence features over season aggregates")
+    add("0.0074", DIAGNOSTICS,
+        lambda: cell(DIAGNOSTICS, "delta_above_null", analysis="sequence_ablation"),
+        "sequence features above their shuffled null")
 
     # ── aging ─────────────────────────────────────────────────────────────────
     into(NOTES)
@@ -4594,150 +4616,57 @@ def _break_even_hurdle(tournament: str) -> float:
 
 
 def _readme() -> list[Claim]:
-    """`README.md` — the project overview, in scientific-paper form.
+    """`README.md` — the concise project overview, rewritten 2026-08-20.
 
-    Its figures are a **selection** from the established facts and the plan docs rather than new
-    measurements, and that is precisely why it needs claiming. A headline copied once
-    into an overview and never refreshed is the exact failure this module was built for,
-    and the README is the most-read and least-maintained document in the repo — the two
-    drift incidents on record (the season-total R2 column, the report-calibration block)
-    both happened in files under far more active editing than this one.
+    The overview used to be the largest claim section in this module — several hundred
+    figures copied from the established facts and the plan docs. It now quotes only the
+    handful of headlines that motivate the architecture, and the detailed readouts moved
+    to the plan docs that own them: the season-unit minutes head-to-head to
+    `docs/minutes-window-plan.md` §6 (claimed via `_minutes_unification_claims`), the
+    role-graded σ readout to `docs/draw-time-calibration-plan.md` §9 (`_draw_time`),
+    the execution-axis re-read to `docs/simulations-plan.md` (`_weekly`), and the shipped
+    bonus overdispersion constants to `docs/facts-archive.md` (`_established_facts`).
+    Everything else the old overview quoted was already claimed from the plan doc that
+    owns it, which is what made the condensation safe.
 
-    Two things are different here from the plan-doc builders:
-
-    - **Roundings are claimed, not skipped.** The README quotes `58%` for 57.96% and
-      `86%` for an R2 of 0.859, because an overview should round. `implied_tolerance`
-      already handles this correctly — a figure is wrong only if no correctly-rounded
-      value could have produced it — so rounding costs no strictness worth having and
-      leaving them unclaimed would exempt the most-read numbers in the repo.
-    - **Shipped constants are claimed against their fitted optima.** The bonus
-      overdispersions 0.10 and 0.025 are constants in `features/targets.py`, not
-      measurements; claiming them against `bonus_calibration.csv`'s fitted values is
-      what makes a re-calibration that moves the optimum away from the shipped constant
-      show up as a failure here rather than silently.
-
-    Three figures are deliberately left unclaimed because no artifact holds them: the
-    whole-block team-context delta R2 (`+0.0086`), mid-season churn (`13.6%`), and the
-    approximate skill split (`~90%`). They are unclaimed in the established facts for the
-    same reason, and coverage reports them rather than hiding them.
+    What stays claimed here is exactly what the overview still quotes. Roundings are
+    claimed, not skipped — `58%` for 57.96%, `0.24` for the 600k lift — because an
+    overview should round and `implied_tolerance` handles that correctly. The tournament
+    break-even hurdles have no `outputs/` artifact — `dashboard/economics.py` derives
+    them at render time — so they are claimed against the checked-in raw boards, with
+    `_break_even_hurdle` duplicating one line of `economics.py` rather than importing it,
+    since nothing in `src/` imports the dashboard package. A test pins the two copies
+    together.
     """
     C: list[Claim] = []
 
     def add(quoted, artifact, actual, label, **kw):
         C.append(_c(quoted, artifact, actual, label, doc=README, **kw))
 
-    def context(feature: str, column: str) -> float:
-        return _one(table(CONTEXT_A), column, feature=feature)
-
-    def opp(outcome: str, column: str) -> float:
-        return _one(table(OPPONENT_A), column, outcome=outcome)
-
     def glen(column: str) -> float:
         return _one(table(GAME_LEN), column, analysis="feasibility", season="all",
                     season_type="regular")
 
-    def comp_m(variant: str, column: str) -> float:
-        return cell(COMP_M, column, variant=variant)
-
-    def first_k(column: str, k: str = "5") -> float:
-        return _one(table(TARGET), column, analysis="season_total",
-                    bucket_kind="first_k_games", bucket=k)
-
-    def bonus_optimum(unit: str) -> float:
-        return _one(table(BONUS), "overdispersion", analysis="fitted", unit=unit,
-                    bucket="all")
-
-    # ── introduction: the variance budget ─────────────────────────────────────
-    add("254,167", VARIANCE, lambda: budget("own_minutes", "n_games"),
-        "variance-budget population")
-    add("9.445", VARIANCE,
-        lambda: budget("within_player_season_residual_sd", "value"), "residual sd")
-    add("14.566", VARIANCE, lambda: budget("dk_pts_sd", "value"), "total sd")
-    add("57.96%", VARIANCE, lambda: budget("player_season_identity"),
-        "player-season identity share")
-    add("46.40%", VARIANCE, lambda: budget("own_minutes"), "own minutes share")
-    add("0.691%", VARIANCE, lambda: budget("opponent_x_season"),
-        "opponent x season share")
-    add("0.034%", VARIANCE, lambda: budget("home_away"), "home/away share")
-    # The two roundings in the "never quote a row without its basis" sentence. The
-    # second is derived, because "the remaining 42%" is only true as the complement.
+    # ── the problem: the variance budget ──────────────────────────────────────
     add("58%", VARIANCE, lambda: budget("player_season_identity"),
-        "identity share, rounded")
-    add("42%", VARIANCE, lambda: 1.0 - budget("player_season_identity"),
-        "the residual share, as the complement")
+        "identity share of total per-game variance, rounded")
     add("46.4%", VARIANCE, lambda: budget("own_minutes"),
-        "own minutes share, rounded")
+        "own-minutes share of the within-player residual, rounded")
 
-    # ── methods: data ─────────────────────────────────────────────────────────
+    # ── architecture: data scale, sweep grid and contest economics ────────────
     add("731,906", GAME_LEN, lambda: glen("player_games"), "cleaned player-games")
-    add("10,900", MATRIX_A, lambda: rows(MATRIX_A), "Tier A player-seasons")
-
-    # ── methods: the output contract ──────────────────────────────────────────
-    add("2.106", CONTEXT_A,
-        lambda: context("teammate_assist_supply", "gross_dk_movement"),
-        "teammate_assist_supply gross DK movement")
-    add("−0.254", CONTEXT_A,
-        lambda: context("teammate_assist_supply", "net_dk_movement"),
-        "teammate_assist_supply net DK movement")
-    add("8.30", CONTEXT_A,
-        lambda: context("teammate_assist_supply", "cancellation_ratio"),
-        "teammate_assist_supply cancellation ratio")
-    add("1.98", OPPONENT_A, lambda: opp("dk_pts", "cancellation_ratio"),
-        "opponent cancellation ratio")
-    add("37,986", GAME_LEN, lambda: _derivation("games", "sum"),
-        "games in the game-length derivation")
-    add("5.93%", GAME_LEN, lambda: _derivation("ot_rate", "weighted"), "overtime rate")
-
-    # ── methods: the simulation specification ─────────────────────────────────
-    add("4.65", STAN_MIN_D,
-        lambda: cell(STAN_MIN_D, "implied_overdispersion", metric="game_level_rho"),
-        "game-level minutes overdispersion")
-    add("2.43", SERIAL, lambda: serial("min", "block_inflation"),
-        "minutes block variance inflation")
-    add("0.10", BONUS, lambda: bonus_optimum("player_season"),
-        "season-unit bonus overdispersion, against its fitted optimum")
-    add("0.025", BONUS, lambda: bonus_optimum("player_game"),
-        "game-unit bonus overdispersion, against its fitted optimum")
-
-    # ── methods: contest economics ────────────────────────────────────────────
+    add("24", STRATEGY_SWEEP, lambda: nunique(STRATEGY_SWEEP, "strategy"),
+        "strategies in the sweep")
+    add("500", STRATEGY_SWEEP, lambda: max_of(STRATEGY_SWEEP, "n_sims"),
+        "simulated worlds per season in the sweep")
     add("10.45%", TOURNAMENTS, lambda: _break_even_hurdle("88k_alley_oop"),
         "lowest break-even edge hurdle")
     add("17.60%", TOURNAMENTS, lambda: _break_even_hurdle("600k_shootaround"),
         "highest break-even edge hurdle")
 
-    # ── methods: the drafting layer's shape ───────────────────────────────────
-    # The grid is a *size*, not a score, and it is claimed for the same reason the row
-    # counts above are: an arm added to `STRATEGIES` or a change to `sim.n_worlds` moves
-    # it, and nothing else in this file would notice.
-    add("24", STRATEGY_SWEEP, lambda: nunique(STRATEGY_SWEEP, "strategy"),
-        "strategies in the sweep")
-    add("500", STRATEGY_SWEEP, lambda: max_of(STRATEGY_SWEEP, "n_sims"),
-        "simulated worlds per season in the sweep")
-
-    # ── methods: what was deprioritized ───────────────────────────────────────
-    add("0.0059", DIAGNOSTICS,
-        lambda: cell(DIAGNOSTICS, "delta_sequence", analysis="sequence_ablation"),
-        "sequence features over season aggregates")
-    add("0.0074", DIAGNOSTICS,
-        lambda: cell(DIAGNOSTICS, "delta_above_null", analysis="sequence_ablation"),
-        "sequence features above their shuffled null")
-
-    # ── results: availability ─────────────────────────────────────────────────
-    # The overview quotes the CRPS column and the paired interval, not the full ladder —
-    # `full=False` claims exactly that subset rather than forcing the README to carry every
-    # cell of a table it deliberately summarizes.
-    C += _availability_ladder_claims(README, scope="headline",
-                                     historical=LADDER_HISTORICAL_README)
-    add("−0.1297", LADDER, lambda: ladder("gbm", "delta_vs_reference"),
-        "GBM vs the shipped head")
-    add("−0.3154", LADDER, lambda: ladder("gbm", "ci_lo"), "GBM CI low")
-    add("+0.0672", LADDER, lambda: ladder("gbm", "ci_hi"), "GBM CI high")
-    add("+0.333", LADDER, lambda: ladder("gbm", "delta_vs_reference", "gp_q1"),
-        "GBM delta on the worst games quartile")
+    # ── results at a glance ───────────────────────────────────────────────────
     for name, which, quoted in [("full_season", "mae_dk_total", "610.8"),
                                 ("beta_binomial", "mae_dk_total", "400.5"),
-                                ("full_season", "bias_dk_total", "523.3"),
-                                ("beta_binomial", "bias_dk_total", "−3.1"),
                                 ("oracle_gp", "mae_dk_total", "214.4"),
                                 ("oracle_rate", "mae_dk_total", "261.9")]:
         add(quoted, SEASON_TOTAL, lambda n=name, w=which: treatment(n, w),
@@ -4745,347 +4674,28 @@ def _readme() -> list[Claim]:
     add("−210", SEASON_TOTAL,
         lambda: (treatment("beta_binomial", "mae_dk_total")
                  - treatment("full_season", "mae_dk_total")),
-        "head vs a full season, rounded")
-    for quoted in ("646.3", "435.1", "221.3", "302.7"):
-        add(quoted, SEASON_TOTAL, lambda: float("nan"),
-            f"pre-lock held-out season total: {quoted}", historical=True)
-
-    # ── results: the component floor ──────────────────────────────────────────
+        "the availability head vs assuming a full season, rounded")
     count_heads = ("fga", "fta", "reb", "ast", "stl", "blk", "tov")
-    fitted = ("linear", "log_own", "log_own_spline", "log_own_inter", "pca",
-              "pca_spline", "pca_inter")
     add("0.81", RATES,
         lambda: min(rate(h, "carry_forward") for h in count_heads),
         "weakest no-fit floor across the count heads")
-    add("0.0013", RATES,
-        lambda: min(max(rate(h, v) for v in fitted) - rate(h, "carry_forward")
-                    for h in count_heads),
-        "smallest gain over the no-fit floor")
-    add("0.0334", RATES,
-        lambda: max(max(rate(h, v) for v in fitted) - rate(h, "carry_forward")
-                    for h in count_heads),
-        "largest gain over the no-fit floor")
-
-    # Session 6b's qualification of the saturation line. The two RATIOS are claimed rather
-    # than only their inputs, because the ratio is the sentence — "the block is worth more
-    # than the fitted head is" goes stale if either end moves, and a reader checking one
-    # column would not catch it.
-    # Read on the SHIPPED arm (`own_delta_shrunk`) since 2026-08-15, not on the declared
-    # primary — the ship decision was taken there, so a ratio quoted from the primary would
-    # describe an arm nobody adopted. That change alone takes `reb` from 5.45x to 7.25x.
-    def block_over_fit(head: str) -> float:
-        floor = _pc(head, "carry_forward", "val_crps")
-        incumbent = _pc(head, "incumbent", "val_crps")
-        return ((incumbent - _pc(head, "own_delta_shrunk", "val_crps"))
-                / (floor - incumbent))
-
-    add("0.1507", PRE_CMP,
-        lambda: _pc("reb", "carry_forward", "val_crps") - _pc("reb", "incumbent",
-                                                              "val_crps"),
-        "reb: what fitting buys over the no-fit floor")
-    add("1.0929", PRE_CMP,
-        lambda: (_pc("reb", "incumbent", "val_crps")
-                 - _pc("reb", "own_delta_shrunk", "val_crps")),
-        "reb: what the preseason block buys on top")
-    add("7.25", PRE_CMP, lambda: block_over_fit("reb"), "reb: block over fit")
-    add("3.77", PRE_CMP, lambda: block_over_fit("fg3a|fga"), "fg3a|fga: block over fit")
-    add("1.17", PRE_CMP, lambda: block_over_fit("fga"), "fga: block over fit")
-    for quoted in ("0.8213", "5.45", "1.07"):
-        add(quoted, PRE_CMP, lambda: float("nan"),
-            f"the six-head 6b reading on the declared primary arm: {quoted}",
-            historical=True)
-    add("−19.00", STAN_C_M, lambda: stan_c("fg3a", "linear", "val_r2"),
-        "fg3a under a linear predictor", historical=True)
-    # Rounded to 3dp here on purpose — this is the overview, and `implied_tolerance`
-    # handles the rounding. The 3dp form is what makes the README's copy independently
-    # checkable rather than a transcription of the notes' 4dp table.
-    add("0.649", STAN_C_M, lambda: stan_c("blk", "log_own", "val_r2"),
-        "blk log_own R2, 3dp")
-    add("0.832", STAN_C_M, lambda: stan_c("blk", "log_own_spline", "val_r2"),
-        "blk spline R2, 3dp")
-    add("0.673", STAN_C_M, lambda: float("nan"),
-        "blk log_own R2, 3dp, pre-preseason-block", historical=True)
-    add("0.831", STAN_C_M, lambda: float("nan"),
-        "blk spline R2, 3dp, pre-preseason-block", historical=True)
-    add("0.679", STAN_C_M, lambda: stan_c("blk", "log_own", "val_r2"),
-        "blk log_own R2, 3dp, on test", historical=True)
-    add("0.858", STAN_C_M, lambda: stan_c("blk", "log_own_spline", "val_r2"),
-        "blk spline R2, 3dp, on test", historical=True)
-    add("+0.0198", STAN_C_M,
-        lambda: stan_c("fta", "log_own", "val_r2") - stan_c("fta", "carry_forward",
-                                                            "val_r2"),
-        "fta clears its floor — the reversal the split move produced")
-    add("+0.0144", STAN_C_M, lambda: float("nan"),
-        "fta's floor margin, pre-preseason-block", historical=True)
-    # The two figures behind "the substitution arm's canonical side was handicapped":
-    # `substitution_arm` fits every head at log_own, and that is the variant on which
-    # `fg3a` fails its own floor. Claimed so the caveat cannot rot into a bare assertion.
-    add("0.3719", STAN_C_M, lambda: stan_c("fg3a", "log_own", "val_r2"),
-        "fg3a at log_own — the variant the substitution arm used", historical=True)
-    add("0.9046", STAN_C_M, lambda: stan_c("fg3a", "log_own_spline", "val_r2"),
-        "fg3a at its selected spline variant", historical=True)
-
-    # ── results: the minutes composition ──────────────────────────────────────
-    # ⚠️ REFRESHED 2026-08-14 for the preseason-blended offset at the covered window
-    # (`docs/preseason-plan.md` P5). Every figure below moved and every one improved; the
-    # pre-adoption values are held beside them as `historical=True` at the foot of this
-    # block, per the convention that a superseded figure stays beside its correction.
-    SEL = "betabinom_ot_graded"
-    add("4.26174", COMP_M, lambda: comp_m(SEL, "val_crps"), "composition val CRPS")
-    add("4.68034", COMP_M, lambda: comp_m("independent_comparator", "val_crps"),
-        "independent comparator val CRPS")
+    add("0.95", RATES,
+        lambda: max(rate(h, "carry_forward") for h in count_heads),
+        "strongest no-fit floor across the count heads")
     add("−8.94%", COMP_M,
-        lambda: (comp_m(SEL, "val_crps")
-                 / comp_m("independent_comparator", "val_crps") - 1.0),
-        "composition CRPS gain, as a percentage")
-    add("33.6451", COMP_P,
-        lambda: cell(COMP_P, "simulated", variant=SEL, analysis="team_sum_abs_error",
-                     group="independent"),
-        "comparator team-sum error")
-    add("0.182", COMP_M, lambda: comp_m("binomial", "val_pit_ks"),
-        "binomial arm PIT KS, 3dp")
-    add("0.140", COMP_RHO, lambda: cell(COMP_RHO, "rho", variant=SEL, bin=1),
-        "fringe-tier dispersion, 3dp")
-    add("0.074", COMP_RHO, lambda: cell(COMP_RHO, "rho", variant=SEL, bin=4),
-        "star-tier dispersion, 3dp")
-    add("1.91×", COMP_RHO,
-        lambda: (cell(COMP_RHO, "rho", variant=SEL, bin=1)
-                 / cell(COMP_RHO, "rho", variant=SEL, bin=4)),
-        "graded dispersion spread")
-    add("40.9%", COMP_P,
-        lambda: (1.0 - mean_abs_dev(COMP_P, "ratio", 1.0, variant=SEL,
-                                    analysis="variance_ratio")
-                 / mean_abs_dev(COMP_P, "ratio", 1.0, variant="betabinom_ot",
-                                analysis="variance_ratio")),
-        "calibration error cut by grading")
-    # The graded dispersion at 4dp as well as 3dp: the minutes section quotes it to four
-    # places to distinguish it from the 4.65x game-level figure it is NOT, so the precision
-    # is doing work and the claim has to match it.
-    add("0.14019", COMP_RHO, lambda: cell(COMP_RHO, "rho", variant=SEL, bin=1),
-        "fringe-tier dispersion, 4dp")
-    add("0.0735171", COMP_RHO, lambda: cell(COMP_RHO, "rho", variant=SEL, bin=4),
-        "star-tier dispersion, 4dp")
-    # The per-team-game floor, which the composition clears on the same draws that fail the
-    # season-unit one. The pair is the whole "a head is only a model at the unit it was
-    # scored at" claim, so both halves are claimed rather than the contrast asserted.
-    add("4.47013", COMP_M, lambda: comp_m("carry_forward", "val_crps"),
-        "the composition's per-team-game no-fit floor, which it does clear")
-    # The pre-adoption ladder, held for the record. Presence-checked only: these described
-    # the un-blended head at 1996-97 and must NOT agree with the refreshed artifact.
-    for quoted, label in (("4.4945", "pre-blend composition val CRPS"),
-                          ("4.7842", "pre-blend comparator val CRPS"),
-                          ("−6.06%", "pre-blend CRPS gain"),
-                          ("33.89", "pre-blend comparator team-sum error"),
-                          ("0.192", "pre-blend binomial PIT KS"),
-                          ("0.1768", "pre-blend fringe-tier dispersion"),
-                          ("0.0855", "pre-blend star-tier dispersion"),
-                          ("2.07×", "pre-blend graded dispersion spread"),
-                          ("35%", "pre-blend calibration error cut")):
-        add(quoted, COMP_M, lambda: float("nan"), label, historical=True)
-
-    # ── results: the two minutes heads at the season unit ─────────────────────
-    C.extend(_minutes_unification_claims(README))
-    C.extend(_role_sigma_claims(README))
-
-    # ── results: substitution and season terms ────────────────────────────────
-    # The README's claim used to be that the gain *replicates across splits*. Gate 0 is
-    # validation-only since 2026-08-06, so there is no second split to replicate on and the
-    # word is gone from the prose. What replaces it is a different and better-founded
-    # replication: the margin survived a doubling of chain length. The test figures stay in
-    # the README as the record of what the adoption was decided on, presence-checked only.
-    add("−0.7218", STAN_C_S,
-        lambda: cell(STAN_C_S, "reparam_minus_canonical", split="val",
-                     arm="two_counts"),
-        "substitution gain, val (handicapped)")
-    add("−0.771", STAN_C_S, lambda: float("nan"),
-        "substitution gain, val (handicapped), pre-preseason-block", historical=True)
-    add("−0.793", SHOT_SWEEP, lambda: float("nan"),
-        "substitution gain, test (handicapped)", historical=True)
-    add("−0.493549", SHOT_SWEEP, lambda: float("nan"),
-        "un-handicapped substitution gain, test", historical=True)
-
-    def shot_joint(arm: str) -> float:
-        frame = table(SHOT_SWEEP)
-        if frame is None:
-            return float("nan")
-        sub = frame[(frame["analysis"] == "joint") & (frame["split"] == "val")
-                    & (frame["arm"] == arm) & frame["selected"].astype(bool)]
-        return float(sub["mean_nll"].iloc[0])
-
-    def shot_floor(name: str, variant: str) -> float:
-        arm = "two_counts" if name in ("fg2a", "fg3a") else "fga_x_fg3a_share"
-        return cell(SHOT_SWEEP, "floor_nll", analysis="head", split="val", arm=arm,
-                    head=name, variant=variant)
-
-    add("−0.501041", SHOT_SWEEP,
-        lambda: shot_joint("fga_x_fg3a_share") - shot_joint("two_counts"),
-        "un-handicapped substitution gain, val")
-    add("−0.440841", SHOT_SWEEP,
-        lambda: (shot_floor("fga", "log_own") + shot_floor("fg3a|fga", "logit_own")
-                 - shot_joint("two_counts")),
-        "reparameterized floor vs canonical fitted")
-    # The oracle bounds every form of season term, so both ends of the range the
-    # README quotes are claimed — the "~3%" ceiling and the median.
-    term_heads = ("fga", "fta", "reb", "ast", "stl", "blk", "tov")
-    add("5%", TERM_M, lambda: max(oracle_gain(h) for h in term_heads),
-        "the league-oracle ceiling")
-    add("1.29%", TERM_M,
-        lambda: float(pd.Series([oracle_gain(h) for h in term_heads]).median()),
-        "the league-oracle median")
-    add("4.97%", TERM_M, lambda: max(oracle_gain(h) for h in term_heads),
-        "the league-oracle maximum")
-    add("10.4%", TERM_SPREAD,
-        lambda: term_spread(15, "year") - 1.0,
-        "year-effect roster spread at 15 players")
-    add("0.6%", STAN_AV_B,
-        lambda: cell(STAN_AV_B, "inflation", n_players=15) - 1.0,
-        "shared-beta roster spread at 15 players")
-
-    # ── results: the drafting layer ───────────────────────────────────────────
-    # The pair the README's headline turns on. They are two columns of one row, so a
-    # re-sweep that moved only the realized side — the one with N = 2 seasons behind it —
-    # would show up here as a single disagreement rather than as a silently updated story.
-    def shipped(column: str) -> float:
-        return cell(STRATEGY_SHIPPED, column, tournament="600k_shootaround")
-
-    add("0.236915", STRATEGY_SHIPPED, lambda: shipped("sim_lift"),
-        "shipped arm's simulated advance lift, 600k")
-    add("0.199380", STRATEGY_SHIPPED, lambda: shipped("realized_lift"),
-        "shipped arm's realized advance lift, 600k")
-    # Superseded by the 2026-08-16 graded-sigma chain re-run. Held for the record because
-    # the README argues FROM the pair moving — and from neither move being attributable.
-    for quoted in ("0.230387", "0.197293", "0.2358", "0.204098"):
-        add(quoted, STRATEGY_SHIPPED, lambda: float("nan"),
-            f"shipped arm's advance lift before the component block: {quoted}",
-            historical=True)
-    # Gate D's failure is a *count of zero*, which is the one shape of result that decays
-    # silently: a sweep that started separating the tiers would leave the prose true-looking
-    # and wrong. Both ends are claimed, so the denominator cannot drift either.
-    add("6", STRATEGY_GATE_D, lambda: rows(STRATEGY_GATE_D),
-        "Gate D paired comparisons")
-    # ⚠️ Reversed on 2026-08-15: the component block took this from 0 to 1 of 6. The claim is
-    # still "a count", and it is still the shape that decays silently — which is why it caught
-    # its own reversal on the first audit after the run rather than on a re-read.
-    add("1", STRATEGY_GATE_D, lambda: total(STRATEGY_GATE_D, "materially_different"),
-        "Gate D comparisons that separate the tiers")
-    add("0", STRATEGY_GATE_D, lambda: float("nan"),
-        "Gate D comparisons separating the tiers, pre-component-block", historical=True)
-
-    # ── results: the field, and the execution axis (2026-08-11) ──────────────
-    # The fitted need weight is a zero the same way Gate D's count is: a recalibration
-    # that started selecting a positive lean would leave the README's "measured null"
-    # claim true-looking and wrong, so the selected row is claimed directly.
-    add("0", GATE_B_NEED,
-        lambda: cell(GATE_B_NEED, "need_weight", season="pooled", selected=True),
-        "fitted field lineup-reasoning lean, picks")
-    add("0.306", SHIPPED_NEED,
-        lambda: cell(SHIPPED_NEED, "sim_lift", tournament="600k_shootaround"),
-        "shipped arm's simulated lift against the stipulated need-aware field, 600k")
-    add("+0.00128856", STRATEGY_PAIRED,
-        lambda: cell(STRATEGY_PAIRED, "gap", tournament="600k_shootaround",
-                     metric="p_advance", baseline="blend_a30",
-                     strategy="autodraft_blend_a30"),
-        "autodraft twin over the uncapped click of the same ranking, 600k")
-
-    def sweep_mean_lift(arm: str) -> float:
-        frame = table(STRATEGY_SWEEP)
-        if frame is None:
-            return float("nan")
-        hit = frame[(frame["tournament"] == "600k_shootaround")
-                    & (frame["strategy"] == arm)]
-        return float(hit["lift_vs_null"].mean()) if len(hit) else float("nan")
-
-    add("0.0602481", STRATEGY_SHIPPED,
-        lambda: shipped("sim_lift") - sweep_mean_lift("autodraft_blend_a30"),
-        "lift given up by autodrafting instead of the shipped objective, 600k")
-    for quoted in ("+0.000303134", "0.0706785", "+0.00841967", "0.105298"):
-        add(quoted, STRATEGY_SHIPPED, lambda: float("nan"),
-            f"execution-axis reading before the component block: {quoted}",
-            historical=True)
-
-    # ── discussion ────────────────────────────────────────────────────────────
-    add("0.317", PROFILE,
-        lambda: prof("persistence", "gp_share", "r_within_weighted"),
-        "games-played persistence")
-    add("86%", TARGET, lambda: first_k("r2_extrapolated"),
-        "first-5-games season-total share, rounded")
-    add("0.859", TARGET, lambda: first_k("r2_extrapolated"),
-        "first-5-games season-total R2")
-    add("14.7%", ROSTER_A, lambda: roster("undescribed"),
-        "roster minutes with no usable prior-season row")
-
-    # ── the availability head's trials assumption (§2, availability) ──────────
-    # Two figures only, and deliberately the two that carry opposite halves of the
-    # sentence: the size of the error and the size of what already pays for it. An
-    # overview that quoted the first without the second would read as an open defect.
-    add("9.1×", AEXCH,
-        lambda: 1.0 / cell(AEXCH, "exchangeable_ratio", analysis="period_gap",
-                           population="30+ mpg", metric="p_dead_run"),
-        "star P(3 consecutive dead periods), exchangeable understatement")
-    add("81.5%", AEXCH,
-        lambda: cell(AEXCH, "recovered_share", analysis="period_gap", population="all",
-                     metric="p_dead_period"),
-        "pooled share of the exchangeability gap the shipped layout recovers")
-
-    # ── The composition's own preseason arm (sessions 4b and 4c) ─────────────
-    # Both rounds' headline margins, because the README is where the two get read side by
-    # side and the whole point of quoting them together is that the second is LARGER.
-    for quoted, column in (("−0.19972", "crps_vs_incumbent"),
-                           ("−0.21661", "crps_vs_incumbent_lo"),
-                           ("−0.18225", "crps_vs_incumbent_hi")):
-        add(quoted, COMP_PRE,
-            lambda c=column: cell(COMP_PRE, c, analysis="floor_margin", k=80.0,
-                                  route="both", unit="player_game",
-                                  population="draftable"),
-            f"README 4b floor margin {column}")
-    for comparison, unit, values in (
-            ("fitted_increment", "player_game",
-             ("−0.20883", "−0.22129", "−0.19693")),
-            ("fitted_increment", "player_season",
-             ("−14.62649", "−19.48503", "−9.54922"))):
-        for quoted, column in zip(values, ("crps_delta", "ci_lo", "ci_hi")):
-            add(quoted, COMP_PRE_FIT,
-                lambda c=comparison, u=unit, col=column: cell(
-                    COMP_PRE_FIT, col, analysis="margin", comparison=c, unit=u,
-                    population="draftable"),
-                f"README 4c {comparison} {unit} {column}")
-    add("1.040", COMP_PRE_FIT,
-        lambda: cell(COMP_PRE_FIT, "retention", analysis="retention", unit="player_game",
-                     population="draftable"),
-        "README 4c retention at the per-player-game unit", tol=0.002)
-
-    # ── P5's closing counterfactual, the figures the overview repeats ─────────
-    # Claimed here as well as in the plan doc because the README states the CONCLUSION
-    # ("the gain is not the world getting easier"), and that sentence is carried entirely by
-    # two numbers with opposite signs. Either one drifting would leave the prose intact and
-    # the argument gone — which is this builder's whole reason for existing.
-    def pc5(block: str, measure: str, key: str, column: str = "preseason") -> float:
-        return cell(PRE_CONTEST, column, block=block, measure=measure, key=key)
-
-    add("+0.095962", PRE_CONTEST,
-        lambda: pc5("contest", "realized_lift", "600k_shootaround", "delta"),
-        "README P5 realized lift delta, 600k")
-    add("9", PRE_CONTEST,
-        lambda: pc5("realized", "delta_positive_cells", "all tournaments"),
-        "README P5 realized cells moving the block's way")
-    # The tenth cell is a TIE. The README's claim is "no cell moves against the block", which
-    # is a statement about this row and not about the count above it.
-    add("0.000000", PRE_CONTEST,
-        lambda: pc5("realized", "min_abs_delta", "all tournaments"),
-        "README P5 the weakest realized cell — a tie, not a loss")
-    add("10", PRE_CONTEST,
-        lambda: pc5("realized", "delta_positive_cells", "all tournaments", "base"),
-        "README P5 the denominator behind that count")
-    add("0.074835", PRE_CONTEST,
-        lambda: pc5("resolution", "min_detectable_lift_gap", "base"),
-        "README P5 the simulated resolution bar")
-    add("−0.00515", PRE_CONTEST,
-        lambda: pc5("strategy", "adp_only_lift", "600k_shootaround", "delta"),
-        "README P5 the adp control — the sign that carries the conclusion")
-    add("+0.04585", PRE_CONTEST,
-        lambda: pc5("strategy", "lift_delta_mean", "600k_shootaround"),
-        "README P5 mean simulated lift delta over 24 strategies")
-
+        lambda: (cell(COMP_M, "val_crps", variant="betabinom_ot_graded")
+                 / cell(COMP_M, "val_crps", variant="independent_comparator") - 1.0),
+        "composition CRPS gain over the independent comparator")
+    add("4.58", MIN_UNIF,
+        lambda: cell(MIN_UNIF, "sd_ratio_minutes_over_composition",
+                     arm="composition_minus_minutes"),
+        "how much narrower the un-injected composition's season total is")
+    add("0.24", STRATEGY_SHIPPED,
+        lambda: cell(STRATEGY_SHIPPED, "sim_lift", tournament="600k_shootaround"),
+        "shipped arm's simulated advance lift at the 600k, rounded")
+    add("0.20", STRATEGY_SHIPPED,
+        lambda: cell(STRATEGY_SHIPPED, "realized_lift", tournament="600k_shootaround"),
+        "shipped arm's realized advance lift at the 600k, rounded")
     return C
 
 
@@ -5467,14 +5077,6 @@ def _games_played() -> list[Claim]:
         lambda: gp_spell("nll", model="geometric") - gp_spell("nll",
                                                               model="beta_geometric"),
         "log-likelihood the geometric gives up")
-    # Quoted in README.md too — the same figure from two docs against the one artifact,
-    # because "current in one doc and stale in the other" is the failure that has already
-    # happened twice in this repo.
-    C.append(_c("11,278", GP_SPELLS,
-                lambda: gp_spell("nll", model="geometric")
-                - gp_spell("nll", model="beta_geometric"),
-                "log-likelihood the geometric gives up", doc=README))
-
     # ── left truncation ───────────────────────────────────────────────────────
     add("−1.7042", GP_SPELLS,
         lambda: gp_spell("open_shift", analysis="left_truncation"),
@@ -6002,6 +5604,29 @@ def _weekly() -> list[Claim]:
         _c("−73.4", SIM_GATE_A, lambda: _season_total_bias(largest=False),
            "largest season-total bias", doc=SIMS),
     ]
+    # The execution axis, re-read 2026-08-16 after the graded-σ chain re-run; the
+    # current pair moved here from `README.md` on 2026-08-20. Claimed for the same reason
+    # the weekly table is: nothing else re-derives the current readings.
+    def sweep_mean_lift(arm: str) -> float:
+        frame = table(STRATEGY_SWEEP)
+        if frame is None:
+            return float("nan")
+        hit = frame[(frame["tournament"] == "600k_shootaround")
+                    & (frame["strategy"] == arm)]
+        return float(hit["lift_vs_null"].mean()) if len(hit) else float("nan")
+
+    C += [
+        _c("+0.00128856", STRATEGY_PAIRED,
+           lambda: cell(STRATEGY_PAIRED, "gap", tournament="600k_shootaround",
+                        metric="p_advance", baseline="blend_a30",
+                        strategy="autodraft_blend_a30"),
+           "autodraft twin over the uncapped click of the same ranking, 600k", doc=SIMS),
+        _c("0.0602481", STRATEGY_SHIPPED,
+           lambda: (cell(STRATEGY_SHIPPED, "sim_lift", tournament="600k_shootaround")
+                    - sweep_mean_lift("autodraft_blend_a30")),
+           "lift given up by autodrafting instead of the shipped objective, 600k",
+           doc=SIMS),
+    ]
     return C
 
 
@@ -6254,7 +5879,21 @@ def _minutes_window() -> list[Claim]:
         lambda: cell(MIN_UNIF, "predictive_sd", arm="composition_sum",
                      unit="season_total"),
         "composition un-injected predictive sd")
+    # The season-unit head-to-head between the two minutes heads — §6 of the doc,
+    # moved from `README.md` on 2026-08-20 when the overview was condensed.
+    C += _minutes_unification_claims(MWIN)
     return C
+
+
+def _draw_time() -> list[Claim]:
+    """`docs/draw-time-calibration-plan.md` — the role-graded injected σ, audited directly.
+
+    §9 anticipated this move: "adding this file to `_DOCS` is a one-line change whenever
+    someone wants the tables here audited directly rather than through their README twin."
+    The 2026-08-20 README condensation removed the twin, so the claims now live against
+    the doc that owns the readout — they are `_role_sigma_claims`, unchanged.
+    """
+    return _role_sigma_claims(DRAW)
 
 
 def _availability_window() -> list[Claim]:
@@ -9293,7 +8932,7 @@ def _build() -> tuple[Claim, ...]:
     return tuple(_availability() + _composition() + _predictions() + _adp()
                  + _established_facts() + _readme() + _shot_basis() + _games_played()
                  + _games_played_in_notes() + _train_validate_test() + _weekly()
-                 + _minutes_window() + _availability_window()
+                 + _minutes_window() + _draw_time() + _availability_window()
                  + _availability_regime() + _availability_exchangeability()
                  + _availability_absence() + _availability_absence_mixture()
                  + _availability_no_design_level() + _availability_population()

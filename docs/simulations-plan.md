@@ -2403,6 +2403,13 @@ The sweep's existing 22 arms reproduce to the digit (each arm draws from its own
 generator, so appending arms cannot perturb the table), and page 8's block 5 renders both
 halves.
 
+**Re-read 2026-08-16 after the graded-σ chain re-run** (recorded here 2026-08-20 when the
+overview was condensed; both are simulated-side figures, so the per-arm `rho` caveat from
+`docs/preseason-plan.md` P5 applies): the autodraft twin beats the uncapped click of the
+same ranking by **+0.00128856** (600k, resolved) and gives up **0.0602481** of simulated
+lift against the shipped per-pick objective. The conclusion is unchanged — the
+ranking-submission fallback is safe, and the objective is the half worth defending.
+
 #### All five captured structures are swept — 2026-08-11
 
 The sweep's tournament axis grew from the two original reference tiers to **all five

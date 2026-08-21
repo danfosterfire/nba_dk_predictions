@@ -3203,8 +3203,10 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/eda/serial_correlation.csv, "
                   "outputs/eda/bonus_calibration.csv, "
                   "outputs/predictions/stan_minutes_dispersion.csv",
-        source="README.md",
-        reviewed="2026-08-08",
+        # Sourced to `README.md` until the 2026-08-20 condensation; the fit-window
+        # inventory and the consume-by-scoring-target rule live in the sim-inputs plan.
+        source="docs/sim-inputs-plan.md",
+        reviewed="2026-08-20",
         date="2026-08-04",
         tags=("simulator-input",),
     ),

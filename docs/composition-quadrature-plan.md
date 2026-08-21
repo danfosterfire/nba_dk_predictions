@@ -62,8 +62,8 @@ rebuild. **To revive it**: set `stan.composition.effects.arms: [mq]` with a `lab
 ## 1. The problem, and why a third representation
 
 The composition head's season-unit underdispersion is a missing **per-(player, season)**
-parameter (`docs/minutes-window-plan.md`, `README.md` §2). Two representations of that
-parameter exist today:
+parameter (`docs/minutes-window-plan.md`, whose §6 carries the full readout). Two
+representations of that parameter exist today:
 
 - **The injection** (ships): `sim.minutes.player_season_sigma`, a constant σ plugged into
   `rehydrate_composition`. Works, but σ is grid-searched per offset change (the preseason
@@ -174,8 +174,8 @@ wiring check for whoever re-runs this.)
 - **The scaling axis changes.** The latent representation scales in *parameters* (2,204
   pilot → 12,307 full window — realistically never fittable); the marginal scales only in
   *rows* (~35 params at any window). The full-window fitted σ — the thing that would
-  actually ship in production and retire the marginal head (`README.md` §2) — is only
-  credible under the marginal representation.
+  actually ship in production and retire the marginal head (`docs/minutes-window-plan.md`
+  §4) — is only credible under the marginal representation.
 - **The `dense_e` dividend.** ~35 params at warmup 1000 clears the 20× rule the 2,234-param
   arm never can. The measured cliff on this head is ~10× wall clock (`diag_e` treedepth 8–9
   against `dense_e` 4, per the config's own comment).

@@ -555,8 +555,9 @@ def test_a_fitted_sigma_takes_precedence_over_the_injected_constant():
 
 
 def test_zero_recovers_the_uninjected_head_exactly():
-    """`composition_sum` in the artifact is the un-injected control and README quotes it,
-    so turning the knob off has to reproduce it rather than merely approximate it."""
+    """`composition_sum` in the artifact is the un-injected control and
+    `docs/minutes-window-plan.md` §6 quotes it, so turning the knob off has to reproduce
+    it rather than merely approximate it."""
     model = MU.rehydrate_composition(_composition_artifact(), keep=8, injected_sigma=0.0)
     assert not model.ps.enabled and model.sigma_source == "none"
     frame = pd.DataFrame({"player_id": [1, 1, 2, 2], "season": "2022-23"})

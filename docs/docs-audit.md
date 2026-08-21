@@ -12,12 +12,15 @@ test. Missing artifacts are *skipped*, so a fresh checkout without `make eda` is
 It guards the artifact→prose direction tightly and the prose→artifact direction loosely;
 see the module docstring for exactly what it cannot catch.
 
-**It covers sixteen docs with 3,721 claims and one builder per doc**: `README.md`,
+**It covers seventeen docs with 5,004 claims and one builder per doc**: `README.md`,
 `availability-plan`, `availability-window-plan`, `minutes-composition-plan`,
-`minutes-window-plan`, `predictions-plan`, `games-played-plan`, `shot-attempt-basis-plan`,
+`minutes-window-plan`, `draw-time-calibration-plan`, `predictions-plan`,
+`games-played-plan`, `shot-attempt-basis-plan`,
 `adp-plan`, `simulations-plan`, `preseason-plan`, and the five files the 2026-08-08
 reorganization split `CLAUDE.md` into — `facts-archive`, `model-development-notes`,
 `data-quirks`, `project-spec` and `train-validate-test-split`.
+`draw-time-calibration-plan` joined on 2026-08-20, when the README condensation (below)
+retargeted `_role_sigma_claims` from the overview to the doc that owns the readout.
 
 **`preseason-plan` joined on 2026-08-12, at P0 rather than at the end of the build.** A
 coverage table is the one kind of section that goes stale invisibly — re-running a backfill
@@ -27,11 +30,12 @@ planning-probe table is deliberately claimed nowhere: it is a superseded scratch
 measurement that carries its own correction inline, which is a different thing from the
 `historical=True` case.
 
-Coverage of measured figures: 79% (README), 79% (shot-attempt basis), 67% (model
-development notes), 64% (composition), 63% (predictions), 60% (adp), 58% (availability),
-46% (games played), 40% (facts archive), 33% (project spec), 26% (train/validate/test),
-21% (data quirks), 4% (simulations) — `make docs-audit` prints them live, so treat the
-printout rather than this line as current. The uncovered remainder is prose-only figures
+Coverage of measured figures: 100% (README), 80% (minutes window), 78% (shot-attempt
+basis), 68% (model development notes), 63% (predictions), 60% (adp), 59% (availability),
+58% (preseason), 45% (games played), 42% (facts archive), 40% (composition), 40%
+(availability window), 32% (project spec), 27% (train/validate/test), 20% (draw-time
+calibration), 18% (data quirks), 10% (simulations) — `make docs-audit` prints them live,
+so treat the printout rather than this line as current. The uncovered remainder is prose-only figures
 (`docs/provenance-plan.md` lists all fourteen), costing estimates, and counts of things
 rather than measurements.
 
@@ -42,7 +46,7 @@ row `make weekly-scores` added, whose readings nothing else re-derives. The rest
 layer's figures are re-derived by their own targets' build gates, which is the argument
 `docs/model-cards-plan.md` makes for staying out of the audit entirely. **A low coverage
 percentage on a long doc is not a to-do list**; a *claimed* figure that stops agreeing is.
-**668 of the claims are superseded values held for the record**, which is the number that
+**1,087 of the claims are superseded values held for the record**, which is the number that
 grows fastest as heads move off the test split: each conversion retires a measurement
 without deleting it. The season-term conversion alone added **161** — the largest single
 jump so far, because that ablation quotes four arms across thirteen heads and five
@@ -58,17 +62,20 @@ set — so a mistyped destination fails a test rather than surfacing as a stale 
 nobody reads. Nothing claims `CLAUDE.md` any more: it is a router carrying no
 measurements, so there is nothing in it to drift.
 
-**`README.md` was added last and is the doc the guard fits best**, which is why its coverage
-is among the highest: it holds no measurements of its own, only a selection of headlines
-copied from the established facts and the plan docs, and it is the most-read and least-maintained file in the
-repo — the exact conditions under which a figure goes stale unnoticed. Two things its builder
-does that the others do not: it claims **roundings** (`58%` against 57.96%, `86%` against an
-R² of 0.859), because an overview should round and `implied_tolerance` already handles that
-correctly; and it claims **shipped constants against their fitted optima** (the bonus
-overdispersions 0.10 and 0.025 against `bonus_calibration.csv`'s `analysis == "fitted"`
-rows), so a re-calibration that moves an optimum away from the constant fails here rather
-than passing silently. The tournament break-even hurdles have no `outputs/` artifact —
-`dashboard/economics.py` derives them at render time — so they are claimed against the
+**`README.md` was condensed on 2026-08-20 and its builder shrank with it, deliberately.**
+The overview used to carry the largest claim section in the registry — several hundred
+headlines copied from the established facts and the plan docs; it now quotes only the
+handful that motivate the architecture, and audits at 100% of its measured figures. The
+condensation moved every sole-record block to the doc that owns it, claims and prose
+together: the season-unit minutes head-to-head to `minutes-window-plan` §6
+(`_minutes_unification_claims`), the role-graded σ readout to `draw-time-calibration-plan`
+§9 (`_draw_time`), the execution-axis re-read to `simulations-plan` (`_weekly`), the bonus
+overdispersion constants-against-their-fitted-optima and the sequence-trunk ablation to the
+established facts. Two builder habits survive in the small `_readme`: it claims
+**roundings** (`58%` against 57.96%, `0.24` against the 600k lift), because an overview
+should round and `implied_tolerance` already handles that correctly; and the tournament
+break-even hurdles, which have no `outputs/` artifact — `dashboard/economics.py` derives
+them at render time — so they are claimed against the
 checked-in raw boards, with `_break_even_hurdle` duplicating one line of `economics.py`
 rather than importing it, since nothing in `src/` imports the dashboard package. A test pins
 the two copies together.
@@ -88,7 +95,8 @@ they survive.** Two kinds: a superseded value preserved beside its correction ("
 promoted one — `docs/adp-plan.md` is built on the second, quoting ρ **0.8704** on 218 pairs in
 its planning section and **0.8675** on 226 in its implementation section, *both correct*. A
 historical claim is excluded from the value check and still presence-checked, so the failure
-mode it guards is **deletion**, not drift. There are 56 of them. Without the flag the only
+mode it guards is **deletion**, not drift. There are over a thousand of them now — the
+printout counts them live. Without the flag the only
 options are to "correct" a reversal out of existence or to leave it unprotected.
 
 **Sampler wall clock is presence-checked too, and for a different reason — added
