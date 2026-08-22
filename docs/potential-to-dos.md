@@ -1317,14 +1317,25 @@ across that break is the one old-regime signal that would deserve any weight.
 ## 16. ⚙️ Rookies are not on the board at all — SCHEDULED 2026-08-22, moved to its own doc
 
 **This entry became a program**: `docs/rookie-rates-plan.md` carries the design, the gates
-and an eight-session runbook. **Sessions 1-3 ran 2026-08-22** — the floor priced (§7a), the
-veteran design's lag-recovery ladder built and gated to one rung of four (§7c), and the
+and an eight-session runbook. **Sessions 1-5 ran 2026-08-22** — the floor priced (§7a), the
+veteran design's lag-recovery ladder built and gated to one rung of four (§7c), the
 true-rookie design built with eleven no-fit floors that beat the shipping draft-bucket
-incumbent on CRPS on 11 of 11 heads (§7d, `make rookie-rates`). **No head is fitted yet**;
-Session 4 runs the gate. Session 1 priced the floor this entry asked for (`make rookie-floor`, plan doc §7a): letting the field draft what we cannot moves
+incumbent on CRPS on 11 of 11 heads (§7d), the eleven arms fitted with one of them clearing
+§4's per-head gate (`reb`, §7e), and **this entry's own settling gate answered** (§7f,
+`make season-total-rookie`). Session 1 priced the floor this entry asked for (`make rookie-floor`, plan doc §7a): letting the field draft what we cannot moves
 the Round-1 cut line +173.1 / +111.9 dk_pts, while the contest lift does not resolve on two
 realized seasons — so the entry's "if the floor is within noise, the head is not worth
 building" test is answered by decision 1 below rather than by the measurement.
+
+**The settling gate, in the unit this entry asked for.** At the season-total dk_pts unit on
+validation, the rookie rate family is worth **520.27 dk_pts of draftable MAE** against the
+zero a true rookie scores today (739.15 → 218.88) and the ladder's returnees **519.15**
+(1062.46 → 543.32). The *fitted* family against the *floor* family is **null** (+0.97
+[−3.36, +5.33] CRPS at the shipped games treatment, −2.81 [−6.01, +0.25] under an oracle on
+games) — which is what one fitted head of eleven should be worth where the other ten arms
+are identical between the two families. The same gate is null for the SHIPPED population
+too, so this is not a rookie-specific weakness. Sessions 6-8 remain: persistence and the
+simulator, the forward board, and the closeout.
 
 Three things decided at scheduling supersede parts of the
 entry below, which is kept as written. (1) The floor is priced first but is **context, not

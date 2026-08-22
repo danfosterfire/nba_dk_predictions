@@ -5,7 +5,7 @@ a component-rate head family for the players the veteran heads structurally cann
 — true rookies, returnees, and thin-prior fringe — so they can appear on a board and be
 drafted. Seven sessions, each with its own prompt (§6), each appending its results here.
 
-## 🚧 STATUS: SESSIONS 1-3 RUN 2026-08-22 (§7a, §7c, §7d). DESIGN REVISED 2026-08-22 (§7b). SESSION 4 IS NEXT.
+## 🚧 STATUS: SESSIONS 1-5 RUN 2026-08-22 (§7a, §7c, §7d, §7e, §7f). DESIGN REVISED 2026-08-22 (§7b). SESSION 6 IS NEXT.
 
 **The program is eight sessions, not seven, and the rookie head serves a smaller
 population than the one it was scheduled for.** §7b measured that a player with *any* prior
@@ -24,12 +24,33 @@ true rookies only.
 **The rookie design is built and its floors are measured** (§7d): `make rookie-rates`
 carries 1,495 true-rookie rows disjoint from the veteran design at every rung, sixteen
 zero-recovering features per head, and eleven dispersion-wrapped floors that beat the
-shipping draft-bucket incumbent on CRPS on **11 of 11 heads**. **No head is fitted yet** —
-Session 4 runs the §4 gate on 108 draftable validation rows.
+shipping draft-bucket incumbent on CRPS on **11 of 11 heads**.
 
-**§7a, §7b, §7c and §7d are in `make docs-audit`** (`_rookie_floor`, `_lag_recovery`,
-`_lag_ladder` and `_rookie_rates`, against `strategy_rookie_floor.csv`, the `_rookiefloor`
-artifact set, `lag_recovery.csv`, `lag_ladder.csv` and `rookie_rate_floors.csv`). Every
+**The heads are fitted and the gate admitted one of eleven** (§7e): `make stan-rookie`
+fits three variants per head and runs §4's conjunction. **`reb` ships FITTED** at the spline
+arm (validation −2.8869 [−5.0460, −0.7950], rolling −2.4642 [−3.8744, −1.0523], 9 of 11
+origins); the other ten ship §7d's floor as a plug-in. Two heads clear validation, two clear
+rolling, and the intersection is one — `fg2m|fg2a` wins validation and **reverses** on the
+fitting half, which is the case the rolling half was put there to catch. Every unit still
+carries all eleven quantities: the gate decides which arm, never whether.
+
+**The heads are composed into a season total and §16's own gate is answered** (§7f): `make
+season-total-rookie` reports `veteran`, `lag_recovered` and `rookie` through
+`season_total.evaluate`'s widened group tuple, and the two answers point opposite ways. The
+rate family is worth **520.27 dk_pts** of draftable season-total MAE on true rookies and
+**519.15** on the ladder's returnees, against the zero they score today — that is the number
+§16 asked for, and the program's mandate is discharged. The *fitted* family against the
+*floor* family is **null** (+0.9738 [−3.3629, +5.3300] CRPS at the shipped games treatment,
+−2.8084 [−6.0123, +0.2479] at `oracle_gp`), which is §7e's one-of-eleven verdict arriving one
+level down. The session's largest incidental finding is elsewhere: the ladder's returnees are
+given **24.738** games against a realized **46.857**, and an oracle on games takes their MAE
+from 543.3167 to 64.4025.
+
+**§7a, §7b, §7c, §7d, §7e and §7f are in `make docs-audit`** (`_rookie_floor`,
+`_lag_recovery`, `_lag_ladder`, `_rookie_rates`, `_rookie_heads` and `_season_total_rookie`,
+against `strategy_rookie_floor.csv`, the
+`_rookiefloor` artifact set, `lag_recovery.csv`, `lag_ladder.csv`, `rookie_rate_floors.csv`,
+`rookie_rate_metrics.csv` and `season_total_rookie.csv`). Every
 other figure here is either audited from its own artifact elsewhere (`rookie_priors.csv`,
 `strategy_injection.csv`, `preseason_coverage.csv`) or labelled scratch — §7a labels its two
 scratch measurements inline. Each session that produces a quotable number should add it to
@@ -297,15 +318,21 @@ zero.
 
 ### 5d. Session 4 — Stan arms and the gate
 
+**Run 2026-08-22 — see §7e**, which records the ladder's shortened shape (the scale rung
+does not exist, because a rookie head's own feature is already on its link) and the dense
+mass matrix that made the rolling half affordable in Stan.
+
 - All eleven heads: 7 NB counts with minutes exposure, `fg3a|fga` + 3 conversions
   beta-binomial, on the two existing compiled sources. Ladder mirrors
   `count_variants`/`conversion_variants`: linear → +interaction → +spline.
 - Metrics via the existing scorers (`val_r2`/`val_nll`/CRPS/PIT); artifact
   `outputs/predictions/rookie_rate_metrics.csv` in the shape of
-  `stan_component_metrics.csv`, with `selected` and `beats_floor` head-local.
+  `stan_component_metrics.csv`, with `selected` and `beats_floor` head-local. §7e adds a
+  `population` column and the gate block to that shape, because §4 reads the verdict on the
+  draftable subpopulation and one row per (head, variant) could carry only one population.
 - Run the §4 gate per head; record fitted-vs-floor ship decisions here and in the
   registry. Sampler scale: eleven small-population fits — minutes each, nothing like the
-  veteran sweeps.
+  veteran sweeps. **396 fits in about fourteen minutes, zero convergence failures.**
 
 ### 5e. Session 5 — the season-total readout (§16's settling gate)
 
@@ -411,12 +438,14 @@ here and updating `dashboard/decisions.py` where a ship decision lands.
    > only (first played season = target season), with the feature ladder per the doc plus
    > the eleven dispersion-wrapped floor estimators. Tests for disjointness from the
    > post-ladder veteran design, shrinkage weight, and zero-recovery. No Stan fits yet.
-4. > I'm working on the NBA prediction project (CLAUDE.md). Read
+4. ✅ **Done 2026-08-22 — §7e.**
+   > I'm working on the NBA prediction project (CLAUDE.md). Read
    > docs/rookie-rates-plan.md and execute **Session 4 (§5d): fit the eleven rookie
    > arms and run the stated gate** — validation paired-bootstrap CRPS vs floor plus
    > rolling origins, write `rookie_rate_metrics.csv`, record fitted-vs-floor ship
    > decisions in the doc and registry.
-5. > I'm working on the NBA prediction project (CLAUDE.md). Read
+5. ✅ **Done 2026-08-22 — §7f.**
+   > I'm working on the NBA prediction project (CLAUDE.md). Read
    > docs/rookie-rates-plan.md and execute **Session 5 (§5e): the season-total
    > readout** — rookie-admitting frame, `rookie` AND `lag_recovered` groups in
    > `season_total.evaluate`, head-vs-floor at the season-total unit on validation. This
@@ -984,3 +1013,365 @@ preseason reads it well (0.6109), and the incumbent is actively harmful (−0.59
   them have a floor near zero on every arm; a head that clears a near-zero floor has cleared
   very little, and Session 4 should read `beats_floor` beside the level rather than alone.
 
+
+### 7e. Session 4 — the eleven arms fitted, and the gate that admitted one (run 2026-08-22)
+
+**`make stan-rookie`** (`src/models/stan_rookie.py` → `outputs/predictions/rookie_rate_metrics.csv`).
+§7d built the design and eleven no-fit floors and fitted nothing; this puts a sampler on it
+and runs §4's per-head ship gate. **One head of eleven ships fitted: `reb`.** The other ten
+ship §7d's floor estimator as a plug-in — which is a decision about *which arm*, never about
+whether the head ships, because a unit must carry all eleven quantities to enter the tensor
+at all.
+
+#### What was fitted
+
+Three variants per head, §5d's ladder with its scale rung removed: the veteran ladder walks
+raw → log → spline because a veteran head's own feature is a prior-season rate that must be
+put on the link scale first, and a rookie head's own feature is **already** on it (§7d's
+level, not a delta). So the rungs are `linear` (the shrunk level, four missing indicators,
+four slot indicators, years-since-draft, age/age_sq — 12 features), `slot_interaction`
+(**§5c's shipped list exactly**, 16), and `slot_interaction_spline` (the level's B-spline
+basis replacing its linear term, 21). Each is built by *subtraction from*
+`rookie_rates.head_features` rather than restated, so a rung cannot drift from the list
+Session 6 will persist.
+
+**The gate is the conjunction §4 stated, and both halves are computed as code.** Validation
+is the selected variant's paired-bootstrap CRPS interval against the floor on the 108
+draftable rows; the rolling half walks 11 origins over the fitting half (2011-12 → 2021-22,
+≥ 300 fitting rows each, 629 draftable rows scored) and asks for the same sign, an interval
+below zero, and a majority of origins won. Unlike `make components-preseason`, **the rolling
+half is Stan rather than a point-MLE stand-in** — at this population size it costs minutes,
+so both halves are the same estimator against the same floor.
+
+Two mechanical points worth recording:
+
+- **`metric=dense_e`, and it is a 30× speedup rather than a preference.** The slot block's
+  four products are collinear with their own indicators by construction, and `age`/`age_sq`
+  add a second such pair. On `fga` the shipped diagonal metric saturated treedepth on
+  **793 of 4,000** draws and took 90.5 s; `dense_e` saturates **0**, takes 3.0 s, and lands
+  on the same answer (R² 0.9633 against 0.9631, CRPS 22.82 against 22.71). All **396** fits
+  ran with **zero** convergence warnings — no R-hat above 1.01, no ESS below 400, no
+  divergence — in about fourteen minutes.
+- **Both arms fit the same 1,161 rows**, not the design's 1,218. The floor's dispersion needs
+  an expanding bucket prior and 2004-05 has none, so handing the sampler 57 rows the floor
+  cannot have would have made this a comparison of two fitting populations.
+- **The spline rung is the one that is not literally zero-recovering**, and it is named
+  rather than hidden: a B-spline basis at a level of exactly 0 is a *constant* vector, not a
+  zero one. The four missing indicators partition exactly the rows with no preseason reading
+  and absorb that constant, so no row's prediction depends on a level nobody measured — but
+  the column is not zero and §7d's blanket claim does not extend to it.
+
+#### The ladder, validation · draftable (n = 108, except `fg3m|fg3a` 106 and `ftm|fta` 105)
+
+CRPS then its paired delta against §7d's floor; `*` marks an interval entirely below zero;
+**bold** is the variant `selected` picked (R² for a count, NLL for a conversion —
+`_finalize`'s rule, unchanged).
+
+| head | floor | linear | + slot × yrs | + spline |
+|---|---:|---:|---:|---:|
+| `fga` | 28.7864 | **27.7258** (−1.0606) | 27.8000 (−0.9863) | 27.9197 (−0.8667) |
+| `fta` | 18.1564 | 16.9755 (−1.1809) | 16.9849 (−1.1715) | **16.7022** (−1.4542) |
+| `reb` | 25.4441 | 23.6888 (−1.7553\*) | 23.7146 (−1.7294\*) | **22.5571** (−2.8869\*) |
+| `ast` | 14.1020 | 13.2504 (−0.8515) | 13.4451 (−0.6569) | **12.9649** (−1.1370) |
+| `stl` | 4.6717 | **4.2233** (−0.4484) | 4.2753 (−0.3964) | 4.3672 (−0.3045) |
+| `blk` | 7.1148 | 6.3973 (−0.7176) | **6.4654** (−0.6494) | 6.8952 (−0.2196) |
+| `tov` | 9.4824 | 8.7768 (−0.7056) | 8.9735 (−0.5089) | **8.6699** (−0.8125) |
+| `fg3a\|fga` | 17.9441 | 18.4253 (+0.4811) | 18.5143 (+0.5701) | **18.0213** (+0.0772) |
+| `fg2m\|fg2a` | 7.9819 | 7.8057 (−0.1762\*) | 7.8399 (−0.1420\*) | **7.7869** (−0.1950\*) |
+| `fg3m\|fg3a` | 3.3672 | **3.4257** (+0.0584) | 3.4328 (+0.0656) | 3.4232 (+0.0560) |
+| `ftm\|fta` | 3.3054 | 3.3323 (+0.0268) | **3.3332** (+0.0278) | 3.3453 (+0.0399) |
+
+The spline is the selected rung on **6** heads, `linear` on 3 and `slot_interaction` on 2 —
+so P4(b)'s expectation that draft slot "earns its place in interaction or not at all" comes
+back *not at all* on nine of eleven heads.
+
+#### The gate
+
+| head | selected | validation delta [95%] | rolling delta [95%] | origins | ships |
+|---|---|---:|---:|---:|:--|
+| `fga` | linear | −1.0606 [−2.5734, +0.4606] | −0.2366 [−0.9897, +0.5090] | 7/11 | floor |
+| `fta` | +spline | −1.4542 [−2.8534, +0.0573] | −0.3919 [−1.1009, +0.3892] | 6/11 | floor |
+| **`reb`** | **+spline** | **−2.8869 [−5.0460, −0.7950]** | **−2.4642 [−3.8744, −1.0523]** | **9/11** | **FITTED** |
+| `ast` | +spline | −1.1370 [−3.0730, +0.5660] | −0.9014 [−1.7982, +0.0280] | 8/11 | floor |
+| `stl` | linear | −0.4484 [−1.1565, +0.1271] | −0.1882 [−0.4204, +0.0505] | 7/11 | floor |
+| `blk` | + slot × yrs | −0.6494 [−1.9045, +0.2934] | +0.3094 [−0.0608, +0.7130] | 4/11 | floor |
+| `tov` | +spline | −0.8125 [−1.7536, +0.1287] | −0.5426 [−0.9532, −0.1326] | 9/11 | floor |
+| `fg3a\|fga` | +spline | +0.0772 [−0.6119, +0.8766] | +0.7197 [−0.0565, +1.8455] | 2/11 | floor |
+| `fg2m\|fg2a` | +spline | −0.1950 [−0.3797, −0.0254] | +0.3365 [+0.1120, +0.6336] | 3/11 | floor |
+| `fg3m\|fg3a` | linear | +0.0584 [−0.1656, +0.2858] | −0.0529 [−0.1318, +0.0242] | 8/11 | floor |
+| `ftm\|fta` | + slot × yrs | +0.0278 [−0.1538, +0.2363] | +0.0764 [−0.0304, +0.1999] | 5/11 | floor |
+
+**Two heads clear validation, two clear rolling, and the intersection is one.** That is what
+a conjunction is for, and this round is the cleanest illustration the project has produced:
+the two halves disagree about *which* head, not merely about how much.
+
+#### Five readings, and the second is why the rolling half exists
+
+**Every count head points the right way and only one of them resolves.** All seven have a
+favourable validation CRPS delta (−0.4484 to −2.8869) and all seven beat the floor on R²;
+`beats_floor` is true on **8 of 11** selected arms. The direction is unanimous and the
+evidence is thin — 108 rows — which is exactly the shape §7d predicted when it said the
+interval widths on this population are the reason §4 pairs validation with a rolling
+confirmation.
+
+**`fg2m|fg2a` is the head the rolling half was put there to catch.** Its validation interval
+is entirely below zero — −0.1950 [−0.3797, −0.0254], a clean win — and its rolling interval
+is entirely below zero *on the wrong side*: **+0.3365 [+0.1120, +0.6336]**, with **3 of 11**
+origins won. A validation-only gate would have shipped a fitted head that 1,161 fitting-half
+rows say is worse than arithmetic. `docs/availability-window-plan.md` §12e and §14f record
+blocks that won validation and *shrank* 4-6× rolling; this one does not shrink, it reverses.
+
+**`tov` is the mirror image and the head to revisit first.** Rolling −0.5426 [−0.9532,
+−0.1326] with **9 of 11** origins is as clear as `reb`'s, and validation −0.8125 [−1.7536,
++0.1287] reaches across zero on 108 rows by a margin smaller than the point estimate. `ast`
+is the other near miss, with a rolling upper edge of **+0.0280**. Neither ships, and neither
+should on the bar §4 set in advance — but both are failures of *power* rather than of
+direction, and the population is the thing that would fix them.
+
+**§7d's three near-nulls are confirmed as nulls, and the head it said to watch is the
+worst.** `fg3m|fg3a`, `ftm|fta` and `fg3a|fga` all have *positive* validation deltas — the
+fitted head is worse than the floor, not merely not better — which answers §7d's caution
+("beating a floor that is itself near-zero is not the same as scoring the head well") more
+sharply than it was posed: they do not beat it. `fg3a|fga` was the opposite case §7d flagged
+to watch, because the share of attempts taken from three is stable and coachable and the
+preseason reads it at R² 0.6109. It is the **worst of the eleven** on the fitting half:
++0.7197 rolling, **2 of 11** origins. The share is readable by an *estimator* and is not
+improved by giving a GLM the same information plus draft slot.
+
+**The fitted arms are better calibrated than the floors on 7 of 11 heads**, including heads
+that fail the gate: `fta` PIT KS 0.2641 → 0.1919, `tov` 0.2456 → 0.1393, `stl` 0.1252 →
+0.0700, and `reb` 0.1044 → **0.0459**. That is a real property of the fitted family and it is
+not what the gate reads, so it changes nothing about what ships — but it is the reason the
+count heads are worth re-opening when the population grows rather than being written off.
+
+#### What `reb` actually buys
+
+Validation · draftable: CRPS **25.4441 → 22.5571**, R² **0.8449 → 0.8781**, PIT KS
+**0.1044 → 0.0459** — better on level, spread and calibration at once, and the only head
+where all three move together with an interval to support it. On the fitting half it wins
+**9 of 11** origins at −2.4642 [−3.8744, −1.0523].
+
+Why this head and not another is an interpretation rather than a measurement, but the
+obvious candidate is in §7d's own table: rebounding is one of only **three** count heads
+whose *raw* preseason arm already beats the draft bucket on R² (0.7868 against 0.7274;
+`ast` and `blk` are the others), so the level the spline bends is one that carries real
+signal before any shrink is applied. What that does not explain is why `ast` and `blk` did
+not follow, and nothing here settles it.
+
+#### What Session 4 settles, and what it does not
+
+- **Settled**: the design fits. Eleven heads, three variants, 396 fits, zero convergence
+  failures, and a dense metric that makes the rolling half of the gate affordable in Stan
+  rather than in a point-MLE stand-in.
+- **Settled**: the ship split. **`reb` fitted at `slot_interaction_spline`; ten heads on
+  §7d's floor.** Session 6 persists ten deterministic recipes and one posterior.
+- **Settled**: the draftable restriction is not what is blocking the other ten. On the wider
+  `all` population (146 validation rows) the verdict is **the same single head** — `fta` and
+  `fg2m|fg2a` clear validation there and still fail rolling, `tov` and `fg3m|fg3a` clear
+  rolling there and still fail validation.
+- **Not settled**: whether `tov` and `ast` are real. Both fail on power rather than
+  direction, and the honest reading is that 108 draftable rows cannot separate a −0.8 CRPS
+  effect from zero. Nothing here licenses shipping them; §5h's closeout is where a wider
+  population or a refit form would be argued for.
+- **Not measured**: anything at the season-total dk_pts unit, which is §16's own settling
+  gate and Session 5's (§5e) job. A per-head CRPS win of −2.9 rebounds is not yet a
+  statement about a draftable player's season total, and a family that ships ten floors and
+  one fitted head has to be read against the floor family *as a family*.
+
+
+### 7f. Session 5 — the season-total readout, and what §16's own gate answers (run 2026-08-22)
+
+**`make season-total-rookie`** (`src/models/season_total_rookie.py` →
+`outputs/predictions/season_total_rookie.csv`). Sessions 3 and 4 measured the family in
+rebounds and made threes; this composes all eleven heads into the number a board is drafted
+on and asks §16's own question. It answers two, and **they point in opposite directions**:
+the family is worth **520 dk_pts of season-total MAE** against the hole it fills, and the
+*fitted* arm is worth **nothing measurable** against the floor arm.
+
+#### What was built
+
+`season_total.build_frame` cannot carry this population and drops it **twice over on lag
+columns** — the availability design is lag-1 and has no row for a player with no prior
+season, and `RATE_FEATURES` then wants three more lag-1 columns. So `season_total_rookie.py`
+is that builder's rookie-admitting twin, and it shares exactly one thing with it: the
+scorer. `season_total.evaluate`'s group tuple now carries `veteran`, `lag_recovered` and
+`rookie` off a `population` column, `rotation_mask` returns all-False on a frame that has no
+lag block rather than raising, and a treatment may supply its own **rate** and its own
+predictive **samples** — which is what lets one scorer serve a ladder that varies games and
+a readout that varies the rate family. The availability ladder's own artifact
+(`season_total_metrics.csv`) comes back **bit-identical** after the change.
+
+**Three rate arms per group, each the family's own version of the same thing.** `unserved`
+is what a row scores today — it is not in the design, so it is not in the tensor, and every
+draw scores it at zero; `floor` is §7d's eleven dispersion-wrapped preseason blends for the
+rookie family and `carry_forward` / `carry_forward_conversion` for the veteran one; `head`
+is what ships — §7e's split read out of `rookie_rate_metrics.csv`'s own `ships` column, and
+the persisted `train`-window posteriors for the veteran family. **One head is fitted here**
+(`reb`, because no rookie posterior exists until Session 6); everything else is read off
+disk. The `lag_recovered` group is the rungs §7c **admitted**, read from `lag_ladder.csv`'s
+verdict rows rather than from `stan.components.lag_ladder`, which is still deliberately `[]`.
+
+The chain is `season_terms.compose_season_dk`'s: counts from their heads, `fg3a` drawn on
+the **drawn** `fga`, `fg2a` as the difference, makes on drawn trials. The bonus is a
+per-game threshold that a season total cannot carry, so each arm gets its own
+`expected_bonus` at `BONUS_OVERDISPERSION` — the constant calibrated at exactly this unit,
+a player-season's mean per-game counts — constant across draws, the same honest shape as the
+availability plug-in. It is **0.66%** of the realized season total on these rows, so the
+target is `dk_pts` outright rather than its linear part.
+
+The games-played side is the shipped treatment per row, and which one a row gets is a
+measured fact rather than a choice: the availability design covers **773 of 773** veteran
+rows and **0 of 165** rookie and returnee rows, so `no_design_availability`'s graded
+`tenure_draft` level is the treatment for exactly the population §5e names it for. Every arm
+is read at that level **and** at `oracle_gp`, which is `season_total`'s own oracle device and
+is what separates a rate-family error from an availability error.
+
+#### The table, validation · draftable (MAE then CRPS, dk_pts, lower is better)
+
+| arm | veteran (706) | lag_recovered (14) | rookie (108) |
+|---|---:|---:|---:|
+| `unserved` — today | 1393.4919 · 1393.4919 | 1062.4643 · 1062.4643 | 739.1505 · 739.1505 |
+| floor family | 284.6165 · 228.8490 | 543.3167 · 510.9946 | **218.8826 · 179.4336** |
+| head family | 280.5043 · 228.2814 | 550.0307 · 521.4856 | **219.2185 · 180.4075** |
+| floor · oracle GP | 118.8089 · 85.4694 | 64.4025 · 47.1678 | 91.1718 · 67.3352 |
+| head · oracle GP | 106.3415 · 76.5554 | 63.6246 · 44.9040 | 88.7267 · 64.5268 |
+
+On the unrestricted population (773 / 19 / 146) the rookie column reads 579.1849 unserved,
+195.2182 floor, 195.3603 head, and 70.0754 for the head at oracle GP.
+
+#### The gate §4 stated, paired, on the draftable rows
+
+| group | games treatment | CRPS delta [95%] | MAE delta |
+|---|---|---:|---:|
+| veteran | shipped | −0.5676 [−5.5140, +4.4607] | −4.1122 |
+| veteran | oracle GP | **−8.9141 [−12.3735, −5.3473]** | −12.4674 |
+| lag_recovered | shipped | +10.4909 [−3.4576, +26.7757] | +6.7140 |
+| lag_recovered | oracle GP | −2.2638 [−7.9743, +3.8861] | −0.7780 |
+| **rookie** | **shipped** | **+0.9738 [−3.3629, +5.3300]** | **+0.3358** |
+| **rookie** | **oracle GP** | **−2.8084 [−6.0123, +0.2479]** | **−2.4451** |
+
+**§16's settling gate does not resolve, and that is the result.** The rookie head family is
+not measurably better than the rookie floor family at the season-total dk_pts unit on either
+games treatment: the interval spans zero at the shipped level and reaches +0.2479 at
+`oracle_gp`. It is also not measurably *worse*. That is exactly what one fitted head of
+eleven should be worth at a unit where the other ten arms are literally identical between
+the two families — the head arm differs from the floor arm in `reb` and in nothing else —
+and it is §7e's verdict arriving one level down rather than a new finding.
+
+#### Four readings, and the first is the number §16 asked for
+
+**The family is worth ~520 dk_pts of season-total MAE, and the choice of arm is worth
+nothing.** A draftable rookie scores **739.1505** MAE today, because he is not in the tensor
+and every draw prices him at zero; the floor family takes that to **218.8826** and CRPS from
+739.1505 to **179.4336**. The ladder's returnees move **1062.4643 → 543.3167**. Those two
+numbers are the answer to *"is a rate head for this population worth building"* and they are
+three orders of magnitude larger than the fitted-vs-floor gap the per-head gate spent
+Session 4 on. **Which arm a head ships is a small decision inside a large one**, and §4's
+ship rule — the gate decides which arm, never whether — is what makes it so.
+
+**The availability plug-in, not the rate family, is what limits the recovered returnees.**
+Their draftable MAE falls from **543.3167 to 64.4025** the moment games played is an oracle,
+an 8.4× reduction, because `no_design_availability` gives them **24.738** games against a
+realized **46.857**. The plug-in is not malfunctioning — `make availability-no-prior` §8b
+measured that an uncovered returnee's realized rate collapses toward 0.30 whatever his draft
+bucket says, and 24.7/82 is 0.30 to the digit. What it is, is estimated on a *different*
+population: it pools every uncovered returnee, most of them fringe roster rows, while rung A
+is specifically the player who missed a whole season having played a full one before it —
+Jamal Murray and Kawhi Leonard, who then play 47 games. **The ladder recovered these rows'
+rate side and their availability side is still being served by a level built for someone
+else.** That is the largest single thing this session found and it is a Session 7 item, not
+a rookie-head item: the rate arms are already at 63-64 MAE on a 1062 dk_pts season.
+
+**The rookie plug-in, by contrast, is doing its job.** 42.715 predicted games against 44.852
+realized on the draftable rows, and the oracle only takes the floor family from 218.8826 to
+91.1718 — a 2.4× reduction against the returnees' 8.4×. `no_design_availability`'s graded
+level was selected on the no-prior population and it is the one place in this table where
+the plug-in is scoring the population it was measured on.
+
+**The head-vs-floor gap does not resolve for the SHIPPED population either, and that reframes
+the rookie row.** The veteran family's eleven fitted heads beat their own no-fit floor by
+**−8.9141 [−12.3735, −5.3473]** CRPS at `oracle_gp` — a clean win — and by **−0.5676
+[−5.5140, +4.4607]** at the shipped games treatment, which is no win at all. The same
+availability noise that hides the rookie family's arm choice hides the veteran family's, on
+706 rows instead of 108. This is README §3's "availability is the largest measured win"
+arriving from a direction nothing had taken it from before: at the season-total unit the
+games-played treatment dominates the rate family *even where the rate family is eleven
+fitted Stan heads*. A reader who takes the rookie row as evidence that the rookie design is
+weak has to explain why the veteran row says the same thing.
+
+#### The cross-check, and what it is worth
+
+The veteran `head · oracle GP` cell on the unrestricted 773 rows is MAE **101.0178**, CRPS
+**72.7774**. `season_term_season_total.csv`'s `base` arm is the same composition on the same
+rows from a different module, with heads it refits itself rather than the persisted ones and
+with the bonus excluded: MAE 105.710, CRPS 76.055. Two independent paths to the same number
+within 4%, and the residual is the direction the bonus and the persisted-versus-refitted
+posteriors would move it. The chain is composing what it says it is composing.
+
+#### What Session 5 settles, and what it does not
+
+- **Settled**: §16's gate, in the sense that matters. The rate family is worth **520.27
+  dk_pts** of draftable season-total MAE on true rookies and **519.15** on the ladder's
+  returnees, against the zero they score today. The program's mandate is discharged.
+- **Settled**: the fitted-vs-floor question at the deliverable unit is **null**, on both
+  games treatments, and Session 4's per-head split is not overturned by it. Ten of the
+  eleven arms are identical between the two families by construction.
+- **Settled**: the readout is one scorer. `season_total.evaluate` serves both ladders, its
+  group tuple never pools `rookie` with `lag_recovered`, and `season_total_metrics.csv`
+  reproduces bit-identically after the change.
+- **Not settled**: whether the fitted `reb` arm is worth anything downstream. 108 rows
+  cannot separate a −2.8 CRPS effect from zero, and §5h's contest replay is where a
+  season-total effect this size would or would not become a bracket effect.
+- **Not measured, and now the largest open item**: what the recovered returnees are worth
+  once their availability comes from something other than a level fitted on fringe roster
+  rows. 543.3167 → 64.4025 under an oracle is the size of that prize, on 14 draftable
+  validation rows. It belongs in `docs/availability-window-plan.md`'s territory rather than
+  this program's, and §5g should not be read as covering it.
+
+#### Why every recovered returnee gets the same number of games, and the fork that follows
+
+Not a bug and not a tie: `availability_no_prior.level_keys` builds the shipped
+`tenure_draft` key as `f"rookie__{bucket}"` for a first appearance and the bare string
+**`"returning"`** for everything else, so the draft bucket is dropped for a returnee by
+construction and one pooled scalar per season is applied to all of them. The 14 draftable
+rows get **24.8** games in 2022-23 and **24.6** in 2023-24 — Kawhi Leonard, Jamal Murray and
+Miles Bridges alongside Armoni Brooks — against realized values from 10 to 70. §8b of
+`make availability-no-prior` chose that collapse on evidence (the bucket is a gradient for a
+rookie and a flat for a returnee, and crossing it in would average the two), but it chose it
+on the **pooled** uncovered-returnee population, which is mostly fringe roster churn. Rung A
+is the opposite shape: a full season played, one missed, a rotation role waiting.
+
+**The rate side of these rows is already right**, which is what makes the games side the
+whole story. Predicted dk_pts per game played against realized, on the same 14: Bridges 40.3
+vs 38.6, Leonard 42.9 vs 41.9, Williamson 42.2 vs 43.6, Wiseman 19.1 vs 19.7, Gallinari 10.8
+vs 11.0, Thompson 10.1 vs 10.1. That is §7b's imputed lag-2 doing exactly what it was
+measured to do.
+
+**The availability head has the identical structural gap and no ladder, and it is closer to
+free than the component one was.** `availability.build_design` already calls
+`with_lags(..., max_lag=3)`, so `gp_share_lag2/lag3` and `minutes_per_game_lag2/lag3` are
+already on the row; `FEATURE_COLS` already **fits coefficients on all six**, so the head
+already reads two- and three-year-old availability for a covered veteran. The row is dropped
+by `dropna(subset=["gp_share_lag1", ...])` — on lag-1 **alone** — and the three lines under
+it already fill lag2/lag3 *from* lag1 when those are missing. The mirror fill is simply not
+written, and that asymmetry is the entire gap.
+
+*Scratch measurement, 2026-08-22, not in `make docs-audit`*: replacing the flat plug-in with
+the ladder's own carried `gp_lag1` (capped at team games, no shrink, no fit) takes the
+`lag_recovered` draftable season-total MAE from **543.32 to 342.39** against the oracle's
+64.40 — about **42%** of the gap — and the games error from 24.2 to 14.1. Correlation between
+the carried lag and realized games is only **+0.352** on the 14 rows (+0.624 on all 19), so
+most of the residual is not carry-forward-recoverable.
+
+**Which is why the fork here does not resolve the way the component one did.** §3 constraint
+4 gated the cheap imputation-only form first because for a *rate* head the nearest real rate
+is a good estimate of this year's rate. For an *availability* head **the missing season is
+the signal**, and imputing lag-1 from a healthy lag-2 tells the head "he played 80 games last
+year" — the single most misleading thing available about Kawhi Leonard in 2022-23. The
+absence block goes with it: `trailing_missed_lag1`, `n_spells_lag1`, `longest_spell_lag1` and
+`ABSENCE_MIX_COLS` all describe S-1 and would be imputed away too. So the arm worth measuring
+is probably the **refit** form — the recovered rows admitted to the fit with a staleness
+column the head can learn a slope for — which the component program declined on cost at
+eleven heads and two windows. **The availability head is one head.** That asymmetry is the
+argument, and it is a measurement for `docs/availability-window-plan.md` to take, not this
+program.

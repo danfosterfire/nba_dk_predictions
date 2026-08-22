@@ -502,14 +502,16 @@ def floor_arms(rows: pd.DataFrame, priors: pd.DataFrame, preseason_col: str,
     return arm_predictions(rows, priors, preseason_col, k)
 
 
-def count_floor(train: pd.DataFrame, test: pd.DataFrame, priors: pd.DataFrame,
-                component: str, k: float, arm: str = FLOOR_ARM,
-                seed: int = SEED) -> dict:
-    """The shrunk rate x realized minutes, wrapped in an NB at a train-fitted dispersion.
+def count_floor_predictive(train: pd.DataFrame, test: pd.DataFrame, priors: pd.DataFrame,
+                           component: str, k: float, arm: str = FLOOR_ARM,
+                           seed: int = SEED
+                           ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+    """`(realized, mu, draws x rows samples, phi)` — the floor's predictive, undigested.
 
-    `stan_components.count_floor`'s shape with a different prior rate — the wrapping is what
-    makes a CRPS from arithmetic comparable to a CRPS from a sampler, and without it §5d's
-    gate would be comparing a point prediction against a predictive distribution.
+    Split out of `count_floor` for §5d's gate, which needs the **per-row** CRPS the paired
+    bootstrap resamples rather than the mean `score_count` returns. One implementation with
+    two readers, so the number the gate is read against and the number §7d's table quotes
+    cannot come apart.
     """
     rate = floor_arms(test, priors, f"pre_per36_{component}", k)[arm]
     mu = np.clip(rate * test["total_minutes"].to_numpy(dtype=float) / PER36, 1e-6, None)
@@ -521,7 +523,20 @@ def count_floor(train: pd.DataFrame, test: pd.DataFrame, priors: pd.DataFrame,
     samples = rng.negative_binomial(
         np.full((PREDICTIVE_SAMPLES, len(mu)), phi),
         np.repeat((phi / (phi + mu))[None, :], PREDICTIVE_SAMPLES, axis=0)).astype(float)
-    return score_count(test[component].to_numpy(dtype=float), mu, samples, phi, seed)
+    return test[component].to_numpy(dtype=float), mu, samples, phi
+
+
+def count_floor(train: pd.DataFrame, test: pd.DataFrame, priors: pd.DataFrame,
+                component: str, k: float, arm: str = FLOOR_ARM,
+                seed: int = SEED) -> dict:
+    """The shrunk rate x realized minutes, wrapped in an NB at a train-fitted dispersion.
+
+    `stan_components.count_floor`'s shape with a different prior rate — the wrapping is what
+    makes a CRPS from arithmetic comparable to a CRPS from a sampler, and without it §5d's
+    gate would be comparing a point prediction against a predictive distribution.
+    """
+    return score_count(*count_floor_predictive(train, test, priors, component, k, arm,
+                                               seed), seed)
 
 
 def conversion_floor(train: pd.DataFrame, test: pd.DataFrame, priors: pd.DataFrame,
@@ -542,17 +557,48 @@ def conversion_floor(train: pd.DataFrame, test: pd.DataFrame, priors: pd.DataFra
     is the grid's own left edge, so the mistake announces itself as a NaN rather than as a
     quietly wrong constant.
     """
+    return score_conversion(*conversion_floor_predictive(
+        train, test, priors, made, attempted, volume_k, k_attempts, league, arm, seed),
+        seed)
+
+
+def conversion_floor_p(frame: pd.DataFrame, priors: pd.DataFrame, made: str,
+                       volume_k: float, k_attempts: float, league: float,
+                       arm: str = FLOOR_ARM) -> np.ndarray:
+    """The floor's predicted percentage on **every** row, whatever its realized attempts.
+
+    Split out of `conversion_floor_predictive` because §5e composes a season dk total from
+    the eleven heads and draws makes on **drawn** trials — so it needs a percentage for a
+    row whose realized attempts are zero, which the scoring path deliberately drops. One
+    implementation with two readers, so the percentage the gate scores and the percentage
+    the composition draws through cannot come apart.
+    """
     pre_col = f"pre_pct_{made}"
-    tr = train.assign(**{pre_col: np.where(train["min_pre"].to_numpy(dtype=float) > 0,
-                                           conversion_pct(train, made, k_attempts, league),
-                                           np.nan)})
-    te = test.assign(**{pre_col: np.where(test["min_pre"].to_numpy(dtype=float) > 0,
-                                          conversion_pct(test, made, k_attempts, league),
-                                          np.nan)})
+    scored = frame.assign(**{pre_col: np.where(
+        frame["min_pre"].to_numpy(dtype=float) > 0,
+        conversion_pct(frame, made, k_attempts, league), np.nan)})
+    return np.clip(floor_arms(scored, priors, pre_col, volume_k)[arm], EPS, 1.0 - EPS)
+
+
+def conversion_floor_predictive(train: pd.DataFrame, test: pd.DataFrame,
+                                priors: pd.DataFrame, made: str, attempted: str,
+                                volume_k: float, k_attempts: float, league: float,
+                                arm: str = FLOOR_ARM, seed: int = SEED
+                                ) -> tuple[np.ndarray, np.ndarray, np.ndarray,
+                                           np.ndarray, float]:
+    """`(y, n, p, draws x rows samples, rho)` on the rows with at least one attempt.
+
+    `count_floor_predictive`'s role for the beta-binomial half, and split out for the same
+    reason: §5d's gate resamples per-row CRPS. **The row filter is part of the return** —
+    only rows with a realized attempt are scored, which is the same restriction
+    `stan_components._score_conv` applies to a fitted head, so a caller pairing the two
+    must hand both the same frame.
+    """
+    tr, te = train, test
     ok = te[attempted].to_numpy(dtype=float) > 0
     live = tr[attempted].to_numpy(dtype=float) > 0
-    p = np.clip(floor_arms(te, priors, pre_col, volume_k)[arm], EPS, 1.0 - EPS)[ok]
-    p_train = np.clip(floor_arms(tr, priors, pre_col, volume_k)[arm], EPS, 1.0 - EPS)[live]
+    p = conversion_floor_p(te, priors, made, volume_k, k_attempts, league, arm)[ok]
+    p_train = conversion_floor_p(tr, priors, made, volume_k, k_attempts, league, arm)[live]
     y_train = np.minimum(np.rint(tr[made].to_numpy(dtype=float)),
                          np.rint(tr[attempted].to_numpy(dtype=float)))[live].astype(int)
     n_train = np.rint(tr[attempted].to_numpy(dtype=float))[live].astype(int)
@@ -563,7 +609,7 @@ def conversion_floor(train: pd.DataFrame, test: pd.DataFrame, priors: pd.DataFra
                         np.full((PREDICTIVE_SAMPLES, 1), rho))
     rng = np.random.default_rng(seed)
     samples = rng.binomial(n[None, :], rng.beta(a, b)).astype(float)
-    return score_conversion(y.astype(float), n.astype(float), p, samples, rho, seed)
+    return y.astype(float), n.astype(float), p, samples, rho
 
 
 def head_floor(train: pd.DataFrame, test: pd.DataFrame, priors: pd.DataFrame,

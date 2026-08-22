@@ -693,6 +693,71 @@ make rookie-rates      # THE TRUE-ROOKIE DESIGN AND ITS ELEVEN NO-FIT FLOORS —
                        #   which is what Session 6's `units` union needs. Requires
                        #   `make lag-recovery` for the ladder's constants.
                        #   numpy/pandas only, ~10 seconds.
+
+make stan-rookie       # THE ELEVEN ROOKIE ARMS, FITTED, AND §4's PER-HEAD SHIP GATE —
+                       #   `docs/rookie-rates-plan.md` §5d/§7e →
+                       #   outputs/predictions/rookie_rate_metrics.csv.
+                       #   `make rookie-rates` built the design and its floors and fitted
+                       #   nothing; this puts a sampler on it and decides, PER HEAD,
+                       #   whether the head ships FITTED or ships that floor as a plug-in.
+                       #   It never decides whether a head ships at all — every unit must
+                       #   carry all eleven quantities to enter the tensor, so the gate
+                       #   chooses the arm and nothing else.
+                       #   Three variants per head: linear -> + slot x years-since-draft
+                       #   -> + a spline on the shrunk level. The scale rung the veteran
+                       #   ladder carries does not exist here, because a rookie head's own
+                       #   feature is already on its link scale.
+                       #   THE GATE IS §4's CONJUNCTION: the selected variant's validation
+                       #   paired-bootstrap CRPS interval against the floor entirely below
+                       #   zero on the DRAFTABLE season-start-roster population (108 rows),
+                       #   AND a rolling-origin harness on the fitting half agreeing —
+                       #   same sign, interval below zero, a majority of origins won.
+                       #   Validation alone ships nothing; two earlier rounds won a
+                       #   validation reading and shrank 4-6x rolling. Unlike
+                       #   `make components-preseason`, the rolling half is Stan rather
+                       #   than a point-MLE stand-in, because at this population size it
+                       #   costs minutes.
+                       #   `metric=dense_e` on every fit, which is a 30x speedup and not a
+                       #   preference: the slot block's four products are collinear with
+                       #   their own indicators and a diagonal mass matrix saturates
+                       #   treedepth. ~400 small fits, ~30 minutes.
+                       #   Requires `make rookie-rates` for the design's constants.
+
+make season-total-rookie
+                       # THE SEASON-TOTAL READOUT, AND §16's OWN SETTLING GATE —
+                       #   `docs/rookie-rates-plan.md` §5e/§7f →
+                       #   outputs/predictions/season_total_rookie.csv plus a
+                       #   *_predictions.csv companion.
+                       #   Sessions 3-4 measured the family in rebounds and made threes;
+                       #   this composes all eleven heads into the number a board is
+                       #   drafted on and asks whether the family beats its floor there.
+                       #   `season_total.build_frame` drops this population TWICE on lag
+                       #   columns, so this is its rookie-admitting twin. It shares ONE
+                       #   thing with it — the scorer, `season_total.evaluate`, whose group
+                       #   tuple now carries `veteran`, `lag_recovered` and `rookie` and
+                       #   never pools the last two. A treatment may now supply its own
+                       #   RATE and its own predictive SAMPLES, which is what lets one
+                       #   scorer serve a ladder that varies games and a readout that
+                       #   varies the rate family; `season_total_metrics.csv` comes back
+                       #   bit-identical.
+                       #   Three rate arms per group: `unserved` (a row missing from the
+                       #   design is missing from the tensor and scores zero in every
+                       #   draw — today's answer), the family's no-fit floor, and what
+                       #   ships. Games played is the availability head where it has a row
+                       #   and `no_design_availability`'s graded level where it does not,
+                       #   which is the design's split rather than a choice: 773 of 773
+                       #   veteran rows against 0 of 165 rookie and returnee ones. Every
+                       #   arm is read at that level AND at `oracle_gp`, so the table says
+                       #   whether an error is the rate family or the availability plug-in.
+                       #   The chain is `season_terms.compose_season_dk`'s (makes drawn on
+                       #   DRAWN attempts); the bonus is each arm's own `expected_bonus` at
+                       #   the constant calibrated for this unit, 0.66% of the realized
+                       #   total here.
+                       #   Fits exactly ONE head — `reb`, §7e's single fitted arm, because
+                       #   no rookie posterior exists until Session 6 persists one.
+                       #   Everything else is read off disk. ~2 minutes.
+                       #   Requires `make stan-rookie`, `make lag-ladder` and
+                       #   `make posteriors WINDOW=train`.
 ```
 
 **After `make posteriors`, nothing else in the simulation layer needs CmdStan.** That is the

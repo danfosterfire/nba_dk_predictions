@@ -10615,6 +10615,131 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("head", "components", "drafting"),
     ),
     Decision(
+        id="one-rookie-rate-head-of-eleven-clears-its-floor-and-it-is-reb",
+        topic="components",
+        claim="**The eleven rookie rate heads are fitted and §4's gate admitted ONE: "
+              "`reb`, at the spline arm.** `make stan-rookie` fits three variants per "
+              "head (linear -> + slot x years-since-draft -> + a spline on the shrunk "
+              "level) and runs the conjunction stated in advance: the selected variant's "
+              "validation paired-bootstrap CRPS interval against "
+              "[[the-true-rookie-design-is-built-and-its-floors-beat-the-shipping-incumbent]]'s "
+              "no-fit floor entirely below zero on the 108 DRAFTABLE validation rows, AND "
+              "a rolling-origin harness on the fitting half agreeing (same sign, interval "
+              "below zero, a majority of 11 origins won). `reb` clears both — validation "
+              "−2.8869 [−5.0460, −0.7950], rolling −2.4642 [−3.8744, −1.0523], 9 of 11 "
+              "origins — and **the other ten ship the floor estimator as a plug-in**. "
+              "Every unit still carries all eleven quantities: the gate decides WHICH "
+              "ARM, never whether a head ships.",
+        because="**Two heads clear validation, two clear rolling, and the intersection is "
+                "one** — which is the cleanest demonstration this project has produced of "
+                "why the bar is a conjunction. `fg2m|fg2a` wins validation outright "
+                "(−0.1950 [−0.3797, −0.0254]) and REVERSES on the fitting half (+0.3365 "
+                "[+0.1120, +0.6336], 3 of 11 origins): a validation-only gate would have "
+                "shipped a fitted head that 1,161 fitting-half rows call worse than "
+                "arithmetic. `tov` is the mirror — rolling −0.5426 [−0.9532, −0.1326] at "
+                "9 of 11 origins, validation reaching +0.1287 — and `ast`'s rolling upper "
+                "edge is +0.0280. All seven count heads point the right way (validation "
+                "deltas −0.4484 to −2.8869) and 8 of 11 selected arms beat the floor on "
+                "the point criterion, so the direction is unanimous and 108 rows are what "
+                "is missing; both near misses fail on POWER, not on sign. The four "
+                "conversion heads are the opposite finding: three have POSITIVE deltas — "
+                "worse than the floor, not merely not better — and `fg3a|fga`, the one "
+                "§7d said to watch, is the worst of the eleven on the fitting half "
+                "(+0.7197, 2 of 11 origins). A share that an estimator reads well is not "
+                "improved by handing a GLM the same information plus draft slot. "
+                "The verdict is NOT an artefact of the draftable restriction: on the "
+                "wider 146-row population the same single head passes. "
+                "**`metric=dense_e` is a 30x speedup and not a preference** — the slot "
+                "block's four products are collinear with their own indicators, and a "
+                "diagonal mass matrix saturated treedepth on 793 of 4,000 `fga` draws at "
+                "90.5 s against dense_e's 0 at 3.0 s for the same answer; that is what "
+                "made the rolling half affordable in Stan rather than in a point-MLE "
+                "stand-in like `make components-preseason`'s. 396 fits, zero convergence "
+                "failures. Fitted arms are also better CALIBRATED than their floors on 7 "
+                "of 11 heads (`reb` PIT KS 0.1044 -> 0.0459, `tov` 0.2456 -> 0.1393), "
+                "which the gate does not read and which is the reason the count heads are "
+                "worth re-opening if the population ever grows.",
+        status="settled",
+        reproduce="make stan-rookie → outputs/predictions/rookie_rate_metrics.csv",
+        source="docs/rookie-rates-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("head", "components", "drafting"),
+    ),
+    Decision(
+        id="the-rookie-rate-family-is-worth-520-dk-pts-and-its-fitted-arm-is-worth-nothing",
+        topic="components",
+        claim="**§16's settling gate answers two questions and they point opposite ways.** "
+              "At the SEASON-TOTAL dk_pts unit on validation, the rookie rate family is "
+              "worth **520.27 dk_pts of draftable MAE** against the zero a true rookie "
+              "scores today (739.1505 unserved → 218.8826 floor, CRPS 739.1505 → "
+              "179.4336), and the ladder's returnees **519.15** (1062.4643 → 543.3167). "
+              "The FITTED family against the FLOOR family is **null** on the same rows — "
+              "+0.9738 [−3.3629, +5.3300] CRPS at the shipped games treatment and "
+              "−2.8084 [−6.0123, +0.2479] with an oracle on games. The program's mandate "
+              "is discharged by the first number; the second changes nothing about "
+              "[[one-rookie-rate-head-of-eleven-clears-its-floor-and-it-is-reb]]'s "
+              "per-head split.",
+        because="A null here is what one fitted head of eleven SHOULD be worth at a unit "
+                "where the other ten arms are identical between the two families by "
+                "construction — the head arm differs from the floor arm in `reb` and in "
+                "nothing else — so it is §4's per-head verdict arriving one level down "
+                "rather than new evidence against the design. Two things make that "
+                "reading defensible instead of convenient. First, **the same gate is null "
+                "for the SHIPPED population too**: the veteran family's eleven fitted "
+                "Stan heads beat their own carry-forward floor by −8.9141 [−12.3735, "
+                "−5.3473] CRPS under an oracle on games and by −0.5676 [−5.5140, +4.4607] "
+                "at the shipped games treatment, on 706 rows. At the season-total unit "
+                "the games-played treatment dominates the rate family even where the rate "
+                "family is eleven fitted heads, which is README §3's availability finding "
+                "arriving from a direction nothing had taken it from. Second, the "
+                "composition cross-checks: the veteran head arm under an oracle reads MAE "
+                "101.0178 / CRPS 72.7774 against `season_term_season_total.csv`'s `base` "
+                "arm at 105.710 / 76.055 — a different module, its own refits, and no "
+                "bonus. The readout shares ONE thing with the availability ladder, "
+                "`season_total.evaluate`, whose group tuple now carries `veteran`, "
+                "`lag_recovered` and `rookie` and never pools the last two; "
+                "`season_total_metrics.csv` reproduces bit-identically after the change.",
+        status="settled",
+        reproduce="make season-total-rookie → outputs/predictions/season_total_rookie.csv",
+        source="docs/rookie-rates-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("head", "components", "drafting"),
+    ),
+    Decision(
+        id="the-recovered-returnees-are-limited-by-availability-not-by-their-rates",
+        topic="availability",
+        claim="**The lag ladder recovered the returnees' RATE side and their availability "
+              "side is still served by a level built for someone else.** "
+              "`no_design_availability` gives a draftable rung-A returnee **24.738** games "
+              "against a realized **46.857**, and an oracle on games takes his "
+              "season-total MAE from **543.3167 to 64.4025** — an 8.4x reduction. The "
+              "same oracle takes a draftable rookie from 218.8826 to 91.1718, 2.4x.",
+        because="The plug-in is not malfunctioning: "
+                "[[no-design-availability-is-graded-by-tenure-and-draft-slot]] "
+                "measured that an uncovered RETURNEE's realized rate collapses toward "
+                "0.30 whatever his draft bucket says, and 24.738/82 is 0.30 to the digit. "
+                "It is estimated on a different population — every uncovered returnee, "
+                "most of them fringe roster rows — while "
+                "[[one-ladder-rung-of-four-clears-its-gate]] admitted specifically the "
+                "player who missed a whole season having played a full one before it "
+                "(Jamal Murray, Kawhi Leonard), who then plays 47 games. The rookie half "
+                "of the plug-in has no such problem (42.715 predicted against 44.852 "
+                "realized), which is expected: the graded level was SELECTED on the "
+                "no-prior population and that is the one group here it is scoring the "
+                "population it was measured on. The prize is large and the evidence is "
+                "14 draftable validation rows, so this is a measurement to take rather "
+                "than a change to make — and it belongs in the availability head's "
+                "territory, not the rookie program's.",
+        status="open",
+        reproduce="make season-total-rookie → outputs/predictions/season_total_rookie.csv",
+        source="docs/rookie-rates-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("head", "availability", "drafting"),
+    ),
+    Decision(
         id="the-rookie-rate-head-program-is-eight-sessions-for-true-rookies-only",
         topic="components",
         claim="**The rookie rate head program is scheduled as eight sessions** "

@@ -337,6 +337,10 @@ LAG_LADDER = "outputs/predictions/lag_ladder.csv"
 # The true-rookie design the ladder cannot reach, and the eleven floors it will be gated
 # against, 2026-08-22.
 ROOKIE_RATES = "outputs/predictions/rookie_rate_floors.csv"
+# The eleven fitted arms and §4's per-head ship gate, 2026-08-22.
+ROOKIE_METRICS = "outputs/predictions/rookie_rate_metrics.csv"
+# The eleven composed into a season total, and §16's own settling gate, 2026-08-22.
+SEASON_TOTAL_ROOKIE = "outputs/predictions/season_total_rookie.csv"
 SWEEP_FLOOR = "outputs/predictions/strategy_sweep_rookiefloor.csv"
 
 
@@ -8969,7 +8973,8 @@ def _build() -> tuple[Claim, ...]:
                  + _composition_preseason_fit_covered()
                  + _preseason_contest()
                  + _final_evaluation() + _rookie_floor() + _lag_recovery()
-                 + _lag_ladder() + _rookie_rates())
+                 + _lag_ladder() + _rookie_rates() + _rookie_heads()
+                 + _season_total_rookie())
 
 
 def _final_evaluation() -> list[Claim]:
@@ -9855,6 +9860,271 @@ def _rookie_rates() -> list[Claim]:
     add("0.8200", lambda: floor("fga", "preseason", "pit_ks"),
         "the raw preseason arm's `fga` PIT KS")
     add("0.0578", lambda: floor("fga", "shrunk", "pit_ks"), "the floor's `fga` PIT KS")
+    return C
+
+
+def _rookie_heads() -> list[Claim]:
+    """`docs/rookie-rates-plan.md` §7e — the eleven fitted arms and §4's ship gate.
+
+    **The head counts are the claims that matter and they are counted from the artifact
+    rather than quoted per head.** "N of 11 ship fitted" is the sentence the doc leads with
+    and the one a later session reads; eleven separate per-head cells would let it pass while
+    the headline was wrong, which is the shape `_lag_ladder` and `_rookie_rates` both took.
+
+    Both halves of the gate are claimed for every head that ships fitted, and the *interval*
+    is claimed alongside the point delta. A paired CRPS delta with no interval beside it is
+    the reading `minutes_unification.paired_bootstrap` exists to prevent — this project has
+    already reversed one apparent winner on exactly that gap — so a doc that quoted the
+    deltas alone would be auditable and still misleading.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, actual, label: str, **kw) -> None:
+        C.append(_c(quoted, ROOKIE_METRICS, actual, label, doc=ROOKIE, **kw))
+
+    def gate(head: str, column: str, population: str = "draftable") -> float:
+        return cell(ROOKIE_METRICS, column, head=head, population=population,
+                    selected=True)
+
+    def arm(head: str, variant: str, column: str,
+            population: str = "draftable") -> float:
+        return cell(ROOKIE_METRICS, column, head=head, population=population,
+                    variant=variant)
+
+    def counting(predicate) -> float:
+        """How many heads satisfy a predicate on their SELECTED row, draftable."""
+        f = table(ROOKIE_METRICS)
+        if f is None:
+            return float("nan")
+        hit = f[(f["population"] == "draftable") & f["selected"]]
+        return float(predicate(hit).sum())
+
+    # ── the headline: how many heads ship fitted, and how the halves disagree ──
+    #
+    # Quoted bare because `parse_quoted` reads a number and "1 of 11" is not one — the shape
+    # `_lag_ladder`'s 5-of-7 claim and `_rookie_rates`' 11-of-11 claim both take.
+    add("1", lambda: counting(lambda f: f["passes"]), "heads that ship FITTED")
+    add("8", lambda: counting(lambda f: f["beats_floor"]),
+        "selected arms that beat the floor on the point criterion")
+    add("2", lambda: counting(lambda f: f["val_pass"]),
+        "heads whose validation interval clears")
+    add("2", lambda: counting(lambda f: f["rolling_pass"]),
+        "heads whose rolling half clears")
+    add("6", lambda: counting(lambda f: f["variant"] == "slot_interaction_spline"),
+        "heads whose selected variant is the spline")
+    add("11", lambda: cell(ROOKIE_METRICS, "n_origins", head="reb", population="draftable",
+                           variant="no_fit_floor"), "rolling origins")
+    add("629", lambda: cell(ROOKIE_METRICS, "n_rolling", head="reb",
+                            population="draftable", variant="no_fit_floor"),
+        "draftable rows scored across the rolling origins")
+    add("108", lambda: cell(ROOKIE_METRICS, "n_scored", head="reb",
+                            population="draftable", variant="no_fit_floor"),
+        "draftable validation rows the gate is read on")
+    add("146", lambda: cell(ROOKIE_METRICS, "n_scored", head="reb", population="all",
+                            variant="no_fit_floor"), "validation rows, all population")
+
+    # ── the ladder table, every head x every rung ────────────────────────────
+    #
+    # The floor CRPS is claimed here as well as in `_rookie_rates`, and deliberately: the two
+    # artifacts compute it on different frames (this one cuts to live rows once, for the
+    # pairing) and a silent divergence between them would mean the gate was read against a
+    # floor the floor table never reported.
+    ladder = {
+        "fga": ("28.7864", "27.7258", "−1.0606", "27.8000", "−0.9863", "27.9197", "−0.8667"),
+        "fta": ("18.1564", "16.9755", "−1.1809", "16.9849", "−1.1715", "16.7022", "−1.4542"),
+        "reb": ("25.4441", "23.6888", "−1.7553", "23.7146", "−1.7294", "22.5571", "−2.8869"),
+        "ast": ("14.1020", "13.2504", "−0.8515", "13.4451", "−0.6569", "12.9649", "−1.1370"),
+        "stl": ("4.6717", "4.2233", "−0.4484", "4.2753", "−0.3964", "4.3672", "−0.3045"),
+        "blk": ("7.1148", "6.3973", "−0.7176", "6.4654", "−0.6494", "6.8952", "−0.2196"),
+        "tov": ("9.4824", "8.7768", "−0.7056", "8.9735", "−0.5089", "8.6699", "−0.8125"),
+        "fg3a|fga": ("17.9441", "18.4253", "0.4811", "18.5143", "0.5701", "18.0213",
+                     "0.0772"),
+        "fg2m|fg2a": ("7.9819", "7.8057", "−0.1762", "7.8399", "−0.1420", "7.7869",
+                      "−0.1950"),
+        "fg3m|fg3a": ("3.3672", "3.4257", "0.0584", "3.4328", "0.0656", "3.4232", "0.0560"),
+        "ftm|fta": ("3.3054", "3.3323", "0.0268", "3.3332", "0.0278", "3.3453", "0.0399"),
+    }
+    for head, cells in ladder.items():
+        add(cells[0], lambda h=head: arm(h, "no_fit_floor", "val_crps"),
+            f"ladder table, {head} floor CRPS")
+        for i, variant in enumerate(("linear", "slot_interaction",
+                                     "slot_interaction_spline")):
+            add(cells[1 + 2 * i], lambda h=head, v=variant: arm(h, v, "val_crps"),
+                f"ladder table, {head} {variant} CRPS")
+            add(cells[2 + 2 * i], lambda h=head, v=variant: arm(h, v, "crps_vs_floor"),
+                f"ladder table, {head} {variant} delta")
+
+    # ── the gate table, both halves and both interval edges ──────────────────
+    #
+    # The INTERVALS are claimed, not only the deltas. A paired CRPS delta with no interval
+    # beside it is the reading `paired_bootstrap` exists to prevent, and every verdict in
+    # this table turns on an edge rather than on a point: `fg2m|fg2a` and `tov` are the two
+    # heads whose two halves disagree, and each disagreement is a sign on an edge.
+    gate_table = {
+        "fga": ("−1.0606", "−2.5734", "0.4606", "−0.2366", "−0.9897", "0.5090", "7"),
+        "fta": ("−1.4542", "−2.8534", "0.0573", "−0.3919", "−1.1009", "0.3892", "6"),
+        "reb": ("−2.8869", "−5.0460", "−0.7950", "−2.4642", "−3.8744", "−1.0523", "9"),
+        "ast": ("−1.1370", "−3.0730", "0.5660", "−0.9014", "−1.7982", "0.0280", "8"),
+        "stl": ("−0.4484", "−1.1565", "0.1271", "−0.1882", "−0.4204", "0.0505", "7"),
+        "blk": ("−0.6494", "−1.9045", "0.2934", "0.3094", "−0.0608", "0.7130", "4"),
+        "tov": ("−0.8125", "−1.7536", "0.1287", "−0.5426", "−0.9532", "−0.1326", "9"),
+        "fg3a|fga": ("0.0772", "−0.6119", "0.8766", "0.7197", "−0.0565", "1.8455", "2"),
+        "fg2m|fg2a": ("−0.1950", "−0.3797", "−0.0254", "0.3365", "0.1120", "0.6336", "3"),
+        "fg3m|fg3a": ("0.0584", "−0.1656", "0.2858", "−0.0529", "−0.1318", "0.0242", "8"),
+        "ftm|fta": ("0.0278", "−0.1538", "0.2363", "0.0764", "−0.0304", "0.1999", "5"),
+    }
+    columns = ("crps_vs_floor", "crps_vs_floor_lo", "crps_vs_floor_hi",
+               "rolling_crps_vs_floor", "rolling_lo", "rolling_hi", "origins_won")
+    for head, cells in gate_table.items():
+        for quoted, column in zip(cells, columns):
+            add(quoted, lambda h=head, c=column: gate(h, c),
+                f"gate table, {head} {column}")
+
+    # ── what the one shipped head buys ───────────────────────────────────────
+    add("0.8449", lambda: arm("reb", "no_fit_floor", "val_r2"), "`reb` floor R2")
+    add("0.8781", lambda: arm("reb", "slot_interaction_spline", "val_r2"),
+        "`reb` fitted R2")
+    add("0.1044", lambda: arm("reb", "no_fit_floor", "val_pit_ks"), "`reb` floor PIT KS")
+    add("0.0459", lambda: arm("reb", "slot_interaction_spline", "val_pit_ks"),
+        "`reb` fitted PIT KS")
+    for head, floor_ks, fitted_ks in (("fta", "0.2641", "0.1919"),
+                                      ("tov", "0.2456", "0.1393"),
+                                      ("stl", "0.1252", "0.0700")):
+        add(floor_ks, lambda h=head: arm(h, "no_fit_floor", "val_pit_ks"),
+            f"{head} floor PIT KS")
+        add(fitted_ks, lambda h=head: gate(h, "val_pit_ks"), f"{head} fitted PIT KS")
+    add("7", lambda: float(sum(
+        gate(h, "val_pit_ks") < arm(h, "no_fit_floor", "val_pit_ks")
+        for h in ladder)), "heads where the fitted arm is better calibrated", tol=0.5)
+
+    # ── the feature counts, which say the ladder is what §5d specified ───────
+    for variant, quoted in (("linear", "12"), ("slot_interaction", "16"),
+                            ("slot_interaction_spline", "21")):
+        add(quoted, lambda v=variant: arm("reb", v, "n_features"),
+            f"features in the {variant} rung")
+    return C
+
+
+def _season_total_rookie() -> list[Claim]:
+    """`docs/rookie-rates-plan.md` §7f — the season-total readout and §16's settling gate.
+
+    **The two headline numbers are DIFFERENCES and they are claimed as differences.** "The
+    family is worth 520 dk_pts" is `unserved` minus `floor` on one group at one restriction,
+    and quoting the two cells alone would let the sentence a later session actually reads
+    drift while both halves still audited. `_lag_ladder`'s reach claims have the same shape
+    and take the same treatment.
+
+    The gate's **intervals** are claimed beside its deltas, for the reason `_rookie_heads`
+    states: every verdict in this table is a sign on an edge, and here two of the three
+    groups turn on one. The `oracle_gp` rows are claimed as well as the shipped ones because
+    the session's whole reading is the gap between them — a doc that quoted only the shipped
+    column would be auditable and would say the opposite thing about the returnees.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, actual, label: str, **kw) -> None:
+        C.append(_c(quoted, SEASON_TOTAL_ROOKIE, actual, label, doc=ROOKIE, **kw))
+
+    def metric(group: str, treatment: str, column: str,
+               restriction: str = "draftable") -> float:
+        return cell(SEASON_TOTAL_ROOKIE, "value", measurement="metric",
+                    restriction=restriction, group=group, treatment=treatment,
+                    metric=column)
+
+    def gate(group: str, treatment: str, column: str) -> float:
+        return cell(SEASON_TOTAL_ROOKIE, "value", measurement="gate",
+                    restriction="draftable", group=group, treatment=treatment,
+                    metric=column)
+
+    def context(group: str, column: str, restriction: str = "draftable") -> float:
+        # No `treatment` filter: a context row describes the frame rather than an arm and
+        # carries no treatment at all, so (measurement, restriction, group, metric) is
+        # already the key.
+        return cell(SEASON_TOTAL_ROOKIE, "value", measurement="context",
+                    restriction=restriction, group=group, metric=column)
+
+    # ── the headline: what the family is worth against the hole it fills ─────
+    add("520.27", lambda: (metric("rookie", "unserved", "mae_dk_total")
+                           - metric("rookie", "floor", "mae_dk_total")),
+        "what the rookie rate family is worth in season-total MAE", tol=0.01)
+    add("519.15", lambda: (metric("lag_recovered", "unserved", "mae_dk_total")
+                           - metric("lag_recovered", "floor", "mae_dk_total")),
+        "what the ladder's returnees are worth in season-total MAE", tol=0.01)
+
+    # ── the table, both games treatments, the three groups ───────────────────
+    rows = {
+        ("veteran", "unserved"): ("1393.4919", "1393.4919"),
+        ("veteran", "floor"): ("284.6165", "228.8490"),
+        ("veteran", "head"): ("280.5043", "228.2814"),
+        ("veteran", "oracle_gp_floor"): ("118.8089", "85.4694"),
+        ("veteran", "oracle_gp_head"): ("106.3415", "76.5554"),
+        ("lag_recovered", "unserved"): ("1062.4643", "1062.4643"),
+        ("lag_recovered", "floor"): ("543.3167", "510.9946"),
+        ("lag_recovered", "head"): ("550.0307", "521.4856"),
+        ("lag_recovered", "oracle_gp_floor"): ("64.4025", "47.1678"),
+        ("lag_recovered", "oracle_gp_head"): ("63.6246", "44.9040"),
+        ("rookie", "unserved"): ("739.1505", "739.1505"),
+        ("rookie", "floor"): ("218.8826", "179.4336"),
+        ("rookie", "head"): ("219.2185", "180.4075"),
+        ("rookie", "oracle_gp_floor"): ("91.1718", "67.3352"),
+        ("rookie", "oracle_gp_head"): ("88.7267", "64.5268"),
+    }
+    for (group, treatment), (mae, crps) in rows.items():
+        add(mae, lambda g=group, t=treatment: metric(g, t, "mae_dk_total"),
+            f"season-total MAE, {group} {treatment}")
+        add(crps, lambda g=group, t=treatment: metric(g, t, "crps_dk_total"),
+            f"season-total CRPS, {group} {treatment}")
+
+    # The unrestricted rookie column, quoted in the paragraph under the table.
+    for treatment, quoted in (("unserved", "579.1849"), ("floor", "195.2182"),
+                              ("head", "195.3603"), ("oracle_gp_head", "70.0754")):
+        add(quoted, lambda t=treatment: metric("rookie", t, "mae_dk_total", "all"),
+            f"season-total MAE, rookie {treatment}, all population")
+
+    # ── the gate, deltas AND edges ───────────────────────────────────────────
+    gate_table = {
+        ("veteran", ""): ("−0.5676", "−5.5140", "4.4607", "−4.1122"),
+        ("veteran", "oracle_gp_"): ("−8.9141", "−12.3735", "−5.3473", "−12.4674"),
+        ("lag_recovered", ""): ("10.4909", "−3.4576", "26.7757", "6.7140"),
+        ("lag_recovered", "oracle_gp_"): ("−2.2638", "−7.9743", "3.8861", "−0.7780"),
+        ("rookie", ""): ("0.9738", "−3.3629", "5.3300", "0.3358"),
+        ("rookie", "oracle_gp_"): ("−2.8084", "−6.0123", "0.2479", "−2.4451"),
+    }
+    columns = ("crps_dk_total_delta", "crps_dk_total_lo", "crps_dk_total_hi",
+               "mae_dk_total_delta")
+    for (group, prefix), cells in gate_table.items():
+        for quoted, column in zip(cells, columns):
+            add(quoted, lambda g=group, p=prefix, c=column: gate(g, f"{p}head_vs_floor", c),
+                f"gate, {group} {prefix or 'shipped'} {column}")
+
+    # ── the context the readings rest on ─────────────────────────────────────
+    add("0.66%", lambda: context("all", "bonus_share", "all"),
+        "the bonus's share of the realized season total")
+    add("24.738", lambda: context("lag_recovered", "mean_predicted_gp"),
+        "games the plug-in gives a recovered returnee")
+    add("46.857", lambda: context("lag_recovered", "mean_gp_played"),
+        "games a recovered returnee realizes")
+    add("42.715", lambda: context("rookie", "mean_predicted_gp"),
+        "games the plug-in gives a draftable rookie")
+    add("44.852", lambda: context("rookie", "mean_gp_played"),
+        "games a draftable rookie realizes")
+    add("706", lambda: context("veteran", "n_rows"), "draftable veteran rows")
+    add("14", lambda: context("lag_recovered", "n_rows"),
+        "draftable lag-recovered rows")
+    add("108", lambda: context("rookie", "n_rows"), "draftable rookie rows")
+    add("773", lambda: context("veteran", "n_rows", "all"), "veteran rows")
+    add("19", lambda: context("lag_recovered", "n_rows", "all"), "lag-recovered rows")
+    add("146", lambda: context("rookie", "n_rows", "all"), "rookie rows")
+
+    # ── the cross-check against the module that composes the same chain ──────
+    #
+    # Claimed against SEASON_TOTAL_ROOKIE's own cell only. The `season_terms` half of the
+    # comparison is already audited where that module's figures live, and re-deriving the
+    # 4% gap here would make one artifact's drift look like the other's.
+    add("101.0178", lambda: metric("veteran", "oracle_gp_head", "mae_dk_total", "all"),
+        "veteran head at oracle GP, the cross-check cell")
+    add("72.7774", lambda: metric("veteran", "oracle_gp_head", "crps_dk_total", "all"),
+        "veteran head CRPS at oracle GP, the cross-check cell")
     return C
 
 

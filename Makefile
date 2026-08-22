@@ -41,7 +41,8 @@ export PYTHONUNBUFFERED = 1
         draft-sim-need draft-room draft-room-prep strategy-sweep strategy-sweep-need \
         pick-log-stake mixture-value preseason-contest final-evaluation \
         posteriors-production production-check forward-rehearsal forward-board \
-        rookie-floor lag-recovery lag-ladder rookie-rates
+        rookie-floor lag-recovery lag-ladder rookie-rates stan-rookie \
+        season-total-rookie
 
 venv:
 	/opt/homebrew/bin/python3.14 -m venv .venv
@@ -886,6 +887,52 @@ lag-ladder:
 # `make lag-recovery` for the ladder's constants. numpy/pandas only, ~10 seconds.
 rookie-rates:
 	$(PYTHON) -m src.models.rookie_rates
+
+# THE ELEVEN ROOKIE ARMS, FITTED, AND §4's PER-HEAD SHIP GATE — `docs/rookie-rates-plan.md`
+# §5d. `make rookie-rates` built the design and its no-fit floors and fitted nothing; this
+# puts a sampler on it and decides, per head, whether the head ships FITTED or ships that
+# floor as a plug-in. It never decides whether a head ships at all — every unit must carry
+# all eleven quantities to enter the tensor, so the gate chooses the arm and nothing else.
+#
+# Three variants per head (linear -> + slot x years-since-draft -> + a spline on the level),
+# and the gate is §4's conjunction: the selected variant's validation paired-bootstrap CRPS
+# interval against the floor entirely below zero on the DRAFTABLE season-start-roster
+# population, AND a rolling-origin harness on the fitting half agreeing — same sign,
+# interval below zero, a majority of origins won. Validation alone ships nothing; two
+# earlier rounds won a validation reading and shrank 4-6x rolling.
+#
+# `metric=dense_e` on every fit, which is a 30x speedup rather than a preference: the slot
+# block's four products are collinear with their own indicators and a diagonal mass matrix
+# saturates treedepth (90.5 s / 793 saturations on `fga` against 3.0 s / 0, same answer).
+# ~450 small fits, minutes in total. Requires `make rookie-rates` for the design constants.
+stan-rookie:
+	$(PYTHON) -m src.models.stan_rookie
+
+# THE SEASON-TOTAL READOUT — `docs/rookie-rates-plan.md` §5e, and §16's own settling gate.
+# Sessions 3 and 4 measured the rookie heads in rebounds and made threes; this composes all
+# eleven into the number a board is drafted on, season-total dk_pts, and asks the question
+# §16 asked: is the head family worth more than the floor family on the population that
+# cannot be scored today?
+#
+# `season_total.build_frame` drops that population TWICE on lag columns (the availability
+# design has no row for a player with no prior season, and the ridge rate model wants three
+# lag-1 features), so this is its rookie-admitting twin. It shares one thing with it — the
+# scorer, `season_total.evaluate`, whose group tuple now carries `veteran`,
+# `lag_recovered` and `rookie` and never pools the last two.
+#
+# Three rate arms per group, each the family's own version of the same thing: `unserved`
+# (a row that is not in the design scores zero in every draw — today's answer), the no-fit
+# floor, and what ships. Games played comes from the availability head where it has a row
+# and from `no_design_availability`'s graded level where it does not — which is the
+# design's split, not a choice: it covers 100% of the veteran rows and 0% of the rookie and
+# returnee ones. Each arm is read at that level and at `oracle_gp`, so the table says
+# whether an error is the rate family or the availability plug-in.
+#
+# Fits exactly ONE head — `reb`, §7e's single fitted arm, because no rookie posterior
+# exists until Session 6 persists one. Everything else is read off disk. ~2 minutes.
+# Requires `make stan-rookie`, `make lag-ladder` and `make posteriors WINDOW=train`.
+season-total-rookie:
+	$(PYTHON) -m src.models.season_total_rookie
 
 # The pick-log stake, priced at the stake it would actually be: 20 entries at $1 in
 # 15k_and_one — the likely first real entries, whose purpose is capturing pick-log data
