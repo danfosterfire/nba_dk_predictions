@@ -138,6 +138,8 @@ FINAL_BOARD = "outputs/predictions/final_evaluation_availability_board.csv"
 FINAL_ADP = "outputs/predictions/final_evaluation_adp_coverage.csv"
 FORWARD = "outputs/predictions/forward_design_rehearsal.csv"
 FORWARD_BOARD = "outputs/predictions/forward_board_rehearsal.csv"
+FULL_MANIFEST = "data/features/posteriors/full/manifest.csv"
+TV_MANIFEST = "data/features/posteriors/train_val/manifest.csv"
 SIMS = "docs/simulations-plan.md"           # the simulation and drafting layer
 PRESEASON = "docs/preseason-plan.md"        # current-season preseason games as covariates
 
@@ -9181,6 +9183,18 @@ def _final_evaluation() -> list[Claim]:
 
     add("−0.0725", lambda: chain_c("lift_vs_null", "600k_shootaround"),
         "held-out 600k lift (README)", doc=README)
+
+    # ── §5: the production fit ─────────────────────────────────────────────────
+    add("20", lambda: rows(FULL_MANIFEST), "heads at the full window",
+        artifact=FULL_MANIFEST)
+    add("1.00608", lambda: max_of(FULL_MANIFEST, "max_rhat"),
+        "worst R-hat across the production heads", artifact=FULL_MANIFEST)
+    add("0", lambda: total(FULL_MANIFEST, "divergences"),
+        "divergences across the production heads", artifact=FULL_MANIFEST)
+    add("553,716", lambda: cell(FULL_MANIFEST, "n_fit_rows", head="composition"),
+        "production composition fit rows", artifact=FULL_MANIFEST)
+    add("500,759", lambda: cell(TV_MANIFEST, "n_fit_rows", head="composition"),
+        "train_val composition fit rows", artifact=TV_MANIFEST)
 
     # ── the board correlation, and the round's binding limitation ─────────────
     add("1.0046", lambda: cell(FINAL_BOARD, "inflation", n_players=12),

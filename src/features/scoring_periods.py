@@ -448,6 +448,11 @@ def run(cfg: dict, refresh: bool = False, forward_seasons: list[str] = ()) -> Pa
                                        "GAME_DATE": PERIOD_DATE_COLUMN})
                    [["season", "game_id", PERIOD_DATE_COLUMN]]
                    .drop_duplicates(["season", "game_id"]))
+        # The synthetic log carries string game ids and the stored logs carry int64 —
+        # match the stored dtype or the concat mints an object column parquet refuses.
+        # Leading zeros survive: `build_periods` re-pads with `zfill(10)`, the same
+        # convention every played season already round-trips through.
+        triples["game_id"] = triples["game_id"].astype(logs["game_id"].dtype)
         print(f"  {forward}: {len(triples):,} synthetic games appended to the grid — "
               f"every date is scheduled, none realized")
         logs = pd.concat([logs, triples], ignore_index=True)

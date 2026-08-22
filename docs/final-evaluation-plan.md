@@ -362,7 +362,23 @@ Consumers must treat these artifacts as production-only. `require_window` is wha
 it — a backtest reading `full` heads has read the seasons it is about to be scored on,
 through the coefficients, and no frame-level split guard can see that.
 
-*Figures pending — the run is in progress.*
+Taken 2026-08-21; the last sampler (the composition, the long pole) exited at 23:15.
+
+**All 20 heads are on disk at `full`, and every one matches the `train` window's
+specification on the 8 columns** — `assert_same_specification` passes for `train_val`
+and `full` alike, which is the §2 check doing the job it was built for on the day it
+was built. Across the 20 heads the manifest reads max R-hat **1.00608**, **0**
+divergences, **0** round-trip failures. The composition fitted **553,716** player-rows
+over 2004-05–2025-26 — against **500,759** at `train_val`, the two held-out seasons'
+rows being the difference and the point — at R-hat 1.0026.
+
+`make production-check` after the fit: **the model half is done.** The season half is
+October data by nature — the preseason box scores gate `make preseason` and the final
+crunch — with one exception closed tonight: the 2026-27 schedule is published, so the
+scoring-period grid is already built through the §6g forward knob (1,230 games, DK's
+17/2/2/2 shape asserted, R1 closing on the rules copy's own date), to be rebuilt near
+the opener when dates move. The 2026-27 rows of the availability panel and component
+targets are the runbook's forward-synthesis steps, not missing artifacts.
 
 ---
 
