@@ -1349,3 +1349,107 @@ floor, at the season-total unit (`make season-total`'s frame), on the rookie pop
 only. Preseason-rate → regular-rate transfer for rookies is the load-bearing unknown;
 `docs/preseason-plan.md`'s P-series measured that transfer for veterans, never for
 players with no prior season.
+
+## 17. Capture the contest's own outcome data — cut lines, standings, field scores
+
+**A capture program, not a model change, and it is the time-critical one: the data only
+exists while contests run.** For every contest entered (2026-27 is the first season with
+real entries), save the standings DK exposes — per-entry scores by scoring period, each
+Round-1 pod's placings and its 2nd-place score, the advancing thresholds for Rounds 2–4,
+field size and payout confirmations — at every round close. The DK lobby is login-gated
+with no archive, which is exactly the shape of the 2024-25 ADP loss that halved the
+held-out contest replay (`docs/final-evaluation-plan.md` §4b); assume standings access
+expires and save early.
+
+### Why this is worth capturing
+
+A realized cut line is an order statistic over thousands of real best-ball rosters — the
+strongest available test of the simulator's **joint** structure at exactly the
+functional the contest pays on (see item 18, which consumes this). Nothing else in the
+project's data reaches the field's realized score distribution.
+
+### What would settle it
+
+Nothing to settle — capture-or-lose. Un-parked the day the first 2026-27 contest locks;
+the weekly cadence belongs beside `make draft-boards-status` in the entry-collection
+routine (`docs/entry-collection-plan.md`).
+
+## 18. A Gate A for joints — score the simulator on contest-shaped joint statistics
+
+**Gate A verifies the tensor margin by margin; the contest pays on joints, and no gate
+reads them.** The held-out round made this concrete: Gate A brackets its bars on both
+test seasons while the one-world contest shows no edge — and the circularity worry
+(strategies tuned in model worlds exploiting model-idiosyncratic joint structure) is
+untestable without a joint instrument.
+
+### What to compare
+
+All computable from existing tensors plus realized box scores, on validation seasons:
+
+- **the best-ball functional itself** — for each captured 12-entrant board
+  (`make draft-boards`), every roster's 17-week sum of weekly max-7 scores, realized
+  against the simulated distribution of the same rosters. The pod's realized 2nd-place
+  score against the simulated 2nd-place distribution is the advance test in miniature;
+- **pairwise player-week co-exceedance** — P(both of a pair clear their own p90 in the
+  same week), realized vs simulated, graded same-team / same-game / neither;
+- **board-level spread** — the 12-man shared-`beta` inflation (1.0046 held out)
+  generalized to full 16-man rosters and to minutes/rate channels, not availability
+  alone;
+- once item 17 lands a season of data: the **realized cut-line distribution** against
+  the simulated one, which folds the field model in.
+
+### What would settle it
+
+This item is the instrument, so it settles by existing: a `sim_season_gate_joint.csv`
+beside Gate A's artifact, reported per season. Items 19 and 20 are gated on what it
+finds — a joint cell the simulator misses by a margin worth contest equity — and if
+every cell lands inside seed noise, both stay parked and that null is the finding.
+
+## 19. Per-minute rates should respond to drawn teammate absences, not just minutes
+
+**When a star sits, the simulator redistributes his minutes (the composition, fitted)
+but not his usage: every teammate's per-minute rate is constant within a player-season,
+so injuries propagate through half the channel.** In reality the backup's shot rate per
+minute rises with the vacated usage. This is the largest known structural gap in the
+joint — it shapes exactly the injury-cascade weeks a best-ball field's variance lives
+on.
+
+### What to compare
+
+Fit a historical elasticity — per-minute count-rate multiplier per share of absent
+teammates' prior-season usage — from the decades of star-absent games already in the
+panel (`availability_panel` knows who sat; `component_targets` knows what everyone did),
+with `nba_api` lineup/on-off splits as the richer source if the game-level fit is too
+noisy. Apply it at **draw time** to *drawn* absences, exactly as the composition already
+does for minutes. Prediction-time legal by construction: the elasticity is a historical
+parameter, and what it multiplies is simulated, never known.
+
+### What would settle it
+
+Item 18's co-exceedance and lineup-score cells, plus the ordinary bars: Gate A marginals
+must not degrade, and `make strategy-sweep` prices the change in contest units against
+the incumbent. Parked for 2027-28: changing the world-generator weeks before the first
+real-entry season would re-tune strategy selection on the layer with the least realized
+evidence.
+
+## 20. The copula has no tails — and the contest pays on joint thresholds
+
+**The residual copula is Gaussian, whose tail dependence is exactly zero, and the
+double-double bonus is a joint threshold event; 4 of 21 count pairs already saturate the
+frailty's reach in the shipped run.** If real box scores carry upper-tail dependence the
+Gaussian cannot express, simulated bonus rates and joint blow-up weeks are structurally
+thin in a way no marginal gate can see.
+
+### What to compare
+
+Measure before building, on validation: realized joint exceedance — P(pts > its p90 ∧
+reb > its p90) per player and pooled by role — against the simulated tensor's. If the
+gap is real: a t-copula (one added df parameter, nesting the shipped Gaussian as
+df → ∞) and a role-graded correlation matrix are the two candid arms, gated the same
+way as item 19. `docs/sim-inputs-plan.md`'s copula measurement items are the natural
+home; this extends them with the tail-specific read.
+
+### What would settle it
+
+The measured exceedance gap first — inside seed noise and this closes as a null. Parked
+for 2027-28 with item 19, same reason, same gates.
