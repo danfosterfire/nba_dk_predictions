@@ -306,6 +306,44 @@ def test_the_priceable_board_drops_exactly_the_unscorable_rows(monkeypatch):
     assert np.allclose(out.dk_pts, room.dk_pts[scorable])
 
 
+def test_the_asymmetric_board_hands_the_field_everything_and_our_seat_nothing_new(
+        monkeypatch):
+    """The rookie floor's arm: the field keeps the whole board, our seat keeps its mask.
+
+    The room comes back UNTOUCHED — that is the design, because `draft_portfolio`,
+    `draft_room.evaluate` and `plan_completion` already mask on `room.scorable`, so the
+    asymmetry is what those masks mean once the board around them stops being filtered.
+    A room whose `scorable` came back all-true would silently let our seat draft a player
+    the tensor prices at zero, which is the bias `priceable_room` exists to prevent.
+
+    The probe figures must be IDENTICAL to the restricted call's, since the probe drafts
+    the unrestricted board in both modes — that is what makes the two records comparable
+    field for field.
+    """
+    scorable = np.ones(len(_room().frame), dtype=bool)
+    scorable[::7] = False
+    room = _room(scorable=scorable)
+    monkeypatch.setattr(R, "build_field",
+                        lambda *a, **k: np.zeros((12, 2, room.dk_pts.shape[2]),
+                                                 dtype=np.float32))
+    monkeypatch.setattr(R, "field_reference", lambda *a, **k: None)
+    out, dropped = S.priceable_room({}, room, seed=0, n_field_drafts=1, restrict=False)
+    _, restricted = S.priceable_room({}, room, seed=0, n_field_drafts=1)
+
+    assert out is room
+    assert list(out.scorable) == list(scorable)
+    assert dropped["field_board"] == "unrestricted"
+    assert restricted["field_board"] == "priceable"
+    assert dropped["n_board"] == len(room.frame)
+    assert dropped["n_dropped"] == 0
+    assert dropped["n_seat_masked"] == int((~scorable).sum())
+    assert restricted["n_seat_masked"] == 0
+    # the same probe, so the field's unpriceable rate is the same measurement in both
+    for key in ("field_unpriced_per_entry", "field_entries_with_unpriced",
+                "probe_entries"):
+        assert dropped[key] == restricted[key]
+
+
 # ── 4. The strategy object ────────────────────────────────────────────────────
 
 def test_alpha_is_a_rank_blend_with_the_two_ends_exact():

@@ -10416,4 +10416,271 @@ REGISTRY: tuple[Decision, ...] = (
         date="2026-08-16",
         tags=("drafting", "capture"),
     ),
+    Decision(
+        id="the-rookie-rate-heads-are-scheduled-as-one-design-for-the-whole-gap",
+        topic="components",
+        claim="**The rookie rate head program is scheduled** (`docs/rookie-rates-plan.md`, "
+              "seven sessions): a fitted component-rate family for every season-start-"
+              "rostered player without a veteran design row — true rookies, returnees, "
+              "thin-prior fringe — so they can enter the tensor and be drafted. One design "
+              "serves the whole population, on volume-shrunk preseason rates plus draft "
+              "slot × years-since-draft; the contest floor is priced first but is context, "
+              "not a kill switch.",
+        because="Every board the project produces carries zero true rookies — the veteran "
+                "heads are lag-designs, so below `MIN_PRIOR_MINUTES` the features do not "
+                "exist rather than being noisy — while the ADP field drafts ~1.2 zero-"
+                "scoring players per entry and Round-1 rookies carry top-100 ADP. "
+                "[[preseason-per36-beats-the-draft-bucket-for-a-no-prior-players-rates]] "
+                "already settled which prior to use if these players are ever put in; this "
+                "program puts them in. A design-free plug-in (the availability precedent) "
+                "was rejected for rates because the bucket mean is the measured anti-model "
+                "there. The test split is spent, so selection is validation-only and the "
+                "heads ship un-priced against the held-out seasons; the existing 20 heads "
+                "are untouched (disjoint parameter blocks, additive artifacts at both "
+                "windows).",
+        status="withdrawn",
+        replaced_by="**The boundary is *is any prior NBA season constructible*, not *is "
+                    "the immediately-prior one big enough*** "
+                    "([[the-veteran-design-serves-anyone-with-a-prior-nba-season]]). "
+                    "Players with any played season inside the window are served by the "
+                    "VETERAN heads through a lag-recovery ladder; the rookie rate heads "
+                    "serve true rookies only — half the unserved board rows, and the only "
+                    "group for which 'the features do not exist' is literally true. The "
+                    "program went from seven sessions to eight, the ladder taking the new "
+                    "Session 2.",
+        caught_by="`make lag-recovery`, the same day. A returnee's TWO-year-old rate "
+                  "carries as well as a veteran's one-year-old one (validation R2 0.8976 "
+                  "against 0.8989, inside the no-fit floor's published 0.81-0.95 band) "
+                  "and beats the volume-shrunk preseason estimator this entry would have "
+                  "served him with on 7 of 7 heads (0.8977 against 0.8092) — while that "
+                  "estimator is MISSING for 28.5% of returnees against 9.2% of true "
+                  "rookies. One design serving the whole population would have thrown "
+                  "away the best feature the returnee half has.",
+        reproduce="make lag-recovery → outputs/predictions/lag_recovery.csv",
+        source="docs/rookie-rates-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("head", "drafting", "reversal"),
+    ),
+    Decision(
+        id="the-veteran-design-serves-anyone-with-a-prior-nba-season",
+        topic="components",
+        claim="**The component-rate design's boundary is whether ANY prior NBA season is "
+              "constructible, not whether the immediately-prior one clears 200 minutes.** "
+              "A lag-recovery ladder fills a missing or thin `lag1` from the nearest "
+              "usable season, shrunk by its own reliability `m/(m+k)`; the rookie rate "
+              "heads keep only players with no NBA season at all.",
+        because="One test was doing three jobs. `build_design` asks for a qualified "
+                "lag-1 and `with_lags` pairs on season INDEX (deliberately — so a missed "
+                "year cannot silently pair across the gap), which drops returnees, "
+                "thin-prior players and true rookies alike. Measured apart (`make "
+                "lag-recovery`, nine rate targets, carry_forward's own functional form so "
+                "the numbers sit on the no-fit floor's 0.81-0.95 scale): a returnee's "
+                "lag-2 scores validation R2 0.8976 against the veteran lag-1's 0.8989; a "
+                "thin lag-1 carried RAW is an anti-model at -1.1451 pooled but reaches "
+                "0.8566 shrunk, with k fitted per head from 25 (fg3a, ast) to 300 (tov) "
+                "prior-season minutes; and one unified rung serves the whole has-history "
+                "population at validation 0.8845 over 1,261 rows. On a real board the "
+                "ladder REACHES 47 of 101 unserved rows in 2022-23 and 51 of 105 in "
+                "2023-24 — 7 of 16 and 6 of 21 of the ADP-PRICED ones — leaving 54 true "
+                "rookies each season to the rookie head; what its gate actually ADMITTED "
+                "is a smaller set, see [[one-ladder-rung-of-four-clears-its-gate]]. "
+                "The census reconciles exactly "
+                "with the drafting layer's own 347/359 served and 16/21 priced. "
+                "**Imputation only: the ladder widens the veteran heads' SCORING "
+                "population, never their fitting population, so no head is refitted** "
+                "([[the-rookie-rate-heads-are-scheduled-as-one-design-for-the-whole-gap]] "
+                "is the entry this replaced). The cost is a discontinuity at 200 prior "
+                "minutes, named rather than solved; removing it means shrinking everyone "
+                "continuously, which changes the fit and costs eleven refits at two "
+                "windows.",
+        status="measured",
+        reproduce="make lag-recovery → outputs/predictions/lag_recovery.csv",
+        source="docs/rookie-rates-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("head", "components", "drafting"),
+    ),
+    Decision(
+        id="one-ladder-rung-of-four-clears-its-gate",
+        topic="components",
+        claim="**Of the lag-recovery ladder's four rungs, only the full-lag-2 returnee "
+              "clears §4's gate** — and it is the ADP-priced half. `build_design` now "
+              "takes a `ladder` and fills an unusable `lag1` block from the nearest usable "
+              "season behind `stan.components.lag_ladder`, a LIST of admitted rungs whose "
+              "shipped value is `[returnee_lag2]`; `[]` rebuilds the pre-ladder design "
+              "exactly. Rung B (thin prior), thin-lag-2 returnees and players away 2+ "
+              "seasons are REJECTED.",
+        because="The gate was stated before the result and fits nothing: the eleven heads "
+                "are read off the `train`-window posteriors and score the recovered rows "
+                "with coefficients fitted before the ladder existed, which is what "
+                "'imputation only, no head is refitted' has to mean. Gate 1 (validation "
+                "paired-bootstrap CRPS against the unserved status quo — a point mass at "
+                "zero, because a row missing from the design is missing from the tensor) "
+                "is cleared 11 of 11 heads by rung 0, rung B and rung A, and 10 of 11 by "
+                "the two tails. Gate 2 (carry-forward R2 inside the shipped floor's "
+                "0.81-0.95 band) is what separates them: rung A 0.8791 against rung 0's "
+                "0.8919, rung B 0.7873, thin-lag-2 returnees 0.5866, away-2+ 0.5977 with "
+                "`blk` an anti-model at -0.632. **Gate 2 is read as the mean over the "
+                "count heads because the per-head form rejects the shipped design "
+                "itself** — only 5 of 7 count heads sit inside the band on rung 0's own "
+                "773 validation rows, `fga` and `reb` being ABOVE it, and a test the "
+                "incumbent fails is not a test. Rung B's failure was foreshadowed: its "
+                "own §7b validation figure was 0.8020, already under the band. What is "
+                "lost is long-tail roster rows — the admitted rung recovers 10 and 4 "
+                "board rows against the ladder's reach of 47 and 51, but 7 of 16 and 3 of "
+                "21 ADP-PRICED rows, which is every priced row 2022-23 had and half of "
+                "2023-24's. The 84 rows left unserved carry 3 ADPs between them. "
+                "Reading is at the SEASON-TOTAL unit, not §4's stated player-game unit: "
+                "these heads are season-collapsed by construction, so a player-game "
+                "predictive does not exist without inventing a per-game dispersion "
+                "nothing has fitted.",
+        status="measured",
+        reproduce="make lag-ladder → outputs/predictions/lag_ladder.csv",
+        source="docs/rookie-rates-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("head", "components", "drafting"),
+    ),
+    Decision(
+        id="the-ladder-is-built-and-gated-but-not-yet-on",
+        topic="components",
+        claim="**The lag-recovery ladder ships OFF (`stan.components.lag_ladder: []`) "
+              "until Session 6 wires it**, even though its gate has run. Turning it on is "
+              "two edits, not one: the config key, AND every fitting path taking its "
+              "training frame through `component_rates.fitting_rows`.",
+        because="`posteriors.windowed()` splits the design on SEASON and knows nothing "
+                "about rungs, so passing the ladder to `stan_components.head_design` "
+                "without the second edit would put the recovered rows into the FIT as "
+                "well as the score — silently widening the fitting population of eleven "
+                "heads and breaching the constraint the whole imputation-only form exists "
+                "to satisfy ([[one-ladder-rung-of-four-clears-its-gate]]). "
+                "`tests/test_lag_ladder.py` pins rung 0 coming back bit-identical NaN for "
+                "NaN on every shared column, which is the design-side half of that "
+                "guarantee; the artifact-side half is a seeded veteran-unit spot-check "
+                "that belongs with the posterior round-trips in Session 6. Leaving the "
+                "key at `[]` with the verdict in its comment is the honest state: nothing "
+                "downstream changed this session.",
+        status="open",
+        source="docs/rookie-rates-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("head", "components"),
+    ),
+    Decision(
+        id="the-true-rookie-design-is-built-and-its-floors-beat-the-shipping-incumbent",
+        topic="components",
+        claim="**The true-rookie design exists and its eleven no-fit floors beat the "
+              "estimator that ships today on CRPS on 11 of 11 heads.** "
+              "`make rookie-rates` carries 1,495 player-seasons whose target season is "
+              "their FIRST played one, disjoint from the veteran design at every ladder "
+              "rung, with sixteen features per head: the head's own volume-shrunk "
+              "preseason LEVEL on its own link centred against the fitting population, "
+              "four age-split missing indicators, four draft-slot indicators with "
+              "UNDRAFTED as the reference cell, years-since-draft and its four "
+              "interactions, and age. Every block is ZERO-RECOVERING. **No head is fitted "
+              "yet** — Session 4 runs the gate.",
+        because="A rookie has no prior season to difference against, so the veteran "
+                "heads' preseason DELTA becomes level-against-the-population on the same "
+                "link — and centring is not cosmetic: uncentred, `log1p(pre_per36) = 0` "
+                "would say 'he did nothing in October' and be indistinguishable from "
+                "'nobody measured him'. The floors are "
+                "[[preseason-per36-beats-the-draft-bucket-for-a-no-prior-players-rates]]' "
+                "own selected estimator wrapped in each head's likelihood so a CRPS from "
+                "arithmetic is comparable to one from a sampler, and that measurement "
+                "reproduces at this unit on this population: the shipping `draft_bucket` "
+                "prior is NEGATIVE R2 on all four conversion heads (−0.5989 to −0.0415) "
+                "and reaches 0.2966 on `blk`, while the raw preseason arm's NB dispersion "
+                "PINS at the optimizer's 0.050 bound on 5 of 7 count heads (`fga` CRPS "
+                "207.0254 against the floor's 28.9885, PIT KS 0.8200 against 0.0578) — "
+                "two bad arms whose volume blend beats both. The count family "
+                "independently re-selects k = 160 preseason minutes, P4(b)'s own "
+                "constant, from a different unit on a different population; conversions "
+                "take k = 10. One k per FAMILY because the inner carve scores ~120 "
+                "player-seasons and eleven heads picking their own rung off that is "
+                "fitting the grid; each head's optimum is written and never selected on. "
+                "**Disjointness is asserted on every run**, because Session 6 makes the "
+                "simulator's units the UNION of the two families and a player in both "
+                "would enter the tensor twice. Two departures from the plan's wording, "
+                "both mechanical: `has_preseason` is not a twelfth feature (it is "
+                "1 − sum of the four missing indicators, so it makes the block "
+                "rank-deficient against the intercept), and `undrafted` is the slot "
+                "block's reference cell rather than a fifth indicator, which is what "
+                "makes an undrafted rookie that block's exact zero.",
+        status="built",
+        reproduce="make rookie-rates → outputs/predictions/rookie_rate_floors.csv",
+        source="docs/rookie-rates-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("head", "components", "drafting"),
+    ),
+    Decision(
+        id="the-rookie-rate-head-program-is-eight-sessions-for-true-rookies-only",
+        topic="components",
+        claim="**The rookie rate head program is scheduled as eight sessions** "
+              "(`docs/rookie-rates-plan.md` §5-§6): Session 2 builds the veteran design's "
+              "lag-recovery ladder, Session 3 onward builds a fitted component-rate family "
+              "for **true rookies only** — players whose target season is their first "
+              "played season — on volume-shrunk preseason rates plus draft slot x "
+              "years-since-draft. Session 1's floor is priced and is context, not a kill "
+              "switch.",
+        because="Every board the project produces carries zero true rookies — the veteran "
+                "heads are lag-designs, so below `MIN_PRIOR_MINUTES` the features do not "
+                "exist rather than being noisy — while the ADP field drafts ~1.2 zero-"
+                "scoring players per entry and Round-1 rookies carry top-100 ADP "
+                "([[the-rookie-floor-is-173-dk-pts-on-the-cut-and-unresolved-in-the-contest]] "
+                "prices what that costs). The population split is "
+                "[[the-veteran-design-serves-anyone-with-a-prior-nba-season]], which cut "
+                "the rookie head's population roughly in half and made it HOMOGENEOUS: "
+                "every row it fits carries preseason, slot and age and nothing else, so "
+                "the coefficients describe one regime instead of averaging three. "
+                "[[preseason-per36-beats-the-draft-bucket-for-a-no-prior-players-rates]] "
+                "already settled which prior to use for that population. A design-free "
+                "plug-in (the availability precedent) was rejected for rates because the "
+                "bucket mean is the measured anti-model there. The test split is spent, so "
+                "selection is validation-only and the heads ship un-priced against the "
+                "held-out seasons; the existing 20 heads are untouched by BOTH changes — "
+                "the ladder is imputation-only and the rookie heads are additive "
+                "artifacts.",
+        status="open",
+        source="docs/rookie-rates-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("head", "drafting"),
+    ),
+    Decision(
+        id="the-rookie-floor-is-173-dk-pts-on-the-cut-and-unresolved-in-the-contest",
+        topic="simulations",
+        claim="**Letting the opponent field draft the players the tensor cannot price "
+              "raises the Round-1 cut line by +173.1 dk_pts (2022-23) and +111.9 "
+              "(2023-24)** — but what that costs in Round-1 advance probability does NOT "
+              "resolve on two realized seasons. `make rookie-floor` runs the sweep "
+              "asymmetrically: the field takes the whole board, our seat stays masked to "
+              "the priceable rows.",
+        because="This prices [[sweep-runs-on-the-priceable-board]], which drops those ~100 "
+                "players symmetrically and states the cost rather than measuring it. The "
+                "cut line is averaged over 1,200 field entries per board, so that half "
+                "resolves; the contest half is one realized world per season and behaves "
+                "like it — 21 of 24 arms lose Round-1 lift (median −0.0765, range −0.2033 "
+                "to +0.1385) while the shipped `lineup_value_blend30` GAINS +0.0316 on "
+                "eight readings spanning −0.1649 to +0.1349. The decomposition says why: "
+                "the field getting better (+173/+112) is swamped 3-5x by which scorable "
+                "players happen to fall to our seat once the field spends ~1.2 picks per "
+                "entry elsewhere (our own realized Round-1 total moves +234.5 / −41.4). "
+                "Our seat's own ranking is NOT distorted by the wider board (blend key "
+                "Spearman >= 0.99990 at every alpha), and Gate C reproduces the shipped "
+                "arm to 0.000e+00 across all 12 rows, so the delta is the board and "
+                "nothing else. The simulated arm is uniformly positive (+0.0603) and is "
+                "NOT the readout — it scores the field's unscorable picks at literal zero. "
+                "The population is not marginal: Wembanyama realized 3,244 dk_pts at ADP "
+                "21.9, and the ADP-priced unpriceable rows out-realize the board we can "
+                "price (1,398.6 against 1,271.8 in 2022-23).",
+        status="measured",
+        reproduce="make rookie-floor → outputs/predictions/strategy_rookie_floor.csv, "
+                  "outputs/predictions/strategy_*_rookiefloor.csv",
+        source="docs/rookie-rates-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("methodology", "strategy", "head"),
+    ),
 )

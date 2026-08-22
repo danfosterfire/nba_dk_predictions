@@ -110,6 +110,13 @@ The docs are:
   - provenance-plan.md: Plan for keeping documentation, dashboard, and 
   context up-to-date with latest findings and ensuring reproducibility of 
   context.
+  - rookie-rates-plan.md: The rookie rate head program — scoring the structurally-missing
+  population (true rookies, returnees, thin-prior fringe), its floor pricing, the veteran
+  design's **lag-recovery ladder** and the per-rung gate that admitted one rung of four,
+  the per-head gates, simulator and forward-board integration, and the eight-session
+  runbook. Read before touching the scorable-unit population,
+  `component_rates.MIN_PRIOR_MINUTES`, `stan.components.lag_ladder`,
+  `src/models/rookie_rates.py`, or starting any of its sessions.
   - shot-attempt-basis-plan.md: Plan for updating one of the box-score statistics
   models (fg3a as a beta-binomial rate over the total fga, rather than fg2a and 
   fg3a as separate poisson counts). Work completed, archival.

@@ -40,7 +40,8 @@ export PYTHONUNBUFFERED = 1
         scoring-periods draft-pool simulate-season weekly-scores bracket draft-sim \
         draft-sim-need draft-room draft-room-prep strategy-sweep strategy-sweep-need \
         pick-log-stake mixture-value preseason-contest final-evaluation \
-        posteriors-production production-check forward-rehearsal forward-board
+        posteriors-production production-check forward-rehearsal forward-board \
+        rookie-floor lag-recovery lag-ladder rookie-rates
 
 venv:
 	/opt/homebrew/bin/python3.14 -m venv .venv
@@ -814,6 +815,77 @@ strategy-sweep:
 # and the shipped strategy_*.csv set is untouched. Requires `make draft-sim-need` first.
 strategy-sweep-need:
 	$(PYTHON) -m src.sim.strategy --field adp_need --need-weight 8
+
+# THE ROOKIE FLOOR — what it costs us that the tensor cannot price a rookie.
+# `docs/rookie-rates-plan.md` §5a. Every board this project has produced contains zero
+# true rookies, because all eleven component rate heads are lag-designs and drop a player
+# with no prior season before any minutes threshold is consulted. The shipped sweep hides
+# that symmetrically: `priceable_room` takes those ~100 players off the board for BOTH
+# sides, which is the honest thing to do when the alternative is scoring a real player at
+# zero, but it also denies the field a Wembanyama it would really have drafted at ADP 22.
+#
+# This target runs the sweep ASYMMETRICALLY — the field drafts the whole board, our seat
+# stays masked to the rows the tensor prices — and the gap to the shipped symmetric run is
+# the floor under a rookie rate head. Read it on the REALIZED REPLAY: in the simulated
+# world an unscorable pick is a literal zero, so that arm hands the field a handicap of the
+# tensor's making and overstates the gap. Artifacts carry `_rookiefloor` and the audited
+# strategy_*.csv set is untouched; Gate C is computed on the same scorable population in
+# both modes, so `strategy_gate_c_rookiefloor.csv` reproducing `strategy_gate_c.csv` is the
+# check that the two arms are the same code on the same worlds.
+rookie-floor:
+	$(PYTHON) -m src.sim.strategy --field-board unrestricted
+
+# WHERE THE VETERAN DESIGN'S BOUNDARY BELONGS — `docs/rookie-rates-plan.md` §7b.
+# `component_rates.build_design` asks for one thing, a lag-1 season of at least 200 minutes,
+# and everything failing it is dropped. That single test bundles three populations with very
+# different information: a RETURNEE whose lag-1 is missing only because he sat out (his
+# lag-2 is a full season, and `with_lags` pairs on season index so it is never built), a
+# THIN-PRIOR player whose lag-1 is noisy rather than absent, and a TRUE ROOKIE for whom no
+# own-rate feature exists at any lag. This measures them apart, in the no-fit floor's own
+# unit, and it is what moved the rookie head's population to true rookies only.
+# Fits no head — every arm is carry_forward's functional form with a different prior rate.
+# numpy/pandas only, a few seconds.
+lag-recovery:
+	$(PYTHON) -m src.models.lag_recovery
+
+# THE LADDER'S GATE — `docs/rookie-rates-plan.md` §5b, run against §4's two conditions.
+# `component_rates.build_design` can now fill an unusable lag-1 block from the nearest
+# usable season (`stan.components.lag_ladder`); this decides which of its four rungs are
+# allowed to. FITS NOTHING: the eleven shipped heads are read off
+# data/features/posteriors/train/ and score the recovered rows with the coefficients they
+# already have, which is the claim under test — the ladder widens the SCORING population
+# and never the fitting one, so no head is refitted.
+#   gate 1  validation paired-bootstrap CRPS below zero against the unserved status quo,
+#           which is a point mass at zero because a row missing from the design is missing
+#           from the tensor. A low bar on purpose, which is why there are two.
+#   gate 2  the rung's mean carry-forward R2 over the count heads inside the shipped
+#           no-fit floor's published 0.81-0.95 band, so a rung cannot ship on the strength
+#           of beating nothing.
+# numpy/pandas over persisted draws, under a minute.
+lag-ladder:
+	$(PYTHON) -m src.models.lag_ladder
+
+# THE TRUE-ROOKIE DESIGN AND ITS ELEVEN NO-FIT FLOORS — `docs/rookie-rates-plan.md` §5c.
+# The population the ladder cannot reach: a player whose target season is his FIRST played
+# season has no own-rate feature at any lag, so "the features do not exist" is literally
+# true and the veteran heads' coefficients have nothing to score him with. This builds his
+# design — the volume-shrunk preseason level on each head's own link, centred against the
+# fitting population; the four age-split missing indicators; draft bucket, years-since-draft
+# and their interaction; age — and the eleven no-fit floors it will be gated against, which
+# are `make rookie-priors`' selected estimator wrapped in each head's own likelihood so a
+# CRPS from arithmetic is comparable to a CRPS from a sampler.
+#
+# FITS NO HEAD. Four constant blocks are estimated on the fitting half — the conversion
+# block's pseudo-attempts and league mean, the volume shrink k (one per family, on an inner
+# carve, each head's own optimum reported and never selected on), the centring means, and
+# the floors' dispersions — and written to the artifact so Sessions 4-7 read them rather
+# than a constant pinned in a module.
+#
+# Asserts on every run that the rookie design shares no (player, season) with the veteran
+# design at EVERY ladder rung, which is what Session 6's `units` union needs. Requires
+# `make lag-recovery` for the ladder's constants. numpy/pandas only, ~10 seconds.
+rookie-rates:
+	$(PYTHON) -m src.models.rookie_rates
 
 # The pick-log stake, priced at the stake it would actually be: 20 entries at $1 in
 # 15k_and_one — the likely first real entries, whose purpose is capturing pick-log data

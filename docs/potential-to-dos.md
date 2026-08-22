@@ -1314,7 +1314,33 @@ knowledge showing the *shipped* layout already misses stage cells badly on **bot
 validation seasons *in the same direction* despite their regime difference — stability
 across that break is the one old-regime signal that would deserve any weight.
 
-## 16. Rookies are not on the board at all — a rate head has no lag to score them from
+## 16. ⚙️ Rookies are not on the board at all — SCHEDULED 2026-08-22, moved to its own doc
+
+**This entry became a program**: `docs/rookie-rates-plan.md` carries the design, the gates
+and an eight-session runbook. **Sessions 1-3 ran 2026-08-22** — the floor priced (§7a), the
+veteran design's lag-recovery ladder built and gated to one rung of four (§7c), and the
+true-rookie design built with eleven no-fit floors that beat the shipping draft-bucket
+incumbent on CRPS on 11 of 11 heads (§7d, `make rookie-rates`). **No head is fitted yet**;
+Session 4 runs the gate. Session 1 priced the floor this entry asked for (`make rookie-floor`, plan doc §7a): letting the field draft what we cannot moves
+the Round-1 cut line +173.1 / +111.9 dk_pts, while the contest lift does not resolve on two
+realized seasons — so the entry's "if the floor is within noise, the head is not worth
+building" test is answered by decision 1 below rather than by the measurement.
+
+Three things decided at scheduling supersede parts of the
+entry below, which is kept as written. (1) The floor is priced first but is **context, not
+a kill switch** — the head is built regardless. (2) ~~The population is the whole
+structurally-missing complement of the veteran design~~ — **reversed the same day** by
+`make lag-recovery` (plan doc §7b): a player with any prior NBA season is better served by
+the VETERAN heads with his nearest usable lag imputed and shrunk (a returnee's two-year-old
+rate carries at validation R² 0.8976 against the veteran floor's 0.8989, and beats the
+preseason estimator on 7 of 7 heads), so the rookie head serves **true rookies only** and a
+new Session 2 builds the veteran design's lag-recovery ladder. (3) The closing claim that
+preseason-rate → regular-rate transfer was "never measured for players with no prior
+season" was already stale when written: P4(b) / `make rookie-priors`
+(`docs/preseason-plan.md`) measured exactly that at the estimator level — the volume-shrunk
+preseason per-36 clears on 5 of 8 rate targets; what remains unmeasured is a *fitted* head.
+
+### The original entry, kept for the record
 
 **Every board this project has produced, forward or retrospective, contains zero true
 rookies.** Surfaced 2026-08-21 while profiling the forward board rehearsal's unshared

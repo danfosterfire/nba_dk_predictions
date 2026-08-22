@@ -696,7 +696,8 @@ def board_adp(board: pd.DataFrame, player_id: np.ndarray) -> np.ndarray:
 # ── 4. The board both sides draft from ────────────────────────────────────────
 
 def priceable_room(cfg: dict, room: draft_room.Room, seed: int = SEED,
-                   n_field_drafts: int = N_FIELD_DRAFTS) -> tuple[draft_room.Room, dict]:
+                   n_field_drafts: int = N_FIELD_DRAFTS,
+                   restrict: bool = True) -> tuple[draft_room.Room, dict]:
     """Restrict the board to the players the tensor can score — **for both sides**.
 
     🔴 This is a real restriction and it is here because the alternative is a bias that
@@ -721,6 +722,20 @@ def priceable_room(cfg: dict, room: draft_room.Room, seed: int = SEED,
     The room's cached field and its tournament references are rebuilt here, because they
     were drafted against the unrestricted board and a reference is only a reference to the
     population that produced it.
+
+    **`restrict=False` is the asymmetric board**, the arm `docs/rookie-rates-plan.md` §5a
+    prices. The field keeps the whole board and takes the unscorable rows exactly as a real
+    field does; our seat keeps its `scorable` mask, because a player the tensor cannot price
+    is a player we cannot rank — `draft_portfolio`, `draft_room.evaluate` and
+    `plan_completion` all already mask on it, so nothing downstream needs a second switch.
+    The diagnostics are built the same way in both modes (the probe drafts the *unrestricted*
+    board either way), and `field_board` names which mode produced the row, so a symmetric
+    and an asymmetric record are comparable field for field.
+
+    Read that arm on the **realized replay**. In the simulated world the unscorable rows are
+    literal zeros, so an unrestricted field spends ~1.3 picks per entry on players who score
+    nothing — a handicap of the tensor's making, not the market's, and not the thing the
+    floor is trying to measure.
     """
     keep = np.nonzero(np.asarray(room.scorable, dtype=bool))[0]
     frame = room.frame.iloc[keep].copy().reset_index(drop=True)
@@ -740,7 +755,15 @@ def priceable_room(cfg: dict, room: draft_room.Room, seed: int = SEED,
                "n_priced": int(np.isfinite(room.board.adp[keep]).sum()),
                "field_unpriced_per_entry": float(unpriced.sum(axis=1).mean()),
                "field_entries_with_unpriced": float((unpriced.sum(axis=1) > 0).mean()),
-               "probe_entries": int(unpriced.shape[0])}
+               "probe_entries": int(unpriced.shape[0]),
+               "field_board": "priceable", "n_seat_masked": 0}
+    if not restrict:
+        dropped |= {"field_board": "unrestricted", "n_dropped": 0,
+                    "n_dropped_priced": 0, "n_board": int(len(room.frame)),
+                    "n_priced": int(np.isfinite(room.board.adp).sum()),
+                    "n_seat_masked": int((~np.asarray(room.scorable,
+                                                      dtype=bool)).sum())}
+        return room, dropped
     frame["board_rank"] = np.arange(len(frame), dtype=np.int32)
     board = draft.to_arrays(frame, room.season)
 
@@ -1254,6 +1277,66 @@ def replay_realized(cfg: dict, room: draft_room.Room, season: str,
     return pd.DataFrame(rows)
 
 
+ROUND_ONE_CUT = 10 / 12          # top 2 of 12 — the bar sits at the 10/12 quantile
+
+
+def field_cut_line(cfg: dict, room: draft_room.Room, season: str, seed: int = SEED,
+                   n_field_drafts: int = N_FIELD_DRAFTS) -> dict:
+    """What the opponent field actually scored in Round 1, on the season that happened.
+
+    The floor's stable half. A lift delta is one realized world per season and swings by
+    hundreds of dk_pts on which players happen to fall to our seat; **the bar the field
+    sets is an average over `n_field_drafts` x 12 entries**, so it resolves where the lift
+    does not. Round 1 is a 2-of-12 cut in all five structures, so the bar is the 10/12
+    quantile of the field's entries and nothing about the payout table enters.
+    """
+    truth = realized_tensor(cfg, season, room.frame["player_id"].to_numpy(),
+                            len(room.round_of_period))
+    field_round = draft_room.build_field(room.frame, room.board, truth, room.masks,
+                                         room.round_of_period, room.field_cfg,
+                                         n_field_drafts, seed, room.pod_size, room.seats)
+    r1 = field_round[:, 0, :].ravel().astype(np.float64)
+    return {"n_field_entries": int(r1.size), "field_round1_mean": float(r1.mean()),
+            "field_round1_median": float(np.median(r1)),
+            "field_round1_cut": float(np.quantile(r1, ROUND_ONE_CUT)),
+            "field_round1_p95": float(np.quantile(r1, 0.95))}
+
+
+def rookie_floor_table(out_dir: Path, realized: pd.DataFrame,
+                       cut_lines: list[dict]) -> pd.DataFrame:
+    """The floor: the asymmetric arm against the SHIPPED symmetric run, one row per
+    (season, tournament, strategy).
+
+    The symmetric side is read from the audited `strategy_realized.csv` rather than
+    re-run, and that is safe here for a reason this module usually refuses to accept —
+    `docs/availability-window-plan.md` §7l's lesson is that a baseline of unknown vintage
+    is not a baseline. What licenses it is that **Gate C is computed on the same scorable
+    population in both modes**, so `strategy_gate_c_rookiefloor.csv` reproducing
+    `strategy_gate_c.csv` to the digit is a direct check that the shipped file was written
+    by today's code on today's tensors. If that check fails, this table means nothing.
+
+    The season-level cut lines and board counts ride on every row, which is the same
+    denormalization `strategy_injection.csv` already uses — one artifact, one groupby,
+    and no figure in the doc that needs two files joined by hand.
+    """
+    path = out_dir / "strategy_realized.csv"
+    if not path.exists():
+        raise FileNotFoundError(f"the symmetric arm {path} is the baseline this floor is "
+                                f"measured against — run `make strategy-sweep` first")
+    key = ["season", "tournament", "strategy"]
+    sym = pd.read_csv(path)[key + ["p_advance", "lift_vs_null", "roi", "n_entries"]]
+    out = sym.merge(realized[key + ["p_advance", "lift_vs_null", "roi"]], on=key,
+                    suffixes=("_symmetric", "_asymmetric"))
+    if len(out) != len(sym):
+        raise ValueError(f"the two arms do not line up row for row: {len(sym)} symmetric "
+                         f"against {len(out)} matched — the strategy table or the "
+                         f"tournament set moved between them")
+    out["d_lift"] = out["lift_vs_null_asymmetric"] - out["lift_vs_null_symmetric"]
+    out["d_p_advance"] = out["p_advance_asymmetric"] - out["p_advance_symmetric"]
+    out["single_entry"] = out["n_entries"] == 1
+    return out.merge(pd.DataFrame(cut_lines), on="season", how="left")
+
+
 def ship(table: pd.DataFrame, realized: pd.DataFrame, cfg: dict,
          strategies: list[Strategy]) -> pd.DataFrame:
     """The artifact item 10 reads: which strategy ships for each tier, and on what.
@@ -1449,10 +1532,25 @@ def truth_sim_index(n_sims: int, n_truth: int = 24) -> np.ndarray:
     return np.unique(np.linspace(0, n_sims - 1, min(n_truth, n_sims)).astype(int))
 
 
+FIELD_BOARDS = ("priceable", "unrestricted")
+
+
 def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
         seed: int | None = None, objective_arm: bool = True,
         n_field_drafts: int | None = None, field: str = "adp",
-        need_weight: float | None = None) -> dict[str, Path]:
+        need_weight: float | None = None,
+        field_board: str = "priceable") -> dict[str, Path]:
+    """The sweep, on whichever board the opponent field is allowed to draft.
+
+    `field_board="unrestricted"` is the rookie floor (`docs/rookie-rates-plan.md` §5a):
+    the field drafts every rostered player, our seat stays masked to the rows the tensor
+    prices, and the gap to the shipped symmetric run is what rookie-lessness costs. It is
+    a different measurement, not a re-decision, so it writes `_rookiefloor` artifacts and
+    the audited `strategy_*.csv` set is untouched — the same discipline `--field` uses.
+    """
+    if field_board not in FIELD_BOARDS:
+        raise KeyError(f"unknown field_board {field_board!r}; "
+                       f"registered: {list(FIELD_BOARDS)}")
     if field not in draft.OPPONENTS:
         raise KeyError(f"unknown field {field!r}; registered: "
                        f"{sorted(draft.OPPONENTS)}")
@@ -1463,6 +1561,7 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
     # suffixed artifacts so the shipped `strategy_*.csv` — the numbers the docs audit —
     # stay the record of the sweep against the field Gate B shipped.
     suffix = "" if field == "adp" else f"_{field}"
+    asymmetric = field_board == "unrestricted"
     if suffix:
         cfg = copy.deepcopy(cfg)
         cfg.setdefault("sim", {}).setdefault("field", {})["composition"] = {
@@ -1489,6 +1588,8 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
         cfg["sim"]["field"].update(noise_model=str(row["noise_model"]),
                                    rank_noise_sd=float(row["rank_noise_sd"]),
                                    need_weight=float(need_weight))
+    if asymmetric:
+        suffix += "_rookiefloor"
     cfg_sim = cfg.get("sim", {})
     cfg_strategy = cfg_sim.get("strategy", {})
     n_sims = int(n_sims or cfg_strategy.get("n_sims", N_SIMS_SWEEP))
@@ -1511,24 +1612,43 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
     print(f"  the opponent field is `{field}`"
           + (" — artifacts carry the suffix and the shipped set is untouched"
              if suffix else " (the shipped field)"))
+    if asymmetric:
+        print("  ASYMMETRIC BOARD — the field drafts every rostered player and our seat "
+              "stays masked to\n    the rows the tensor prices. The REALIZED REPLAY is "
+              "the readout; the simulated arm\n    scores the field's unscorable picks "
+              "at literal zero and overstates its handicap.")
     print(f"  select on LIFT IN P(top 2 of 12); report ROI against the break-even hurdle")
 
     gate_c_rows, injection_rows, sweep_rows, realized_rows, null_rows = [], [], [], [], []
+    cut_lines: list[dict] = []
     portfolios: dict = {}
     pooled: dict = {}
     pooled_any: dict = {}
     for season in seasons:
         print(f"\n── {season} ──")
         full = draft_room.load_room(cfg, season, n_sims=n_sims)
-        room, dropped = priceable_room(cfg, full, seed, n_field_drafts)
-        print(f"  board restricted to the {dropped['n_board']:,} players the tensor "
-              f"prices: {dropped['n_dropped']:,} dropped, {dropped['n_dropped_priced']:,} "
-              f"of them carrying ADP. Unrestricted, the ADP field drafts "
-              f"{dropped['field_unpriced_per_entry']:.2f} zero-scoring players per "
-              f"sixteen-man entry and "
-              f"{dropped['field_entries_with_unpriced'] * 100:.0f}% of its entries hold at "
-              f"least one — a handicap on the field, not model edge "
-              f"(see `priceable_room`)")
+        room, dropped = priceable_room(cfg, full, seed, n_field_drafts,
+                                       restrict=not asymmetric)
+        if asymmetric:
+            print(f"  board left UNRESTRICTED for the field: {dropped['n_board']:,} "
+                  f"players, {dropped['n_priced']:,} of them priced. Our seat may take "
+                  f"only\n    {dropped['n_board'] - dropped['n_seat_masked']:,} of them "
+                  f"— {dropped['n_seat_masked']:,} rows have no component-head design. "
+                  f"The field drafts\n    "
+                  f"{dropped['field_unpriced_per_entry']:.2f} of those per sixteen-man "
+                  f"entry and "
+                  f"{dropped['field_entries_with_unpriced'] * 100:.0f}% of its entries "
+                  f"hold at least one (see `priceable_room`)")
+        else:
+            print(f"  board restricted to the {dropped['n_board']:,} players the tensor "
+                  f"prices: {dropped['n_dropped']:,} dropped, "
+                  f"{dropped['n_dropped_priced']:,} "
+                  f"of them carrying ADP. Unrestricted, the ADP field drafts "
+                  f"{dropped['field_unpriced_per_entry']:.2f} zero-scoring players per "
+                  f"sixteen-man entry and "
+                  f"{dropped['field_entries_with_unpriced'] * 100:.0f}% of its entries "
+                  f"hold at least one — a handicap on the field, not model edge "
+                  f"(see `priceable_room`)")
         games_played = board_games_played(features_dir, season, room, n_sims)
         truth_sims = truth_sim_index(n_sims)
 
@@ -1558,6 +1678,31 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
         print(f"  replaying the same portfolios against realized {season}")
         realized_rows.append(replay_realized(cfg, room, season, strategies, folios,
                                              seed, n_field_drafts))
+        if asymmetric:
+            # The bar the field sets, on BOTH boards, measured on the realized season.
+            # The symmetric room is rebuilt here rather than read off an artifact because
+            # the cut line is not in one — and it is the half of the floor that resolves,
+            # so it has to come out of the same run as the half that does not.
+            sym_room, _ = priceable_room(cfg, full, seed, n_field_drafts)
+            a = field_cut_line(cfg, room, season, seed, n_field_drafts)
+            b = field_cut_line(cfg, sym_room, season, seed, n_field_drafts)
+            cut_lines.append({"season": season}
+                             | {f"{k}_asymmetric": v for k, v in a.items()}
+                             | {f"{k}_symmetric": v for k, v in b.items()}
+                             | {"d_field_round1_cut": a["field_round1_cut"]
+                                - b["field_round1_cut"],
+                                "d_field_round1_mean": a["field_round1_mean"]
+                                - b["field_round1_mean"],
+                                "n_board_asymmetric": dropped["n_board"],
+                                "n_board_symmetric": dropped["n_board"]
+                                - dropped["n_seat_masked"],
+                                "n_seat_masked": dropped["n_seat_masked"],
+                                "field_unpriced_per_entry":
+                                    dropped["field_unpriced_per_entry"]})
+            print(f"  the field's realized Round-1 cut line moves "
+                  f"{b['field_round1_cut']:,.1f} -> {a['field_round1_cut']:,.1f} dk_pts "
+                  f"({cut_lines[-1]['d_field_round1_cut']:+,.1f}) when it may draft the "
+                  f"whole board")
 
     table = pd.concat(sweep_rows, ignore_index=True)
     realized = pd.concat(realized_rows, ignore_index=True)
@@ -1584,6 +1729,11 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
     _report_gate_d(gate_d_table)
     _report_realized(realized, shipped)
 
+    floor = (rookie_floor_table(out_dir, realized, cut_lines) if asymmetric
+             else None)
+    if floor is not None:
+        _report_rookie_floor(floor)
+
     paths = {}
     for name, frame in (("strategy_gate_c", pd.concat(gate_c_rows, ignore_index=True)),
                         ("strategy_injection", pd.DataFrame(injection_rows)),
@@ -1597,7 +1747,48 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
         frame.to_csv(dest, index=False)
         print(f"Saved {len(frame):,} {name.replace('_', ' ')} rows → {dest}")
         paths[name] = dest
+    if floor is not None:
+        # Unsuffixed: the floor table IS the asymmetric measurement, so a `_rookiefloor`
+        # tag on it would name the arm twice, and there is no symmetric twin it could
+        # collide with.
+        dest = out_dir / "strategy_rookie_floor.csv"
+        floor.to_csv(dest, index=False)
+        print(f"Saved {len(floor):,} rookie floor rows → {dest}")
+        paths["strategy_rookie_floor"] = dest
     return paths
+
+
+def _report_rookie_floor(floor: pd.DataFrame) -> None:
+    """The floor, in the two units it is measurable in — and only one of them resolves."""
+    print("\nTHE ROOKIE FLOOR — what it costs that the tensor cannot price a rookie")
+    print("  1. The bar. The field's realized Round-1 cut, by which board it drafted:")
+    for r in floor.drop_duplicates("season").itertuples():
+        print(f"     {r.season}  {r.field_round1_cut_symmetric:>9,.1f} -> "
+              f"{r.field_round1_cut_asymmetric:>9,.1f} dk_pts  "
+              f"({r.d_field_round1_cut:+,.1f})   over "
+              f"{r.n_field_entries_asymmetric:,} field entries, "
+              f"{r.n_seat_masked} rows our seat may never take")
+    print("     Averaged over the whole field, so this half of the floor RESOLVES.")
+
+    multi = floor[~floor["single_entry"]]
+    ship_row = "lineup_value_blend30"
+    s = multi[multi["strategy"] == ship_row]
+    print(f"\n  2. The contest. Round-1 lift delta, {len(multi['tournament'].unique())} "
+          f"multi-entry structures x {floor['season'].nunique()} seasons\n"
+          f"     (`88k_alley_oop` is one $450 entry and is reported apart, never pooled):")
+    print(f"     the shipped `{ship_row}`: {s['d_lift'].mean():+.4f} mean over "
+          f"{len(s)} readings, which run "
+          f"{s['d_lift'].min():+.4f} to {s['d_lift'].max():+.4f}")
+    per_arm = multi.groupby("strategy")["d_lift"].mean()
+    print(f"     across all {len(per_arm)} arms: {int((per_arm < 0).sum())} lose lift, "
+          f"median {per_arm.median():+.4f}, "
+          f"range {per_arm.min():+.4f} to {per_arm.max():+.4f}")
+    single = floor[floor["single_entry"] & (floor["strategy"] == ship_row)]
+    print(f"     the single-entry tier, reported not pooled: "
+          f"{', '.join(f'{r.season} {r.d_lift:+.4f}' for r in single.itertuples())}")
+    print("     One realized world per season and the readings straddle zero, so this "
+          "half does NOT\n     resolve — which is what `docs/rookie-rates-plan.md` §3 "
+          "decision 1 already assumed.")
 
 
 def board_games_played(features_dir: Path, season: str, room: draft_room.Room,
@@ -1782,6 +1973,12 @@ if __name__ == "__main__":
                         help="stipulate the adp_need field's lean instead of reading "
                              "the fitted (zero) one — a robustness probe, suffixed "
                              "into the artifact names")
+    parser.add_argument("--field-board", choices=list(FIELD_BOARDS),
+                        default="priceable",
+                        help="which board the OPPONENT field drafts from. "
+                             "`unrestricted` is the rookie floor: the field takes "
+                             "every rostered player, our seat stays masked to the "
+                             "priceable ones, and artifacts carry `_rookiefloor`")
     parser.add_argument("--pick-log-stake", action="store_true",
                         help="price the pick-log stake instead of running the sweep: "
                              "20 cheap 15k_and_one entries, DK autodraft against the "
@@ -1795,4 +1992,5 @@ if __name__ == "__main__":
     else:
         run(cfg, seasons=args.season, n_sims=args.n_sims, seed=args.seed,
             objective_arm=not args.no_objective_arm, n_field_drafts=args.field_drafts,
-            field=args.field, need_weight=args.need_weight)
+            field=args.field, need_weight=args.need_weight,
+            field_board=args.field_board)

@@ -593,6 +593,106 @@ make preseason-contest # what the PRESEASON BLOCK is worth in the contest, as a 
                        #   it — all four CONFIG KEYS do show 0→1. Read `resolution` before
                        #   `contest`, then `board`: this block arrives as the allocation
                        #   MEAN rather than as shape, so a ranking is what it can move.
+
+make rookie-floor      # what it costs that no board this project produces carries a
+                       #   ROOKIE — `docs/rookie-rates-plan.md` §5a/§7a
+                       #   → outputs/predictions/strategy_rookie_floor.csv plus the whole
+                       #   strategy_*_rookiefloor.csv set. The sweep run ASYMMETRICALLY:
+                       #   the opponent field drafts every rostered player, our seat stays
+                       #   masked to the rows the tensor prices (which is what the live
+                       #   draft room does anyway). ~50 min, the same cost as
+                       #   `make strategy-sweep` — it is that target with one flag,
+                       #   `--field-board unrestricted`, and it never touches the audited
+                       #   strategy_*.csv set.
+                       #   Read it on the REALIZED replay. The simulated arm scores the
+                       #   field's unscorable picks at literal ZERO, which hands the field
+                       #   a handicap of the tensor's making and reads uniformly positive
+                       #   for that reason alone.
+                       #   The symmetric side is read from the shipped strategy_realized
+                       #   .csv rather than re-run, and the licence for that is a
+                       #   measurement: Gate C runs on the same scorable population in
+                       #   both modes, so strategy_gate_c_rookiefloor.csv reproducing
+                       #   strategy_gate_c.csv (it does, to 0.000e+00) says the shipped
+                       #   file was written by today's code on today's tensors.
+
+make lag-recovery      # WHERE THE VETERAN DESIGN'S BOUNDARY BELONGS — `docs/rookie-rates
+                       #   -plan.md` §7b → outputs/predictions/lag_recovery.csv.
+                       #   `component_rates.build_design` asks for one thing, a lag-1
+                       #   season of at least 200 minutes, and everything failing it is
+                       #   dropped. That single test bundles three populations with very
+                       #   different information: a RETURNEE whose lag-1 is missing only
+                       #   because he sat out (his lag-2 is a full season, and `with_lags`
+                       #   pairs on season INDEX so the row is never built), a THIN-PRIOR
+                       #   player whose lag-1 is noisy rather than absent, and a TRUE
+                       #   ROOKIE for whom no own-rate feature exists at any lag.
+                       #   FITS NO HEAD — every arm is `carry_forward`'s functional form
+                       #   with a different prior rate, scored as R2 against the realized
+                       #   count so the numbers sit on the no-fit floor's own 0.81-0.95
+                       #   scale. numpy/pandas only, a few seconds.
+                       #   It reversed a decision: the rookie rate heads now serve TRUE
+                       #   ROOKIES ONLY and the veteran design widens to everyone with any
+                       #   prior season. The board census reconciles with the drafting
+                       #   layer from the opposite direction — 347/359 rows served and
+                       #   16/21 ADP-priced rows unserved are `strategy_injection.csv`'s
+                       #   own figures, reached without sharing any code with it.
+                       #   It also fits and persists the constants the ladder consumes —
+                       #   per-head shrinkage k, the population mean it shrinks toward,
+                       #   and the conversion block's (pseudo-attempts, league) pair — so
+                       #   `build_design` fits nothing at build time.
+
+make lag-ladder        # THE LADDER'S GATE — `docs/rookie-rates-plan.md` §5b/§7c →
+                       #   outputs/predictions/lag_ladder.csv.
+                       #   `build_design(..., ladder=...)` raises `with_lags` to max_lag=3
+                       #   and fills an unusable lag-1 block from the nearest usable
+                       #   season, into the SAME `_lag1` columns the eleven shipped heads
+                       #   already fit coefficients on, behind
+                       #   `stan.components.lag_ladder` — a LIST of admitted rungs, `[]`
+                       #   rebuilding the pre-ladder design exactly. This target decides
+                       #   which rungs are allowed in.
+                       #   FITS NOTHING: the eleven heads are read off
+                       #   data/features/posteriors/train/ and score the recovered rows
+                       #   with the coefficients they already have, which is the claim
+                       #   under test — the ladder widens the SCORING population and never
+                       #   the fitting one, so no head is refitted.
+                       #   Two gates, stated before the result. (1) validation paired-
+                       #   bootstrap CRPS below zero against the unserved status quo, a
+                       #   point mass at ZERO because a row missing from the design is
+                       #   missing from the tensor — a low bar on purpose. (2) the rung's
+                       #   mean carry-forward R2 over the count heads inside the shipped
+                       #   floor's 0.81-0.95 band. Gate 2 is the MEAN and not per head
+                       #   because the per-head form rejects the shipped design itself
+                       #   (5 of 7 count heads inside the band on rung 0's own rows).
+                       #   One rung of four cleared: the full-lag-2 returnee.
+                       #   numpy/pandas over persisted draws, under a minute.
+
+make rookie-rates      # THE TRUE-ROOKIE DESIGN AND ITS ELEVEN NO-FIT FLOORS —
+                       #   `docs/rookie-rates-plan.md` §5c/§7d →
+                       #   outputs/predictions/rookie_rate_floors.csv.
+                       #   The population the ladder cannot reach: a player whose target
+                       #   season is his FIRST PLAYED season has no own-rate feature at any
+                       #   lag, so the veteran coefficients have nothing to score him with.
+                       #   Builds his design — the volume-shrunk preseason level on each
+                       #   head's own link, CENTRED against the fitting population (a
+                       #   rookie has no prior season to difference against, so the delta
+                       #   convention becomes a level); the four age-split missing
+                       #   indicators; draft bucket, years-since-draft and their
+                       #   interaction, with UNDRAFTED as the reference cell; age.
+                       #   Every block is ZERO-RECOVERING — exactly 0 where its information
+                       #   is absent, which is where the Stan L2 prior's mode already is.
+                       #   FITS NO HEAD. Four constant blocks are estimated on the fitting
+                       #   half and written to the artifact so Sessions 4-7 read them
+                       #   rather than a constant pinned in a module: the conversion
+                       #   block's (pseudo-attempts, league), the volume shrink k, the
+                       #   centring means, and the floors' dispersions.
+                       #   The floors ARE `make rookie-priors`' selected estimator — the
+                       #   expanding draft-bucket mean blended with the preseason per-36
+                       #   by volume — wrapped in each head's own likelihood so a CRPS
+                       #   from arithmetic is comparable to one from a sampler.
+                       #   Asserts on every run that the rookie design shares no
+                       #   (player, season) with the veteran design at EVERY ladder rung,
+                       #   which is what Session 6's `units` union needs. Requires
+                       #   `make lag-recovery` for the ladder's constants.
+                       #   numpy/pandas only, ~10 seconds.
 ```
 
 **After `make posteriors`, nothing else in the simulation layer needs CmdStan.** That is the

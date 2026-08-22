@@ -131,6 +131,9 @@ QUIRKS = "docs/data-quirks.md"             # raw-data and library behaviour
 SPEC = "docs/project-spec.md"              # the spec every workflow reads
 SPLIT = "docs/train-validate-test-split.md"
 FINAL = "docs/final-evaluation-plan.md"   # the one reading of the held-out seasons
+# The rookie rate head program. Only §7a is claimed — Session 1's floor — because that is
+# the only section with an artifact behind it yet; each later session adds its own block.
+ROOKIE = "docs/rookie-rates-plan.md"
 
 FINAL_EVAL = "outputs/predictions/final_evaluation.csv"
 FINAL_ST = "outputs/predictions/final_evaluation_season_total.csv"
@@ -314,6 +317,9 @@ TOURNAMENTS = "data/raw/dk_best_ball_tournament_metadata.csv"
 # overview is the document that goes stale, which is the argument the README builder makes
 # about itself, so the claims live where the drift risk is.
 STRATEGY_SWEEP = "outputs/predictions/strategy_sweep.csv"
+# The sweep's per-season board record: what `priceable_room` dropped, and how often the
+# unrestricted ADP field drafts one of those rows. Same probe in both board modes.
+STRATEGY_INJECTION = "outputs/predictions/strategy_injection.csv"
 STRATEGY_SHIPPED = "outputs/predictions/strategy_shipped.csv"
 STRATEGY_GATE_D = "outputs/predictions/strategy_gate_d.csv"
 STRATEGY_PAIRED = "outputs/predictions/strategy_paired.csv"
@@ -321,6 +327,17 @@ STRATEGY_PAIRED = "outputs/predictions/strategy_paired.csv"
 # sweep against the stipulated 8-pick lean its suffix names.
 GATE_B_NEED = "outputs/predictions/draft_gate_b_need.csv"
 SHIPPED_NEED = "outputs/predictions/strategy_shipped_adp_need_w8.csv"
+# The rookie floor, 2026-08-22: the asymmetric-board arm and the table that pairs it
+# against the shipped symmetric run.
+ROOKIE_FLOOR = "outputs/predictions/strategy_rookie_floor.csv"
+# The population split that moved the rookie head's boundary, 2026-08-22.
+LAG_RECOVERY = "outputs/predictions/lag_recovery.csv"
+# The ladder that split carved, and the per-rung gate that admitted one rung of it.
+LAG_LADDER = "outputs/predictions/lag_ladder.csv"
+# The true-rookie design the ladder cannot reach, and the eleven floors it will be gated
+# against, 2026-08-22.
+ROOKIE_RATES = "outputs/predictions/rookie_rate_floors.csv"
+SWEEP_FLOOR = "outputs/predictions/strategy_sweep_rookiefloor.csv"
 
 
 # ── Claims ────────────────────────────────────────────────────────────────────
@@ -8951,7 +8968,8 @@ def _build() -> tuple[Claim, ...]:
                  + _composition_preseason_fit()
                  + _composition_preseason_fit_covered()
                  + _preseason_contest()
-                 + _final_evaluation())
+                 + _final_evaluation() + _rookie_floor() + _lag_recovery()
+                 + _lag_ladder() + _rookie_rates())
 
 
 def _final_evaluation() -> list[Claim]:
@@ -9210,6 +9228,634 @@ def _final_evaluation() -> list[Claim]:
 #: The three ways the availability head's shipped likelihood is expressed — the point MLE
 #: and the two Stan readings. Their spread is the port check, not a model comparison.
 _PORTS = ("mixture_mle", "stan_plug_in", "stan_posterior")
+
+
+def _rookie_floor() -> list[Claim]:
+    """`docs/rookie-rates-plan.md` §7a — Session 1's floor on the rookie-less board.
+
+    The doc enters the registry at its first session rather than at the end of the program,
+    for the reason `_preseason` did: a results section that grows one block per session is
+    the kind that goes stale a block at a time, and the block most likely to be
+    half-refreshed is the one a later session re-runs to compare against — which Session 7
+    is scheduled to do to exactly this one.
+
+    **Both halves of every pair are claimed, never the delta alone.** §7a's whole shape is
+    that one half of the floor resolves and the other does not, so a cut line quoted without
+    its symmetric twin, or a pooled lift without the readings it spans, would survive both
+    sides drifting together — the failure `docs/availability-window-plan.md` §7l records.
+
+    **The 88k readings are claimed even though the doc refuses to pool them.** They are the
+    evidence for the refusal: a single-entry tier reading 0.9940 against 0.0654 across two
+    seasons is why the pooled figures exclude it, and a claim that quietly stopped
+    reproducing would leave the exclusion resting on nothing.
+
+    Two blocks in §7a are deliberately unclaimed and labelled scratch in the prose: the
+    roster-side decomposition, and the ranking-invariance Spearman. Both come from ad-hoc
+    probes rather than from `make rookie-floor`, and inventing an artifact to hold them
+    would be the tail wagging the dog. The player-level colour — Wembanyama's realized total
+    and ADP, the priceable/unpriceable realized means — is scratch for the same reason.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, actual, label: str, artifact: str = ROOKIE_FLOOR, **kw) -> None:
+        C.append(_c(quoted, artifact, actual, label, doc=ROOKIE, **kw))
+
+    def floor() -> pd.DataFrame | None:
+        return table(ROOKIE_FLOOR)
+
+    def season(season_: str, column: str) -> float:
+        f = floor()
+        return _one(None if f is None else f.drop_duplicates("season"), column,
+                    season=season_)
+
+    def lift(season_: str, tournament: str, column: str = "d_lift",
+             strategy: str = "lineup_value_blend30") -> float:
+        return cell(ROOKIE_FLOOR, column, season=season_, tournament=tournament,
+                    strategy=strategy)
+
+    MULTI = ("15k_and_one", "20k_spin_move", "50k_four_pt_play", "600k_shootaround")
+
+    def shipped(column: str = "d_lift", tournament: str | None = None) -> float:
+        """The shipped arm's mean over the multi-entry structures, or over one of them."""
+        f = floor()
+        if f is None:
+            return float("nan")
+        keep = (f["strategy"] == "lineup_value_blend30") & (~f["single_entry"])
+        if tournament is not None:
+            keep &= f["tournament"] == tournament
+        return float(f.loc[keep, column].mean())
+
+    def per_arm(how: str) -> float:
+        """Every arm's mean `d_lift` over the four multi-entry structures x two seasons."""
+        f = floor()
+        if f is None:
+            return float("nan")
+        g = f[~f["single_entry"]].groupby("strategy")["d_lift"].mean()
+        return {"n_negative": float((g < 0).sum()), "n_arms": float(len(g)),
+                "median": float(g.median()), "min": float(g.min()),
+                "max": float(g.max())}[how]
+
+    # ── the board ─────────────────────────────────────────────────────────────
+    for s_, sym, asym, masked, per in (("2022-23", "347", "448", "101", "1.2556"),
+                                       ("2023-24", "359", "464", "105", "1.1861")):
+        add(sym, lambda x=s_: season(x, "n_board_symmetric"),
+            f"the field's priceable board, {s_}")
+        add(asym, lambda x=s_: season(x, "n_board_asymmetric"),
+            f"the field's whole board, {s_}")
+        add(masked, lambda x=s_: season(x, "n_seat_masked"),
+            f"rows our seat may never take, {s_}")
+        add(per, lambda x=s_: season(x, "field_unpriced_per_entry"),
+            f"unpriceable players the field drafts per entry, {s_}")
+    # `n_dropped_priced` and the entry share live on the injection record, which the floor
+    # table does not carry — claimed against the artifact that owns them.
+    for s_, priced, share in (("2022-23", "16", "73.06%"), ("2023-24", "21", "74.72%")):
+        add(priced, lambda x=s_: cell(STRATEGY_INJECTION, "n_dropped_priced", season=x),
+            f"unpriceable rows carrying ADP, {s_}", artifact=STRATEGY_INJECTION)
+        add(share, lambda x=s_: cell(STRATEGY_INJECTION, "field_entries_with_unpriced",
+                                     season=x),
+            f"field entries holding at least one unpriceable player, {s_}",
+            artifact=STRATEGY_INJECTION)
+
+    # ── 1. the bar, which resolves — both ends of both pairs ──────────────────
+    for s_, sym, asym, delta in (("2022-23", "15,505.8", "15,678.9", "+173.1"),
+                                 ("2023-24", "15,393.5", "15,505.4", "+111.9")):
+        add(sym, lambda x=s_: season(x, "field_round1_cut_symmetric"),
+            f"the field's realized Round-1 cut on the priceable board, {s_}")
+        add(asym, lambda x=s_: season(x, "field_round1_cut_asymmetric"),
+            f"the field's realized Round-1 cut on the whole board, {s_}")
+        add(delta, lambda x=s_: season(x, "d_field_round1_cut"),
+            f"how far the cut line moves, {s_}")
+    add("1,200", lambda: season("2022-23", "n_field_entries_asymmetric"),
+        "field entries behind each cut line")
+
+    # ── 2. the contest lift, which does not ──────────────────────────────────
+    for tournament, a, b, pool in (("15k_and_one", "+0.0952", "+0.0205", "+0.0579"),
+                                   ("20k_spin_move", "+0.0430", "+0.0889", "+0.0659"),
+                                   ("50k_four_pt_play", "+0.1349", "−0.1649", "−0.0150"),
+                                   ("600k_shootaround", "+0.1035", "−0.0680", "+0.0178")):
+        add(a, lambda t=tournament: lift("2022-23", t),
+            f"shipped-arm lift delta, {tournament} 2022-23")
+        add(b, lambda t=tournament: lift("2023-24", t),
+            f"shipped-arm lift delta, {tournament} 2023-24")
+        add(pool, lambda t=tournament: shipped(tournament=t),
+            f"shipped-arm lift delta pooled over seasons, {tournament}")
+    add("+0.0316", lambda: shipped(),
+        "shipped-arm lift delta, four multi-entry structures x two seasons")
+    add("−0.1649", lambda: min(lift(x, t) for x in ("2022-23", "2023-24")
+                               for t in MULTI), "the shipped arm's worst reading")
+    add("+0.1349", lambda: max(lift(x, t) for x in ("2022-23", "2023-24")
+                               for t in MULTI), "the shipped arm's best reading")
+    # The single-entry tier: its delta, and the two symmetric readings that are the whole
+    # argument for reporting it apart from the pooled figures.
+    add("−0.0065", lambda: lift("2022-23", "88k_alley_oop"),
+        "88k single entry, lift delta, 2022-23")
+    add("+0.6851", lambda: lift("2023-24", "88k_alley_oop"),
+        "88k single entry, lift delta, 2023-24")
+    add("0.9940", lambda: lift("2022-23", "88k_alley_oop", "p_advance_symmetric"),
+        "88k single entry, symmetric realized P(advance), 2022-23")
+    add("0.0654", lambda: lift("2023-24", "88k_alley_oop", "p_advance_symmetric"),
+        "88k single entry, symmetric realized P(advance), 2023-24")
+    # The whole table, which is where the sign reverses.
+    add("21", lambda: per_arm("n_negative"), "arms losing Round-1 lift")
+    add("24", lambda: per_arm("n_arms"), "arms in the sweep table")
+    add("−0.0765", lambda: per_arm("median"), "median arm's lift delta")
+    add("−0.2033", lambda: per_arm("min"), "the worst arm's lift delta")
+    add("+0.1385", lambda: per_arm("max"), "the best arm's lift delta")
+
+    # ── the simulated arm, which is not the readout ──────────────────────────
+    def simulated_delta() -> float:
+        """The same shipped-arm delta in the SIMULATED world, on the same structures.
+
+        Its symmetric side is `strategy_sweep.csv` rather than the floor table, because the
+        floor table pairs the REALIZED arms and this row exists to say that the simulated
+        arm answers a different question.
+        """
+        a, b = table(SWEEP_FLOOR), table(STRATEGY_SWEEP)
+        if a is None or b is None:
+            return float("nan")
+        def mean(f: pd.DataFrame) -> float:
+            keep = ((f["strategy"] == "lineup_value_blend30")
+                    & (f["tournament"].isin(MULTI)))
+            return float(f.loc[keep, "lift_vs_null"].mean())
+        return mean(a) - mean(b)
+
+    add("+0.0603", simulated_delta,
+        "shipped-arm lift delta in the SIMULATED world", artifact=SWEEP_FLOOR)
+    return C
+
+
+def _lag_recovery() -> list[Claim]:
+    """`docs/rookie-rates-plan.md` §7b — the measurement that moved the design boundary.
+
+    **This section reversed a recorded decision, which is why it is claimed densely.** A
+    figure here is not a readout of a head's performance, it is the evidence for where the
+    veteran design stops and the rookie head starts — so a drifted number would leave a
+    reversal standing on nothing, and Sessions 2 and 3 are both built on it.
+
+    Three families, and each is claimed at BOTH ends for the same reason `_rookie_floor`
+    claims both ends of a pair.
+
+    - **The carry-power table.** The veteran lag-1 row is the bar every other arm is read
+      against, so it is claimed beside them rather than trusted; and the thin-prior arm is
+      claimed **raw and shrunk**, because -1.1451 against +0.8566 is the whole argument for
+      the shrink and a table that kept only the good half would read as a mild improvement
+      instead of as the difference between an anti-model and a working estimator.
+    - **The preseason head-to-head**, which is the comparison that withdrew the constraint:
+      lag-2 against the estimator the rookie head would otherwise have served returnees
+      with, plus the coverage on both sides.
+    - **The board census**, whose reconciliation with the drafting layer is the reason to
+      believe it — `n_unserved_priced` summing to `strategy_injection.csv`'s 16 and 21 is a
+      cross-check between two modules that share no code, so both are claimed.
+
+    The fitted shrinkage `k` values are claimed as a range rather than per head: the doc
+    quotes the endpoints and which head sits at each, which is what a reader needs, and
+    nine per-head constants in the prose would be nine more things to half-refresh.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, actual, label: str, artifact: str = LAG_RECOVERY,
+            **kw) -> None:
+        C.append(_c(quoted, artifact, actual, label, doc=ROOKIE, **kw))
+
+    def arm(split: str, group: str, estimator: str, metric: str = "r2",
+            measurement: str = "carry_power") -> float:
+        """Mean over the nine rate targets, which is how §7b's table quotes every cell.
+
+        `measurement` is not optional in practice: `returnee_lag2` carries a `lag2` arm in
+        BOTH families — the carry-power table scores it on all 177 rows, the preseason
+        head-to-head on the 108 that have a preseason row — and averaging the two together
+        silently reports neither.
+        """
+        f = table(LAG_RECOVERY)
+        if f is None:
+            return float("nan")
+        # `fillna("")` because `_row`'s default estimator is the empty string and a CSV
+        # round-trip reads that back as NaN — without it the two coverage claims below
+        # match nothing and are reported as "artifact not built", which is a skip that
+        # looks like a missing file rather than like a stale filter.
+        hit = f[(f["measurement"] == measurement) & (f["split"] == split)
+                & (f["group"] == group) & (f["estimator"].fillna("") == estimator)
+                & (f["metric"] == metric)]
+        return float(hit["value"].mean())
+
+    def census(season: str, group: str, metric: str) -> float:
+        return cell(LAG_RECOVERY, "value", measurement="board_census", season=season,
+                    group=group, metric=metric)
+
+    def n_of(split: str, group: str, estimator: str,
+             measurement: str = "carry_power") -> float:
+        f = table(LAG_RECOVERY)
+        if f is None:
+            return float("nan")
+        hit = f[(f["measurement"] == measurement) & (f["split"] == split)
+                & (f["group"] == group) & (f["estimator"] == estimator)
+                & (f["metric"] == "r2")]
+        return float(hit["n"].max()) if len(hit) else float("nan")
+
+    def population(group: str) -> float:
+        """Played player-seasons in a group, on the split — its own census row."""
+        return cell(LAG_RECOVERY, "value", measurement="population",
+                    split="train+validation", group=group, metric="n_played")
+
+    # ── the carry-power table, every cell of it ──────────────────────────────
+    for group, estimator, train_, val_, pooled_, n_ in (
+            ("veteran", "lag1", "0.9081", "0.8989", "0.9080", "9,403"),
+            ("returnee_lag2", "lag2", "0.9108", "0.8976", "0.9157", "177"),
+            ("thin_prior", "lag1_raw", "−1.2555", "0.2165", "−1.1451", None),
+            ("thin_prior", "lag1_shrunk", "0.8575", "0.8020", "0.8566", "891"),
+            ("has_history", "recent_shrunk", "0.8601", "0.8845", "0.8630", "1,261")):
+        for split, quoted in (("train", train_), ("validation", val_),
+                              ("train+validation", pooled_)):
+            add(quoted, lambda s=split, g=group, e=estimator: arm(s, g, e),
+                f"{group}/{estimator} carry-forward R2, {split}")
+        if n_ is not None:
+            add(n_, lambda g=group, e=estimator: n_of("train+validation", g, e),
+                f"{group}/{estimator} pooled n")
+    # The two weak subgroups the ladder admits anyway — named in the prose, so claimed.
+    for group, pooled_, n_ in (("returnee_thin", "0.7813", "75"),
+                               ("no_usable_lag", "0.7497", "118")):
+        add(pooled_, lambda g=group: arm("train+validation", g, "recent_shrunk"),
+            f"{group} unified-rung R2, pooled")
+        add(n_, lambda g=group: n_of("train+validation", g, "recent_shrunk"),
+            f"{group} pooled n")
+    add("0.8989", lambda: arm("validation", "veteran", "lag1"),
+        "the veteran bar the returnee arm is read against, validation")
+
+    # ── the population census, which is also §7b's first table ──────────────
+    for group, quoted in (("veteran", "9,403"), ("thin_prior", "891"),
+                          ("returnee_lag2", "177"), ("returnee_thin", "75"),
+                          ("no_usable_lag", "118"), ("true_rookie", "2,176")):
+        add(quoted, lambda g=group: population(g),
+            f"played player-seasons, {group}")
+
+    # ── the head-to-head that withdrew the constraint ───────────────────────
+    add("0.8977", lambda: arm("train+validation", "returnee_lag2", "lag2",
+                              measurement="preseason"),
+        "returnee lag-2 on the preseason-covered rows")
+    add("0.8092", lambda: arm("train+validation", "returnee_lag2", "preseason_shrunk",
+                              measurement="preseason"),
+        "shrunk preseason on the same rows")
+    add("71.5%", lambda: arm("train+validation", "returnee_lag2", "", "coverage",
+                             measurement="preseason"),
+        "preseason coverage, returnees")
+    add("90.8%", lambda: arm("train+validation", "true_rookie", "", "coverage",
+                             measurement="preseason"),
+        "preseason coverage, true rookies")
+    add("108", lambda: n_of("train+validation", "returnee_lag2", "preseason_shrunk",
+                            measurement="preseason"),
+        "returnee rows carrying a preseason row")
+
+    # ── the board census, and its reconciliation with the drafting layer ────
+    for season, served, thin, ret2, retthin, away, rook in (
+            ("2022-23", "347", "27", "10", "1", "9", "54"),
+            ("2023-24", "359", "35", "4", "2", "10", "54")):
+        add(served, lambda x=season: census(x, "served_today", "n"),
+            f"board rows the shipped design serves, {season}")
+        for group, quoted in (("thin_prior", thin), ("returnee_lag2", ret2),
+                              ("returnee_thin", retthin), ("no_usable_lag", away),
+                              ("true_rookie", rook)):
+            add(quoted, lambda x=season, g=group: census(x, g, "n_unserved"),
+                f"unserved board rows, {group} {season}")
+    for season, priced in (("2022-23", ("0", "7", "0", "0", "9")),
+                           ("2023-24", ("3", "3", "0", "0", "15"))):
+        for group, quoted in zip(("thin_prior", "returnee_lag2", "returnee_thin",
+                                  "no_usable_lag", "true_rookie"), priced):
+            add(quoted, lambda x=season, g=group: census(x, g, "n_unserved_priced"),
+                f"unserved ADP-priced rows, {group} {season}")
+    # What the ladder recovers, which is the sentence the session is scheduled on.
+    for season, rows_, priced_ in (("2022-23", "47", "7"), ("2023-24", "51", "6")):
+        add(rows_, lambda x=season: sum(census(x, g, "n_unserved")
+                                        for g in ("thin_prior", "returnee_lag2",
+                                                  "returnee_thin", "no_usable_lag")),
+            f"board rows the ladder recovers, {season}")
+        add(priced_, lambda x=season: sum(census(x, g, "n_unserved_priced")
+                                          for g in ("thin_prior", "returnee_lag2",
+                                                    "returnee_thin", "no_usable_lag")),
+            f"ADP-priced board rows the ladder recovers, {season}")
+    # The cross-check itself: the census and the drafting layer agree on the priced hole.
+    for season, quoted in (("2022-23", "16"), ("2023-24", "21")):
+        add(quoted, lambda x=season: cell(STRATEGY_INJECTION, "n_dropped_priced",
+                                          season=x),
+            f"ADP-priced unserved rows as the drafting layer counts them, {season}",
+            artifact=STRATEGY_INJECTION)
+    return C
+
+
+def _lag_ladder() -> list[Claim]:
+    """`docs/rookie-rates-plan.md` §7c — the ladder built, and its gate run per rung.
+
+    **A gate that rejected three of four rungs is claimed on both sides**, for the reason
+    `_lag_recovery` claims the thin-prior arm raw and shrunk: a table showing only the
+    admitted rung would read as "the ladder works" instead of as "one rung of four
+    cleared", and the rejections are the part that shaped what Sessions 6-8 have to do.
+
+    Two things here are load-bearing beyond their own numbers and are claimed for that
+    reason rather than because the prose leans on them:
+
+    - **The veteran row**, which appears in both gates. It is the bar every rung is read
+      against, and its 9-rate mean is a cross-check on the whole pipeline — 0.8989
+      reproduces `_lag_recovery`'s audited veteran validation figure from a different
+      module on a different frame, so the two drifting apart is exactly what should fail.
+    - **The 5-of-7 per-head reading on those same veteran rows**, which is the evidence
+      for gating on the mean rather than per head. Without it the choice of aggregate
+      looks like a convenience; with it, the per-head test is disqualified by the
+      incumbent failing it.
+
+    Gate-1 deltas are claimed as the per-rung mean over the eleven heads, which is what
+    §7c's table quotes and labels as a direction rather than a quantity.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, actual, label: str, **kw) -> None:
+        C.append(_c(quoted, LAG_LADDER, actual, label, doc=ROOKIE, **kw))
+
+    def one(gate: str, group: str, head: str, metric: str) -> float:
+        return cell(LAG_LADDER, "value", gate=gate, group=group, head=head,
+                    metric=metric)
+
+    def blank(gate: str, group: str, metric: str) -> float:
+        """A row whose `head` is the empty string — NaN after a CSV round-trip."""
+        f = table(LAG_LADDER)
+        if f is None:
+            return float("nan")
+        hit = f[(f["gate"] == gate) & (f["group"] == group)
+                & (f["head"].fillna("") == "") & (f["metric"] == metric)]
+        return float(hit["value"].iloc[0]) if len(hit) else float("nan")
+
+    def mean_over_heads(group: str, metric: str) -> float:
+        f = table(LAG_LADDER)
+        if f is None:
+            return float("nan")
+        hit = f[(f["gate"] == "crps") & (f["group"] == group)
+                & (f["metric"] == metric)]
+        return float(hit["value"].mean())
+
+    def heads_winning(group: str) -> float:
+        f = table(LAG_LADDER)
+        if f is None:
+            return float("nan")
+        hit = f[(f["gate"] == "crps") & (f["group"] == group)
+                & (f["metric"] == "wins")]
+        return float(hit["value"].sum())
+
+    # ── what the ladder reaches ──────────────────────────────────────────────
+    add("10,194", lambda: blank("population", "all", "n_design_today"),
+        "design rows the shipped builder carries")
+    add("11,544", lambda: blank("population", "all", "n_design_ladder"),
+        "design rows with every rung on")
+    add("1,350", lambda: (blank("population", "all", "n_design_ladder")
+                          - blank("population", "all", "n_design_today")),
+        "rows the ladder reaches")
+    add("910", lambda: blank("population", "all", "n_validation"),
+        "validation rows the gate reads")
+    for group, quoted in (("veteran", "773"), ("thin_prior", "100"),
+                          ("returnee_lag2", "19"), ("returnee_thin", "11"),
+                          ("no_usable_lag", "7")):
+        add(quoted, lambda g=group: blank("population", g, "n_validation"),
+            f"validation rows, {group}")
+    add("996", lambda: blank("population", "thin_prior", "n_design"),
+        "design rows rung B would add")
+
+    # ── gate 1, every cell of §7c's table ────────────────────────────────────
+    for group, crps_, unserved_, delta_, won_ in (
+            ("veteran", "13.1114", "154.0600", "−140.9486", "11"),
+            ("thin_prior", "4.5890", "32.1362", "−27.5471", "11"),
+            ("returnee_lag2", "7.3274", "95.7589", "−88.4315", "11"),
+            ("returnee_thin", "2.5457", "13.1506", "−10.6049", "10"),
+            ("no_usable_lag", "4.4994", "29.4134", "−24.9141", "10")):
+        add(crps_, lambda g=group: mean_over_heads(g, "val_crps"),
+            f"gate 1 head CRPS, {group}")
+        add(unserved_, lambda g=group: mean_over_heads(g, "unserved_crps"),
+            f"gate 1 unserved CRPS, {group}")
+        add(delta_, lambda g=group: mean_over_heads(g, "crps_delta"),
+            f"gate 1 mean delta, {group}")
+        add(won_, lambda g=group: heads_winning(g),
+            f"gate 1 heads with the interval below zero, {group}")
+    # The two heads that fail, quoted at the interval end that fails them — the whole of
+    # why the two tails lose the CRPS half as well as the band half.
+    add("+0.2376", lambda: one("crps", "returnee_thin", "fta", "ci_hi"),
+        "the `fta` interval that reaches across zero, thin-lag-2 returnees")
+    add("+2.6648", lambda: one("crps", "no_usable_lag", "blk", "ci_hi"),
+        "the `blk` interval that reaches across zero, away 2+ seasons")
+
+    # ── gate 2, every cell, plus the aggregate the gate is actually read on ──
+    cells = {
+        "veteran": ("0.951", "0.876", "0.950", "0.919", "0.839", "0.810", "0.897"),
+        "thin_prior": ("0.954", "0.573", "0.930", "0.697", "0.781", "0.747", "0.828"),
+        "returnee_lag2": ("0.980", "0.839", "0.990", "0.900", "0.963", "0.522", "0.961"),
+        "returnee_thin": ("0.981", "0.093", "0.858", "0.755", "0.863", "0.307", "0.248"),
+        "no_usable_lag": ("0.975", "0.859", "0.951", "0.760", "0.432", "−0.632", "0.839"),
+    }
+    heads = ("fga", "fta", "reb", "ast", "stl", "blk", "tov")
+    for group, quoted in cells.items():
+        for head, value in zip(heads, quoted):
+            add(value, lambda g=group, h=head: one("band", g, h, "floor_r2"),
+                f"gate 2 carry-forward R2, {group}/{head}")
+    for group, counts_, rates_ in (
+            ("veteran", "0.8919", "0.8989"), ("thin_prior", "0.7873", "0.7999"),
+            ("returnee_lag2", "0.8791", "0.9013"), ("returnee_thin", "0.5866", "0.6402"),
+            ("no_usable_lag", "0.5977", "0.6748")):
+        add(counts_, lambda g=group: blank("band", g, "count_mean_r2"),
+            f"gate 2 count-head mean R2, {group}")
+        add(rates_, lambda g=group: blank("band", g, "rate_mean_r2"),
+            f"gate 2 nine-rate mean R2, {group}")
+    # The reading that disqualified the per-head form of gate 2. Quoted bare because
+    # `parse_quoted` reads a number and "5 of 7" is not one — the value check is the
+    # point here, and the presence check is carried by the cells above it.
+    add("5", lambda: sum(one("band", "veteran", h, "in_band") for h in heads),
+        "count heads inside the band on the SHIPPED design's own rows")
+
+    # The per-rung verdict is NOT claimed separately, because it is not a separate
+    # measurement: §4's conjunction is exactly the gate-1 head counts and the gate-2
+    # count-head means above, both of which are claimed at every rung. A claim on
+    # `admitted` would restate them and could only ever fail with them.
+    return C
+
+
+def _rookie_rates() -> list[Claim]:
+    """`docs/rookie-rates-plan.md` §7d — the true-rookie design and its eleven floors.
+
+    **The floor table is claimed on all three arms**, for the reason `_lag_recovery` claims
+    the thin-prior arm raw and shrunk. The floor alone would read as "an estimator works";
+    the three together are the finding — the shipping `draft_bucket` incumbent is an
+    anti-model on five heads, the raw `preseason` arm is unusable at the CRPS unit, and the
+    blend of two bad arms beats both. A later session that quietly changed the shrink would
+    move the middle column and leave the outer two standing, which is exactly what should
+    fail here.
+
+    Two figures are load-bearing beyond their own values:
+
+    - **The count family's `k = 160`.** It reproduces P4(b)'s selected constant from a
+      different unit (CRPS through a fitted likelihood, not standardized MAE on rates) on a
+      different population, and the plan doc leans on that agreement. The two drifting
+      apart is a finding, not a rounding change.
+    - **The design and disjointness counts.** 1,495 against 11,544 is the statement
+      Session 6's `units` union rests on, and the census is what sizes every interval
+      Session 4 will report.
+
+    Dispersion is claimed only at the boundary hit — the raw preseason arm pinning `phi` at
+    the optimizer's floor is why its CRPS is quoted as a direction rather than as a
+    quantity, and a claim on it is what keeps that caveat honest if the bound ever moves.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, actual, label: str, **kw) -> None:
+        C.append(_c(quoted, ROOKIE_RATES, actual, label, doc=ROOKIE, **kw))
+
+    def census(split: str, population: str, metric: str) -> float:
+        return cell(ROOKIE_RATES, "value", measurement="population", split=split,
+                    population=population, metric=metric)
+
+    def constant(head: str, metric: str) -> float:
+        return cell(ROOKIE_RATES, "value", measurement="constants", head=head,
+                    metric=metric)
+
+    def floor(head: str, arm: str, metric: str, split: str = "validation",
+              population: str = "draftable") -> float:
+        return cell(ROOKIE_RATES, "value", measurement="floor", split=split,
+                    population=population, head=head, arm=arm, metric=metric)
+
+    def beats(metric: str, better) -> float:
+        """How many of the eleven heads the floor beats the incumbent on.
+
+        Counted from the artifact rather than quoted per head, because "11 of 11" is the
+        claim the doc makes and eleven separate cells would let it pass while the headline
+        was wrong.
+        """
+        f = table(ROOKIE_RATES)
+        if f is None:
+            return float("nan")
+        hit = f[(f["measurement"] == "floor") & (f["split"] == "validation")
+                & (f["population"] == "draftable") & (f["metric"] == metric)]
+        wide = hit.pivot_table(index="head", columns="arm", values="value")
+        return float(better(wide["shrunk"], wide["draft_bucket"]).sum())
+
+    # ── the population, and the disjointness Session 6 needs ─────────────────
+    #
+    # The two sides of Session 6's `units` union, and the empty intersection between them.
+    # Claimed from this artifact rather than left to the assertion: `assert_disjoint`
+    # raises, which is right for a guarantee and wrong for a record — a figure nobody can
+    # re-derive is a figure that drifts silently once the assertion is deleted. The rookie
+    # design is the split's rows PLUS the held-out seasons it carries so Session 6 can
+    # persist it at the `full` window, which is why 1,218 + 146 does not sum to 1,495 and
+    # why the census below is quoted per split rather than pooled.
+    def disjoint(metric: str) -> float:
+        return cell(ROOKIE_RATES, "value", measurement="disjoint", metric=metric)
+
+    add("1,495", lambda: disjoint("n_rookie_design"), "true-rookie design rows")
+    add("11,544", lambda: disjoint("n_veteran_design"),
+        "veteran design rows at every ladder rung, from the rookie side")
+    # `n_overlap` is deliberately NOT claimed: it is 0 by construction of the run, since
+    # `assert_disjoint` raises before anything is written. A claim on it could only ever
+    # pass, and the artifact row exists so a reader can see the check ran at all.
+    for split, population, quoted in (("train", "all", "1,218"),
+                                      ("train", "draftable", "961"),
+                                      ("validation", "all", "146"),
+                                      ("validation", "draftable", "108")):
+        add(quoted, lambda s=split, p=population: census(s, p, "n_rows"),
+            f"rookie design rows, {split}/{population}")
+    for split, population, quoted in (("train", "all", "91.4%"),
+                                      ("train", "draftable", "97.1%"),
+                                      ("validation", "all", "93.8%"),
+                                      ("validation", "draftable", "99.1%")):
+        # `check_values` scales a `%`-quoted claim itself, so the actual stays a share.
+        add(quoted, lambda s=split, p=population: census(s, p, "preseason_coverage"),
+            f"preseason coverage, {split}/{population}")
+    for split, population, quoted in (("train", "all", "70.5"),
+                                      ("train", "draftable", "81.2"),
+                                      ("validation", "all", "65.3"),
+                                      ("validation", "draftable", "70.4")):
+        add(quoted, lambda s=split, p=population: census(s, p, "median_min_pre"),
+            f"median preseason minutes, {split}/{population}")
+    for bucket, quoted in (("lottery_top5", "90"), ("lottery", "162"),
+                           ("late_first", "282"), ("second_round", "347"),
+                           ("undrafted", "337")):
+        add(quoted, lambda b=bucket: cell(ROOKIE_RATES, "value", measurement="population",
+                                          split="train", population="all", arm=b,
+                                          metric="n_slot"),
+            f"training rows in the {bucket} slot bucket")
+
+    # ── the constants, on the fitting half ───────────────────────────────────
+    add("160", lambda: constant("fga", "k_minutes"), "volume shrink k, count family")
+    add("10", lambda: constant("fg3a", "k_minutes"), "volume shrink k, conversion family")
+    for head, quoted in (("fga", "2.4755"), ("reb", "1.8623"), ("ast", "1.1363"),
+                         ("blk", "0.4294")):
+        add(quoted, lambda h=head: constant(h, "center"), f"centring mean, {head}")
+    for head, k_, league_ in (("fg3a", "2.07", "0.2754"), ("fg2m", "107.93", "0.4789"),
+                              ("fg3m", "401.32", "0.3346"), ("ftm", "34.89", "0.7282")):
+        add(k_, lambda h=head: constant(h, "k_attempts"),
+            f"conversion EB pseudo-attempts, {head}")
+        add(league_, lambda h=head: constant(h, "league_pct"),
+            f"conversion league mean, {head}")
+    # The grid's shape, which is what says `k = 160` is an interior optimum rather than a
+    # boundary the grid imposed.
+    for k, quoted in ((0.0, "0.72140"), (160.0, "0.20216"), (1e6, "0.22233")):
+        add(quoted, lambda k=k: cell(ROOKIE_RATES, "value",
+                                     measurement="shrinkage_grid", arm="count", k=k,
+                                     metric="inner_crps_standardized"),
+            f"count-family inner CRPS at k={k:g}")
+
+    # ── the floor table, all three arms ──────────────────────────────────────
+    floors = {
+        "fga": ("0.9127", "0.8585", "0.9531", "28.9885", "37.7341"),
+        "reb": ("0.7274", "0.7868", "0.8449", "25.5257", "34.0359"),
+        "ast": ("0.6132", "0.6563", "0.8378", "14.3171", "21.3704"),
+        "tov": ("0.7611", "0.5682", "0.8082", "9.6004", "10.2502"),
+        "fta": ("0.6750", "0.2643", "0.7668", "18.0836", "20.0037"),
+        "stl": ("0.7871", "−0.5164", "0.7851", "4.6727", "4.8078"),
+        "blk": ("0.2966", "0.7019", "0.6711", "7.1199", "9.7919"),
+        "fg3a|fga": ("−0.5989", "0.6109", "0.5743", "17.8601", "40.8617"),
+        "fg3m|fg3a": ("−0.0415", "−0.0963", "−0.0388", "3.3429", "5.8696"),
+        "ftm|fta": ("−0.0441", "0.0120", "0.0027", "3.2919", "3.7188"),
+        "fg2m|fg2a": ("−0.1649", "−0.0356", "−0.0508", "7.9526", "9.1621"),
+    }
+    for head, (bucket_, pre_, floor_, crps_, bucket_crps_) in floors.items():
+        add(bucket_, lambda h=head: floor(h, "draft_bucket", "r2"),
+            f"floor table, {head} bucket R2")
+        add(pre_, lambda h=head: floor(h, "preseason", "r2"),
+            f"floor table, {head} preseason R2")
+        add(floor_, lambda h=head: floor(h, "shrunk", "r2"),
+            f"floor table, {head} floor R2")
+        add(crps_, lambda h=head: floor(h, "shrunk", "crps"),
+            f"floor table, {head} floor CRPS")
+        add(bucket_crps_, lambda h=head: floor(h, "draft_bucket", "crps"),
+            f"floor table, {head} bucket CRPS")
+    # Quoted bare because `parse_quoted` reads a number and "11 of 11" is not one, the
+    # same shape `_lag_ladder`'s 5-of-7 claim takes. The head count is the headline: eleven
+    # separate cells would let it pass while the summary sentence was wrong.
+    add("11", lambda: beats("crps", lambda a, b: a < b),
+        "heads where the floor beats the incumbent on CRPS")
+    add("10", lambda: beats("r2", lambda a, b: a > b),
+        "heads where the floor beats the incumbent on R2")
+    add("0.0020", lambda: floor("stl", "draft_bucket", "r2") - floor("stl", "shrunk", "r2"),
+        "the `stl` R2 the floor loses by")
+    for head, quoted in (("fg3m|fg3a", "106"), ("ftm|fta", "105")):
+        add(quoted, lambda h=head: cell(ROOKIE_RATES, "n", measurement="floor",
+                                        split="validation", population="draftable",
+                                        head=h, arm="shrunk", metric="crps"),
+            f"scorable validation rows, {head}")
+
+    # ── the raw arm's boundary hit, which is why its CRPS is a direction ─────
+    #
+    # Claimed on a head that actually pins rather than on `fga`, whose dispersion sits just
+    # off the bound at 0.0634 — the finding is "the optimizer ran out of room", so it has to
+    # be read where the optimizer ran out of room.
+    add("0.050", lambda: floor("ast", "preseason", "dispersion"),
+        "the raw preseason arm's NB dispersion, pinned at the optimizer's floor")
+    add("5", lambda: float(sum(
+        floor(h, "preseason", "dispersion") <= 0.0501
+        for h in ("fga", "fta", "reb", "ast", "stl", "blk", "tov"))),
+        "count heads whose raw-arm dispersion pins at the bound", tol=0.5)
+    add("0.0634", lambda: floor("fga", "preseason", "dispersion"),
+        "the raw preseason arm's `fga` dispersion, just off the bound")
+    add("0.0962", lambda: floor("reb", "preseason", "dispersion"),
+        "the raw preseason arm's `reb` dispersion, just off the bound")
+    add("207.0254", lambda: floor("fga", "preseason", "crps"),
+        "the raw preseason arm's `fga` CRPS")
+    add("0.8200", lambda: floor("fga", "preseason", "pit_ks"),
+        "the raw preseason arm's `fga` PIT KS")
+    add("0.0578", lambda: floor("fga", "shrunk", "pit_ks"), "the floor's `fga` PIT KS")
+    return C
 
 
 CLAIMS: tuple[Claim, ...] = _build()

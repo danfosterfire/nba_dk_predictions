@@ -329,6 +329,44 @@ stan:
     # season) so the missing indicator cannot read as an era dummy.
     preseason: true
 
+    # ── The lag-recovery ladder, docs/rookie-rates-plan.md §5b ──
+    # Which rungs of the ladder `component_rates.build_design` admits. A LIST, not a
+    # boolean, because §4's gate is per rung and came back per rung; `[]` builds the
+    # pre-ladder design EXACTLY (max_lag=1, no provenance columns, the same 200-minute
+    # test), so the shipped design is recoverable by emptying this key.
+    #
+    # The vocabulary is `component_rates.LADDER_RUNGS`, named as `lag_recovery.classify`
+    # names the population groups so the design's `lag_rung` column reconciles with §7b's
+    # board census directly:
+    #   thin_prior     lag-1 exists and is under 200 minutes — the rate is noisy, not absent
+    #   returnee_lag2  lag-1 missing, a FULL season at lag 2 (the Jamal Murray shape)
+    #   returnee_thin  lag-1 missing, a thin season at lag 2
+    #   no_usable_lag  away two or more seasons — lag 3
+    #
+    # ⚠️ IMPUTATION ONLY. The recovered rows are written into the same `_lag1` columns the
+    # eleven shipped heads already fit coefficients on, so those coefficients score them
+    # unchanged and NO HEAD IS REFITTED (§3 constraint 4). A fitting path must route its
+    # training frame through `component_rates.fitting_rows`, which is rung 0 alone — the
+    # ladder widens the SCORING population and never the fitting one. Admitting these rows
+    # to the fit, with a staleness feature the head could learn a slope for, is the
+    # escalation that constraint holds in reserve and it costs eleven refits at two windows.
+    #
+    # ⚠️ Reaches the heads through `stan_components.head_design` and never through a bare
+    # `build_design` call, which twelve modules make.
+    #
+    # ── THE GATE'S VERDICT, `make lag-ladder` 2026-08-22 (§7c) ──
+    # ONE RUNG OF FOUR CLEARED. Gate 1 is cleared by rungs A and B (11 of 11 heads with
+    # the interval below zero) and by the two tails at 10 of 11; gate 2 is what separates
+    # them — count-head mean carry-forward R2 of 0.8791 (returnee_lag2, in band) against
+    # 0.7873 (thin_prior), 0.5866 (returnee_thin) and 0.5977 (no_usable_lag, with `blk`
+    # an anti-model at -0.632). Rung 0's own reading is 0.8919.
+    #   shipped verdict:  lag_ladder: [returnee_lag2]
+    # It is left EMPTY here because turning the ladder on is two edits and Session 6 owns
+    # both — this key, AND every fitting path routing through `fitting_rows`. Flipping it
+    # alone would widen eleven heads' fitting population, which is the one thing the
+    # imputation-only form exists to prevent.
+    lag_ladder: []
+
     # Every head gets a spline variant and the winner is picked on a VALIDATION split,
     # rather than hard-coding "splines on fg3a and blk only". `make component-rates`
     # measured that pattern (+0.030 R^2 on fg3a, +0.041 on blk, <= +0.003 elsewhere) under
