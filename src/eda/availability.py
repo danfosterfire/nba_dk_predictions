@@ -56,7 +56,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from src.data.fetch import _slug, nbastats_dir
+from src.data.fetch import _season_start_year, _slug, nbastats_dir
 from src.eda.feature_diagnostics import above_null
 from src.eda.persistence import demean_within, pair_weights, weighted_corr
 from src.data.preprocess import PLAYOFFS
@@ -127,12 +127,58 @@ def weighted_r2(X: np.ndarray, y: np.ndarray, w: np.ndarray) -> float:
     return float(1 - np.average(resid ** 2, weights=w) / denom) if denom > 0 else np.nan
 
 
+#: The date the bio family's `age` is referenced to, measured rather than assumed. Age
+#: recomputed from `BIRTH_DATE` at 31 December of the season's start year reproduces
+#: `player_bio_stats`' own column to a mean of +0.018 years, inside half a year on 98.7%
+#: of 525 shared 2025-26 players; 1 October and 1 February both miss by more.
+AGE_REFERENCE = (12, 31)
+
+
+def roster_ages(season: str, raw_dir: str | Path) -> pd.DataFrame:
+    """Age from the roster snapshot, for a season the bio family cannot cover yet.
+
+    🔴 **Not the roster's own `AGE` column, and the difference is a real bias.** That
+    column is a *fetch-time* attribute: on a roster pulled during the season it matches the
+    bio column exactly (98.7% of 525 players), and on the 2026-27 roster pulled in August
+    2026 it sits **0.617 years low** against the season's own reference date, inside half a
+    year on only 38.1% of players. Age and age squared are features on every head, so
+    taking the convenient column would push a systematic error through the whole board.
+
+    `BIRTH_DATE` is exact and does not move, so it is recomputed at the reference date and
+    the `AGE` column is used only where a birth date is missing.
+    """
+    path = nbastats_dir(raw_dir) / f"team_rosters_{_slug(season)}.csv"
+    if not path.exists():
+        return pd.DataFrame(columns=["season", "player_id", "age"])
+    roster = pd.read_csv(path)
+    if "PLAYER_ID" not in roster.columns:
+        return pd.DataFrame(columns=["season", "player_id", "age"])
+
+    month, day = AGE_REFERENCE
+    reference = pd.Timestamp(year=_season_start_year(season), month=month, day=day)
+    birth = pd.to_datetime(roster.get("BIRTH_DATE"), errors="coerce", format="mixed")
+    age = (reference - birth).dt.days / 365.25
+    if "AGE" in roster.columns:
+        age = age.fillna(pd.to_numeric(roster["AGE"], errors="coerce"))
+    out = pd.DataFrame({"season": season, "player_id": roster["PLAYER_ID"], "age": age})
+    return out.dropna(subset=["age"]).drop_duplicates("player_id")
+
+
 def load_ages(seasons: list[str], raw_dir: str | Path) -> pd.DataFrame:
-    """Player age per season, off the bio family. 100% coverage in practice."""
+    """Player age per season, off the bio family. 100% coverage in practice.
+
+    `player_bio_stats_<season>.csv` is a season-*statistics* endpoint, so it does not exist
+    for a season that has not been played — which is the one season a production board is
+    for. `roster_ages` is the fallback and is used only where the bio file is absent, so no
+    played season's ages move.
+    """
     frames = []
     for season in seasons:
         path = nbastats_dir(raw_dir) / f"player_bio_stats_{_slug(season)}.csv"
         if not path.exists():
+            fallback = roster_ages(season, raw_dir)
+            if len(fallback):
+                frames.append(fallback)
             continue
         df = pd.read_csv(path, low_memory=False)
         df.columns = [c.lower() for c in df.columns]

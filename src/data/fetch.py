@@ -205,27 +205,62 @@ def fetch_season_game_logs(season: str, output_dir: str | Path = "data/raw",
     return _save(df, dest)
 
 
+def schedule_team_ids(season: str) -> list[int]:
+    """The season's teams from `ScheduleLeagueV2` — the forward-season team list.
+
+    `fetch_team_rosters` reads teams off the season's game log, which is right for every
+    played season and unavailable for the one that matters most: the upcoming season, whose
+    roster is the only admissible membership source before the opener
+    (`src/features/forward_design.py`). The published schedule names both teams in every
+    game months ahead, so it is the fallback.
+
+    The NBA Cup's undetermined knockout games carry the placeholder team id `0` on both
+    sides; a real franchise id is ten digits, so the filter drops it.
+    """
+    from nba_api.stats.endpoints import ScheduleLeagueV2
+
+    payload = ScheduleLeagueV2(season=season, timeout=60).get_dict()
+    ids = {side["teamId"]
+           for date in payload["leagueSchedule"]["gameDates"] for game in date["games"]
+           for side in (game["homeTeam"], game["awayTeam"])}
+    return sorted(i for i in ids if i > 1_000_000)
+
+
 def fetch_team_rosters(season: str, output_dir: str | Path = "data/raw",
-                       delay: float = DELAY) -> Path:
-    """CommonTeamRoster for every team that played in `season`, as one file.
+                       delay: float = DELAY, refresh: bool = False) -> Path:
+    """CommonTeamRoster for every team in `season`, as one file.
 
     Official roster membership *with experience*, which the availability panel otherwise
     has to infer from appearances — the bias documented in
     `src/features/availability.py`. Teams come off the season's own game log rather than
     the static team list, so relocated and defunct franchises resolve to the ids that
-    actually played that year, and everything stays keyed on `team_id`.
+    actually played that year, and everything stays keyed on `team_id`. For a season with
+    no game log yet, `schedule_team_ids` supplies the list instead.
+
+    **`refresh` matters for exactly one season and it is the one that counts.** Every other
+    roster file describes a season that is over and cannot change, so the default skip is
+    right. The upcoming season's roster changes with every signing and trade right up to
+    the opener, and it is this project's forward membership rule — so a file cached in
+    August and never refreshed would draft an October board off a summer roster.
     """
     output_dir = Path(output_dir)
     dest = nbastats_dir(output_dir) / f"team_rosters_{_slug(season)}.csv"
-    if _skip_or_fetch(dest, f"team_rosters {season}"):
+    if not refresh and _skip_or_fetch(dest, f"team_rosters {season}"):
         return dest
+    if refresh:
+        print(f"Re-fetching team_rosters {season} (refresh requested)...")
 
     log_path = nbastats_dir(output_dir) / f"game_logs_{_slug(season)}.csv"
-    if not log_path.exists():
-        print(f"  Skipping team_rosters for {season} (no game log to read teams from)")
-        return dest
-    team_ids = sorted(pd.read_csv(log_path, usecols=["TEAM_ID"],
-                                  low_memory=False)["TEAM_ID"].dropna().unique())
+    if log_path.exists():
+        team_ids = sorted(pd.read_csv(log_path, usecols=["TEAM_ID"],
+                                      low_memory=False)["TEAM_ID"].dropna().unique())
+    else:
+        print(f"  no game log for {season}; reading the team list from the published "
+              f"schedule")
+        team_ids = schedule_team_ids(season)
+        if not team_ids:
+            print(f"  Skipping team_rosters for {season} (no schedule either)")
+            return dest
 
     frames = []
     for i, team_id in enumerate(team_ids):
@@ -504,7 +539,21 @@ def fetch_all_seasons(seasons: list[str], output_dir: str | Path = "data/raw", d
 
 
 if __name__ == "__main__":
+    import argparse
+
     import yaml
 
+    parser = argparse.ArgumentParser(description="Fetch raw data from nba_api.")
+    parser.add_argument("--rosters", metavar="SEASON", default=None,
+                        help="fetch ONLY the team rosters, for one season, and always "
+                             "re-fetch. The upcoming season's roster changes with every "
+                             "signing right up to the opener and is the forward "
+                             "membership rule, so it is the one file that must not be "
+                             "cached (src/features/forward_design.py).")
+    args = parser.parse_args()
+
     cfg = yaml.safe_load(open("configs/default.yaml"))
-    fetch_all_seasons(cfg["data"]["seasons"], cfg["data"]["raw_dir"])
+    if args.rosters:
+        fetch_team_rosters(args.rosters, cfg["data"]["raw_dir"], refresh=True)
+    else:
+        fetch_all_seasons(cfg["data"]["seasons"], cfg["data"]["raw_dir"])

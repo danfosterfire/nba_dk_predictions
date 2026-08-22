@@ -582,6 +582,50 @@ def _trailing_missed(played: pd.Series) -> int:
 
 # ── Per player-season summary ─────────────────────────────────────────────────
 
+def primary_team(frame: pd.DataFrame) -> pd.DataFrame:
+    """`(season, player_id) -> team_id`, attributing a traded player to his last team.
+
+    A traded player has panel rows under both teams, and every schedule-relative measure
+    needs one of them. The convention is his **final appearance**, which this project uses
+    everywhere and which `sim/season.py::roster_grid` shares through this function rather
+    than through a second copy of the rule.
+
+    🔴 **A season nobody has played has no appearances to attribute by**, and the failure
+    was silent in both callers: the inner merge that follows dropped every row, so
+    `season_availability` returned all-NaN denominators and `roster_grid` returned an empty
+    grid. A forward roster gives each player exactly one team, so there is nothing to
+    disambiguate and his only team is the answer; if he somehow sits on two with nothing
+    played, that is undecidable and says so rather than picking one.
+
+    In a played season the fallback never fires — the panel's `(player, team)` pairs come
+    from the game log, so every pair carries at least one appearance.
+    """
+    played = frame[frame["played"] == 1]
+    last = (played.sort_values(["game_date", "game_id"])
+            .groupby(["season", "player_id"], as_index=False)
+            .agg(team_id=("team_id", "last")))
+
+    # Keyed on the (season, player_id) PAIR, never on the player. A veteran on a forward
+    # roster has appearances in earlier seasons, so a player-level check would find him in
+    # `last` and skip the fallback — leaving exactly the rows that carry lagged features,
+    # and only the never-played rookies attributed. That was 496 of 577 on 2026-27.
+    seen = set(map(tuple, last[["season", "player_id"]].to_numpy()))
+    unseen = frame[~pd.Series(list(map(tuple, frame[["season", "player_id"]].to_numpy())),
+                              index=frame.index).isin(seen)]
+    if unseen.empty:
+        return last
+    only = (unseen.drop_duplicates(["season", "player_id", "team_id"])
+            .groupby(["season", "player_id"], as_index=False)
+            .agg(team_id=("team_id", "first"), n_teams=("team_id", "size")))
+    ambiguous = only[only["n_teams"] > 1]
+    if len(ambiguous):
+        raise ValueError(
+            f"{len(ambiguous):,} player(s) have no appearance to attribute them by and "
+            f"sit on more than one roster, so their team is undecidable — e.g. "
+            f"{ambiguous['player_id'].head(3).tolist()}")
+    return pd.concat([last, only.drop(columns="n_teams")], ignore_index=True)
+
+
 def season_availability(panel: pd.DataFrame, window: str = "full",
                         long_spell_games: int = LONG_SPELL_GAMES,
                         edge_games: int = SEASON_EDGE_GAMES,
@@ -601,10 +645,7 @@ def season_availability(panel: pd.DataFrame, window: str = "full",
               .agg(gp=("played", "sum"), total_minutes=("min", "sum")))
 
     # Last team = the team of the player's final appearance that season.
-    played_rows = sel[sel["played"] == 1]
-    last_team = (played_rows.sort_values(["game_date", "game_id"])
-                 .groupby(["season", "player_id"], as_index=False)
-                 .agg(team_id=("team_id", "last")))
+    last_team = primary_team(sel)
     primary = sel.merge(last_team, on=["season", "player_id", "team_id"], how="inner")
     primary = primary.sort_values(["season", "player_id", "team_game_index"])
 

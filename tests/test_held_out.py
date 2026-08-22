@@ -220,8 +220,14 @@ def test_component_rates_no_longer_defines_its_own_split():
     assert component_rates.selection_split is selection_split
 
 
-def test_final_evaluation_is_the_only_registered_way_to_the_test_split():
-    """`final_split` is guarded, and `src/final_evaluation.py` is what unlocks it."""
+def test_final_evaluation_is_the_only_registered_way_to_MEASURE_on_the_test_split():
+    """`final_split` is guarded, and `src/final_evaluation.py` is what unlocks it.
+
+    ⚠️ It is no longer the only *unlocker* — `posteriors.assert_production` opens the split
+    for the production fit as of 2026-08-21 — but it is still the only thing that scores
+    on it. The two are different acts and the test below pins the difference: a production
+    fit takes no measurement, so it can never produce a number a decision could read.
+    """
     from src import final_evaluation
 
     with pytest.raises(HeldOutLocked):
@@ -231,9 +237,33 @@ def test_final_evaluation_is_the_only_registered_way_to_the_test_split():
     # is asserted rather than assumed: a head dropped from it silently loses its
     # end-of-project measurement.
     assert set(final_evaluation.HEADS) >= {"availability", "games_played",
-                                           "season_total"}
+                                           "season_total", "chain"}
     assert "selection_split" not in _names("src/final_evaluation.py"), (
         "the final evaluation must use final_split, not the selection split")
+
+
+def test_the_production_unlock_fits_and_does_not_score():
+    """The second unlocker, and the property that makes a second one safe.
+
+    `posteriors.py` refits the shipped specification on every season there is. If it ever
+    grew a metric it would become a way to read the held-out seasons that nothing calls a
+    measurement — the shape of the Gate D failure that produced `held_out.py`, one module
+    over.
+    """
+    from src.models import posteriors
+
+    assert posteriors.PRODUCTION_REASON != held_out_reason()
+    names = _names("src/models/posteriors.py")
+    for scorer in ("crps_from_samples", "mean_absolute_error", "r2_score"):
+        assert scorer not in names, (
+            f"posteriors names {scorer}; the production fit must not score, or the "
+            f"production window becomes an unmeasured way to read the test split")
+
+
+def held_out_reason() -> str:
+    from src import final_evaluation
+
+    return final_evaluation.REASON
 
 
 def test_a_head_that_scores_the_held_out_frame_still_raises():

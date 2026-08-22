@@ -287,3 +287,73 @@ def test_season_string_ordering_picks_the_api_seasons():
 
 def test_published_round_ends_cover_every_round():
     assert len(DK_PUBLISHED_ROUND_ENDS) == len(ROUND_WEEKS)
+
+
+from pathlib import Path
+
+
+# ── The forward season ────────────────────────────────────────────────────────
+
+def _forward_cfg(tmp_path, round_weeks=(17, 2, 2, 2)):
+    processed = tmp_path / "processed"
+    processed.mkdir(parents=True, exist_ok=True)
+    features = tmp_path / "features"
+    eda = tmp_path / "eda"
+    return {"data": {"processed_dir": str(processed), "features_dir": str(features),
+                     "raw_dir": str(tmp_path)},
+            "sim": {"scoring_periods": {"round_weeks": list(round_weeks)}},
+            "eda": {"output_dir": str(eda)}}
+
+
+def test_a_played_season_may_not_enter_through_the_forward_path(tmp_path):
+    """The knob is for a season nobody has played. A played season's periods come from
+    realized dates — 'played, not scheduled' — and letting it through the synthesis
+    would silently swap that rule for a plan."""
+    from src.features.scoring_periods import run
+
+    cfg = _forward_cfg(tmp_path)
+    pd.DataFrame({"season": ["2015-16"], "game_id": ["0021500001"],
+                  "game_date": [pd.Timestamp("2015-10-27")]}
+                 ).to_parquet(Path(cfg["data"]["processed_dir"]) / "game_logs.parquet")
+    with pytest.raises(ValueError) as excinfo:
+        run(cfg, forward_seasons=["2015-16"])
+    assert "has been played" in str(excinfo.value)
+
+
+def test_a_forward_season_enters_the_grid_from_the_synthetic_log(tmp_path):
+    """The triples come from `synthetic_game_log`, not the raw schedule, so the period
+    grid carries the SAME game ids the roster grid will — filler games included. A
+    pre-API season label keeps the test off the network; the week grid is derived either
+    way."""
+    from src.features.scoring_periods import run
+
+    cfg = _forward_cfg(tmp_path)
+    pd.DataFrame({"season": ["2014-15"] * 3,
+                  "game_id": [f"002140000{i}" for i in range(3)],
+                  "game_date": pd.to_datetime(["2014-10-28", "2014-10-29",
+                                               "2014-10-31"])}
+                 ).to_parquet(Path(cfg["data"]["processed_dir"]) / "game_logs.parquet")
+
+    # Two franchises meeting daily: 82 games each, nothing for the filler rule to add.
+    raw = tmp_path / "nbastats"
+    raw.mkdir(parents=True, exist_ok=True)
+    teams = (1610612737, 1610612738)
+    dates = pd.date_range("2015-10-27", periods=82, freq="D")
+    pd.DataFrame({"game_id": [f"00215{i:05d}" for i in range(82)],
+                  "date": dates.strftime("%Y-%m-%d"),
+                  "home_team_id": [teams[i % 2] for i in range(82)],
+                  "away_team_id": [teams[(i + 1) % 2] for i in range(82)],
+                  "game_label": ""}).to_csv(raw / "schedule_teams_2015_16.csv",
+                                            index=False)
+    pd.DataFrame({"PLAYER_ID": [1, 2], "TeamID": list(teams),
+                  "PLAYER": ["A", "B"], "HOW_ACQUIRED": ["", ""]}
+                 ).to_csv(raw / "team_rosters_2015_16.csv", index=False)
+
+    dest = run(cfg, forward_seasons=["2015-16"])
+    periods = pd.read_parquet(dest)
+    forward = periods[periods["season"] == "2015-16"]
+    assert len(forward) == 82, "every synthetic game carries a period"
+    assert forward["period_index"].notna().all()
+    assert set(forward["game_id"]) == {f"00215{i:05d}" for i in range(82)}
+    assert (periods[periods["season"] == "2014-15"]["period_index"] == 1).all(), (
+        "the played seasons build exactly as before")

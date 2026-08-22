@@ -52,7 +52,15 @@ not versions of one thing — they are three artifacts wanted at once:
   `src/final_evaluation.py` refits on train **plus** validation before scoring test: a
   held-out figure should describe the model that would actually deploy.
 - **`full`** is the 2026-27 production board. It reads the held-out seasons, so it goes
-  through `held_out.assert_unlocked`.
+  through `held_out.assert_unlocked` — and, unlike every other window, it needs somebody to
+  say so: `assert_production` wants the `--production` flag typed **and** the held-out
+  measurement already on disk, because deploying before measuring leaves no honest
+  measurement to take afterwards.
+
+Two windows for the same head are only comparable if they are the same *model*, and
+`assert_same_specification` is what makes that checkable — a wider window that quietly
+carries an older variant is a second model wearing the deployed one's name, which is what
+the `train_val` artifacts had become by 2026-08-21.
 
 The doc's config block originally specified `train_val` as the default on the grounds that it
 matches the four simulator inputs already calibrated that way — the residual copula, the
@@ -90,6 +98,7 @@ from __future__ import annotations
 import pickle
 import subprocess
 import time
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -100,7 +109,8 @@ import yaml
 from sklearn.preprocessing import SplineTransformer
 
 from src.models.availability import split_seasons
-from src.models.held_out import assert_unlocked, selection_split
+from src.models.held_out import (HeldOutLocked, assert_unlocked, selection_split,
+                                 unlocked)
 from src.models.stan_utils import cmdstan_version, thin
 
 # Draws kept per head. Thinned across the whole posterior, so this is a statement about
@@ -110,6 +120,12 @@ POSTERIOR_DRAWS = 1000
 # backtest scores 2022-23 and 2023-24, which `train_val` fits on.
 FIT_WINDOW = "train"
 WINDOWS = ("train", "train_val", "full")
+
+# The `full` window's unlock, and the artifact that has to exist before it fires. The
+# production fit is a *deployment* act rather than a measurement, which is why it carries
+# its own reason rather than riding on `final_evaluation`'s — see `assert_production`.
+PRODUCTION_REASON = "the production fit for the upcoming season's draft board"
+FINAL_EVALUATION_ARTIFACT = "final_evaluation.csv"
 
 # Rows kept as the round-trip probe. Evenly spaced through the validation frame via the
 # same `thin` used on the draws, so the probe spans the design rather than sampling one
@@ -592,6 +608,71 @@ def require_window(artifacts: dict, window: str = FIT_WINDOW) -> None:
             f"`make posteriors WINDOW={window}`.")
 
 
+#: The columns that define a head's *specification* as opposed to its fit. Two artifacts
+#: agreeing on all of these are the same model at two fit windows; disagreeing on any one
+#: of them are two models, and comparing them across windows compares the wrong thing.
+SPECIFICATION_COLUMNS = ("family", "variant", "fit_first_season", "n_features",
+                         "preseason", "preseason_columns", "player_season_effect",
+                         "sigma_u")
+
+
+def assert_same_specification(cfg: dict, window: str,
+                              reference: str = FIT_WINDOW) -> pd.DataFrame:
+    """Refuse a wider-window fit that is not the same model the selection window shipped.
+
+    `require_window` stops a consumer reading coefficients that saw too much. This is the
+    other half, and nothing had it: a wider window is only interpretable as "the same head,
+    deployed" if the *specification* is the one selection settled on. The `train_val`
+    artifacts on disk on 2026-08-21 were exactly that failure — built 2026-08-08, before
+    the preseason block shipped on eleven heads and before the composition adopted its
+    offset, so they carried the right window and the wrong model, and every column that
+    would have said so was inside the manifest already.
+
+    Compared on `SPECIFICATION_COLUMNS` rather than on a hash of the artifact, because the
+    two windows legitimately differ in everything else — row counts, season spans, R-hat,
+    the draws themselves. Returns the joined frame so a caller can print it.
+    """
+    ref_path = posteriors_dir(cfg, reference) / "manifest.csv"
+    path = posteriors_dir(cfg, window) / "manifest.csv"
+    for candidate, name in ((ref_path, reference), (path, window)):
+        if not candidate.exists():
+            raise FileNotFoundError(
+                f"no {candidate}; run `make posteriors WINDOW={name}` before comparing "
+                f"specifications across windows.")
+    ref = pd.read_csv(ref_path).set_index("head")
+    got = pd.read_csv(path).set_index("head")
+
+    missing = sorted(set(ref.index) - set(got.index))
+    if missing:
+        raise ValueError(
+            f"the `{window}` window is missing {len(missing)} head(s) the `{reference}` "
+            f"window carries: {missing}. A chain fitted at one window and completed at "
+            f"another is not a model anybody selected — re-run "
+            f"`make posteriors WINDOW={window}`.")
+
+    columns = [c for c in SPECIFICATION_COLUMNS if c in ref.columns and c in got.columns]
+    rows = []
+    for head in sorted(ref.index):
+        for column in columns:
+            a, b = ref.loc[head, column], got.loc[head, column]
+            same = (pd.isna(a) and pd.isna(b)) or str(a) == str(b)
+            if not same:
+                rows.append({"head": head, "column": column,
+                             reference: a, window: b})
+    disagree = pd.DataFrame(rows)
+    if len(disagree):
+        raise ValueError(
+            f"{disagree['head'].nunique()} head(s) are fitted at `{window}` under a "
+            f"DIFFERENT specification from the `{reference}` window that selected them:\n"
+            f"{disagree.to_string(index=False)}\n"
+            f"Re-run `make posteriors WINDOW={window}` so the deployed model is the "
+            f"selected one refitted, rather than a second model wearing its name.")
+    print(f"  every one of {len(ref)} heads matches the `{reference}` window's "
+          f"specification on {len(columns)} columns "
+          f"({', '.join(columns)})")
+    return got
+
+
 # ── Provenance ────────────────────────────────────────────────────────────────
 
 def _git_sha() -> str:
@@ -659,6 +740,47 @@ def windowed(design: pd.DataFrame, window: str, test_seasons: int
         return full_train, val
     assert_unlocked("posteriors at the `full` fit window")
     return design, val
+
+
+def assert_production(cfg: dict, production: bool) -> None:
+    """The two conditions the `full` window has to meet before it may read the test split.
+
+    `src/final_evaluation.py` was the only thing permitted to unlock the split, and it is
+    the only thing permitted to *measure* on it. This is the other legitimate reason to
+    read those seasons, and it is a different act: nothing is scored, nothing is compared,
+    and no decision is taken — the shipped specification is refitted on every season there
+    is so the board it produces for the upcoming draft is not throwing two years of data
+    away. So it gets its own unlock and its own reason rather than borrowing that module's.
+
+    Both conditions are about **ordering**, because a production fit is the one thing that
+    can quietly spend the split forever:
+
+    1. `--production` has to be typed. `--window full` alone raises, for the reason
+       `held_out.unlocked` takes a mandatory reason — an unlock should be an act somebody
+       performs, and a window is a value that gets passed around.
+    2. The held-out measurement has to already exist on disk. Deploy first and measure
+       afterwards and there is no honest measurement left to take: every candidate fit
+       from that point on has seen the test seasons, and the comparison that would have
+       priced the workflow can only be made against a model that already read the answer.
+       The file is written once and stays, so this gate fires on the first production fit
+       and never again.
+    """
+    if not production:
+        raise HeldOutLocked(
+            "the `full` fit window fits on the held-out test seasons, and building it is "
+            "a production act rather than a measurement.\n"
+            "If this really is the production fit for the upcoming season's board, run "
+            "`make posteriors-production` — or pass `--window full --production`.\n"
+            "Everything that selects, ablates or gates reads `train`; the one-shot "
+            "held-out readout reads `train_val`.")
+    dest = Path(cfg["evaluation"]["predictions_dir"]) / FINAL_EVALUATION_ARTIFACT
+    if not dest.exists():
+        raise HeldOutLocked(
+            f"no {dest}, so the held-out seasons have never been read as a measurement — "
+            f"and a production fit consumes them permanently.\n"
+            f"Run `make final-evaluation` FIRST: after this fit exists, every model that "
+            f"could be compared against it has already seen the test split, and the "
+            f"workflow can no longer be priced on data it did not train on.")
 
 
 def probe_rows(frame: pd.DataFrame, n: int = PROBE_ROWS) -> pd.DataFrame:
@@ -1550,7 +1672,7 @@ def manifest_row(artifact: PosteriorArtifact, check: dict, dest: Path) -> dict:
 
 
 def run(cfg: dict, window: str = FIT_WINDOW, groups: tuple[str, ...] = GROUPS,
-        draws_kept: int = POSTERIOR_DRAWS) -> dict[str, Path]:
+        draws_kept: int = POSTERIOR_DRAWS, production: bool = False) -> dict[str, Path]:
     dest_dir = posteriors_dir(cfg, window)
     dest_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = dest_dir / "manifest.csv"
@@ -1558,7 +1680,10 @@ def run(cfg: dict, window: str = FIT_WINDOW, groups: tuple[str, ...] = GROUPS,
     print(f"Persisting fitted posteriors — fit window `{window}`, {draws_kept:,} draws "
           f"per head,\n  thinned across the WHOLE posterior via `stan_utils.thin`; never "
           f"sliced off the front.")
+    gate: AbstractContextManager = nullcontext()
     if window == "full":
+        assert_production(cfg, production)
+        gate = unlocked(PRODUCTION_REASON)
         print("  /!\\  The `full` window fits on the held-out test seasons. Every consumer "
               "must\n       treat these artifacts as production-only — see "
               "`require_window`.")
@@ -1604,30 +1729,34 @@ def run(cfg: dict, window: str = FIT_WINDOW, groups: tuple[str, ...] = GROUPS,
         merged.to_csv(manifest_path, index=False)
         return merged
 
-    for group in groups:
-        print(f"\n── {group} ──")
-        for artifact in builders[group]():
-            dest = save(artifact, dest_dir)
-            # Re-loaded from disk before the check, so the manifest attests to the
-            # artifact a consumer will actually open rather than to the one in memory —
-            # that is what makes the pickled `StandardScaler` and `SplineTransformer`
-            # part of the gate instead of an assumption about them.
-            check = load(artifact.head, dest_dir).roundtrip()
-            rows.append(manifest_row(artifact, check, dest))
-            paths[artifact.head] = dest
-            flush()
-            p = artifact.provenance
-            print(f"Saved {artifact.n_draws:,} posterior draws x "
-                  f"{len(artifact.recipe.features)} features → {dest}")
-            print(f"    {artifact.head_label} · {artifact.recipe.variant} · "
-                  f"{p['n_fit_rows']:,} rows {p['first_season']}–{p['last_season']} · "
-                  f"R-hat {p['max_rhat']:.4f} · {p['divergences']} divergences · "
-                  f"{p['fit_seconds'] / 60:.1f} min")
-            print(f"    round-trip without refitting: design "
-                  f"{check['max_design_error']:.2e}, prediction "
-                  f"{check['max_prediction_error']:.2e} over "
-                  f"{check['n_probe_rows']:,} probe rows → "
-                  f"{'PASS' if check['passes'] else 'FAIL'}")
+    # The unlock wraps the WHOLE loop rather than each builder, because a head that fails
+    # halfway must not leave the split open for the next one — `held_out.unlocked` re-locks
+    # on the way out whatever happens inside. At every window but `full` this is a no-op.
+    with gate:
+        for group in groups:
+            print(f"\n── {group} ──")
+            for artifact in builders[group]():
+                dest = save(artifact, dest_dir)
+                # Re-loaded from disk before the check, so the manifest attests to the
+                # artifact a consumer will actually open rather than to the one in memory
+                # — that is what makes the pickled `StandardScaler` and
+                # `SplineTransformer` part of the gate instead of an assumption about them.
+                check = load(artifact.head, dest_dir).roundtrip()
+                rows.append(manifest_row(artifact, check, dest))
+                paths[artifact.head] = dest
+                flush()
+                p = artifact.provenance
+                print(f"Saved {artifact.n_draws:,} posterior draws x "
+                      f"{len(artifact.recipe.features)} features → {dest}")
+                print(f"    {artifact.head_label} · {artifact.recipe.variant} · "
+                      f"{p['n_fit_rows']:,} rows {p['first_season']}–{p['last_season']} · "
+                      f"R-hat {p['max_rhat']:.4f} · {p['divergences']} divergences · "
+                      f"{p['fit_seconds'] / 60:.1f} min")
+                print(f"    round-trip without refitting: design "
+                      f"{check['max_design_error']:.2e}, prediction "
+                      f"{check['max_prediction_error']:.2e} over "
+                      f"{check['n_probe_rows']:,} probe rows → "
+                      f"{'PASS' if check['passes'] else 'FAIL'}")
 
     built = pd.DataFrame(rows)
     frame = flush()
@@ -1667,6 +1796,10 @@ if __name__ == "__main__":
     parser.add_argument("--window", default=None, choices=list(WINDOWS),
                         help="fit window; `full` reads the held-out seasons and is "
                              "guarded")
+    parser.add_argument("--production", action="store_true",
+                        help="unlock the held-out split for the `full` window — the "
+                             "production fit for the upcoming season's board. Requires "
+                             "that `make final-evaluation` has already been taken.")
     parser.add_argument("--groups", default=",".join(GROUPS),
                         help=f"comma-separated subset of {','.join(GROUPS)}")
     parser.add_argument("--draws", type=int, default=None,
@@ -1685,4 +1818,5 @@ if __name__ == "__main__":
     _run(cfg,
          window=args.window or str(cfg_sim.get("fit_window", FIT_WINDOW)),
          groups=tuple(g.strip() for g in args.groups.split(",") if g.strip()),
-         draws_kept=args.draws or int(cfg_sim.get("posterior_draws", POSTERIOR_DRAWS)))
+         draws_kept=args.draws or int(cfg_sim.get("posterior_draws", POSTERIOR_DRAWS)),
+         production=args.production)

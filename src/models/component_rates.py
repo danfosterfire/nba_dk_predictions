@@ -62,6 +62,8 @@ Usage:
 
 from pathlib import Path
 
+from collections.abc import Sequence
+
 import numpy as np
 import pandas as pd
 import yaml
@@ -160,13 +162,31 @@ def season_totals(targets: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def build_design(targets: pd.DataFrame, seasons: list[str],
-                 raw_dir: str | Path) -> pd.DataFrame:
+def build_design(targets: pd.DataFrame, seasons: list[str], raw_dir: str | Path,
+                 forward_seasons: Sequence[str] = ()) -> pd.DataFrame:
     """One row per (player, target season) with lag-1 prior-season columns.
 
     Rows need a prior season of at least `MIN_PRIOR_MINUTES`, so every own-rate feature is
     measured over enough minutes to be worth something, and a current season with minutes,
     since minutes are the exposure.
+
+    ## `forward_seasons`, and why the second condition cannot apply to one
+
+    `total_minutes > 0` is the **target** season's minutes, and it is a fitting-population
+    rule: a player-game with no minutes contributes nothing to a count likelihood whose
+    exposure *is* minutes. A season that has not been played has no minutes for anybody, so
+    the rule empties it — which is correct when fitting and wrong when building the design
+    a production board is scored from.
+
+    Naming a season here exempts it from that condition **only**. The prior-minutes
+    qualification still binds, because it is a statement about the features rather than
+    about the target, and it is exactly as knowable in September as in June.
+
+    **The default is empty**, so a fitting path cannot receive forward rows without asking
+    for them by name. `features/targets.build_component_targets` carries the same knob for
+    the same reason and has to be told too, since it drops blank-minute rows first — two
+    stacked population filters, and a caller that clears one and not the other simply gets
+    nothing, which is the safe way for a half-applied change to fail.
     """
     s = season_totals(targets)
     lag_cols = ([f"{c}_p36" for c in rate_columns()]
@@ -183,7 +203,13 @@ def build_design(targets: pd.DataFrame, seasons: list[str],
     d["career_year"] = d.sort_values("season_index").groupby("player_id").cumcount()
 
     d = d.dropna(subset=["age", "mpg_lag1", "total_minutes_lag1"])
-    d = d[(d["total_minutes_lag1"] >= MIN_PRIOR_MINUTES) & (d["total_minutes"] > 0)]
+    qualified = d["total_minutes_lag1"] >= MIN_PRIOR_MINUTES
+    if forward_seasons:
+        forward = d["season"].isin(set(forward_seasons))
+        d = d[qualified & ((d["total_minutes"] > 0) | forward)]
+        d = d.assign(is_forward=forward[d.index].astype(int))
+    else:
+        d = d[qualified & (d["total_minutes"] > 0)]
     return d.reset_index(drop=True)
 
 

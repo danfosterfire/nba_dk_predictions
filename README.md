@@ -104,8 +104,12 @@ heads also carry current-season preseason features
 Selection runs on a temporal walk-forward split — train 1997-98 → 2021-22, validation
 2022-23 and 2023-24, test 2024-25 and 2025-26 — and the test split is enforced by code
 rather than discipline: [src/models/held_out.py](src/models/held_out.py) hands back guarded
-frames that raise when read, and only `make final-evaluation` unlocks them
-([docs/train-validate-test-split.md](docs/train-validate-test-split.md)).
+frames that raise when read, and only `make final-evaluation` unlocks them *to score*
+([docs/train-validate-test-split.md](docs/train-validate-test-split.md)). It was run once,
+on 2026-08-21. `make posteriors-production` is the second and last unlock — it refits the
+shipped specification on every season there is, for the upcoming season's board, and
+refuses to run until that measurement exists
+([docs/final-evaluation-plan.md](docs/final-evaluation-plan.md)).
 
 ### Simulation
 
@@ -142,7 +146,13 @@ disagreement.
 - **Availability is the largest measured win** (`make season-total`): the head is worth
   −210 dk_pts of season-total MAE against assuming a full season (610.8 → 400.5), and an
   oracle on games played (MAE 214.4) beats an oracle on the scoring rate (261.9) — the
-  availability distribution is where the effort belongs.
+  availability distribution is where the effort belongs. **Both hold on the held-out
+  seasons** (`make final-evaluation`, taken once, 2026-08-21): the head is worth
+  **211.1288** there against 210.2978 on validation, and the oracle gap widens from
+  47.5351 to **81.3619**. The season-total table re-derives figures the project already
+  had rather than taking fresh ones, and the plan doc says which is which. The head's own held-out CRPS is **9.8771**, and its
+  two-component mixture beats the plain beta-binomial by **0.8483** — a wider margin than
+  the 0.7154 it was selected on ([docs/final-evaluation-plan.md](docs/final-evaluation-plan.md)).
 - **The rate side is nearly saturated by prior-season information**
   (`make stan-components`): a no-fit floor scores validation R² 0.81–0.95 on the count
   heads, and fitted heads clear it by small margins. Preseason features are the exception —

@@ -17,14 +17,67 @@ So reaching the test split now **raises** unless something has explicitly unlock
 - **`held_out.selection_split(design)` → `(train, validation)`** is what a sweep calls. The
   test seasons are never materialized, so there is nothing to read by accident.
 - **`held_out.final_split(design)` → `(full_train, test)`** is guarded, and
-  `src/final_evaluation.py` (`make final-evaluation`) is the only thing that unlocks it.
-  It reads which arm shipped **from the artifact** rather than re-deciding, refits on train
-  **plus** validation, and scores test once. Registered heads: `availability`,
-  `games_played`, `season_total`.
+  `src/final_evaluation.py` (`make final-evaluation`) is the only thing that unlocks it *to
+  score*. It reads which arm shipped **from the artifact** rather than re-deciding, refits
+  on train **plus** validation, and scores test once. Registered heads: `availability`,
+  `games_played`, `season_total`, and — since 2026-08-21 — `chain`, which is not a head but
+  the workflow: a board built from the deployed posterior, drafted under the shipped
+  strategy and scored on the box scores that happened.
 - `tests/conftest.py` unlocks for the suite (unit tests exercise the split machinery on
   synthetic four-season frames); `tests/test_held_out.py` re-locks and tests the lock, and
   **AST-walks every converted module** to assert it names `selection_split` and never
   `split_seasons`.
+
+### ✅ The split was spent on 2026-08-21, and a SECOND unlocker exists
+
+**`make final-evaluation` has now been run for the three model heads.** (The `chain`
+reading is a separate, hours-long run and is not in yet — `final_evaluation.csv` merges by
+head, so taking it later does not retract these.) What it said is
+`docs/final-evaluation-plan.md`; the one-line version is that the project's headline
+replicated — the availability head is worth **210.2978** dk_pts of season-total MAE on
+validation and **211.1288** on the held-out seasons.
+
+⚠️ **With one caveat that belongs in this doc rather than that one.** The season-total half
+of that statement re-derives figures the project already had: the whole table was a test
+evaluation until 2026-08-05 and its retired readings are still presence-checked as
+historical claims. They reproduce exactly, because that table composes the *plain*
+beta-binomial and nothing in it changed. The availability head's own held-out figures had
+never been computed under any discipline, and those are the new ones.
+
+The same day added the other legitimate reason to read those seasons, and it is a different
+act: `posteriors.assert_production` unlocks the split for the **production fit**, which
+refits the shipped specification on every season there is so the upcoming season's board is
+not throwing two years of data away. `docs/preseason-plan.md`'s October runbook has always
+specified that fit; until 2026-08-21 the command it named could not run, because nothing
+unlocked what it reached.
+
+**A second unlocker is safe here for one reason, and it is pinned by a test rather than
+argued**: the production fit produces coefficients and takes no measurement, so nothing it
+writes is a number a decision could read. `tests/test_held_out.py` asserts that
+`posteriors.py` names no scoring function — the day it grows one, the production window
+becomes an unmeasured way to read the test split, which is the shape of the Gate D failure
+that produced this module.
+
+It is gated on **ordering** as well as on intent: `assert_production` refuses to run until
+`outputs/predictions/final_evaluation.csv` exists. Deploy before measuring and there is no
+honest measurement left to take — from the moment a production fit exists, every candidate
+model has seen the test seasons. The gate fires once and never again.
+
+### ⚠️ The deployed model was not the selected model, and nothing could see it
+
+`require_window` stops a consumer reading coefficients fitted on a wider split. It says
+nothing about *which model* those coefficients belong to, and on 2026-08-21 that gap was
+live: `data/features/posteriors/train_val/` had been on disk since 2026-08-08, carrying the
+right window and a **different specification** — it predated the preseason block on ten of
+eleven rate heads and the composition's adopted offset. A held-out reading taken off it
+would have described a model nobody ships.
+
+`posteriors.assert_same_specification` is the missing half. It compares two windows on the
+eight columns that define a specification rather than a fit — `family`, `variant`,
+`fit_first_season`, `n_features`, `preseason`, `preseason_columns`, `player_season_effect`,
+`sigma_u` — and refuses a wider window that is missing a head, because a partial `--groups`
+run is the normal way to produce one. The chain readout calls it before it simulates
+anything.
 
 **Why the final evaluation refits rather than predicting test from the training fit.** A test
 figure should describe the model that would actually deploy, which has seen train *and*

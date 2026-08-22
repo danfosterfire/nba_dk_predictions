@@ -409,7 +409,24 @@ def dk_calendar_check(structure: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def run(cfg: dict, refresh: bool = False) -> Path:
+def run(cfg: dict, refresh: bool = False, forward_seasons: list[str] = ()) -> Path:
+    """Build the period grid from the realized game logs — plus, when a season is named
+    in `forward_seasons`, from that season's synthetic game log.
+
+    The forward triples come from `forward_design.synthetic_game_log` rather than from
+    `ScheduleLeagueV2` directly, and the difference is the whole point: the published
+    schedule for an unplayed season is 26 games short (the Cup knockout rides on TBD
+    placeholders and the replacement games are not published at all), while the synthetic
+    log fills every team to 82 with the SAME game ids the roster grid will carry. Periods
+    keyed to the raw schedule would leave the filler games slotless, and a game with no
+    slot scores for nobody. Every date in it is still a plan — `PERIOD_DATE_COLUMN`'s
+    "played, not scheduled" rule has nothing realized to prefer until games happen, which
+    is why a forward season's periods are rebuilt by the October runbook rather than
+    trusted from August.
+
+    Defaults to empty, so `make scoring-periods` is unchanged and a forward season enters
+    this artifact only when someone names it.
+    """
     processed_dir = Path(cfg["data"]["processed_dir"])
     features_dir = Path(cfg["data"]["features_dir"])
     raw_dir = Path(cfg["data"]["raw_dir"])
@@ -417,6 +434,23 @@ def run(cfg: dict, refresh: bool = False) -> Path:
 
     logs = pd.read_parquet(processed_dir / "game_logs.parquet",
                            columns=["season", "game_id", PERIOD_DATE_COLUMN])
+    played = set(logs["season"].unique())
+    for forward in forward_seasons:
+        if forward in played:
+            raise ValueError(
+                f"{forward} is in the game logs, so it has been played and its periods "
+                f"are built from realized dates — the forward path is for a season "
+                f"nobody has played.")
+        from src.features.forward_design import synthetic_game_log
+
+        log, _ = synthetic_game_log(forward, raw_dir)
+        triples = (log.rename(columns={"SEASON_YEAR": "season", "GAME_ID": "game_id",
+                                       "GAME_DATE": PERIOD_DATE_COLUMN})
+                   [["season", "game_id", PERIOD_DATE_COLUMN]]
+                   .drop_duplicates(["season", "game_id"]))
+        print(f"  {forward}: {len(triples):,} synthetic games appended to the grid — "
+              f"every date is scheduled, none realized")
+        logs = pd.concat([logs, triples], ignore_index=True)
     periods, audit = build_periods(logs, cfg, raw_dir, refresh=refresh)
 
     features_dir.mkdir(parents=True, exist_ok=True)
@@ -496,7 +530,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--refresh", action="store_true",
                         help="re-pull cached schedules from ScheduleLeagueV2")
+    parser.add_argument("--forward", nargs="*", default=[],
+                        help="unplayed season(s) to append from the synthetic game log, "
+                             "e.g. --forward 2026-27")
     args = parser.parse_args()
 
     cfg = yaml.safe_load(open("configs/default.yaml"))
-    run(cfg, refresh=args.refresh)
+    run(cfg, refresh=args.refresh, forward_seasons=list(args.forward))

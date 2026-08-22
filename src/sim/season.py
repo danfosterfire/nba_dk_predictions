@@ -144,6 +144,7 @@ import yaml
 from src.data.preprocess import compute_dk_pts
 from src.eda.residual_correlation import MINUTES_CONDITIONED
 from src.eda.residual_correlation import to_matrix as residual_matrix
+from src.features.availability import primary_team
 from src.features.targets import BONUS_GAME_OVERDISPERSION, bonus_part
 from src.models.availability_no_prior import (KEY_LADDERS, PRESEASON_KEY_ARMS,
                                               SHIPPED_LEVEL_ARM, appearance_gap, level_keys,
@@ -283,7 +284,8 @@ def scoring_slots(features_dir: Path, season: str) -> pd.DataFrame:
     return out
 
 
-def roster_grid(features_dir: Path, season: str, slots: pd.DataFrame) -> pd.DataFrame:
+def roster_grid(features_dir: Path, season: str, slots: pd.DataFrame,
+                panel: pd.DataFrame | None = None) -> pd.DataFrame:
     """One row per (team, team-game, rostered player) — the frame a season is drawn on.
 
     `availability_panel.parquet` is the source rather than the game logs, for the reason
@@ -306,17 +308,32 @@ def roster_grid(features_dir: Path, season: str, slots: pd.DataFrame) -> pd.Data
     Mid-season trades themselves are still not modelled — a known limit inherited from the
     prediction layer.
     """
-    panel = pd.read_parquet(
-        features_dir / "availability_panel.parquet",
-        columns=["season", "player_id", "team_id", "game_id", "game_date",
-                 "team_game_index", "played"])
+    # `panel` overrides the artifact for a forward season, whose rows the stored panel
+    # cannot carry — they come from the synthetic game log. `None` is today's behaviour.
+    if panel is None:
+        panel = pd.read_parquet(
+            features_dir / "availability_panel.parquet",
+            columns=["season", "player_id", "team_id", "game_id", "game_date",
+                     "team_game_index", "played"])
     grid = panel[panel["season"] == season].copy()
     if grid.empty:
         raise ValueError(f"the availability panel carries no rows for {season}")
-    last = (grid[grid["played"] == 1].sort_values(["game_date", "game_id"])
-            .groupby(["season", "player_id"], as_index=False)
-            .agg(team_id=("team_id", "last")))
-    grid = grid.merge(last, on=["season", "player_id", "team_id"], how="inner")
+    # A traded player has rows under both teams and must be attributed to one. The rule is
+    # his last APPEARANCE, which is `season_availability`'s own convention — and which has
+    # nothing to attribute in a season nobody has played yet. For a forward panel every
+    # player carries exactly one team, straight off the roster, so there is nothing to
+    # disambiguate and the fallback is his only team.
+    #
+    # 🔴 Without it this returns an EMPTY grid rather than raising: the emptiness check
+    # above runs before this filter, so a forward season would simulate nothing and say
+    # nothing. In a played season the fallback is a no-op — the panel's (player, team)
+    # pairs come from the game log, so every pair carries at least one appearance.
+    grid = grid.merge(primary_team(grid), on=["season", "player_id", "team_id"],
+                      how="inner")
+    if grid.empty:
+        raise ValueError(
+            f"{season}: no roster row survived team attribution, so there is nothing to "
+            f"simulate on")
     lookup = dict(zip(slots["game_id"], slots["slot"]))
     grid["slot"] = grid["game_id"].map(lookup).fillna(-1).astype(int)
     return grid.drop(columns=["played", "game_date"]).reset_index(drop=True)
@@ -926,8 +943,21 @@ def _sim_one(s: int, ctx: dict) -> dict:
 # ── Context ───────────────────────────────────────────────────────────────────
 
 def build_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
-                  composition: pd.DataFrame | None = None) -> dict:
-    """Everything the per-sim loop reads, built once. No draws happen here."""
+                  composition: pd.DataFrame | None = None,
+                  design: pd.DataFrame | None = None,
+                  availability: pd.DataFrame | None = None,
+                  panel: pd.DataFrame | None = None) -> dict:
+    """Everything the per-sim loop reads, built once. No draws happen here.
+
+    The four frame parameters all default to the retrospective builders and exist for the
+    forward path (`sim/forward_board.py`, `docs/final-evaluation-plan.md` §6), whose rows
+    the stored artifacts cannot carry: `design` replaces `component_head_design`,
+    `availability` replaces `head_design`, `panel` replaces the stored availability
+    panel under `roster_grid`, and `composition` predates the others. Every injected
+    frame must be the FULL multi-season frame its builder returns, not the target
+    season's rows — `allowed_seasons`, the no-design empirical rate and the tenure edges
+    all read the other seasons.
+    """
     features_dir = Path(cfg["data"]["features_dir"])
 
     artifacts = load_all(posteriors_dir(cfg, window))
@@ -937,11 +967,11 @@ def build_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
     # the eleven rate heads carry preseason feature columns, and the persisted RECIPE demands
     # them. The plain builder produces a frame the recipe cannot evaluate, which is what
     # `PosteriorRecipe._block` raises on rather than silently predicting from a short design.
-    design = component_head_design(cfg)
+    design = component_head_design(cfg) if design is None else design
     assert_season_allowed(season, design)
 
     slots = scoring_slots(features_dir, season)
-    grid = roster_grid(features_dir, season, slots)
+    grid = roster_grid(features_dir, season, slots, panel=panel)
     frame = head_frame(cfg) if composition is None else composition
     players = composition_players(frame, season)
 
@@ -997,7 +1027,7 @@ def build_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
     # frame built from the shared builder would satisfy every other head here and be five
     # columns short for this one. The flag lives with the head; `preseason: false` in config
     # gives back the pre-2026-08-13 frame exactly.
-    full_avail = head_design(cfg)
+    full_avail = head_design(cfg) if availability is None else availability
     avail = full_avail[full_avail["season"] == season].drop_duplicates(
         subset=["player_id"]).set_index("player_id").reindex(player_ids).reset_index()
     present = avail["team_games"].notna().to_numpy()
@@ -1574,7 +1604,16 @@ def save_tensor(sim: dict, ctx: dict, dest: Path) -> Path:
 
 
 def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
-        window: str | None = None, seed: int | None = None) -> dict[str, Path]:
+        window: str | None = None, seed: int | None = None,
+        label: str = "") -> dict[str, Path]:
+    """Simulate each season and write its tensor, plus the merged Gate A table.
+
+    `label` suffixes the **gate** artifact and nothing else. The tensors are already keyed
+    by season so a held-out run cannot collide with a validation one, but Gate A is a
+    single pooled table whose extremes `make docs-audit` re-derives — so a run on the test
+    seasons writing into it would move an audited figure by adding rows rather than by
+    changing a result. `src/final_evaluation.py` passes a label for exactly that reason.
+    """
     features_dir = Path(cfg["data"]["features_dir"])
     out_dir = Path(cfg["evaluation"]["predictions_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1657,7 +1696,7 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
         gates.append(table)
         _report_gate(table)
 
-    dest = out_dir / "sim_season_gate_a.csv"
+    dest = out_dir / f"sim_season_gate_a{label}.csv"
     gate = merge_gate(pd.concat(gates, ignore_index=True), dest)
     gate.to_csv(dest, index=False)
     print(f"\nSaved {len(gate):,} Gate A rows over "
@@ -1734,8 +1773,11 @@ if __name__ == "__main__":
     parser.add_argument("--n-sims", type=int, default=None)
     parser.add_argument("--window", default=None)
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--label", default="",
+                        help="suffix for the Gate A artifact, so a run outside the "
+                             "shipped set does not add rows to the audited table")
     args = parser.parse_args()
 
     cfg = yaml.safe_load(open("configs/default.yaml"))
     run(cfg, seasons=args.season, n_sims=args.n_sims, window=args.window,
-        seed=args.seed)
+        seed=args.seed, label=args.label)

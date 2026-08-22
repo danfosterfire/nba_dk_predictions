@@ -191,6 +191,61 @@ make posteriors        # PERSIST the fits: 20 heads refitted once at the variant
                        #   `stan`: it consumes those artifacts rather than being one.
 ```
 
+### The held-out seasons — two targets, and they may only run in this order
+
+```bash
+make final-evaluation  # the ONE reading. Refits the shipped spec on train+validation and
+                       #   scores test once: `availability`, `games_played`,
+                       #   `season_total`, and `chain` — the deliverable, which builds a
+                       #   board from the train_val posterior, drafts the SHIPPED strategy
+                       #   and replays it against realized box scores. The three heads are
+                       #   minutes; the chain is hours and needs
+                       #   `make posteriors WINDOW=train_val` first, so run it alone:
+                       #     .venv/bin/python -m src.final_evaluation chain
+                       #   The artifact merges BY HEAD, so that does not retract the rest.
+                       #   The three heads were taken 2026-08-21; the chain is a separate
+                       #   run — docs/final-evaluation-plan.md.
+make posteriors-production
+                       # the production fit: the same 20 heads at the `full` window, for
+                       #   the upcoming season's board. Guarded twice — `--production` has
+                       #   to be typed AND final_evaluation.csv has to already exist,
+                       #   because deploying before measuring leaves no honest measurement
+                       #   to take. Budget most of a day.
+make production-check  # is the chain ready to price a season it has never seen? Reads
+                       #   disk only, costs a second. Two halves: the MODEL half (20 heads
+                       #   at `full`, matching the `train` specification) is finishable
+                       #   today; the SEASON half cannot be finished early, and a missing
+                       #   row there before October is the NBA schedule.
+```
+
+### Scoring a season nobody has played
+
+```bash
+make rosters           # the upcoming season's rosters, ALWAYS re-fetched — it is the
+                       #   forward MEMBERSHIP rule and it changes with every signing up to
+                       #   the opener, so unlike every other raw file it must not be
+                       #   cached. Teams come from the published schedule when there is no
+                       #   game log yet. `make rosters SEASON=2026-27`, ~30 calls.
+make forward-rehearsal # build a PLAYED season's design without its game log — from the
+                       #   roster snapshot and the schedule — and compare against the
+                       #   design as it is built today. Part A is the mechanics and has an
+                       #   exact right answer; part B is the population and is a BOUND,
+                       #   because a retrospective snapshot is contaminated in a direction
+                       #   the file does not record. The runbook's own advice, since the
+                       #   real October window is too short to debug a join in. Part D
+                       #   compares the composition's forward per-player frame against
+                       #   the shipped `head_frame` path the same way. numpy.
+make forward-board     # §6h's acceptance test: the forward inputs pushed through the
+                       #   SIMULATOR to a board ranking on a played season, against the
+                       #   retrospective board from the same `train` posteriors — with a
+                       #   retro-vs-retro run at seed+1 as the noise floor the gap is
+                       #   judged against. SEASON= and SIMS= override 2023-24 / 500.
+```
+
+`src/features/forward_design.py` also holds `synthetic_game_log`, which is the production
+path rather than a target: the published schedule crossed with the roster snapshot, which
+every existing builder then consumes unchanged because they all aggregate that one file.
+
 ### The simulation layer
 
 Everything here is numpy over the posterior pickles. Only `make posteriors` above needs a
@@ -208,7 +263,11 @@ make scoring-periods   # one row per (season, game_id): its scoring period and i
                        #   Owns three edge cases once — a postponed game scores in the
                        #   period PLAYED, the NBA Cup final scores nowhere, and the
                        #   all-star gap moves no Monday. Schedules cache to data/raw/nbastats, so
-                       #   a rebuild needs no network; REFRESH=1 re-pulls them.
+                       #   a rebuild needs no network; REFRESH=1 re-pulls them. A season
+                       #   nobody has played enters only when NAMED — `--forward
+                       #   2026-27` appends its triples from the synthetic game log, so
+                       #   the grid carries the same game ids the roster grid will,
+                       #   filler games included.
 
 make draft-pool        # the board: one row per (season, player) with team, DK position
                        #   eligibility, ADP and the prior-season key the heads score him
