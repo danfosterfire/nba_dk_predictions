@@ -9123,13 +9123,13 @@ def _final_evaluation() -> list[Claim]:
                             "forward_fixed_population_vs_retro", "forward_vs_retro")
     add("0.9990", lambda: brd("spearman", _NOISE),
         "board Spearman, seed-noise floor", artifact=FORWARD_BOARD)
-    add("0.9988", lambda: brd("spearman", _FIXED),
+    add("0.9989", lambda: brd("spearman", _FIXED),
         "board Spearman, forward with population held fixed", artifact=FORWARD_BOARD)
     add("0.9831", lambda: brd("spearman", _FWD),
         "board Spearman, forward from the snapshot", artifact=FORWARD_BOARD)
     add("21.03", lambda: brd("mean_abs_total_diff", _NOISE),
         "mean season-total gap, seed noise", artifact=FORWARD_BOARD)
-    add("22.82", lambda: brd("mean_abs_total_diff", _FIXED),
+    add("22.17", lambda: brd("mean_abs_total_diff", _FIXED),
         "mean season-total gap, fixed population", artifact=FORWARD_BOARD)
     add("104.90", lambda: brd("mean_abs_total_diff", _FWD),
         "mean season-total gap, snapshot population", artifact=FORWARD_BOARD)
@@ -9141,10 +9141,8 @@ def _final_evaluation() -> list[Claim]:
         "retro-board players the snapshot arm is missing", artifact=FORWARD_BOARD)
     add("6", lambda: brd("missing_top100", _FWD),
         "missing players inside the retro top 100", artifact=FORWARD_BOARD)
-    add("18", lambda: brd("n_ref_only", _FIXED),
-        "fringe units the fixed-population arm cannot qualify", artifact=FORWARD_BOARD)
-    add("133", lambda: brd("best_missing_rank", _FIXED),
-        "best retro rank among the unqualifiable fringe", artifact=FORWARD_BOARD)
+    add("387", lambda: brd("n_shared", _FIXED),
+        "units shared by the fixed-population arm — all of them", artifact=FORWARD_BOARD)
 
     # ── the board correlation, and the round's binding limitation ─────────────
     add("1.0046", lambda: cell(FINAL_BOARD, "inflation", n_players=12),

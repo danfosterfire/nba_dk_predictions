@@ -1386,7 +1386,7 @@ REGISTRY: tuple[Decision, ...] = (
               "measured at the board. ⚙️ All four design inputs build forward "
               "(availability and components on real 2026-27 inputs, the composition's "
               "per-player frame, the calendar), and `make forward-board` pushes them "
-              "through the simulator on 2023-24: **Spearman 0.9988 against a 0.9990 "
+              "through the simulator on 2023-24: **Spearman 0.9989 against a 0.9990 "
               "seed-noise floor with the population held fixed** — the forward board is "
               "indistinguishable from re-rolling the seed. The 0.9831 headline gap is "
               "entirely the rehearsal snapshot's population bound, absent in "

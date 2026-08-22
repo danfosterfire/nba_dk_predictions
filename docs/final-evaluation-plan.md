@@ -571,14 +571,23 @@ arm can separate that from the forward frames themselves.
 | arm | shared players | Spearman | mean \|Δ season total\| | top-16 | top-48 | top-100 |
 |---|---|---|---|---|---|---|
 | retro vs retro, seed noise | 387 | 0.9990 | 21.03 | 15 | 46 | 99 |
-| **forward, population held fixed** | 369 | **0.9988** | 22.82 | **15** | **46** | **99** |
+| **forward, population held fixed** | **387** | **0.9989** | 22.17 | **15** | **47** | **99** |
 | forward, snapshot population | 354 | 0.9831 | 104.90 | 14 | 44 | 89 |
 
 **With the population held fixed, the forward board is indistinguishable from seed
-noise** — Spearman **0.9988** against a **0.9990** floor, the same top-16/48/100
-overlaps, a mean season-total gap of **22.82** dk_pts against the floor's **21.03**.
-Every input difference the earlier parts classified — the draft-number sourcing, the
-filler games, the schedule-sourced denominator — amounts to nothing the board can see.
+noise** — every one of the retro board's 387 units shared, Spearman **0.9989** against a
+**0.9990** floor, the same top-16/100 overlaps, a mean season-total gap of **22.17**
+dk_pts against the floor's **21.03**. Every input difference the earlier parts
+classified — the draft-number sourcing, the filler games, the schedule-sourced
+denominator — amounts to nothing the board can see.
+
+⚠️ The first run of this arm reported 18 units it could not share, and the sentence
+written for them — a permanent qualification fringe — was wrong. Profiling the 18 found
+every one absent from the roster snapshot: `forward_component_design` synthesized its
+own log from the roster *file*, so the population override reached three of the four
+frames and not the fourth. The membership frame now flows through the component log
+too, the arm shares all 387, and the wrong diagnosis is recorded here because it
+briefly claimed a production limitation that does not exist.
 
 The whole headline gap (**0.9831**, **89**/100) is therefore the population bound Part B
 measured, priced here at the board: **33** players the 2023-24 snapshot no longer lists
@@ -587,12 +596,15 @@ the retro top 100, reaching it partly through the redistribution of their minute
 everyone else. Neither contamination exists for a snapshot taken before the opener,
 which is the production case — and **0** spurious players, in both arms, again.
 
-One residual is real and permanent rather than a rehearsal artifact: the
-fixed-population arm still misses **18** of the retro board's scorable units, the best
-of them at retro rank **133**. Those are players under the component design's own
-`total_minutes_lag1 >= 200` qualification — the forward design cannot qualify a player
-by minutes he has not yet played, so a production board will not score that fringe. None
-of it reaches the top 100.
+What IS real and permanent — and predates the forward path entirely — is that **no
+board this project produces contains a true rookie**, forward or retrospective: the
+2023-24 retrospective design carries **0** players in their first season, because every
+rate feature is a lag and `component_rates.MIN_PRIOR_MINUTES` (200) is a statement that
+the features do not exist below it, not a threshold to relax. Rookies absorb minutes
+(the composition's draft-bucket priors) and carry an availability rate (the graded
+no-design level), so their teammates' totals are right — but their own dk_pts are never
+scored, and a 2026 draftee cannot appear on the 2026-27 board while the ADP field
+drafts him. Parked with a measurement plan as `docs/potential-to-dos.md` §16.
 
 ---
 

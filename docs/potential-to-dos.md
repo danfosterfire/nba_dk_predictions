@@ -1313,3 +1313,39 @@ realistically after 2026-27, i.e. after this project's target draft. Or B0 run a
 knowledge showing the *shipped* layout already misses stage cells badly on **both**
 validation seasons *in the same direction* despite their regime difference — stability
 across that break is the one old-regime signal that would deserve any weight.
+
+## 16. Rookies are not on the board at all — a rate head has no lag to score them from
+
+**Every board this project has produced, forward or retrospective, contains zero true
+rookies.** Surfaced 2026-08-21 while profiling the forward board rehearsal's unshared
+units: the 2023-24 retrospective component design carries **0** players whose first
+played season is the target — Wembanyama is not in the 387 scorable units the shipped
+path ranked that season. The mechanism is structural, not a filter to relax:
+`component_rates.MIN_PRIOR_MINUTES` demands 200 prior-season minutes because **every
+rate feature is a lag**, and below it the own-rate features do not exist rather than
+being noisy.
+
+The consequence is asymmetric with availability: rookies DO absorb minutes (the
+composition's expanding draft-bucket priors, `rookie_share_priors`) and DO get an
+availability rate (the graded no-design level), so their teammates' minutes are drained
+correctly — but their own dk_pts are never scored, so the recommender can never draft
+one while the ADP field will. Round-1 rookies routinely carry top-100 ADP.
+
+### What to compare
+
+A rookie rate arm needs a feature set that exists before the opener with no NBA lag:
+draft slot (already bucketed in `features/team_context.py`), and — the genuinely
+promising one — **current-season preseason box scores**, which the preseason capture
+already lands and which rookies play heavily in. The floor to clear is the current
+behaviour priced in contest units: how much Round-1 advance probability does a strategy
+lose by being structurally unable to roster any rookie, measured by giving the simulated
+field (which drafts by ADP) its rookies while our seat cannot. If the floor is within
+noise, the head is not worth building.
+
+### What would settle it
+
+The same gate every component head cleared: a validation-scored arm against the no-fit
+floor, at the season-total unit (`make season-total`'s frame), on the rookie population
+only. Preseason-rate → regular-rate transfer for rookies is the load-bearing unknown;
+`docs/preseason-plan.md`'s P-series measured that transfer for veterans, never for
+players with no prior season.

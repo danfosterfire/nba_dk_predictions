@@ -339,7 +339,8 @@ def scheduled_team_games(panel: pd.DataFrame, season: str) -> pd.Series:
 
 def forward_component_design(cfg: dict, season: str,
                              targets: pd.DataFrame | None = None,
-                             whole_frame: bool = False) -> pd.DataFrame:
+                             whole_frame: bool = False,
+                             log: pd.DataFrame | None = None) -> pd.DataFrame:
     """The eleven rate heads' design for a season that has not been played.
 
     The whole chain in one call, because October is a two-day window and three separate
@@ -364,7 +365,12 @@ def forward_component_design(cfg: dict, season: str,
             f"{season} already has component targets on disk, so it has been played and "
             f"needs no forward design — build it the ordinary way.")
 
-    log, _ = synthetic_game_log(season, cfg["data"]["raw_dir"])
+    # `log` lets a caller supply its own synthesis — `sim/forward_board.py` passes the
+    # one built from its membership frame, so a rehearsal that cuts or fixes the
+    # population cuts it EVERYWHERE. Production callers pass nothing and the default is
+    # the roster file, which is the same membership by construction.
+    if log is None:
+        log, _ = synthetic_game_log(season, cfg["data"]["raw_dir"])
     frame = log.rename(columns={"PLAYER_ID": "player_id", "TEAM_ID": "team_id",
                                 "GAME_ID": "game_id", "GAME_DATE": "game_date",
                                 "SEASON_YEAR": "season", "MIN": "min"})

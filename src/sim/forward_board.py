@@ -109,8 +109,8 @@ def forward_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
                       "PLAYER": members["player_id"].astype(str),
                       "TeamID": members["team_id"]}).to_csv(
             tmp_nba / f"team_rosters_{_slug(season)}.csv", index=False)
-        synthetic_game_log(season, tmp,
-                           dest=tmp_nba / f"game_logs_{_slug(season)}.csv")
+        log, _ = synthetic_game_log(season, tmp,
+                                    dest=tmp_nba / f"game_logs_{_slug(season)}.csv")
         fwd_panel = build_season_panel(season, tmp)
     print(f"  synthetic panel: {len(fwd_panel):,} rostered player-games, "
           f"{fwd_panel['player_id'].nunique():,} players")
@@ -133,7 +133,7 @@ def forward_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
     targets = pd.read_parquet(features_dir / "component_targets.parquet")
     targets_cut = targets[targets["season"] != season] if played_target else targets
     comp_design = forward_component_design(cfg, season, targets=targets_cut,
-                                           whole_frame=True)
+                                           whole_frame=True, log=log)
     comp_fwd = component_head_design(cfg, design=comp_design)
     if real_design is None:
         real_design = component_head_design(cfg)
