@@ -9144,6 +9144,44 @@ def _final_evaluation() -> list[Claim]:
     add("387", lambda: brd("n_shared", _FIXED),
         "units shared by the fixed-population arm — all of them", artifact=FORWARD_BOARD)
 
+    # ── §4d: the chain — Gate A on the held-out seasons, and the one-world contest ──
+    def chain_a(metric: str, season: str, arm: str = "gate_a/season_total_dk") -> float:
+        return cell(FINAL_EVAL, metric, head="chain", arm=arm, season=season)
+
+    add("367.3581", lambda: chain_a("mae", "2024-25"),
+        "held-out Gate A season-total MAE, 2024-25")
+    add("421.9977", lambda: chain_a("mae", "2025-26"),
+        "held-out Gate A season-total MAE, 2025-26")
+    add("257.6995", lambda: chain_a("crps", "2024-25"),
+        "held-out Gate A season-total CRPS, 2024-25")
+    add("299.2200", lambda: chain_a("crps", "2025-26"),
+        "held-out Gate A season-total CRPS, 2025-26")
+    add("0.6911", lambda: chain_a("r2", "2024-25"),
+        "held-out Gate A season-total R2, 2024-25")
+    add("0.5267", lambda: chain_a("r2", "2025-26"),
+        "held-out Gate A season-total R2, 2025-26")
+    add("9.2840", lambda: chain_a("crps", "2024-25", "gate_a/games_played"),
+        "held-out Gate A games-played CRPS, 2024-25")
+    add("10.2700", lambda: chain_a("crps", "2025-26", "gate_a/games_played"),
+        "held-out Gate A games-played CRPS, 2025-26")
+
+    def chain_c(metric: str, structure: str) -> float:
+        return cell(FINAL_EVAL, metric, head="chain",
+                    arm=f"{structure}/lineup_value_blend30", season="2025-26")
+
+    for structure, lift, roi in (("600k_shootaround", "−0.0725", "−0.8578"),
+                                 ("20k_spin_move", "−0.1143", "−0.7537"),
+                                 ("50k_four_pt_play", "+0.0349", "−0.6951"),
+                                 ("15k_and_one", "+0.0691", "−0.6325"),
+                                 ("88k_alley_oop", "+0.0356", "−0.2674")):
+        add(lift, lambda s=structure: chain_c("lift_vs_null", s),
+            f"held-out Round-1 lift, shipped strategy, {structure}")
+        add(roi, lambda s=structure: chain_c("roi", s),
+            f"held-out realized ROI, shipped strategy, {structure}")
+
+    add("−0.0725", lambda: chain_c("lift_vs_null", "600k_shootaround"),
+        "held-out 600k lift (README)", doc=README)
+
     # ── the board correlation, and the round's binding limitation ─────────────
     add("1.0046", lambda: cell(FINAL_BOARD, "inflation", n_players=12),
         "held-out board inflation, a 12-man board", artifact=FINAL_BOARD)

@@ -288,7 +288,64 @@ by adding rows rather than by changing a result.
 
 ### 4d. Results
 
-*Pending — the run is in progress.*
+Run 2026-08-21, 20:21 → 20:38 — `assert_same_specification` passed on all 20 heads
+before anything simulated, both test seasons drew 2,000-sim tensors at the `train_val`
+window, and the contest replayed on 2025-26 alone (§4b).
+
+**Gate A — the simulator against what happened, on seasons nothing in it has seen.** The
+bars beside each figure are the validation run's own values, which is what makes this a
+walk-forward reading rather than a self-comparison:
+
+| | 2024-25 | 2025-26 | validation bar |
+|---|---|---|---|
+| scorable units | 386 | 405 | 873 pooled |
+| season-total MAE | **367.3581** | **421.9977** | 400.46 |
+| season-total CRPS | 257.6995 | 299.2200 | 287.26 |
+| season-total R² | 0.6911 | 0.5267 | 0.7073 |
+| season-total bias | −17.4584 | −8.0504 | −3.06 |
+| games-played CRPS | **9.2840** | **10.2700** | the head's own floor, 10.0057 |
+| minutes spread, conditional on gp | 270.89 | 269.63 | 277.23 |
+| bonus per game | 0.1857 vs 0.1700 | 0.1831 vs 0.1410 | — |
+
+The held-out seasons **bracket the validation bar** — one better, one worse, on the
+season total and on games played alike — and the like-for-like minutes spread lands
+within 8 minutes of it on both. The bonus runs hot on 2025-26 (+0.0421) and the
+conditional-on-realized-minutes read is −0.0066, so the excess is minutes-shaped rather
+than conversion-shaped. These rows live in `sim_season_gate_a_final.csv`, never in the
+pooled validation table the audit re-derives (§4c).
+
+**The contest — one season, one world.** The field is the only thing that can be
+resampled, so no interval below is a season interval; `strategy.replay_realized` already
+records that N = 2 cannot separate nearby strategies, and N = 1 is what the ADP capture
+left. The shipped strategy (`lineup_value_blend30`) against its in-world comparators,
+Round-1 lift over the 1/6 null and realized ROI, per captured payout structure:
+
+| structure | shipped lift | shipped ROI | `adp` lift | `model_mean` lift | break-even hurdle |
+|---|---|---|---|---|---|
+| 600k_shootaround | **−0.0725** | −0.8578 | +0.0056 | −0.0593 | +0.1760 |
+| 20k_spin_move | −0.1143 | −0.7537 | +0.1021 | +0.0795 | +0.1232 |
+| 50k_four_pt_play | +0.0349 | −0.6951 | +0.1287 | −0.0593 | +0.1750 |
+| 15k_and_one | +0.0691 | −0.6325 | +0.0358 | −0.0423 | +0.1760 |
+| 88k_alley_oop | +0.0356 | −0.2674 | +0.8138 | +0.8138 | +0.1045 |
+
+(The 88k row is one $450 entry in one world — its comparator column is degenerate and
+quoted only because leaving a hole would look like an omission.)
+
+**The honest reading: the held-out chain does not confirm the drafting edge, and that is
+the result rather than a caveat.** The sweep's simulated worlds put the shipped
+strategy's Round-1 lift at ~0.24 and the validation-season replay at ~0.20; the one
+admissible held-out world puts it **negative on two structures including the 600k
+flagship** and at +0.03 to +0.07 on the other three, with every ROI negative against
+hurdles of +10.45% to +17.60% — and the plain-ADP ranking outperforms the shipped
+strategy on four of five structures in this world. One world cannot separate strategy
+from variance, so this neither refutes the simulated edge nor supports it; what it does
+establish is that the project's realized evidence for the edge ends where it stood after
+the validation replay, and the held-out season bought no confirmation.
+
+One structural note the contest surfaced: the board was restricted to the 361 pool
+players the tensor prices — 95 dropped, 25 of them carrying ADP — which is §6h's
+rookie-and-fringe scope limitation showing up as market names the model cannot rank
+(`docs/potential-to-dos.md` §16).
 
 ---
 

@@ -3495,6 +3495,39 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("adp", "discipline"),
     ),
     Decision(
+        id="the-held-out-chain-does-not-confirm-the-drafting-edge",
+        topic="drafting",
+        claim="The held-out chain (taken once, 2026-08-21) splits cleanly: **Gate A "
+              "brackets its validation bar** — season-total MAE 367.36 / 422.00 on "
+              "2024-25 / 2025-26 against the 400.46 bar — while **the one-world contest "
+              "does not confirm the drafting edge**: the shipped strategy's Round-1 lift "
+              "is −0.0725 on the 600k flagship and −0.11 to +0.07 across the five "
+              "structures, against ~0.24 in simulated worlds and ~0.20 in the validation "
+              "replay, with every realized ROI negative.",
+        because="The chain is the workflow's figure rather than a head's: a board from "
+                "the deployed `train_val` posterior, drafted under the shipped strategy "
+                "against an ADP field, scored on the box scores that happened. Gate A "
+                "runs on both test seasons (no market needed) and lands one side better "
+                "and one worse than validation on the season total AND on games played, "
+                "with the like-for-like minutes spread within 8 minutes of its bar — the "
+                "simulator's marginals carry to unseen seasons. The contest is N = 1 "
+                "season and one world, where the field is the only thing resampled; "
+                "`strategy.replay_realized` already records N = 2 cannot separate nearby "
+                "strategies, so this neither refutes the simulated edge nor supports it. "
+                "What it establishes is that the realized evidence for the edge ends "
+                "where the validation replay left it — the held-out season bought no "
+                "confirmation, and the plain-ADP ranking beat the shipped strategy on "
+                "four of five structures in the world that happened. The test split is "
+                "spent: nothing here may pick a strategy.",
+        status="measured",
+        reproduce="python -m src.final_evaluation chain → "
+                  "outputs/predictions/final_evaluation.csv",
+        source="docs/final-evaluation-plan.md",
+        reviewed="2026-08-21",
+        date="2026-08-21",
+        tags=("drafting", "discipline"),
+    ),
+    Decision(
         id="held-out-gate-e-was-a-model-against-itself",
         topic="availability",
         claim="The first held-out run reported a `spell_process` season-total row (MAE "
