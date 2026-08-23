@@ -794,6 +794,18 @@ draft slot, years-since-draft and age — which is what a August board can hones
   - Where the two changes are priced instead is `docs/rookie-rates-plan.md` §7i, on the
     validation seasons, at the unit that resolves — and the split's own rule below is why
     that is the only place they could be priced.
+  - **🔴 THE HELD-OUT TENSORS ARE FROZEN ROOKIE-LESS BY DECISION, NOT BY NEGLECT — taken
+    2026-08-22.** `sim_tensor_2024-25.npz` and `sim_tensor_2025-26.npz` were written by
+    `src/final_evaluation.py` under the one-shot unlock, and
+    `docs/rookie-inclusive-tensors-plan.md` ships the wider population over the `train` and
+    `full` tensors while deliberately leaving these two alone. **Redrawing them would be a
+    second reading of a spent split, and the record is worth more than the consistency.**
+    So the mismatch that results is permanent and chosen: after that round the `train` and
+    `full` tensors carry **two** rate families and this `train_val` pair carries **one**.
+    It is not a staleness to be tidied up on some later pass, and a session that "fixes"
+    it has spent the only thing this document is the record of. Do not unlock the split,
+    do not redraw them, and quote §4d's chain reading only as what it is — a measurement of
+    a workflow that no longer exists.
 - **The split is spent.** Nothing above may be used to change a modelling decision. If a
   figure here motivates a change, the change is un-priced: there is no second held-out
   reading behind it, and the honest thing to record is that the estimate no longer applies

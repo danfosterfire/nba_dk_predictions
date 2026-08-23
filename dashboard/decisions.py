@@ -11146,7 +11146,14 @@ REGISTRY: tuple[Decision, ...] = (
                 "would spend the comparison the floor exists to be read against. "
                 "`priceable_room`'s '101 of 105 board rows dropped' is the same case one "
                 "level down: it reads the tensor's `scorable` mask, so it moves only when "
-                "the tensor is rebuilt. The forward board IS re-run, because Session 6 "
+                "the tensor is rebuilt. **Scheduled 2026-08-22 as its own round** — "
+                "`docs/rookie-inclusive-tensors-plan.md`, which ships the wider population "
+                "over the `train` tensors and builds the `full` one that has never "
+                "existed, and prices the doc cost at 359 audited claims "
+                "([[shipping-the-wider-population-is-a-documentation-round-not-a-compute-round]]). "
+                "The held-out pair is explicitly NOT in it "
+                "([[the-held-out-tensors-are-frozen-rookie-less-by-decision]]). "
+                "The forward board IS re-run, because Session 6 "
                 "changed its retrospective arm — on the 387 units both arms share the "
                 "mechanics reading is unchanged (Spearman 0.9988 against a 0.9990 "
                 "seed-noise floor, where 2026-08-21 read 0.9989 against 0.9990) and the "
@@ -11302,7 +11309,11 @@ REGISTRY: tuple[Decision, ...] = (
                 "population. `rookie_floor_table` reads `strategy_realized{label}.csv` so "
                 "a labelled asymmetric arm cannot be compared against an unlabelled "
                 "baseline, which is `docs/availability-window-plan.md` §7l's "
-                "unknown-vintage lesson arriving through the back door.",
+                "unknown-vintage lesson arriving through the back door. **The machinery "
+                "outlives the label**: `docs/rookie-inclusive-tensors-plan.md` §5e retires "
+                "`_rookieinclusive` once the shipped tensor IS the rookie-inclusive one — "
+                "at which point the suffix names a variant of nothing — and keeps "
+                "`--tensor-label` for the next population change.",
         status="built",
         reproduce="python -m src.sim.season --tensor-label _rookieinclusive → "
                   "data/features/sim_tensor_2022-23_rookieinclusive.npz, "
@@ -11391,5 +11402,147 @@ REGISTRY: tuple[Decision, ...] = (
         reviewed="2026-08-22",
         date="2026-08-22",
         tags=("drafting", "strategy", "simulations", "methodology"),
+    ),
+    Decision(
+        id="the-held-out-tensors-are-frozen-rookie-less-by-decision",
+        topic="simulations",
+        claim="**`sim_tensor_2024-25.npz` and `sim_tensor_2025-26.npz` keep the "
+              "rookie-less population permanently, and that is a decision rather than a "
+              "staleness.** After `docs/rookie-inclusive-tensors-plan.md` the `train` and "
+              "`full` tensors carry TWO rate families and this `train_val` pair carries "
+              "ONE. Nothing is to be done about it.",
+        because="Those two were written by `src/final_evaluation.py` under the one-shot "
+                "unlock, so redrawing them is a second reading of a spent split — and "
+                "there is no second unlock to take it with. **The record is worth more "
+                "than the consistency.** The alternative reading, that the pair is merely "
+                "behind and will be caught up on some later pass, is the one that spends "
+                "the split: a session that 'fixes the mismatch' has quietly re-read the "
+                "held-out seasons to make a set of files agree. The mismatch is therefore "
+                "recorded in both places it can be found from — "
+                "`docs/final-evaluation-plan.md` §7 and the round's own constraint C1 — "
+                "and §4d's **−0.0725** chain reading stays quotable only as what it is, a "
+                "measurement of a workflow that no longer exists "
+                "([[the-rookie-inclusive-tensors-are-not-rebuilt-yet]]).",
+        status="settled",
+        reproduce="make final-evaluation → data/features/sim_tensor_2024-25.npz, "
+                  "data/features/sim_tensor_2025-26.npz",
+        source="docs/final-evaluation-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("methodology", "simulations", "provenance"),
+    ),
+    Decision(
+        id="shipping-the-wider-population-is-a-documentation-round-not-a-compute-round",
+        topic="simulations",
+        claim="**Re-drawing the shipped tensors moves 359 audited claims, 266 of them "
+              "live** — `docs/rookie-rates-plan.md` 138, `docs/simulations-plan.md` 119, "
+              "`docs/availability-window-plan.md` 98, `README.md` 4 — against roughly four "
+              "hours of numpy. `make docs-audit` is a GATE, so rewriting those figures IS "
+              "the work.",
+        because="Read off `src/docs_audit.py`'s own registry rather than estimated, and "
+                "the estimate was wrong in both directions. **494** claims read a "
+                "tensor-derived artifact, which is 101 more than the round was scoped at "
+                "— `docs/preseason-plan.md`'s preseason-contest block was not counted. But "
+                "**135 of those do not move**: `make mixture-value` and "
+                "`make preseason-contest` read frozen capture directories "
+                "(`outputs/predictions/mixture_arms/`, `preseason_arms/`) and never the "
+                "live artifacts, so they reproduce to the digit after any re-run, and "
+                "re-capturing either arm would need the counterfactual half refitted — 1 h "
+                "of CmdStan for the mixture and ~3.5 h for the preseason block, each twice "
+                "— which this round forbids. What changes for those two is provenance and "
+                "not arithmetic: both are now snapshots of a superseded chain. A further "
+                "93 of the 359 are `historical=True` and presence-checked rather than "
+                "value-checked, which is what takes the live rewrite to 266.",
+        status="open",
+        source="docs/rookie-inclusive-tensors-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("methodology", "provenance", "simulations"),
+    ),
+    Decision(
+        id="the-cached-field-key-does-not-cover-the-tensor-it-was-scored-on",
+        topic="drafting",
+        claim="**`draft_room.load_field` accepts a cached field drafted off a different "
+              "board, and the two validation caches on disk are already stale.** The key "
+              "carries the field's CONFIGURATION — noise model, rank noise, need weight, "
+              "seat composition, sim count — and the filename carries `--tensor-label`; "
+              "nothing carries the tensor's content. `draft_room_field_2022-23.npz` is "
+              "2026-08-12 and `2023-24` is 2026-08-11, both older than the 2026-08-16 "
+              "tensors they are read against.",
+        because="`field_artifact`'s docstring states the hazard exactly — 'a field cached "
+                "against the shipped tensor is not a field for a tensor drawn over a wider "
+                "population' — but the guard it installed is the FILENAME LABEL, which "
+                "only fires when somebody passes a label "
+                "([[a-variant-unit-population-writes-a-labelled-tensor-not-over-the-shipped-one]]). "
+                "A rebuild at the same filename is invisible to it. **The blast radius is "
+                "the live recommender and only the live recommender, and the sweep escapes "
+                "for a narrower reason than it looks.** Every arm `src/sim/strategy.py` "
+                "reports calls `draft_room.build_field` on the tensor it is scoring — "
+                "`gate_c`, `field_cut_line`, the realized replay and the pick-log stake all "
+                "build their own — so `Room.field_round` never reaches a reported figure. "
+                "`priceable_room` rebuilds it as well, but only on the SYMMETRIC path: "
+                "`restrict=False` returns the room with its cached field intact, so the "
+                "asymmetric arm behind `make rookie-floor` carries a stale cache it happens "
+                "not to consume, and is one refactor from consuming it. Meanwhile "
+                "`dashboard/draft_room.py` and `make draft-room-prep` load the cache as "
+                "written, which is to say draft night prices our entry against a field "
+                "drafted off a board that no longer exists. Scheduled "
+                "as `docs/rookie-inclusive-tensors-plan.md` §5b, ahead of the re-run, "
+                "because fixing it after the tensors move is a wider window than fixing it "
+                "before.",
+        status="open",
+        source="docs/rookie-inclusive-tensors-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("drafting", "simulations", "methodology"),
+    ),
+    Decision(
+        id="the-production-board-has-no-tensor-and-the-draft-room-cannot-open-one",
+        topic="simulations",
+        claim="**Nothing writes a production tensor, and the live recommender cannot open "
+              "a 2026-27 board at all.** `make forward-board` simulates in memory and "
+              "persists only the population census, `sim/season.run` refuses a season "
+              "outside the selection split under every window, and there is no production "
+              "unlock in the simulator. `dashboard/draft_room.py` globs "
+              "`sim_tensor_*.npz` and goes through `load_room`, whose "
+              "`assert_season_allowed` raises for the one season a draft is actually "
+              "held for. **And the tensor that could be built today is not the one to "
+              "draft off**: the 2026-27 preseason has not been played, so 0 of 489 "
+              "forward availability rows, 0 of 425 component rows and 0 of 116 "
+              "true-rookie rows carry a preseason block.",
+        because="The forward path was built to be VERIFIED rather than to be shipped "
+                "(`docs/final-evaluation-plan.md` §6h), and its production case stops at "
+                "the frames "
+                "([[a-test-season-is-censused-from-its-frames-because-it-cannot-be-simulated]]). "
+                "Everything it needs now exists: 31 heads at the `full` window with "
+                "`make production-check` green, `forward_board.forward_frames` building "
+                "every frame `build_context` wants for a season with no game log, and a "
+                "2026-27 census of **419** veteran + **6** lag-recovered + **116** "
+                "true-rookie units, 197 of them ADP-priced. What is missing is the unlock "
+                "and the persistence. Scheduled as "
+                "`docs/rookie-inclusive-tensors-plan.md` §5b on "
+                "`posteriors.assert_production`'s precedent — a typed `--production` flag "
+                "and a stated reason, **never** the test-split unlock, because simulating "
+                "an unplayed season is a deployment act and the thing that has read the "
+                "held-out seasons is the fit window rather than the target. **The path "
+                "ships this round and the BOARD ships in October**, because the gate is "
+                "data rather than code: `preseason.parquet` ends at 2025-26, every "
+                "`pre_*` column is NaN or zero on the 2026-27 frames, and the four "
+                "age-split missing indicators fire on 100% of the availability design "
+                "(108 / 214 / 104 / 63). Every head therefore scores 2026-27 on its "
+                "missing-preseason arm, and `docs/preseason-plan.md` measures that block "
+                "as worth more than fitting itself on several heads. So the persisted "
+                "tensor is a REHEARSAL that stamps its own preseason coverage and carries "
+                "a **self-arming** staleness guard — silent in August when no preseason "
+                "exists anywhere, a hard refusal in October the moment "
+                "`game_logs_pre_season_2026_27.csv` lands beside a tensor that does not "
+                "carry it. Written against the input's existence rather than against the "
+                "coverage figure, because a coverage-is-zero warning would nag now and go "
+                "quiet exactly when it matters.",
+        status="open",
+        source="docs/rookie-inclusive-tensors-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("simulations", "drafting", "dashboard"),
     ),
 )

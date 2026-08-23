@@ -9421,7 +9421,52 @@ def _build() -> tuple[Claim, ...]:
                  + _final_evaluation() + _rookie_floor() + _lag_recovery()
                  + _lag_ladder() + _ladder_board() + _rookie_rates() + _rookie_heads()
                  + _season_total_rookie() + _rookie_persistence()
-                 + _rookie_forward() + _rookie_recovery() + _rookie_replay())
+                 + _rookie_forward() + _rookie_recovery() + _rookie_replay()
+                 + _tensor_round())
+
+
+def _tensor_round() -> list[Claim]:
+    """`docs/rookie-inclusive-tensors-plan.md` — the round that ships the wider population.
+
+    **Deliberately small, and it is the census rather than the inventory.** §7a's headline
+    numbers — 6,066 claims, 494 tensor-derived, 359 moving, 266 live — are properties of
+    THIS MODULE, so claiming them here would be a registry checking itself: `check_values`
+    would compare a literal in the doc against a number derived from the literals in the
+    doc. They are guarded instead by being re-derivable in one command, which §7a states.
+
+    The tensor censuses (386/387 shipped against 471/467 labelled, and their per-family
+    splits) are the figures that *should* be audited and cannot be yet: they live in
+    `.npz` files and `table()` reads CSV and parquet only. Entering the doc into the
+    registry at all is what makes adding them incremental, which is the same argument
+    `ROOKIE` was entered on.
+    """
+    C: list[Claim] = []
+    TENSORS = "docs/rookie-inclusive-tensors-plan.md"
+
+    def add(quoted: str, artifact: str, actual, label: str, **kw) -> None:
+        C.append(_c(quoted, artifact, actual, label, doc=TENSORS, **kw))
+
+    def pop26(population: str, column: str) -> float:
+        frame = table(FORWARD_POP_26)
+        if frame is None:
+            return float("nan")
+        rows_ = frame[frame["population"] == population]
+        return float(rows_[column].iloc[0]) if len(rows_) else float("nan")
+
+    # The production board this round exists to make openable. Claimed against
+    # `docs/rookie-rates-plan.md`'s own copy too, on `_rookie_forward`'s stated precedent:
+    # a copy that drifts while the original still audits is the failure the guard is for.
+    for population, units in (("veteran", "419"), ("lag_recovered", "6"),
+                              ("true_rookie", "116")):
+        add(units, FORWARD_POP_26, lambda q=population: pop26(q, "units"),
+            f"2026-27 production units, {population} (tensor round)")
+    add("197", FORWARD_POP_26,
+        lambda: sum(pop26(q, "adp_priced")
+                    for q in ("veteran", "lag_recovered", "true_rookie")),
+        "2026-27 production units the market prices, all populations")
+    add("31", FULL_MANIFEST, lambda: rows(FULL_MANIFEST),
+        "heads at the full window (tensor round)")
+    return C
 
 
 def _rookie_forward() -> list[Claim]:

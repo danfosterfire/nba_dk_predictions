@@ -12,19 +12,22 @@ test. Missing artifacts are *skipped*, so a fresh checkout without `make eda` is
 It guards the artifact→prose direction tightly and the prose→artifact direction loosely;
 see the module docstring for exactly what it cannot catch.
 
-**It covers nineteen docs with 6,025 claims and one builder per doc**: `README.md`,
+**It covers twenty docs with 6,071 claims and one builder per doc**: `README.md`,
 `availability-plan`, `availability-window-plan`, `minutes-composition-plan`,
 `minutes-window-plan`, `draw-time-calibration-plan`, `predictions-plan`,
 `games-played-plan`, `shot-attempt-basis-plan`,
 `adp-plan`, `simulations-plan`, `preseason-plan`, `final-evaluation-plan`,
-`rookie-rates-plan`, and the five files the 2026-08-08
+`rookie-rates-plan`, `rookie-inclusive-tensors-plan`, and the five files the 2026-08-08
 reorganization split `CLAUDE.md` into — `facts-archive`, `model-development-notes`,
 `data-quirks`, `project-spec` and `train-validate-test-split`.
 `draw-time-calibration-plan` joined on 2026-08-20, when the README condensation (below)
 retargeted `_role_sigma_claims` from the overview to the doc that owns the readout;
 `final-evaluation-plan` on 2026-08-21 and `rookie-rates-plan` on 2026-08-22, the latter at
 its first session rather than at the end of its program, for the reason `preseason-plan`
-joined at P0. **Those counts move every session and the printout is the authority** — the
+joined at P0. `rookie-inclusive-tensors-plan` joined the same way on 2026-08-22, at five
+claims — its 2026-27 production census and its head count. Its own inventory figures (how
+many claims a tensor re-run moves) are deliberately unclaimed, because they are properties
+of `src/docs_audit.py` and a registry checking itself checks nothing. **Those counts move every session and the printout is the authority** — the
 two figures above were last refreshed 2026-08-22 and this doc is not itself audited.
 
 **`preseason-plan` joined on 2026-08-12, at P0 rather than at the end of the build.** A

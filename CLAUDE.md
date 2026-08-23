@@ -114,6 +114,14 @@ The docs are:
   - provenance-plan.md: Plan for keeping documentation, dashboard, and 
   context up-to-date with latest findings and ensuring reproducibility of 
   context.
+  - rookie-inclusive-tensors-plan.md: Shipping the wider unit population — the `train`
+  tensor re-run and its whole downstream chain, and the **production path** for the
+  upcoming season's board (the path ships now; the board is October-gated on the preseason
+  block, §1a). Carries the round's session ladder, the audited-claim inventory that sizes
+  it, and the standing decision that the **held-out tensors are frozen rookie-less**. Read
+  before re-running `make simulate-season` or anything after it, before building or opening
+  a production board, and before touching the simulator's production unlock or
+  `draft_room.load_field`'s cache key.
   - rookie-rates-plan.md: The rookie rate head program — scoring the structurally-missing
   population (true rookies, returnees, thin-prior fringe), its floor pricing, the veteran
   design's **lag-recovery ladder** and the per-rung gate that admitted one rung of four,
