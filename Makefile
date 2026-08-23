@@ -1173,8 +1173,18 @@ forward-rehearsal:
 # posteriors — with a second retro run at seed+1 supplying the noise floor the gap is
 # judged against. Needs the `train` posteriors; numpy only, no sampler. SEASON and SIMS
 # override the 2023-24 / 500 defaults.
+#
+# Since docs/rookie-rates-plan.md §5g (2026-08-22) it also prints §4's acceptance census —
+# veteran / lag-recovered / true-rookie units, how many of each the market prices, and the
+# best rank each puts on the board — plus a `__rung0` copy of all three comparisons on the
+# veterans neither family added, which is the half that asks that they did not move.
+#
+# FRAMES_ONLY=1 builds the five forward frames and censuses them WITHOUT simulating. That
+# is the only form a TEST season admits — `make forward-board SEASON=2026-27 FRAMES_ONLY=1`
+# is the production board's acceptance reading, and simulating it is locked until
+# `make posteriors-production` (docs/final-evaluation-plan.md).
 forward-board:
-	$(PYTHON) -m src.sim.forward_board $(if $(SEASON),--season $(SEASON),) $(if $(SIMS),--sims $(SIMS),)
+	$(PYTHON) -m src.sim.forward_board $(if $(SEASON),--season $(SEASON),) $(if $(SIMS),--sims $(SIMS),) $(if $(FRAMES_ONLY),--frames-only,)
 
 # WHAT THE AVAILABILITY LADDER DOES TO THE BOARD — `docs/availability-window-plan.md` §16j.
 # §16i priced the ladder at the head's own unit (draftable CRPS in games, 17.6175 -> 8.3662)

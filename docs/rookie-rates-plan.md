@@ -5,7 +5,7 @@ a component-rate head family for the players the veteran heads structurally cann
 — true rookies, returnees, and thin-prior fringe — so they can appear on a board and be
 drafted. Seven sessions, each with its own prompt (§6), each appending its results here.
 
-## 🚧 STATUS: SESSIONS 1-6 RUN 2026-08-22 (§7a, §7c, §7d, §7e, §7f, §7g). DESIGN REVISED 2026-08-22 (§7b). THE INTERLEAVED ROUND — `docs/availability-window-plan.md` §16 — RAN 2026-08-22 AND §7f HAS ITS NUMBER. ⏭ NEXT IS SESSION 7.
+## 🚧 STATUS: SESSIONS 1-7 RUN 2026-08-22 (§7a, §7c, §7d, §7e, §7f, §7g, §7h). DESIGN REVISED 2026-08-22 (§7b). THE INTERLEAVED ROUND — `docs/availability-window-plan.md` §16 — RAN 2026-08-22 AND §7f HAS ITS NUMBER. ⏭ NEXT IS SESSION 8 (CLOSEOUT).
 
 **The program is eight sessions, not seven, and the rookie head serves a smaller
 population than the one it was scheduled for.** §7b measured that a player with *any* prior
@@ -54,13 +54,25 @@ against 386 and 387, with Victor Wembanyama on a board for the first time. `make
 production-check` is green on 31 of 31 heads. **The tensors on disk were not regenerated**:
 what the change is worth in contest units is §5h's replay against §7a's floor.
 
+**The forward path is wired and the production board carries rookies** (§7h): the DK id
+map gains a **roster-snapshot** tier (`no_nba_history` 162 → **91**, 71 rows resolving to
+real `nba_api` ids, no existing match moved), `forward_rookie_design` builds true-rookie rows
+from the roster snapshot for a season nobody has played, and `forward_component_design` now
+asks for the ladder it was silently not getting. **2026-27 carries 419 veteran, 6
+lag-recovered and 116 true-rookie units, 13 of the rookies ADP-priced.** §4's second
+acceptance half holds: on the 354 rung-0 veterans, Spearman **0.9986** against a **0.9988**
+seed-noise floor. A test season cannot be *simulated* outside `make posteriors-production`,
+so its reading is `make forward-board SEASON=2026-27 FRAMES_ONLY=1`.
+
 ⚠️ **Session 6 left one thing broken for the length of a session and
 `docs/availability-window-plan.md` §16j fixed it**: the ladder's recovered returnees went
 into the tensor at the availability plug-in's 24.7 games. That key is now on too, so both
 ladders ship — see §7g's closing item.
 
-**§7a, §7b, §7c, §7d, §7e and §7f are in `make docs-audit`** (`_rookie_floor`,
+**§7a, §7b, §7c, §7d, §7e, §7f and §7h are in `make docs-audit`** (`_rookie_floor`,
 `_lag_recovery`, `_lag_ladder`, `_rookie_rates`, `_rookie_heads` and `_season_total_rookie`,
+plus `_final_evaluation` for §7h's board figures, which live in
+`forward_board_rehearsal.csv` and `forward_board_population.csv`,
 against `strategy_rookie_floor.csv`, the
 `_rookiefloor` artifact set, `lag_recovery.csv`, `lag_ladder.csv`, `rookie_rate_floors.csv`,
 `rookie_rate_metrics.csv` and `season_total_rookie.csv`). Every
@@ -410,11 +422,14 @@ mass matrix that made the rolling half affordable in Stan.
   only against the season matrix. Add a **roster-snapshot reference tier**, revisit
   `adp.NON_DEFECT_METHODS`, and pin with a test (board name → snapshot row → real
   PLAYER_ID; the AJ-Dybantsa shape).
-- **The ladder is forward-safe without new work and the doc should say why**: a
+- ~~**The ladder is forward-safe without new work and the doc should say why**: a
   returnee's lag-2 and a thin-prior's lag-1 are both prior-season NBA statistics, which is
   exactly what `forward_design` already assembles for veterans. Rung A and rung B need no
   forward-specific tier — only the true-rookie head does, which is the whole of the
-  id-map blocker above.
+  id-map blocker above.~~ 🔴 **Wrong, and §7h says how.** The features need no new tier and
+  the *builder* did: `forward_component_design` reaches `component_rates.build_design`
+  directly, whose default is the pre-ladder design, so the forward board dropped every
+  recovered returnee until `ladder=lag_ladder(cfg)` was passed.
 - Acceptance per §4; `make forward-board` on 2026-27 shows draftable rookies **and**
   lag-recovered returnees.
 
@@ -503,7 +518,8 @@ verbatim; keep the two in step if either is edited.
    > deterministic recipes for floor-shipped heads, the `build_context` units union with
    > per-family branching, veteran units bit-identical spot-check, `production_check`
    > green.
-7. > I'm working on the NBA prediction project (CLAUDE.md). Read
+7. ✅ **Done 2026-08-22 — §7h.**
+   > I'm working on the NBA prediction project (CLAUDE.md). Read
    > docs/rookie-rates-plan.md and execute **Session 7 (§5g): forward wiring** —
    > `forward_rookie_design`, the ADP id-map roster-snapshot tier with its test, rookie
    > and lag-recovered rows on `make forward-board`, and the §4 acceptance checks.
@@ -1634,3 +1650,140 @@ deferral**, and it is why §5g is the session that puts a rookie on a *forward* 
   **−214.76** and **−82.23** dk_pts of season-total MAE, and the teammates who lose the
   minutes pay +3.93 and +3.88 — inside the seed noise on the same rows. `make ladder-board`
   is that reading.
+
+### 7h. Session 7 — the forward wiring, and a production board with rookies on it (run 2026-08-22)
+
+`make forward-board` on 2023-24 and `make forward-board SEASON=2026-27 FRAMES_ONLY=1`,
+plus the id-map tier that had to land first. §7g put rookies in the *retrospective* tensor
+and said exactly why it could not put them in the forward one; this session removes that
+reason. **The 2026-27 production board now carries 116 true rookies and 6 lag-recovered
+returnees**, and 13 of the rookies are players the DK market prices.
+
+#### The id-map blocker, closed with a reference tier rather than a fallback
+
+`adp_draftkings.build_id_map` matched only against the season matrix, which is built from
+played seasons — so a player who has never played had no `player_id` to find and
+`draft_pool.load_dk_boards` gave him a **negative surrogate**. That is the correct answer to
+the question it was asked and the wrong one for a rookie head: a design row is keyed on the
+real `nba_api` id, so no amount of modelling could reach a board row wearing `-830650`.
+
+The source that has the id is the one `forward_design` already leans on —
+`team_rosters_<season>.csv` carries a real `PLAYER_ID` for the 2026 draft class the day it
+is published. `roster_snapshot_reference` reads it and a new cascade step consumes it,
+**keyed on `(season, normalized name)`**, sitting above the three fuzzy steps and below the
+two exact ones. Above the fuzzy steps because it is stronger evidence than any of them: the
+era guard `prefix` and `reversed` need is free when the reference *is* the era, and an
+ambiguous key yields nothing rather than a coin flip, which is `_by_prefix`'s own rule.
+
+| | before | after |
+|---|---:|---:|
+| matchable DK ids | 811 | **882** |
+| `no_nba_history` | 162 | **91** |
+| `roster_snapshot` | — | **71** |
+| cascade unmatched rate | 0.50% | **0.49%** |
+
+**No existing match moved**, which is the property that made the placement safe to choose
+on evidence rather than on argument. The residual 91 are DK's deep pool below the
+577-player snapshot — camp and two-way names, **none of which carries an ADP** — so
+`adp.NON_DEFECT_METHODS` was revisited and deliberately left alone: promoting them to
+`unmatched` would put a permanent 91-row failure on a join with nothing left to find. All
+**13** ADP-priced never-played players resolve, AJ Dybantsa at 41.8 among them, which is the
+shape `tests/test_adp.py` now pins along with the cross-season and ambiguous-key refusals.
+
+#### `forward_rookie_design`, and the two filters a forward season cannot pass
+
+`rookie_rates.build_design` gains a `forward_seasons` knob with the same default-empty guard
+`component_rates.build_design` and `build_component_targets` carry, and it clears **two**
+conditions rather than one:
+
+- `total_minutes > 0` — the target season's own minutes, which a scheduled season has for
+  nobody. Same rule, same reason as the veteran design's.
+- the `covered` cut — an **era** rule about seasons with no preseason panel at all, where a
+  fitted row from 1998 would carry its missing indicator as a decade dummy. A forward season
+  is the other case: its panel arrives with `make preseason` in October. Cutting it would
+  leave a production board with no rookie rows every year until the fetch ran.
+
+Everything else the design needs already existed forward. Membership is
+`lag_recovery.classify`'s `true_rookie` over the **same** stacked targets frame the veteran
+design is carved from — `forward_targets`, extracted this session so both families read one
+frame, because two separate synthesies could disagree about whose first season this is. The
+slot block comes from `forward_draft_slots`, which is `forward_draft_numbers`' own two
+preseason-legal sources plus the draft **year** the rookie design needs for
+years-since-draft; `_DRAFT_PICK` now captures it, and the 25 rights-traded draftees that
+function documents still land in the undrafted bucket. Age comes from `load_ages`' roster
+fallback. On 2026-27 that is **116** rows, **429** of the roster's 577 resolving a draft
+slot, and **0** carrying a preseason block — the missing-indicator path working, not a gap.
+
+#### 🔴 The ladder was not forward-safe, and §5g's third bullet was wrong about why
+
+§5g reasoned that rung A needs no forward-specific tier because a returnee's lag-2 is a
+prior-season statistic like any other. That is true and it is not sufficient:
+`stan_components.head_design` carries the ladder **only on the path where it builds the
+design itself**, and the forward path brings its own design and reaches
+`component_rates.build_design`, whose default is the pre-ladder frame. So the forward board
+was silently dropping every recovered returnee *and* handing the rows it did carry a null
+`lag_rung`.
+
+It was found by the census below, which read every forward veteran as lag-recovered. The fix
+is one argument — `ladder=lag_ladder(cfg)` — and `tests/test_forward_design.py` pins it by
+inspecting the call, because the failure mode is a board that is quietly narrower rather than
+an error. The forward design goes from 419 to **425** rows on 2026-27.
+
+#### §4's acceptance, both halves
+
+**Present and draftable** — `forward_board_population.csv`, one row per (arm, population),
+2023-24 at the `train` window, 500 sims:
+
+| population | retro units | retro priced | forward units | forward priced | forward best rank |
+|---|---:|---:|---:|---:|---:|
+| veteran (rung 0) | 387 | 216 | 354 | 202 | 1 |
+| lag-recovered | 6 | 3 | 4 | 3 | 267 |
+| true rookie | 74 | 18 | 91 | 18 | 66 |
+
+and on the **production** board, `make forward-board SEASON=2026-27 FRAMES_ONLY=1`:
+**419** veteran units (180 priced), **6** lag-recovered (4 priced), **116** true rookies
+(**13** priced). Both recovered populations are present and priced on every board. The
+forward counts are the roster snapshot's rather than the game log's, so a returnee who never
+actually came back is not in it (4 against 6) and a rookie who never played is (91 against
+74) — the Part B bound, running in the direction it is known to.
+
+**Unchanged for units the ladder did not touch** — the second half, and the reason
+`forward_board.py` now runs every comparison twice. On the **354** rung-0 veterans all three
+contexts carry, the fixed-population arm scores Spearman **0.9986** against a **0.9988**
+seed-noise floor on the same units, at mean season-total gaps of **25.35** and **22.64**
+dk_pts. The whole-board fixed-population figure *did* move, 0.9988 → **0.9929**, and that is
+the 33 new units it carries and the retro board does not — rookies the snapshot lists who
+never played. A Spearman over a union reports exactly that, which is why the rung-0 row sits
+beside it rather than instead of it.
+
+The population bound fell with the builders: the fixed-population arm now shares **all 467**
+retro units against 80 missing before, and the snapshot arm is missing **36** against 113.
+
+#### What Session 7 settles, and what it does not
+
+- **Settled**: a forward board can carry a true rookie, end to end — board row → real
+  `player_id` → design row → posterior → tensor → rank. The 2026-27 board carries 116 of
+  them and prices 13.
+- **Settled**: the ladder reaches the forward path, which it did not before this session
+  and which nothing would have raised about.
+- **Settled**: the untouched veterans did not move. Two population changes in two sessions,
+  and the rung-0 mechanics reading is still inside seed noise.
+- **Not measured**: what the forward rookies are *worth*. Nothing here scores a board — the
+  acceptance is presence, pricing and stability. §5h's symmetric replay against §7a's floor
+  is the contest-unit reading, and it is retrospective.
+- **⚠️ The 2026-27 board cannot be SIMULATED and that is not a §5g gap.** 2026-27 is a
+  **test** season, so `season.assert_season_allowed` refuses it under any window but the
+  production one — `docs/final-evaluation-plan.md`'s guard doing its job. `FRAMES_ONLY=1`
+  is the form a test season admits: every forward frame builds and is censused, and nothing
+  is unlocked. The production board itself comes after `make posteriors-production`.
+- **⚠️ Four DK boards are ingested nowhere.** `data/raw/dk_draft_rankings/` holds captures
+  from Aug 12, 16, 17 and 20 that the ADP artifact chain (last built 2026-07-29) has never
+  read. This session rebuilt the id map from the **same two boards** the rest of the chain
+  uses, so its only delta is the snapshot tier. Ingesting the other four is a separate round:
+  it moves roughly twenty audited ADP figures and `docs_audit._dk_name_agreement` assumes one
+  board per season and raises on more.
+- **Not settled**: the rights-traded draftees. 25 of the 2026-27 roster carry no slot in
+  `HOW_ACQUIRED` and sit in the undrafted bucket until their first bio row corrects them.
+  That is the largest cell and the block's honest zero, so nothing is invented — but a
+  lottery pick priced as undrafted is a real mis-bucket and the fix is a draft-results
+  source this project does not capture.

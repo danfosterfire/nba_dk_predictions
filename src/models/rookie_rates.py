@@ -185,7 +185,8 @@ def head_features(component: str) -> list[str]:
 # ── The population ────────────────────────────────────────────────────────────
 
 def rookie_rows(targets: pd.DataFrame, seasons: Sequence[str], raw_dir: str | Path,
-                covered: Sequence[str] | None = None) -> pd.DataFrame:
+                covered: Sequence[str] | None = None,
+                forward_seasons: Sequence[str] = ()) -> pd.DataFrame:
     """Every true-rookie player-season, with the lag block **removed**.
 
     Built on `lag_recovery.population_frame` rather than on a second census: that function
@@ -204,18 +205,42 @@ def rookie_rows(targets: pd.DataFrame, seasons: Sequence[str], raw_dir: str | Pa
     prior-season rate, a rookie row before 2004-05 has no preseason block at all — the head
     would be slot and age alone, a different regime, and its missing indicator would read as
     an era dummy rather than as a player fact.
+
+    ## `forward_seasons`, and the two filters it clears
+
+    `component_rates.build_design` carries the same knob for the same reason, and both of
+    the conditions it exempts here are **fitting-population** rules that a season nobody has
+    played cannot satisfy:
+
+    - `total_minutes > 0` is the target season's own minutes, and a scheduled season has
+      none for anybody. This is the one `forward_component_design` clears one family over.
+    - the `covered` cut is an **era** rule: before 2004-05 there is no preseason panel at
+      all, so a fitted row from 1998 would carry its missing indicator as a decade dummy.
+      A forward season is on the other side of that — its preseason arrives in October and
+      is simply not measured yet, which is exactly what the four age-split missing
+      indicators are coded to say. Cutting it would leave a production board with no rookie
+      rows every year until `make preseason` runs.
+
+    **The default is empty**, so no fitting path can receive a forward row without naming
+    the season — `held_out.selection_split`'s discipline, and `build_component_targets`'
+    own.
     """
     from src.models.lag_recovery import population_frame
 
+    forward_seasons = set(str(s) for s in forward_seasons)
     frame = population_frame(targets, list(seasons), raw_dir)
-    rows = frame[(frame["group"] == ROOKIE_GROUP) & (frame["total_minutes"] > 0)]
+    is_forward = frame["season"].isin(forward_seasons)
+    rows = frame[(frame["group"] == ROOKIE_GROUP)
+                 & ((frame["total_minutes"] > 0) | is_forward)]
     rows = rows.dropna(subset=["age"])
     if covered is not None:
-        rows = rows[rows["season"].isin(set(covered))]
+        rows = rows[rows["season"].isin(set(covered) | forward_seasons)]
     lagged = [c for c in rows.columns if c.endswith(("_lag1", "_lag2", "_lag3"))]
     out = rows.drop(columns=lagged + ["group"]).reset_index(drop=True)
     out["season_start_year"] = out["season"].map(_season_start_year)
     out["age_sq"] = out["age"].to_numpy(dtype=float) ** 2
+    if forward_seasons:
+        out["is_forward"] = out["season"].isin(forward_seasons).astype(int)
     return out
 
 
@@ -297,15 +322,18 @@ def attach_preseason(rows: pd.DataFrame, panel: pd.DataFrame) -> pd.DataFrame:
 
 def build_design(targets: pd.DataFrame, seasons: Sequence[str], raw_dir: str | Path,
                  panel: pd.DataFrame, draft: pd.DataFrame,
-                 covered: Sequence[str] | None = None) -> pd.DataFrame:
+                 covered: Sequence[str] | None = None,
+                 forward_seasons: Sequence[str] = ()) -> pd.DataFrame:
     """One row per true-rookie player-season, with every block that needs no constant.
 
     Frames in rather than paths in, for the reason `component_rates.build_design` takes
     `targets`: the forward path (§5g) assembles rookie rows from a roster snapshot for a
     season nobody has played, and it has to reach the same three attachments without going
-    through a parquet of realized box scores.
+    through a parquet of realized box scores. That is `forward_design.forward_rookie_design`,
+    which supplies its own `targets`, `panel` and `draft` and names its season in
+    `forward_seasons`; nothing else in the project passes it.
     """
-    rows = rookie_rows(targets, seasons, raw_dir, covered)
+    rows = rookie_rows(targets, seasons, raw_dir, covered, forward_seasons)
     return attach_preseason(attach_draft_slot(rows, draft), panel)
 
 

@@ -1352,7 +1352,7 @@ Reproduce with `make persistence` / `make aging` / `make target-profile` /
   - **Report unmatched alongside the count and method of fuzzy matches**, never alone.
   - ✅ **The rejected rule now runs forever, as an ablation beside the metric it discredits.**
     Re-run on the same rows it makes **31** matches, **23** of which the cascade refuses, and
-    it scores **0.00% unmatched against the cascade's 0.50%**. `Cameron Boozer` → Carlos
+    it scores **0.00% unmatched against the cascade's 0.49%**. `Cameron Boozer` → Carlos
     Boozer and `Darryn Peterson` → Drew Peterson come straight back out, alongside
     `Mikel Brown Jr.` → Moses Brown, `Baba Miller` → Brandon Miller and
     `Dillon Mitchell` → Davion Mitchell. A *better* unmatched rate on a rule that fabricates

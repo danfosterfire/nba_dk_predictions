@@ -249,16 +249,24 @@ def load_dk_boards(features_dir: str | Path) -> pd.DataFrame:
 
     **A board row with no `player_id` is kept, not dropped.** 162 of the 942 rows on the
     2026-27 board are players who have never played an NBA game — almost all of them the
-    2026 draft class — so `adp_dk_id_map` reports them as `no_nba_history` rather than as
+    2026 draft class — so `adp_dk_id_map` reported them as `no_nba_history` rather than as
     a join failure. They are nonetheless *draftable*, and several go early: AJ Dybantsa at
     ADP 41.8 is a fourth-round pick. Dropping them would break the draft simulator in a
     way that has nothing to do with whether the model can score them, because the field
     takes them at their ADP regardless, and who is still on the board at pick k is the
     quantity a snake draft turns on.
 
-    They get a **surrogate id, `-dk_player_id`**, which is negative so it can never
-    collide with an `nba_api` id and never silently matches a season-matrix row — a
+    Those without an id get a **surrogate, `-dk_player_id`**, which is negative so it can
+    never collide with an `nba_api` id and never silently matches a season-matrix row — a
     player with no NBA history has no prior season, and `has_nba_id` says so out loud.
+
+    **71 of the 162 stopped needing the surrogate on 2026-08-22**
+    (`docs/rookie-rates-plan.md` §5g): `build_id_map`'s roster-snapshot tier gives a
+    never-played *rostered* player his real `nba_api` id, which is what a rookie rate design
+    row has to join to before the board can price him. `has_nba_id` is therefore no longer a
+    proxy for "has a prior season" — it never promised to be, and the rookie design's own
+    population rule (`lag_recovery.classify`) is the thing that says so. The 91 that remain
+    are DK's deep pool below the roster snapshot and keep the surrogate.
     """
     features_dir = Path(features_dir)
     board = pd.read_parquet(features_dir / "adp_draftkings.parquet")

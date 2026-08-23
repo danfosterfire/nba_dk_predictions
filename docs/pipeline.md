@@ -253,7 +253,17 @@ make forward-board     # §6h's acceptance test: the forward inputs pushed throu
                        #   retrospective board from the same `train` posteriors — with a
                        #   retro-vs-retro run at seed+1 as the noise floor the gap is
                        #   judged against. SEASON= and SIMS= override 2023-24 / 500.
+                       #   Also prints the §4 population census (veteran / lag-recovered /
+                       #   true-rookie units, how many the market prices, best rank) and
+                       #   a `__rung0` copy of every comparison on the veterans neither
+                       #   family added. FRAMES_ONLY=1 builds and censuses the frames
+                       #   WITHOUT simulating — the only form a TEST season admits, and
+                       #   how the 2026-27 production board is read.
 ```
+
+`make forward-board SEASON=2026-27 FRAMES_ONLY=1` is the production board's acceptance
+reading. Simulating a test season is locked outside `make posteriors-production`
+(`docs/final-evaluation-plan.md`), so the census is taken off the designs instead.
 
 `src/features/forward_design.py` also holds `synthetic_game_log`, which is the production
 path rather than a target: the published schedule crossed with the roster snapshot, which

@@ -242,12 +242,23 @@ def assert_point_in_time(panel: pd.DataFrame) -> None:
 #    says so on the next run rather than after the next modelling decision.
 
 # Methods that require the normalized name to match exactly. Everything else is fuzzy and
-# gets listed by name.
-EXACT_METHODS = ("name+team", "name+season", "name")
+# gets listed by name. `roster_snapshot` is exact — it is a normalized-name equality inside
+# the board's own season's roster file, with an ambiguous key yielding nothing — so it is
+# not a tier that needs reading, and counting it as fuzzy would grow the read-it-all list
+# by 71 rows that no rule guessed at.
+EXACT_METHODS = ("name+team", "name+season", "name", "roster_snapshot")
 FUZZY_METHODS = ("reversed", "prefix", "alias")
 
 # Not defects: a board row for a player who has never played an NBA game has no `player_id`
 # to find. Kept apart from `unmatched` per the standing rule.
+#
+# **Revisited for `docs/rookie-rates-plan.md` §5g and left as it is.** The roster-snapshot
+# tier gives the never-played *rostered* player an id, which is what a rookie design row
+# needs to join to — so the class shrinks from 162 to 91 on the two real boards. The
+# residual is still not a defect: it is DK's deep pool below the 577-player snapshot,
+# carrying no ADP, and no preseason-legal source holds an id for a player nobody has
+# rostered. Promoting it to `unmatched` would put a permanent 91-row failure on a join that
+# has nothing left to find.
 NON_DEFECT_METHODS = ("no_nba_history",)
 
 

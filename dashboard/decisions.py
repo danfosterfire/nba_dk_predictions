@@ -11033,6 +11033,92 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("head", "components", "simulations"),
     ),
     Decision(
+        id="a-dk-board-row-for-a-never-played-player-gets-his-real-id-from-the-roster-snapshot",
+        topic="data",
+        claim="**`build_id_map` gains a roster-snapshot tier, and 71 of the 162 DK board "
+              "rows with no NBA history stop taking a negative surrogate id.** "
+              "`team_rosters_<season>.csv` carries a real `nba_api` `PLAYER_ID` for a "
+              "player who has never played, so the 2026 draft class resolves by exact "
+              "normalized name inside the board's own season. `no_nba_history` falls 162 → "
+              "**91**, matchable ids rise 811 → **882**, the cascade's unmatched rate goes "
+              "0.50% → **0.49%**, and **no existing match moved**.",
+        because="A rookie rate design row is keyed on the real id "
+                "([[the-simulators-scorable-units-are-the-union-of-two-rate-families]]), so "
+                "a board row wearing `-830650` could never be reached by the head built to "
+                "score him — this was the blocker standing between the rookie family and a "
+                "FORWARD board. The tier sits above the three fuzzy steps and below the two "
+                "exact ones: it is an exact name match against a point-in-time source for "
+                "the board's own season, the era guard `prefix` and `reversed` need is free "
+                "when the reference IS the era, and an ambiguous key yields nothing rather "
+                "than a coin flip. `adp.NON_DEFECT_METHODS` was revisited and deliberately "
+                "left alone — the residual 91 are DK's deep pool below the 577-player "
+                "snapshot, none of them carrying an ADP, and no preseason-legal source "
+                "holds an id for a player nobody has rostered. All 13 ADP-priced "
+                "never-played players resolve, AJ Dybantsa at 41.8 among them.",
+        status="built",
+        reproduce="make adp-draftkings → data/features/adp_dk_id_map.parquet",
+        source="docs/rookie-rates-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("data", "adp", "simulations"),
+    ),
+    Decision(
+        id="the-forward-board-carries-rookies-and-the-ladder-had-to-be-asked-for",
+        topic="simulations",
+        claim="**The 2026-27 production board carries 116 true rookies (13 ADP-priced) and "
+              "6 lag-recovered returnees (4 priced), against 419 veteran units.** "
+              "`forward_rookie_design` builds true-rookie rows from the roster snapshot for "
+              "a season nobody has played — slot and year from `HOW_ACQUIRED`, age from the "
+              "roster fallback, and a preseason block that is all-missing until October. "
+              "§4's second acceptance half holds: on the 354 rung-0 veterans all three "
+              "contexts carry, Spearman **0.9986** against a **0.9988** seed-noise floor.",
+        because="§7g put rookies in the retrospective tensor and could not put them in a "
+                "forward one, because `rookie_rates.build_design` carves its population out "
+                "of `component_targets` and 'he played in the NBA this season' is "
+                "target-season information. §5g replaces the SOURCE rather than the rule. "
+                "🔴 It also found that the ladder was **not** forward-safe, which §5g had "
+                "argued it was: `stan_components.head_design` carries the ladder only where "
+                "it builds the design itself, and the forward path brings its own and "
+                "reaches `component_rates.build_design`, whose default is the pre-ladder "
+                "frame — so the forward board silently dropped every recovered returnee. "
+                "One argument fixes it and a source-inspecting test pins it, because a "
+                "quietly narrower board raises nothing. The whole-board fixed-population "
+                "Spearman moved 0.9988 → 0.9929 and that is the 33 snapshot-listed rookies "
+                "the retro board does not carry, not the old units — which is why every "
+                "comparison now runs twice, once on the union and once on rung 0.",
+        status="built",
+        reproduce="make forward-board → outputs/predictions/forward_board_population.csv",
+        source="docs/rookie-rates-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("methodology", "simulations", "head"),
+    ),
+    Decision(
+        id="a-test-season-is-censused-from-its-frames-because-it-cannot-be-simulated",
+        topic="simulations",
+        claim="**`make forward-board SEASON=2026-27 FRAMES_ONLY=1` builds every forward "
+              "frame and censuses it without simulating.** 2026-27 is a test season, so "
+              "`season.assert_season_allowed` refuses it under any window but the "
+              "production one; the acceptance reading is taken off the DESIGNS instead — a "
+              "design row intersected with the composition's per-player frame, which is "
+              "what `component_units` would do one step later.",
+        because="The alternative was an unlock, and a plumbing session is not what the two "
+                "unlocks are for ([[the-held-out-split-is-enforced-by-code-not-discipline]] "
+                "is the rule and `make posteriors-production` is the second and last one). "
+                "The question §4 asks of a forward board — are the two recovered "
+                "populations present and priced — is answerable from the frames, because "
+                "presence and ADP coverage are properties of the rows rather than of the "
+                "draws. What is NOT answerable is the ranking, so the artifact carries no "
+                "`best_rank` and never will.",
+        status="built",
+        reproduce="make forward-board SEASON=2026-27 FRAMES_ONLY=1 → "
+                  "outputs/predictions/forward_board_population_2026_27.csv",
+        source="docs/rookie-rates-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("methodology", "simulations"),
+    ),
+    Decision(
         id="the-rookie-inclusive-tensors-are-not-rebuilt-yet",
         topic="simulations",
         claim="**The wiring is live and the tensors on disk are NOT.** "

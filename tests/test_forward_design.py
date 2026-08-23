@@ -301,11 +301,18 @@ def test_the_fitting_paths_never_ask_for_forward_rows():
 # ── The composition's per-player frame ────────────────────────────────────────
 
 def _matrix_and_roster(tmp_path, matrix_rows, roster_rows):
-    """The two draft-number sources, written where the builders read them."""
+    """The two draft-number sources, written where the builders read them.
+
+    `bio_draft_year` rides along because `forward_draft_slots` carries the whole slot
+    block — the rookie design's years-since-draft needs the year and the composition's
+    ordering does not. Rows may give it explicitly or leave it to default to NaN.
+    """
     features = tmp_path / "features"
     features.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(matrix_rows, columns=["player_id", "season", "bio_draft_number"]
-                 ).to_parquet(features / "season_matrix_roster_tierA.parquet")
+    matrix = pd.DataFrame([tuple(r) + (np.nan,) * (4 - len(r)) for r in matrix_rows],
+                          columns=["player_id", "season", "bio_draft_number",
+                                   "bio_draft_year"])
+    matrix.to_parquet(features / "season_matrix_roster_tierA.parquet")
     raw = tmp_path / "nbastats"
     raw.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(roster_rows).to_csv(raw / "team_rosters_2026_27.csv", index=False)
@@ -443,3 +450,115 @@ def test_a_duplicated_member_raises_rather_than_double_weighting(tmp_path):
     with pytest.raises(ValueError) as excinfo:
         fd.forward_composition_players(cfg, "2026-27", members, design)
     assert "repeats a player_id" in str(excinfo.value)
+
+
+# ── §5g: the true-rookie design, forward ─────────────────────────────────────
+
+def test_forward_draft_slots_carries_the_year_from_both_sources(tmp_path):
+    """Years-since-draft is half the rookie design's slot block, and the matrix column it
+    normally comes from does not exist before the opener. Both preseason-legal sources
+    carry it: a veteran's own earlier matrix row, and the `#N Pick in YYYY` text."""
+    cfg = _matrix_and_roster(
+        tmp_path,
+        [(1, "2024-25", 7.0, 2021.0), (1, "2026-27", 99.0, 1999.0)],
+        [{"PLAYER_ID": 1, "TeamID": 10, "PLAYER": "Vet",
+          "HOW_ACQUIRED": "Traded from BOS on 07/06/25"},
+         {"PLAYER_ID": 2, "TeamID": 10, "PLAYER": "Stashed",
+          "HOW_ACQUIRED": "#40 Pick in 2022 Draft"},
+         {"PLAYER_ID": 4, "TeamID": 11, "PLAYER": "Rights",
+          "HOW_ACQUIRED": "Draft Rights Traded from DAL on 06/24/26"}])
+    out = fd.forward_draft_slots(cfg, "2026-27").set_index("player_id")
+    assert (out.loc[1, "draft_number"], out.loc[1, "draft_year"]) == (7.0, 2021.0)
+    assert (out.loc[2, "draft_number"], out.loc[2, "draft_year"]) == (40.0, 2022.0)
+    assert np.isnan(out.loc[4, "draft_number"]) and np.isnan(out.loc[4, "draft_year"])
+    assert "draft_year" not in fd.forward_draft_numbers(cfg, "2026-27").columns, (
+        "the composition's ordering reads the bucket, not the year")
+
+
+def test_forward_component_design_asks_for_the_ladder(tmp_path):
+    """🔴 The defect this exists for. `stan_components.head_design` carries the ladder only
+    on the path where it builds the design ITSELF; the forward path brings its own, and
+    reaches `component_rates.build_design`, whose default is the pre-ladder design.
+
+    Without the explicit `ladder=`, a forward board silently drops every recovered
+    returnee AND hands the rows it does carry a null `lag_rung` — which reads on the
+    census as every veteran being lag-recovered, and is how it was found."""
+    import inspect
+
+    source = inspect.getsource(fd.forward_component_design)
+    assert "ladder=lag_ladder(cfg)" in source, (
+        "`forward_component_design` must pass the configured ladder, or the forward "
+        "board and the retrospective one are built from different populations")
+
+
+def _rookie_targets(seasons_by_player):
+    """Player-game targets: `{player_id: [(season, n_games, minutes_each)]}`."""
+    from src.models.component_rates import volume_columns
+
+    rows = []
+    for pid, seasons in seasons_by_player.items():
+        for season, n, minutes in seasons:
+            for g in range(n):
+                row = {"player_id": pid, "season": season, "min": minutes,
+                       "played": 1 if minutes > 0 else 0}
+                row |= {c: 1.0 for c in volume_columns()}
+                rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _ages(tmp_path, seasons, player_ids, age=22.0):
+    raw = tmp_path / "nbastats"
+    raw.mkdir(parents=True, exist_ok=True)
+    from src.data.fetch import _slug
+
+    for season in seasons:
+        pd.DataFrame({"PLAYER_ID": player_ids, "AGE": age}).to_csv(
+            raw / f"player_bio_stats_{_slug(season)}.csv", index=False)
+
+
+def test_a_forward_rookie_row_needs_its_season_named_twice_over(tmp_path):
+    """`rookie_rows`' two forward exemptions, and the guard that is the default.
+
+    A season nobody has played has no minutes for anybody (`total_minutes > 0`) and no
+    preseason panel (the `covered` cut). Both are fitting-population rules and both empty
+    the forward season — so the frame comes back with rookies only when the season is
+    named, and with none of them when it is not."""
+    from src.models.rookie_rates import rookie_rows
+
+    seasons = ["2024-25", "2025-26", "2026-27"]
+    _ages(tmp_path, seasons, [1, 2])
+    targets = _rookie_targets({1: [("2024-25", 40, 20.0)],       # a played rookie season
+                               2: [("2026-27", 82, 0.0)]})       # a forward rookie
+    covered = ["2024-25", "2025-26"]
+    plain = rookie_rows(targets, seasons, tmp_path, covered=covered)
+    assert list(plain["player_id"]) == [1], "the played rookie season, and nothing else"
+    assert "2026-27" not in set(plain["season"]), "the default admits no forward row"
+
+    out = rookie_rows(targets, seasons, tmp_path, covered=covered,
+                      forward_seasons=["2026-27"])
+    forward = out[out["season"] == "2026-27"].reset_index(drop=True)
+    assert list(forward["player_id"]) == [2]
+    assert int(forward.loc[0, "is_forward"]) == 1
+    assert int(out.loc[out["season"] != "2026-27", "is_forward"].sum()) == 0
+    assert not [c for c in out.columns if c.endswith(("_lag1", "_lag2", "_lag3"))], (
+        "the lag block is dropped rather than carried as NaN — it cannot exist here")
+
+
+def test_the_forward_rookie_population_excludes_anyone_with_a_played_season(tmp_path):
+    """Disjointness from the veteran design, which `component_units` asserts on every
+    build: a player with ANY prior season is `lag_recovery.classify`'s somebody else, and
+    a forward row of his must not turn up in the rookie family."""
+    from src.models.rookie_rates import rookie_rows
+
+    seasons = ["2024-25", "2025-26", "2026-27"]
+    _ages(tmp_path, seasons, [1, 2, 3])
+    targets = _rookie_targets({
+        1: [("2024-25", 40, 20.0), ("2026-27", 82, 0.0)],   # returning veteran
+        2: [("2026-27", 82, 0.0)],                          # true rookie
+        3: [("2025-26", 3, 4.0), ("2026-27", 82, 0.0)],     # thin, but he has played
+    })
+    out = rookie_rows(targets, seasons, tmp_path, forward_seasons=["2026-27"])
+    assert set(out.loc[out["season"] == "2026-27", "player_id"]) == {2}
+    # Their own first seasons are still rookie rows — the population is a (player, season)
+    # one, and it is only the FORWARD season the two families could collide on.
+    assert set(out["player_id"]) == {1, 2, 3}

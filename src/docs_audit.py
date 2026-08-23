@@ -141,6 +141,9 @@ FINAL_BOARD = "outputs/predictions/final_evaluation_availability_board.csv"
 FINAL_ADP = "outputs/predictions/final_evaluation_adp_coverage.csv"
 FORWARD = "outputs/predictions/forward_design_rehearsal.csv"
 FORWARD_BOARD = "outputs/predictions/forward_board_rehearsal.csv"
+FORWARD_POP = "outputs/predictions/forward_board_population.csv"
+FORWARD_POP_26 = "outputs/predictions/forward_board_population_2026_27.csv"
+DK_MAP_PATH = "data/features/adp_dk_id_map.parquet"
 FULL_MANIFEST = "data/features/posteriors/full/manifest.csv"
 TV_MANIFEST = "data/features/posteriors/train_val/manifest.csv"
 SIMS = "docs/simulations-plan.md"           # the simulation and drafting layer
@@ -3152,17 +3155,21 @@ def _adp() -> list[Claim]:
     add("175", DK_BOARD, lambda: _dk_both_boards_adp(), "players with ADP on both boards")
     add("13.4%", DK_BOARD, lambda: _dk_no_prior_adp_share(),
         "2026-27 ADP'd players with no prior-year DK ADP")
-    add("811", DK_MAP,
+    add("882", DK_MAP,
         lambda: float((table(DK_MAP)["match_method"] != "no_nba_history").sum())
         if table(DK_MAP) is not None else float("nan"), "matchable DK ids")
-    add("162", DK_MAP,
+    add("91", DK_MAP,
         lambda: float((table(DK_MAP)["match_method"] == "no_nba_history").sum())
         if table(DK_MAP) is not None else float("nan"),
         "DK pool entries with no NBA history")
 
     # ── the match audit ───────────────────────────────────────────────────────
-    add("0.50%", ADP_AUDIT, lambda: audit("unmatched_rate_cascade"),
+    add("0.49%", ADP_AUDIT, lambda: audit("unmatched_rate_cascade"),
         "cascade unmatched rate")
+    add("71", DK_MAP,
+        lambda: float((table(DK_MAP)["match_method"] == "roster_snapshot").sum())
+        if table(DK_MAP) is not None else float("nan"),
+        "DK ids resolved by the roster-snapshot tier")
 
     # ── what implementing it changed — the auditable half ─────────────────────
     add("226", ADP_PROFILE, lambda: adp("agreement", "n_pairs"), "matched pairs")
@@ -4556,12 +4563,14 @@ def _established_facts() -> list[Claim]:
     # The two headline rates are quoted in the notes' name-matching block; the rule
     # comparison below stayed with the archive.
     add("3,591", ADP_AUDIT, lambda: audit("rows_audited"), "rows audited", doc=NOTES)
-    add("0.50%", ADP_AUDIT, lambda: audit("unmatched_rate_cascade"),
+    add("0.49%", ADP_AUDIT, lambda: audit("unmatched_rate_cascade"),
         "cascade unmatched rate", doc=NOTES)
     add("0.00%", ADP_AUDIT,
         lambda: audit("unmatched_rate_surname_initial", "surname_initial"),
         "rejected rule's unmatched rate")
-    add("57", ADP_AUDIT, lambda: rows(ADP_AUDIT), "match audit rows")
+    # 57 until 2026-08-22, when `build_id_map`'s roster-snapshot tier moved 71 board rows
+    # out of the class the rejected rule was re-run on (`docs/rookie-rates-plan.md` §5g).
+    add("48", ADP_AUDIT, lambda: rows(ADP_AUDIT), "match audit rows")
 
     # The season-term verdict, claimed against the SAME artifact `docs/predictions-plan.md`
     # claims it from. Both, deliberately: this file's copy of a block going stale while the
@@ -9395,7 +9404,129 @@ def _build() -> tuple[Claim, ...]:
                  + _preseason_contest()
                  + _final_evaluation() + _rookie_floor() + _lag_recovery()
                  + _lag_ladder() + _ladder_board() + _rookie_rates() + _rookie_heads()
-                 + _season_total_rookie() + _rookie_persistence())
+                 + _season_total_rookie() + _rookie_persistence()
+                 + _rookie_forward())
+
+
+def _rookie_forward() -> list[Claim]:
+    """`docs/rookie-rates-plan.md` §7h — the forward wiring and its acceptance census.
+
+    The board figures live in `docs/final-evaluation-plan.md`'s artifacts and are claimed
+    against them there too. Claiming them twice is deliberate and is what `_lag_ladder`
+    does for the same reason: §7h is the doc a later session reads for this session's
+    verdict, and a copy of a figure that drifts while the original still audits is the
+    failure the whole guard exists for.
+
+    The id-map counts point at `adp_dk_id_map.parquet` rather than at a metrics table,
+    because that parquet IS the measurement — `make adp-draftkings` re-derives it from the
+    boards and the snapshot with no fitting in between.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, artifact: str, actual, label: str, **kw) -> None:
+        C.append(_c(quoted, artifact, actual, label, doc=ROOKIE, **kw))
+
+    def method(name: str) -> float:
+        frame = table(DK_MAP_PATH)
+        return float((frame["match_method"] == name).sum()) if frame is not None \
+            else float("nan")
+
+    add("91", DK_MAP_PATH, lambda: method("no_nba_history"),
+        "DK board rows with no NBA history, after the snapshot tier")
+    add("71", DK_MAP_PATH, lambda: method("roster_snapshot"),
+        "DK board rows the roster-snapshot tier resolves")
+    add("882", DK_MAP_PATH,
+        lambda: float((table(DK_MAP_PATH)["match_method"] != "no_nba_history").sum())
+        if table(DK_MAP_PATH) is not None else float("nan"),
+        "matchable DK ids, after the snapshot tier")
+
+    def pop(artifact: str, population: str, column: str, arm: str | None = None) -> float:
+        frame = table(artifact)
+        if frame is None:
+            return float("nan")
+        rows_ = frame[frame["population"] == population]
+        if arm is not None:
+            rows_ = rows_[rows_["arm"] == arm]
+        return float(rows_[column].iloc[0]) if len(rows_) else float("nan")
+
+    # The 2026-27 production board — §7h's headline, and the whole point of the session.
+    for population, units, priced in (("veteran", "419", "180"),
+                                      ("lag_recovered", "6", "4"),
+                                      ("true_rookie", "116", "13")):
+        add(units, FORWARD_POP_26, lambda q=population: pop(FORWARD_POP_26, q, "units"),
+            f"2026-27 forward units, {population}")
+        add(priced, FORWARD_POP_26,
+            lambda q=population: pop(FORWARD_POP_26, q, "adp_priced"),
+            f"2026-27 forward ADP-priced units, {population}")
+
+    # The 2023-24 rehearsal's census, both arms.
+    for population, retro_n, fwd_n in (("veteran", "387", "354"),
+                                       ("lag_recovered", "6", "4"),
+                                       ("true_rookie", "74", "91")):
+        add(retro_n, FORWARD_POP,
+            lambda q=population: pop(FORWARD_POP, q, "units", "retrospective"),
+            f"2023-24 retro units, {population}")
+        add(fwd_n, FORWARD_POP,
+            lambda q=population: pop(FORWARD_POP, q, "units", "forward"),
+            f"2023-24 forward units, {population}")
+    for population, retro_p, fwd_p in (("veteran", "216", "202"),
+                                       ("lag_recovered", "3", "3"),
+                                       ("true_rookie", "18", "18")):
+        add(retro_p, FORWARD_POP,
+            lambda q=population: pop(FORWARD_POP, q, "adp_priced", "retrospective"),
+            f"2023-24 retro ADP-priced, {population}")
+        add(fwd_p, FORWARD_POP,
+            lambda q=population: pop(FORWARD_POP, q, "adp_priced", "forward"),
+            f"2023-24 forward ADP-priced, {population}")
+    add("267", FORWARD_POP,
+        lambda: pop(FORWARD_POP, "lag_recovered", "best_rank", "forward"),
+        "best forward rank, lag-recovered")
+    add("66", FORWARD_POP,
+        lambda: pop(FORWARD_POP, "true_rookie", "best_rank", "forward"),
+        "best forward rank, true rookie")
+
+    # §4's second acceptance half — the rung-0 arms, which is what the session turns on.
+    def brd(column: str, arm: str) -> float:
+        frame = table(FORWARD_BOARD)
+        if frame is None:
+            return float("nan")
+        rows_ = frame[frame["arm"] == arm]
+        return float(rows_[column].iloc[0]) if len(rows_) else float("nan")
+
+    add("0.9988", FORWARD_BOARD,
+        lambda: brd("spearman", "retro_vs_retro_seed_noise__rung0"),
+        "rung-0 Spearman, seed-noise floor")
+    add("0.9986", FORWARD_BOARD,
+        lambda: brd("spearman", "forward_fixed_population_vs_retro__rung0"),
+        "rung-0 Spearman, fixed population")
+    add("25.35", FORWARD_BOARD,
+        lambda: brd("mean_abs_total_diff", "forward_fixed_population_vs_retro__rung0"),
+        "rung-0 season-total gap, fixed population")
+    add("22.64", FORWARD_BOARD,
+        lambda: brd("mean_abs_total_diff", "retro_vs_retro_seed_noise__rung0"),
+        "rung-0 season-total gap, seed noise")
+    add("354", FORWARD_BOARD,
+        lambda: brd("n_shared", "retro_vs_retro_seed_noise__rung0"),
+        "rung-0 veteran units all three contexts carry")
+    add("0.9929", FORWARD_BOARD,
+        lambda: brd("spearman", "forward_fixed_population_vs_retro"),
+        "whole-board Spearman, fixed population")
+    add("467", FORWARD_BOARD,
+        lambda: brd("n_shared", "forward_fixed_population_vs_retro"),
+        "units the fixed-population arm shares")
+    add("36", FORWARD_BOARD, lambda: brd("n_ref_only", "forward_vs_retro"),
+        "retro-board units the snapshot arm is missing")
+    add("33", FORWARD_BOARD, lambda: brd("n_alt_only", "forward_fixed_population_vs_retro"),
+        "units the fixed-population arm carries and the retro board does not")
+    # The figures §7h supersedes, presence-checked so the before/after table cannot lose
+    # half of itself: three id-map counts and three board ones.
+    for quoted in ("0.50%", "162", "811"):
+        add(quoted, DK_MAP_PATH, None, f"superseded §7h id-map figure: {quoted}",
+            historical=True)
+    for quoted in ("0.9988", "113", "80"):
+        add(quoted, FORWARD_BOARD, None, f"superseded §7h board figure: {quoted}",
+            historical=True)
+    return C
 
 
 def _final_evaluation() -> list[Claim]:
@@ -9569,40 +9700,95 @@ def _final_evaluation() -> list[Claim]:
                             "forward_fixed_population_vs_retro", "forward_vs_retro")
     add("0.9990", lambda: brd("spearman", _NOISE),
         "board Spearman, seed-noise floor", artifact=FORWARD_BOARD)
-    add("0.9988", lambda: brd("spearman", _FIXED),
+    add("0.9929", lambda: brd("spearman", _FIXED),
         "board Spearman, forward with population held fixed", artifact=FORWARD_BOARD)
-    add("0.9828", lambda: brd("spearman", _FWD),
+    add("0.9804", lambda: brd("spearman", _FWD),
         "board Spearman, forward from the snapshot", artifact=FORWARD_BOARD)
-    add("20.35", lambda: brd("mean_abs_total_diff", _NOISE),
+    add("21.61", lambda: brd("mean_abs_total_diff", _NOISE),
         "mean season-total gap, seed noise", artifact=FORWARD_BOARD)
-    add("23.25", lambda: brd("mean_abs_total_diff", _FIXED),
+    add("30.09", lambda: brd("mean_abs_total_diff", _FIXED),
         "mean season-total gap, fixed population", artifact=FORWARD_BOARD)
-    add("105.11", lambda: brd("mean_abs_total_diff", _FWD),
+    add("104.00", lambda: brd("mean_abs_total_diff", _FWD),
         "mean season-total gap, snapshot population", artifact=FORWARD_BOARD)
-    add("89", lambda: brd("overlap_100", _FWD),
+    add("87", lambda: brd("overlap_100", _FWD),
         "top-100 overlap, forward from the snapshot", artifact=FORWARD_BOARD)
-    add("98", lambda: brd("overlap_100", _FIXED),
+    add("95", lambda: brd("overlap_100", _FIXED),
         "top-100 overlap, fixed population", artifact=FORWARD_BOARD)
     add("98", lambda: brd("overlap_100", _NOISE),
         "top-100 overlap, seed-noise floor", artifact=FORWARD_BOARD)
-    add("113", lambda: brd("n_ref_only", _FWD),
+    add("36", lambda: brd("n_ref_only", _FWD),
         "retro-board players the snapshot arm is missing", artifact=FORWARD_BOARD)
-    # The rookie family and the ladder's returnees, which §5f of docs/rookie-rates-plan.md
-    # put on the retro board and §5g has yet to put on a forward one.
-    add("80", lambda: brd("n_ref_only", _FIXED),
-        "retro-board players the fixed-population arm is missing", artifact=FORWARD_BOARD)
     add("467", lambda: brd("n_shared", _NOISE),
         "units on the 2023-24 retrospective board", artifact=FORWARD_BOARD)
-    add("6", lambda: brd("missing_top100", _FWD),
+    add("5", lambda: brd("missing_top100", _FWD),
         "missing players inside the retro top 100", artifact=FORWARD_BOARD)
-    add("387", lambda: brd("n_shared", _FIXED),
+    add("17", lambda: brd("best_missing_rank", _FWD),
+        "best retro rank the snapshot arm is missing", artifact=FORWARD_BOARD)
+    add("467", lambda: brd("n_shared", _FIXED),
         "units shared by the fixed-population arm", artifact=FORWARD_BOARD)
-    # The 2026-08-21 run, kept whole beside the re-run because what did NOT move is the
+    add("33", lambda: brd("n_alt_only", _FIXED),
+        "units the fixed-population arm carries and the retro board does not",
+        artifact=FORWARD_BOARD)
+    # §5g of docs/rookie-rates-plan.md: the acceptance is the RUNG-0 arm, because the
+    # whole-board figure now folds in two populations the retro board does not carry.
+    add("0.9988", lambda: brd("spearman", f"{_NOISE}__rung0"),
+        "rung-0 board Spearman, seed-noise floor", artifact=FORWARD_BOARD)
+    add("0.9986", lambda: brd("spearman", f"{_FIXED}__rung0"),
+        "rung-0 board Spearman, fixed population", artifact=FORWARD_BOARD)
+    add("0.9818", lambda: brd("spearman", f"{_FWD}__rung0"),
+        "rung-0 board Spearman, snapshot population", artifact=FORWARD_BOARD)
+    add("22.64", lambda: brd("mean_abs_total_diff", f"{_NOISE}__rung0"),
+        "rung-0 season-total gap, seed noise", artifact=FORWARD_BOARD)
+    add("25.35", lambda: brd("mean_abs_total_diff", f"{_FIXED}__rung0"),
+        "rung-0 season-total gap, fixed population", artifact=FORWARD_BOARD)
+    add("108.98", lambda: brd("mean_abs_total_diff", f"{_FWD}__rung0"),
+        "rung-0 season-total gap, snapshot population", artifact=FORWARD_BOARD)
+    add("354", lambda: brd("n_shared", f"{_NOISE}__rung0"),
+        "rung-0 veteran units all three contexts carry", artifact=FORWARD_BOARD)
+    # The superseded runs, kept whole beside the re-runs because what did NOT move is the
     # reading: Session 6 of docs/rookie-rates-plan.md widened the retro board's population
-    # and left the mechanics arms inside seed noise.
-    for quoted in ("0.9989", "22.17", "21.03"):
-        add(quoted, None, f"superseded 2026-08-21 forward-board figure: {quoted}",
-            historical=True)
+    # and Session 7 built the forward rows for it, and the mechanics arms stayed inside
+    # seed noise across both.
+    for quoted in ("0.9989", "22.17", "21.03", "0.9988", "113", "80"):
+        add(quoted, None, f"superseded forward-board figure: {quoted}", historical=True)
+
+    # §6i — the population census, `docs/rookie-rates-plan.md` §4's other acceptance half.
+    def pop(arm: str, population: str, column: str) -> float:
+        frame = table(FORWARD_POP)
+        rows_ = frame[(frame["arm"] == arm) & (frame["population"] == population)]
+        return float(rows_[column].iloc[0]) if len(rows_) else float("nan")
+
+    for population, n_retro, n_fwd, priced_retro, priced_fwd in (
+            ("veteran", "387", "354", "216", "202"),
+            ("lag_recovered", "6", "4", "3", "3"),
+            ("true_rookie", "74", "91", "18", "18")):
+        add(n_retro, lambda q=population: pop("retrospective", q, "units"),
+            f"retro units, {population}", artifact=FORWARD_POP)
+        add(n_fwd, lambda q=population: pop("forward", q, "units"),
+            f"forward units, {population}", artifact=FORWARD_POP)
+        add(priced_retro, lambda q=population: pop("retrospective", q, "adp_priced"),
+            f"retro ADP-priced units, {population}", artifact=FORWARD_POP)
+        add(priced_fwd, lambda q=population: pop("forward", q, "adp_priced"),
+            f"forward ADP-priced units, {population}", artifact=FORWARD_POP)
+    add("267", lambda: pop("forward", "lag_recovered", "best_rank"),
+        "best forward rank, lag-recovered", artifact=FORWARD_POP)
+    add("66", lambda: pop("forward", "true_rookie", "best_rank"),
+        "best forward rank, true rookie", artifact=FORWARD_POP)
+
+    # The 2026-27 production board, censused off the frames — a test season cannot be
+    # simulated, so this artifact has no `best_rank` and never will.
+    def pop26(population: str, column: str) -> float:
+        frame = table(FORWARD_POP_26)
+        rows_ = frame[frame["population"] == population]
+        return float(rows_[column].iloc[0]) if len(rows_) else float("nan")
+
+    for population, n_units, n_priced in (("veteran", "419", "180"),
+                                          ("lag_recovered", "6", "4"),
+                                          ("true_rookie", "116", "13")):
+        add(n_units, lambda q=population: pop26(q, "units"),
+            f"2026-27 forward units, {population}", artifact=FORWARD_POP_26)
+        add(n_priced, lambda q=population: pop26(q, "adp_priced"),
+            f"2026-27 forward ADP-priced units, {population}", artifact=FORWARD_POP_26)
 
     # ── §4d: the chain — Gate A on the held-out seasons, and the one-world contest ──
     def chain_a(metric: str, season: str, arm: str = "gate_a/season_total_dk") -> float:
