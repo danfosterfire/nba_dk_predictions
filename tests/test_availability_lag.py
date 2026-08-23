@@ -311,3 +311,113 @@ def test_the_lag_columns_still_backfill_from_the_recovered_block(tmp_path):
     for col in LAG_COLS:
         assert np.isfinite(last.loc[3, f"{col}_lag2"]), col
         assert np.isfinite(last.loc[3, f"{col}_lag3"]), col
+
+
+# ── Turning the availability ladder on — §16j's second edit ──────────────────
+
+def _cfgs():
+    """`(ladder off, ladder on)` — the shipped config and the same with the key emptied."""
+    import copy
+    import yaml
+
+    on = yaml.safe_load(open("configs/default.yaml"))
+    off = copy.deepcopy(on)
+    off["stan"]["availability"]["lag_ladder"] = []
+    return off, on
+
+
+def test_the_shipped_config_admits_the_one_rung_the_availability_gate_cleared():
+    """§16i's verdict, as the key seven consumers read.
+
+    Pinned because this key is a config list whose blast radius is the widest in the
+    project: it reaches the minutes head, the composition, the spell process and the
+    simulator through one choke point, and two of its three rungs were measured as losses.
+    """
+    import yaml
+
+    cfg = yaml.safe_load(open("configs/default.yaml"))
+    assert cfg["stan"]["availability"]["lag_ladder"] == ["returnee_lag2"]
+
+
+def test_every_availability_fitting_path_cuts_to_rung_zero():
+    """§16's imputation-only claim, pinned by parsing rather than by discipline.
+
+    `availability_design` is the choke point seven consumers reach their rows through, and
+    §16i's shipped arm scores the recovered rows with a posterior fitted BEFORE the ladder
+    existed — the arm that admitted them to a fit was built, priced and rejected. So every
+    module that fits from this design must cut to `rung_zero` first, and a new one that
+    does not has to fail here rather than silently widen four heads' fitting populations.
+
+    `StanAvailability.fitting_rows` is the head's own choke point and covers `run`,
+    `fit_and_score`'s two point MLEs, `posteriors` and `final_evaluation` at once, which is
+    why those four are not listed separately.
+    """
+    import pathlib
+
+    for module in ("src/models/stan_availability.py",      # the head's own fitting_rows
+                   "src/models/stan_minutes.py",
+                   "src/models/stan_composition.py",
+                   "src/models/stan_games_played.py",
+                   "src/models/season_terms.py",
+                   "src/models/availability_exchangeability.py",
+                   "src/models/availability_no_prior.py",
+                   "src/models/model_cards.py"):
+        source = pathlib.Path(module).read_text()
+        assert "rung_zero(" in source, (
+            f"{module} reaches `availability_design` and does not cut to rung 0; §16's "
+            f"ladder would enter its fitting population")
+
+
+def test_the_ladder_widens_the_design_and_rung_zero_takes_it_back():
+    """The design gains rows; the rows any head reads do not move.
+
+    The claim is stated on the FEATURE MATRIX rather than on the frame, because the frame
+    does move: `availability_preseason` writes a season-CENTRED twin of the preseason
+    minutes level, and a season mean is a property of the frame, so 189 new rows shift it.
+    That column is in no head's feature list and the matrix is what the coefficients see.
+    """
+    from src.models.availability import ladder_recovered, rung_zero
+    from src.models.stan_availability import (PI_FEATURES, StanAvailability, head_design,
+                                              head_features)
+
+    off, on = _cfgs()
+    d_off, d_on = head_design(off), head_design(on)
+    assert len(d_on) > len(d_off)
+    assert int(ladder_recovered(d_on).sum()) == len(d_on) - len(d_off)
+    assert not ladder_recovered(d_off).any()
+
+    head = StanAvailability(first_season="2012-13")
+    f_off, f_on = head.fitting_rows(d_off), head.fitting_rows(d_on)
+    assert len(f_off) == len(f_on)
+    for block in (head_features(True), list(PI_FEATURES), ["gp", "team_games"]):
+        np.testing.assert_array_equal(f_off[block].to_numpy(dtype=float),
+                                      f_on[block].to_numpy(dtype=float))
+
+
+def test_the_ladder_leaves_the_other_three_heads_bit_identical():
+    """The minutes head, the composition and the spell process do not move at all.
+
+    §16i measured the ladder on games played and on nothing else, so the three heads that
+    merely *read* this design have to come back unchanged — and the composition is cut at
+    its MERGE rather than at its split, so its scoring block is unmoved too. Without that
+    cut, 5,710 player-game rows would flip `design_missing` from 1 to 0 and move `impute`'s
+    train means, which is a different head and the one refit in this project measured in
+    hours.
+    """
+    import pandas as pd
+    from pathlib import Path
+
+    from src.models.stan_composition import head_frame
+    from src.models.stan_games_played import games_played_design
+    from src.models.stan_minutes import head_design as minutes_head_design
+
+    off, on = _cfgs()
+    panel = pd.read_parquet(
+        Path(on["data"]["features_dir"]) / "availability_panel.parquet")
+    for label, builder in (("minutes", lambda c: minutes_head_design(c)),
+                           ("composition", lambda c: head_frame(c)),
+                           ("games_played", lambda c: games_played_design(c, panel))):
+        a, b = builder(off).reset_index(drop=True), builder(on).reset_index(drop=True)
+        assert len(a) == len(b), f"{label}: {len(a)} vs {len(b)}"
+        differing = [c for c in a.columns if c in b.columns and not a[c].equals(b[c])]
+        assert not differing, f"{label} moved on {differing}"

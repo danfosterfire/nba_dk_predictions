@@ -98,7 +98,7 @@ from src.eda.season_effects import ROLE_EDGES, ROLE_LABELS
 from src.features.targets import (BONUS_CATEGORIES, BONUS_GAME_OVERDISPERSION,
                                   expected_bonus)
 from src.models.availability import (FEATURE_COLS, LeagueAgeBaseline, crps as gp_crps,
-                                     pit_values)
+                                     pit_values, rung_zero)
 from src.models.component_rates import (CONVERSION_HEADS, COUNT_HEADS, DERIVED_COUNTS,
                                         build_design as build_component_design)
 from src.models.held_out import selection_split
@@ -974,7 +974,10 @@ def run(cfg: dict) -> dict[str, Path]:
     print(minutes[["arm", "val_crps", "val_r2", "val_bias",
                    "val_coverage_80", "selected"]].round(3).to_string(index=False))
 
-    av_design = availability_design(cfg)
+    # Rung 0 only: this is an ABLATION over the shipped head and its arms are fitted, so
+    # §16's recovered rows would move every one of them — `docs/availability-window-plan.md`
+    # §16j.
+    av_design = rung_zero(availability_design(cfg))
     a_train, a_val = selection_split(av_design, test_seasons)
     l2 = float(cfg.get("features", {}).get("availability", {}).get("glm_l2", 1.0))
     availability, diag_av = sweep_availability(a_train, a_val, cfg_stan, l2)

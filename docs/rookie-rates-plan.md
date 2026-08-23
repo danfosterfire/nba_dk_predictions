@@ -5,7 +5,7 @@ a component-rate head family for the players the veteran heads structurally cann
 — true rookies, returnees, and thin-prior fringe — so they can appear on a board and be
 drafted. Seven sessions, each with its own prompt (§6), each appending its results here.
 
-## 🚧 STATUS: SESSIONS 1-5 RUN 2026-08-22 (§7a, §7c, §7d, §7e, §7f). DESIGN REVISED 2026-08-22 (§7b). THE INTERLEAVED ROUND — `docs/availability-window-plan.md` §16 — RAN 2026-08-22 AND §7f HAS ITS NUMBER. ⏭ NEXT IS SESSION 6.
+## 🚧 STATUS: SESSIONS 1-6 RUN 2026-08-22 (§7a, §7c, §7d, §7e, §7f, §7g). DESIGN REVISED 2026-08-22 (§7b). THE INTERLEAVED ROUND — `docs/availability-window-plan.md` §16 — RAN 2026-08-22 AND §7f HAS ITS NUMBER. ⏭ NEXT IS SESSION 7.
 
 **The program is eight sessions, not seven, and the rookie head serves a smaller
 population than the one it was scheduled for.** §7b measured that a player with *any* prior
@@ -46,6 +46,19 @@ level down. The session's largest incidental finding is elsewhere: the ladder's 
 given **24.738** games against a realized **46.857**, and an oracle on games takes their MAE
 from 543.3167 to 64.4025.
 
+**The family is persisted and the simulator draws it** (§7g): `stan.components.lag_ladder`
+is `[returnee_lag2]`, the eleven `rookie-components` posteriors exist at all three windows
+(ten deterministic plug-ins, `reb` fitted), and `build_context`'s scorable units are the
+**union** of the two rate families — **471** and **467** units on the two validation seasons
+against 386 and 387, with Victor Wembanyama on a board for the first time. `make
+production-check` is green on 31 of 31 heads. **The tensors on disk were not regenerated**:
+what the change is worth in contest units is §5h's replay against §7a's floor.
+
+⚠️ **Session 6 left one thing broken for the length of a session and
+`docs/availability-window-plan.md` §16j fixed it**: the ladder's recovered returnees went
+into the tensor at the availability plug-in's 24.7 games. That key is now on too, so both
+ladders ship — see §7g's closing item.
+
 **§7a, §7b, §7c, §7d, §7e and §7f are in `make docs-audit`** (`_rookie_floor`,
 `_lag_recovery`, `_lag_ladder`, `_rookie_rates`, `_rookie_heads` and `_season_total_rookie`,
 against `strategy_rookie_floor.csv`, the
@@ -58,6 +71,11 @@ the audit the same day (see `docs/docs-audit.md`).
 
 ## 1. The problem
 
+*Written before the program ran, and kept as the problem statement it is. The
+retrospective half was closed on 2026-08-22 by §7g — a 2023-24 board now carries 74 true
+rookies — and the forward half is §5g's. Everything below describes the state the program
+was opened against.*
+
 Every board this project has produced, forward or retrospective, contains **zero true
 rookies**, and the mechanism is structural: all eleven component rate heads are
 lag-designs. `component_rates.build_design` drops any row with NaN lag columns
@@ -69,7 +87,8 @@ Wembanyama is not among the 387 scorable units the shipped path ranked that seas
 The consequence is asymmetric. Rookies DO absorb minutes (the composition's expanding
 draft-bucket priors) and DO carry an availability rate (the graded no-design level), so
 their teammates' totals are right — but their own dk_pts are never scored. The simulator's
-scorable units are `component design ∩ composition players` (`src/sim/season.py:978-982`);
+scorable units are `component design ∩ composition players` (`sim/season.build_context`,
+which §7g replaced with `component_units`);
 a player missing from the design stays in the grid, drains teammate minutes, and never
 enters the tensor. Downstream, `priceable_room` (`src/sim/strategy.py:698-763`) restricts
 the sweep's board symmetrically and *measures* the hole: 101/105 board rows dropped in the
@@ -477,7 +496,8 @@ verbatim; keep the two in step if either is edited.
    > `make docs-audit`, and re-run `make season-total-rookie` so §7f of
    > docs/rookie-rates-plan.md gets its number.
 
-6. > I'm working on the NBA prediction project (CLAUDE.md). Read
+6. ✅ **Done 2026-08-22 — §7g.**
+   > I'm working on the NBA prediction project (CLAUDE.md). Read
    > docs/rookie-rates-plan.md and execute **Session 6 (§5f): persistence and simulator
    > integration** — the `rookie-components` posterior group at `train_val` and `full`,
    > deterministic recipes for floor-shipped heads, the `build_context` units union with
@@ -1419,3 +1439,198 @@ it to the draftable one — the plug-in's own defect, one level up. The imputati
 ships at one rung of three, `returnee_lag2`, exactly as §7c's component ladder did on the
 same vocabulary. `n_prior_seasons` now counts real seasons rather than depth, and
 `lag_interior_gaps` sees the 130 `(1,0,1)` rows.
+
+### 7g. Session 6 — the family persisted, the ladder turned on, and a board with rookies on it (run 2026-08-22)
+
+**`make posteriors --groups rookie-components` at all three windows**, plus two edits that
+turn §7c's admitted rung on and one that makes the simulator's scorable units the union of
+the two rate families. Nothing is measured here: this session is **plumbing**, and its
+result is that a 2023-24 board now contains Victor Wembanyama.
+
+#### The ladder, on — and it is two edits because one of them is the guard
+
+`stan.components.lag_ladder: [returnee_lag2]` is §7c's verdict, and it reaches the heads
+through `stan_components.head_design` alone — never through the bare `build_design` that
+twelve modules call. The design goes from **10,194** rows to **10,383**, which is
+`lag_ladder.csv`'s own `returnee_lag2` census of **189** arriving where the heads can see
+it.
+
+The second edit is the one §3 constraint 4 depends on: `selection_split` and
+`windowed` split on **season** and know nothing about rungs, so every path that *fits*
+rather than scores takes its training frame through `component_rates.fitting_rows` first.
+Three do — `stan_components.run`, `posteriors.component_artifacts` and
+`model_cards.component_frames`, the last because it re-derives each head's fitted state
+(imputation means, spline knots) and checks the persisted recipe against it at 1e-9, so a
+widened training frame would fail heads that are correct. `season_terms` and
+`components_preseason` reach `component_rates.build_design` directly and are pre-ladder by
+construction; `tests/test_lag_ladder.py` pins all five by parsing, so a fourth fitting path
+fails there rather than silently.
+
+**Rung 0 comes back bit-identical on every column any head reads** — 48 feature and target
+columns over 10,194 rows, checked through `head_design` rather than through `build_design`,
+which is one layer further out than §7c's own test. Eleven columns *do* move and they are
+named rather than glossed: `components_preseason.attach_preseason` writes a season-**centred**
+twin of every preseason delta, and a season mean is a property of the frame, so 189 new rows
+shift it. None of the eleven is in any head's feature list — the shipped block is the
+volume-shrunk delta, a per-row product that cannot move — and `own_delta_centered` is an
+ablation arm that ships nowhere. A test asserts no head's preseason block names a `_centered`
+column, so if one is ever shipped this fails and the fix is to centre on rung 0.
+
+#### The eleven artifacts, and what a plug-in looks like when it is one
+
+`posteriors.GROUPS` gains `rookie-components`; the heads are namespaced `rookie_*` because
+both families share a window directory and a rookie `reb` landing on `reb.pkl` would
+overwrite the head that scores everybody else.
+
+**Ten of the eleven are deterministic and one samples**, which is §7e's ship split read out
+of `rookie_rate_metrics.csv` rather than pinned. A floor-shipped head is persisted as a
+`DesignRecipe` with one step and one feature: the step writes §7d's floor **on the head's own
+link** — `log(rate / 36)` for a count, `logit(p)` for a conversion — and the artifact carries
+`beta = 1`, `alpha = 0`, identical on every draw, so the family's own inverse link hands the
+floor's prediction straight back. That is what makes a plug-in and a fitted head the same
+object to `component_rates`, and it is `sim/season.no_design_availability`'s shape one family
+over: no posterior, so the predictive does not integrate over one. The draws are 1,000
+identical rows rather than one, because `build_context` takes `min(a.n_draws …)` across the
+bundle and a single-row head would collapse the twenty that do have a posterior to one draw.
+
+The dispersion is **not** constant in the same sense: `phi` / `rho` are fitted on the head's
+own fitting rows by `count_floor_predictive` / `conversion_floor_predictive`, so the plug-in
+is a distribution rather than a point — a point estimate *of a dispersion*, repeated per
+draw, which is exactly what §7d scored the floor's CRPS with.
+
+The expanding draft-bucket prior table travels **inside** the step, for the reason the
+composition's team-context block does: a rebuilt `rookie_rate_floors.csv` must not silently
+change what a persisted posterior scores. It is point-in-time by construction — season S
+averages true rookies from seasons strictly before S — so carrying it is not carrying an
+answer, and its **history is the window's own**: the `train` artifact's floors have never
+read a test season. A season the table does not cover **raises** rather than extrapolating,
+which is how a 2026-27 forward row will announce that §5g's tier is missing.
+
+| window | rookie fit rows | fitted head | its R-hat | divergences | worst round-trip |
+|---|---:|---|---:|---:|---:|
+| `train` | 1,161 | `reb` @ `slot_interaction_spline` | 1.0014 | 0 | 3.41e-13 |
+| `train_val` | 1,307 | same | 1.0032 | 0 | 3.41e-13 |
+| `full` | 1,438 | same | 1.00418 | 0 | 3.41e-13 |
+
+The 1,161 is §7e's own fitting population to the row. The round-trip error is not zero and
+should not be: a floor head's design is `log(rate/36)` and its prediction is `exp` of that,
+so the gate measures a log/exp round trip against a **1e-8** bar. The design half is exactly
+0.0 on all eleven.
+
+**The whole group builds in 4.7 seconds at the `full` window** — `reb` is 4.5 of them and
+the ten floors are 0.01–0.02 each, which is two dispersion fits and a round-trip rather
+than a sampler. `make posteriors` was a day; this adds nothing to it.
+
+#### The manifest, and the two columns that stop a plug-in wearing a fitted head's name
+
+Every window now carries **31** manifest rows, and `manifest_row` gains
+`family_population` (`veteran` / `true_rookie`) and `deterministic`. Both are in
+`SPECIFICATION_COLUMNS`, so `assert_same_specification` compares on **10** columns rather
+than 8 — which is the point: a head deployed at `full` as a fitted arm while `train`
+selected the floor is exactly the class of failure that check exists for, and neither
+`variant` alone nor `n_features` alone would catch every case of it.
+
+`make production-check` is **green**: 31 of 31 heads at `full`, all matching the `train`
+specification on those ten columns. The `full` manifest's worst R-hat is still **1.00608**
+and its divergence count still **0**, because the one rookie head that samples reads
+1.00418.
+
+`make model-cards` still cards **20** heads and prints the eleven it does not, by name,
+against a `DEFERRED_PREFIXES` rule — §5h decides whether the rookie family gets cards and
+what `chain_role` it declares. `tests/test_model_cards.py` checks the deferral rather than
+exempting it: the deferred keys must be **exactly** the component heads' rookie twins, so a
+rookie head the simulator stops reading, or a twelfth one it starts reading, fails there.
+
+#### The union, and where a board gains rows
+
+`build_context`'s `units` is now `component_units(veteran design, rookie design, season,
+composition players)` — both families intersected with the minutes allocation, concatenated
+veteran-first, and labelled with `unit_family`. Disjointness is **asserted on every build**
+rather than trusted, because the failure is silent: a player in both families takes two rows
+in `units`, two entries in the tensor and two slots on a board, and every marginal still
+looks plausible. The rookie rows inherit the ladder's own provenance vocabulary —
+`lag_rung = true_rookie`, `lag_source = none` — so a board can say which rung scored a
+player, and `total_minutes_lag1 = 0`, which is literally true rather than a fill and puts a
+rookie in the lowest `prior_minutes` bucket every tensor consumer already has.
+
+`component_rates` branches by family and scatters the blocks back. Scoring the whole frame
+through one recipe would **not** raise — `DesignRecipe._block` fills a missing column with
+zero and then standardizes it, so a rookie would be priced off the veteran design's mean
+prior season — which is why the branch is on rows rather than on a `try`.
+
+| season | veteran | `returnee_lag2` | true rookie | units | ADP-priced |
+|---|---:|---:|---:|---:|---:|
+| 2022-23 | 386 | 13 | 72 | **471** (was 386) | **211** (was 194) |
+| 2023-24 | 387 | 6 | 74 | **467** (was 387) | **237** (was 216) |
+
+*Scratch measurement, 2026-08-22, not in `make docs-audit`* — reproduce with
+`build_context(cfg, season, "train", …)` and `adp_panel.parquet`. The ladder's 7 and 3
+ADP-priced rows are §7c's admitted count to the digit. The rookie head's 10 and 18 are
+larger than §7b's 9 and 15 because the denominators differ: §7b counted draft-board rows and
+this counts units that reach the tensor and carry a panel row.
+
+**The 2023-24 board's top five rookies are Chet Holmgren, Scoot Henderson, Victor
+Wembanyama, Brandon Miller and Ausar Thompson**, and the recovered returnees are Miles
+Bridges, Danilo Gallinari, Isaiah Thomas and Tristan Thompson — §7f's own named rows,
+arriving in the tensor rather than in a table beside it. The ordering inside the rookie
+block is coarse and should be: ten of the eleven heads are a preseason-per-36 blend, so the
+family separates a lottery pick from a second-rounder far better than it separates
+Wembanyama from Holmgren.
+
+#### What the veteran units did not do
+
+**§5f's spot-check is at the rates, not at the tensor, and that is forced.** Adding rows
+moves the RNG stream — `_sim_one` draws a per-unit gamma and a per-unit beta sized by
+`n_units` — so no simulated season can be bit-identical across a population change. The
+claim that *is* well-posed is that the union does not change what a unit the veteran design
+already carried is **scored with**, and it holds exactly: on 2023-24's 393 veteran-family
+rows, every count rate, every conversion probability and every dispersion is bit-identical
+to scoring those rows alone. A single-family frame also keeps the pre-union **shapes** —
+`phi` stays `(draws,)` rather than being promoted to `(draws × n_units)` — which is not
+cosmetic, since numpy's scalar and array gamma paths are different code and a promoted
+shape would move every retrospective tensor for no modelling reason.
+
+`make forward-board` re-run at 500 sims says the same thing from the board's end: on the 387
+units both arms share, Spearman **0.9988** against a **0.9990** seed-noise floor, where
+2026-08-21 read 0.9989 against 0.9990. The population column is where everything moved — the
+retro board is **467** units and the forward arms carry **80** fewer, because
+`rookie_rates.build_design` carves its population out of `component_targets` and "he played
+in the NBA this season" is target-season information a forward context may not read.
+`forward_context` withholds those rows and prints how many. **That is a leak guard, not a
+deferral**, and it is why §5g is the session that puts a rookie on a *forward* board.
+
+#### What Session 6 settles, and what it does not
+
+- **Settled**: the family is persisted and reproducible. Eleven artifacts at three windows,
+  every one round-tripping from its saved draws and recipe alone, and `production_check`
+  green on 31 of 31 heads at `full` under a specification check that now reads the two
+  columns telling a plug-in from a fit.
+- **Settled**: the ladder is on, and rung 0's design is bit-identical on every column any
+  head reads. The fitting population did not move, which is the only thing that makes
+  scoring these rows with coefficients fitted before the ladder existed legitimate.
+- **Settled**: rookies and lag-recovered returnees are in the tensor. 471 and 467 scorable
+  units on the two validation seasons against 386 and 387, and 17 and 21 more ADP-priced
+  rows — the hole §1 measured, closed on the retrospective path.
+- **Not measured**: what any of it is worth. **The tensors on disk were NOT regenerated**,
+  deliberately: every downstream artifact — the strategy sweep, Gate A, the mixture arms,
+  the draft room's board — is built on the rookie-less ones, and re-running them is §5h's
+  symmetric replay against §7a's floor. Until then `make simulate-season` and everything
+  after it will produce different numbers from the ones on disk, and that is the wiring
+  being live rather than a regression.
+- **Not measured**: `priceable_room`'s drop, for the same reason — it reads the tensor's
+  `scorable` mask, so the "101 of 105 board rows dropped" figure §1 quotes moves only when
+  the tensor is rebuilt.
+- **Not settled**: the forward board. It carries no rookies and cannot until §5g builds
+  their rows from a roster snapshot and closes the ADP id-map's negative-surrogate tier.
+- **⚠️ Was open for the length of this session, and is now CLOSED by
+  `docs/availability-window-plan.md` §16j.** Session 6 wired the ladder's returnees into
+  the tensor while `stan.availability.lag_ladder` was still `[]`, so they were given
+  **24.7** games against a realized 46.9 — exactly what the §6 runbook interleaved §16
+  ahead of this session to prevent, and it happened anyway because §16c's blast-radius
+  argument had left the key off pending its own decision. §16j took that decision: the key
+  is on, `availability.rung_zero` is threaded through all eight paths that fit, and the
+  zero-sum transfer is measured at the board rather than assumed. On these rows the
+  simulator now gives **39.71** and **35.88** games against realized 38.00 and 33.33, worth
+  **−214.76** and **−82.23** dk_pts of season-total MAE, and the teammates who lose the
+  minutes pay +3.93 and +3.88 — inside the seed noise on the same rows. `make ladder-board`
+  is that reading.

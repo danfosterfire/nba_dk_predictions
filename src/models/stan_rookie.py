@@ -455,6 +455,35 @@ def finalize(table: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+# ── What the gate decided, for everything downstream ──────────────────────────
+
+def ship_arms_from(table: pd.DataFrame) -> dict[str, str]:
+    """`head -> the variant it ships`, off a `rookie_rate_metrics.csv` table.
+
+    Read on `DECISION_POPULATION` and nowhere else: `ships` is written onto every row of a
+    head's block, but §4 reads its verdict on the draftable population and a table filtered
+    any other way would be a different gate's answer.
+    """
+    block = table[table["population"] == DECISION_POPULATION]
+    return {str(head): str(part["ships"].iloc[0])
+            for head, part in block.groupby("head")}
+
+
+def ship_arms(path: Path | str) -> dict[str, str]:
+    """`head -> the variant it ships`, from `rookie_rate_metrics.csv`.
+
+    Read rather than pinned, because §4's gate is what decides it and a constant copied
+    into a module is a constant that can stop matching the run that measured it. Today that
+    is `reb` at `slot_interaction_spline` and ten `no_fit_floor`s.
+
+    Lives here rather than beside either consumer because this module is what WRITES the
+    column: `season_total_rookie` composes the ship split into a season total and
+    `posteriors.rookie_component_artifacts` persists it, and two readers of one verdict is
+    one reader too many.
+    """
+    return ship_arms_from(pd.read_csv(path))
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def fitting_frames(cfg: dict) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:

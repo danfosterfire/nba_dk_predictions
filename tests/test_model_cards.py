@@ -193,9 +193,12 @@ def _sim_artifact_keys() -> set[str]:
     - `artifacts["gp_duration"]` — a literal, taken as itself;
     - `artifacts[artifact_name(head)]` — the component loop, whose head list is
       `component_rates`' own, so it is expanded from that list through the simulator's own
-      `artifact_name` rather than from a copy of the names kept here.
+      `artifact_name` rather than from a copy of the names kept here;
+    - `artifacts[artifact_key]` — `season.family_artifact`, which since
+      `docs/rookie-rates-plan.md` §5f picks one of the two rate families' twin of a
+      component head. It expands to BOTH families, because both are read at draw time.
 
-    Anything else raises, so a third addressing form fails this test instead of quietly
+    Anything else raises, so a fourth addressing form fails this test instead of quietly
     widening the declared draw path.
     """
     keys: set[str] = set()
@@ -210,15 +213,23 @@ def _sim_artifact_keys() -> set[str]:
                 keys.add(key.value)
             elif (isinstance(key, ast.Call) and isinstance(key.func, ast.Name)
                   and key.func.id == "artifact_name"):
-                keys |= {S.artifact_name(head) for head in COUNT_HEADS}
-                keys |= {S.artifact_name(f"{made}|{attempted}")
-                         for made, attempted in CONVERSION_HEADS}
+                keys |= _component_keys()
+            elif isinstance(key, ast.Name) and key.id == "artifact_key":
+                keys |= _component_keys()
+                keys |= {f"{S.ROOKIE_PREFIX}{name}" for name in _component_keys()}
             else:
                 raise AssertionError(
                     f"{path}:{node.lineno} addresses the posterior bundle as "
                     f"`{ast.unparse(node)}`, which this scanner cannot resolve. Teach it "
                     f"the form or the declared draw path stops being checkable.")
     return keys
+
+
+def _component_keys() -> set[str]:
+    """The eleven rate heads' artifact names, through the simulator's own `artifact_name`."""
+    return ({S.artifact_name(head) for head in COUNT_HEADS}
+            | {S.artifact_name(f"{made}|{attempted}")
+               for made, attempted in CONVERSION_HEADS})
 
 
 def test_every_head_declares_a_chain_role_from_the_closed_vocabulary():
@@ -243,8 +254,17 @@ def test_the_declared_draw_path_is_what_the_simulator_actually_reads():
     that the simulator never loads is a page overstating what ships; a head the simulator
     loads that is declared out of it is a page understating it, which is how the
     Availability class intro came to describe five heads as two alternates.
+
+    Since §5f of `docs/rookie-rates-plan.md` the simulator also reads a second rate family,
+    and those eleven heads deliberately have no `HeadSpec` yet — §5h decides whether they
+    get a card. That deferral is checked rather than exempted: the deferred keys must be
+    EXACTLY the component heads' rookie twins, so a rookie head the simulator stops
+    reading, or a twelfth one it starts reading, fails here.
     """
-    assert M.draw_path_heads() == _sim_artifact_keys()
+    keys = _sim_artifact_keys()
+    deferred = {key for key in keys if M.deferred(key)}
+    assert keys - deferred == M.draw_path_heads()
+    assert deferred == {f"{S.ROOKIE_PREFIX}{name}" for name in _component_keys()}
 
 
 def test_the_availability_chain_is_a_count_head_and_a_layout_head():

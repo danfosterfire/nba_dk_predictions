@@ -93,7 +93,8 @@ import pandas as pd
 import yaml
 
 from src.models.held_out import selection_split
-from src.models.posteriors import (DESIGN_TOL, fit_first_season, team_game_probe, load_all,
+from src.models.posteriors import (DESIGN_TOL, ROOKIE_PREFIX, fit_first_season,
+                                   team_game_probe, load_all,
                                    posteriors_dir, require_window)
 from src.models.stan_utils import ks_uniform, pit_from_samples, thin
 
@@ -462,6 +463,25 @@ for _head, _what in _CONVERSION_DESCRIPTIONS.items():
                             "box_score_component")
 
 
+#: Heads that are on disk and deliberately have **no card yet**, with the session that
+#: decides whether they get one. `load_all` globs the window directory, so a new posterior
+#: group arrives here the moment it is fitted — and the raise in `chain_role` is the guard
+#: that says "declare it", which is the right default and the wrong answer for a family
+#: whose card is a scheduled decision rather than an oversight.
+#:
+#: The eleven `rookie_*` heads are `docs/rookie-rates-plan.md` §5f's `rookie-components`
+#: group. §5h is where they are given a `HeadSpec` and a `chain_role` or a reason not to
+#: be; until then they are skipped by prefix and COUNTED in the run's own output, so the
+#: deferral is visible rather than silent. Nothing else may be deferred — an undeclared
+#: head outside this rule still raises.
+DEFERRED_PREFIXES = (ROOKIE_PREFIX,)
+
+
+def deferred(head: str) -> bool:
+    """Is this head one the emitter is knowingly not carding yet?"""
+    return head.startswith(DEFERRED_PREFIXES)
+
+
 def chain_role(head: str) -> ChainRole:
     """The head's declared role in the shipped chain, or a raise naming the vocabulary."""
     spec = SPECS.get(head)
@@ -632,11 +652,18 @@ def availability_frames(cfg: dict, artifacts: dict) -> dict[str, HeadFrames]:
     # the preseason block this head ships (docs/preseason-plan.md P2). Rebuilding from
     # `availability_design` would fail `verify` on five missing columns rather than on
     # anything being wrong.
+    from src.models.availability import rung_zero
     from src.models.stan_availability import head_design, restrict_window
 
     test_seasons = _test_seasons(cfg)
     train, val = _split_pair(head_design(cfg), test_seasons)
-    train = restrict_window(train, str(art.extras.get("fit_first_season") or "") or None)
+    # `rung_zero` then the window — `StanAvailability.fitting_rows`' own order, and the
+    # only place in this module that has to restate it because this head's frames are the
+    # design itself rather than a variant ladder's output. Without it the §16 ladder's
+    # recovered rows would enter the rebuilt fitting frame and the population anchor would
+    # raise against the row count `posteriors.py` recorded from the head's own cut.
+    train = restrict_window(rung_zero(train),
+                            str(art.extras.get("fit_first_season") or "") or None)
     return {"availability": _frames("availability", train, val, train, val,
                                     art.recipe.features)}
 
@@ -722,7 +749,7 @@ def component_frames(cfg: dict, artifacts: dict) -> dict[str, HeadFrames]:
     of 6b's wiring gap, and the reason that check compares row counts rather than trusting
     that two modules agree about what a head's frame is.
     """
-    from src.models.component_rates import CONVERSION_HEADS, COUNT_HEADS
+    from src.models.component_rates import CONVERSION_HEADS, COUNT_HEADS, fitting_rows
     from src.models.stan_components import (PRESEASON, SPLINE_KNOTS, conversion_variants,
                                             count_variants, covered_fitting_rows,
                                             head_design, head_features, head_fitting_rows)
@@ -736,6 +763,13 @@ def component_frames(cfg: dict, artifacts: dict) -> dict[str, HeadFrames]:
     preseason = bool(cfg.get("stan", {}).get("components", {})
                      .get("preseason", PRESEASON))
     train_full, val = _split_pair(head_design(cfg, preseason), test_seasons)
+    # Rung 0 alone on the FIT half, exactly as `posteriors.component_artifacts` cuts it.
+    # This module refits nothing, but it re-derives each head's FITTED STATE — the
+    # imputation means and the spline knots its variant ladder left implicit — and checks
+    # the persisted recipe against it at 1e-9. A ladder-widened training frame moves those
+    # knots, so the check would fail against artifacts that are correct. A no-op while
+    # `stan.components.lag_ladder` is `[]`.
+    train_full = fitting_rows(train_full)
     # The cut lands on the FITTING rows only, exactly as `posteriors.component_artifacts`
     # applies it — validation is scored on every covered row either way.
     train_covered = covered_fitting_rows(train_full, cfg, preseason)
@@ -2273,6 +2307,8 @@ def run(cfg: dict, heads: tuple[str, ...] | None = None,
           f"  reading persisted posteriors from {source}; nothing is refitted and no "
           f"sampler runs.")
     artifacts = load_all(source, heads=list(heads) if heads else None)
+    skipped = sorted(h for h in artifacts if deferred(h))
+    artifacts = {h: a for h, a in artifacts.items() if not deferred(h)}
     if not artifacts:
         raise FileNotFoundError(
             f"no posterior artifacts under {source}. Run `make posteriors` first — it is "
@@ -2283,6 +2319,11 @@ def run(cfg: dict, heads: tuple[str, ...] | None = None,
     require_window(artifacts, WINDOW)
     print(f"  {len(artifacts)} heads at the `{WINDOW}` window. The test split is LOCKED; "
           f"every row carries `split` in {list(SPLITS)}.")
+    if skipped:
+        print(f"  {len(skipped)} head(s) on disk are NOT carded, and that is a "
+              f"scheduled decision rather than an\n  oversight: "
+              f"{', '.join(skipped)}\n  — see `DEFERRED_PREFIXES` and "
+              f"docs/model-cards-plan.md.")
 
     print("\n── rebuilding each head's own design frames ──")
     frames = build_frames(cfg, artifacts)

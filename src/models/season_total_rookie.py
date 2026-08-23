@@ -518,26 +518,12 @@ def rookie_floor_arm(train: pd.DataFrame, frame: pd.DataFrame, priors: dict,
     return counts, conversions
 
 
-def ship_arms_from(table: pd.DataFrame) -> dict[str, str]:
-    """`head -> the variant it ships`, off a `rookie_rate_metrics.csv` table.
-
-    Read on `stan_rookie.DECISION_POPULATION` and nowhere else: `ships` is written onto
-    every row of a head's block, but §4 reads its verdict on the draftable population and a
-    table filtered any other way would be a different gate's answer.
-    """
-    block = table[table["population"] == sr.DECISION_POPULATION]
-    return {str(head): str(part["ships"].iloc[0])
-            for head, part in block.groupby("head")}
-
-
-def ship_arms(path: Path | str) -> dict[str, str]:
-    """`head -> the variant it ships`, from `rookie_rate_metrics.csv`.
-
-    Read rather than pinned, because §4's gate is what decides it and a constant copied
-    into a module is a constant that can stop matching the run that measured it. Today that
-    is `reb` at `slot_interaction_spline` and ten `no_fit_floor`s.
-    """
-    return ship_arms_from(pd.read_csv(path))
+#: `head -> the variant it ships`, read off `rookie_rate_metrics.csv`. Re-exported from
+#: `stan_rookie`, which is the module that WRITES the `ships` column — §5f gave the
+#: `rookie-components` posterior group a second reader, and a gate's verdict should have
+#: one implementation however many modules consume it.
+ship_arms_from = sr.ship_arms_from
+ship_arms = sr.ship_arms
 
 
 def rookie_head_arm(train: pd.DataFrame, frame: pd.DataFrame, priors: dict,
@@ -947,7 +933,12 @@ if __name__ == "__main__":
     # The §16 arm is a CLI flag rather than a config edit, so both readings are
     # reproducible from a make target and neither can be produced by accident. It
     # overrides `stan.availability.lag_ladder` for this process only and writes
-    # `LADDER_SUFFIX`'d artifacts, so the shipped table is never overwritten by it.
+    # `LADDER_SUFFIX`'d artifacts, so one arm's table is never overwritten by the other's.
+    #
+    # ⚠️ **Since 2026-08-22 the config key ships ON** (§16j), so BOTH make targets pass the
+    # flag: `make season-total-rookie` passes it empty. Omitting it now inherits the ladder
+    # and writes §7f's plug-in table under the `_lagladder` name — the artifacts would still
+    # be internally consistent and would describe the wrong arm each.
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--lag-ladder", nargs="*", default=None, choices=LADDER_RUNGS,
                         help="availability-ladder rungs to admit for this run "

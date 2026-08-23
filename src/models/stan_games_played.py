@@ -106,7 +106,7 @@ from src.features.availability import (CELL_KEYS, collapse_transitions,
                                        spell_classes)
 from src.models.availability import (EPS, FEATURE_COLS, RHO_MAX, RHO_MIN,
                                      AvailabilityModel, BetaBinomialGLM,
-                                     evaluate, pit_table)
+                                     evaluate, pit_table, rung_zero)
 from src.models.held_out import assert_unlocked, selection_split
 from src.models.games_played import (allocate_spells, beta_shapes,
                                      closed_form_calibration,
@@ -183,7 +183,10 @@ def games_played_design(cfg: dict, panel: pd.DataFrame) -> pd.DataFrame:
     on all 911 test rows. Prediction is unaffected because every covariate is
     player-season level.
     """
-    design = availability_design(cfg)
+    # Rung 0 only. The spell process is fitted per (player, team) off this frame, and
+    # §16's ladder is a games-played change measured on the availability head alone —
+    # `docs/availability-window-plan.md` §16j.
+    design = rung_zero(availability_design(cfg))
     process = process_frame(panel)
     single = process[~process["multi_team"]]
 

@@ -536,3 +536,229 @@ def test_the_simulator_builds_component_rows_through_the_head_design():
              if mod == "src.models.component_rates" and name.endswith("build_design")]
     assert not plain, f"`component_rates.build_design` is imported as {plain}"
     assert "component_build_design" not in source
+
+
+# ── The two rate families — docs/rookie-rates-plan.md §5f ─────────────────────
+
+def _rate_artifact(head: str, family: str, rate: float, dispersion: float,
+                   feature: str, n_draws: int = 5):
+    """A component-rate posterior whose `mu_draws` is a constant, so it is checkable.
+
+    `beta = 0` on a one-column design makes `mu` exactly `exp(alpha)` for a count and
+    `sigmoid(alpha)` for a conversion, which is what lets a test say which artifact scored
+    a row rather than only that some artifact did.
+    """
+    from sklearn.preprocessing import StandardScaler
+
+    conversion = "_given_" in head
+    alpha = np.log(rate) if not conversion else np.log(rate / (1 - rate))
+    key = "rho_draws" if conversion else "phi_draws"
+    return P.PosteriorArtifact(
+        head=head, head_label=head, family="betabinomial" if conversion else "negbinomial",
+        response="mean_mu" if conversion else "mean_count",
+        recipe=P.DesignRecipe(
+            "base", [feature],
+            StandardScaler(with_mean=False, with_std=False).fit(np.zeros((1, 1))),
+            builder="test"),
+        draws={"alpha_draws": np.full(n_draws, alpha),
+               "beta_draws": np.zeros((n_draws, 1)),
+               key: np.full(n_draws, dispersion)},
+        extras={"family_population": family},
+        provenance={"fit_window": "train"})
+
+
+def _rate_bundle(vet_rate=0.02, rookie_rate=0.05, vet_phi=40.0, rookie_phi=9.0,
+                 n_draws: int = 5) -> dict:
+    """Both families' eleven heads, each family on its own constant."""
+    out = {}
+    for component in COUNT_HEADS:
+        out[component] = _rate_artifact(component, "veteran", vet_rate, vet_phi,
+                                        "vet_x", n_draws)
+        out[f"{S.ROOKIE_PREFIX}{component}"] = _rate_artifact(
+            f"{S.ROOKIE_PREFIX}{component}", "true_rookie", rookie_rate, rookie_phi,
+            "rk_x", n_draws)
+    for made, attempted in CONVERSION_HEADS:
+        name = S.artifact_name(f"{made}|{attempted}")
+        out[name] = _rate_artifact(name, "veteran", 0.40, 0.01, "vet_x", n_draws)
+        out[f"{S.ROOKIE_PREFIX}{name}"] = _rate_artifact(
+            f"{S.ROOKIE_PREFIX}{name}", "true_rookie", 0.30, 0.05, "rk_x", n_draws)
+    return out
+
+
+def _family_frames():
+    """A veteran design and a rookie design over one season, sharing no player."""
+    vet = pd.DataFrame({"player_id": [1, 2, 3], "season": "2023-24",
+                        "vet_x": [0.1, 0.2, 0.3], "lag_rung": "veteran",
+                        "lag_source": "lag1", "mpg_lag1": [30.0, 20.0, 10.0]})
+    rookie = pd.DataFrame({"player_id": [7, 8], "season": "2023-24",
+                           "rk_x": [0.5, 0.6]})
+    return vet, rookie
+
+
+def test_component_units_unions_the_two_designs_and_labels_each_row():
+    """Both families reach the tensor, and every row says which design put it there."""
+    vet, rookie = _family_frames()
+    units = S.component_units(vet, rookie, "2023-24", {1, 2, 3, 7, 8})
+
+    assert len(units) == 5
+    assert list(units[S.FAMILY_COL]) == [S.VETERAN_FAMILY] * 3 + [S.ROOKIE_FAMILY] * 2
+    # The veteran block keeps its order and its identity, which is what makes the rest of
+    # `build_context`'s row addressing unchanged for every unit that was already there.
+    assert list(units["player_id"][:3]) == [1, 2, 3]
+    # The rookie rows join the ladder's own provenance vocabulary rather than carrying NaN:
+    # `true_rookie` is `lag_recovery.classify`'s label for them, and there is no prior
+    # season for a lag to have come from.
+    assert list(units["lag_rung"]) == ["veteran"] * 3 + ["true_rookie"] * 2
+    assert list(units["lag_source"]) == ["lag1"] * 3 + ["none"] * 2
+
+
+def test_component_units_drops_the_ladder_columns_when_the_ladder_is_off():
+    """`lag_rung` exists only when the ladder does — `component_rates.LADDER_COLS`' rule."""
+    vet, rookie = _family_frames()
+    vet = vet.drop(columns=["lag_rung", "lag_source"])
+    units = S.component_units(vet, rookie, "2023-24", {1, 2, 3, 7, 8})
+    assert "lag_rung" not in units.columns and "lag_source" not in units.columns
+    assert len(units) == 5
+
+
+def test_component_units_needs_a_place_in_the_minutes_allocation_for_both_families():
+    """A design row for a player the composition cannot weight is not a scorable unit.
+
+    Symmetric across families deliberately: the allocation is zero-sum, so a rookie the
+    composition has no weight for would have to take minutes from nobody.
+    """
+    vet, rookie = _family_frames()
+    units = S.component_units(vet, rookie, "2023-24", {1, 7})
+    assert list(units["player_id"]) == [1, 7]
+
+
+def test_component_units_refuses_a_player_who_is_in_both_designs():
+    """The failure the union cannot be allowed to have, because it is silent.
+
+    A player in both families takes two rows in `units`, two entries in the tensor and two
+    slots on a board, and every marginal still looks plausible.
+    """
+    vet, rookie = _family_frames()
+    rookie = pd.concat([rookie, vet.iloc[[0]][["player_id", "season"]].assign(rk_x=0.4)],
+                       ignore_index=True)
+    with pytest.raises(AssertionError, match="disjoint"):
+        S.component_units(vet, rookie, "2023-24", {1, 2, 3, 7, 8})
+
+
+def test_component_rates_scores_each_family_through_its_own_artifact():
+    """The point of the branching: a rookie is not predicted from the veteran design.
+
+    Scoring the whole frame through one recipe would not raise — `DesignRecipe._block`
+    fills a missing column with zero and standardizes it — so the check has to be on the
+    VALUES, and the two families' constants are what make them distinguishable.
+    """
+    vet, rookie = _family_frames()
+    units = S.component_units(vet, rookie, "2023-24", {1, 2, 3, 7, 8})
+    rates = S.component_rates(_rate_bundle(), units)
+
+    for component in COUNT_HEADS:
+        mu = rates["count"][component]
+        assert mu.shape == (5, 5)
+        np.testing.assert_allclose(mu[:, :3], 0.02)
+        np.testing.assert_allclose(mu[:, 3:], 0.05)
+        np.testing.assert_allclose(rates["phi"][component][:, :3], 40.0)
+        np.testing.assert_allclose(rates["phi"][component][:, 3:], 9.0)
+    for made, attempted in CONVERSION_HEADS:
+        head = f"{made}|{attempted}"
+        np.testing.assert_allclose(rates["conversion"][head][:, :3], 0.40)
+        np.testing.assert_allclose(rates["conversion"][head][:, 3:], 0.30)
+        np.testing.assert_allclose(rates["rho"][head][:, :3], 0.01)
+        np.testing.assert_allclose(rates["rho"][head][:, 3:], 0.05)
+
+
+def test_the_veteran_block_of_a_mixed_frame_is_bit_identical_to_scoring_it_alone():
+    """§5f's spot-check, as an invariant rather than a run.
+
+    The union must not change what a unit the veteran design already carried is scored
+    with. It cannot be checked on the tensor — adding rows moves the RNG stream, because
+    the per-unit gamma and beta draws are sized by `n_units` — so it is checked where the
+    claim actually lives: the rates and dispersions the artifacts hand back.
+    """
+    vet, rookie = _family_frames()
+    bundle = _rate_bundle()
+    units = S.component_units(vet, rookie, "2023-24", {1, 2, 3, 7, 8})
+    mixed = S.component_rates(bundle, units)
+    alone = S.component_rates(bundle, vet)
+
+    mask = units[S.FAMILY_COL].to_numpy() == S.VETERAN_FAMILY
+    for component in COUNT_HEADS:
+        np.testing.assert_array_equal(mixed["count"][component][:, mask],
+                                      alone["count"][component])
+    for made, attempted in CONVERSION_HEADS:
+        head = f"{made}|{attempted}"
+        np.testing.assert_array_equal(mixed["conversion"][head][:, mask],
+                                      alone["conversion"][head])
+
+
+def test_a_single_family_frame_keeps_the_pre_union_dispersion_shape():
+    """One family, one dispersion vector — the shape every consumer had before §5f.
+
+    Not cosmetic: `_sim_one` draws `rng.gamma(phi, 1/phi, size=n_units)`, and numpy's
+    scalar and array parameter paths are different code. A frame that used to produce a
+    scalar and now produces a length-`n` vector would draw a different (still valid)
+    stream, so every retrospective tensor would move for no modelling reason.
+    """
+    vet, _ = _family_frames()
+    alone = S.component_rates(_rate_bundle(), vet)
+    assert alone["phi"]["reb"].shape == (5,)
+    assert alone["rho"]["ftm|fta"].shape == (5,)
+
+    _, rookie = _family_frames()
+    mixed = S.component_rates(_rate_bundle(),
+                              S.component_units(vet, rookie, "2023-24", {1, 2, 3, 7, 8}))
+    assert mixed["phi"]["reb"].shape == (5, 5)
+    assert mixed["rho"]["ftm|fta"].shape == (5, 5)
+
+
+def test_the_conversion_draw_reads_a_scalar_and_a_per_unit_rho_identically():
+    """`np.broadcast_to` replaced `np.full` at the beta draw, and must not move a number.
+
+    The scalar arm is every simulation this project has run; the vector arm is what a
+    mixed frame produces. Pinned because a shape change at this call site is invisible —
+    both forms produce a legal `(n_units,)` array and a plausible season.
+    """
+    n_units = 6
+    scalar = 0.013
+    np.testing.assert_array_equal(np.broadcast_to(scalar, (n_units,)),
+                                  np.full(n_units, scalar))
+    vector = np.linspace(0.01, 0.02, n_units)
+    np.testing.assert_array_equal(np.broadcast_to(vector, (n_units,)), vector)
+
+
+def test_component_rates_names_the_missing_group_rather_than_raising_a_key_error():
+    """A rookie unit with no `rookie-components` group on disk is a runbook problem."""
+    vet, rookie = _family_frames()
+    units = S.component_units(vet, rookie, "2023-24", {1, 2, 3, 7, 8})
+    bundle = {k: v for k, v in _rate_bundle().items()
+              if not k.startswith(S.ROOKIE_PREFIX)}
+    with pytest.raises(KeyError, match="rookie-components"):
+        S.component_rates(bundle, units)
+
+
+def test_the_two_families_carry_the_same_number_of_posterior_draws():
+    """One simulated season uses draw `s % n_draws` for every head at once.
+
+    Two families thinned differently would pair one player's draw 7 with another player's
+    draw 7 out of a posterior of a different length, which is not the shared-`beta` sweep
+    the layer's cross-player correlation rests on.
+    """
+    vet, rookie = _family_frames()
+    units = S.component_units(vet, rookie, "2023-24", {1, 2, 3, 7, 8})
+    bundle = _rate_bundle()
+    bundle[f"{S.ROOKIE_PREFIX}reb"] = _rate_artifact(
+        f"{S.ROOKIE_PREFIX}reb", "true_rookie", 0.05, 9.0, "rk_x", n_draws=3)
+    with pytest.raises(ValueError, match="posterior draws"):
+        S.component_rates(bundle, units)
+
+
+def test_a_frame_with_no_family_column_is_all_veteran():
+    """Every caller that predates the union, and the shape `component_rates` had then."""
+    vet, _ = _family_frames()
+    families = S.unit_families(vet)
+    assert len(families) == 1 and families[0][0] == S.VETERAN_FAMILY
+    np.testing.assert_array_equal(families[0][1], np.arange(3))

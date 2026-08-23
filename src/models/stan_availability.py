@@ -146,7 +146,7 @@ from src.features.availability import build_panel, season_availability
 from src.models.availability import (EPS, FEATURE_COLS, RHO_MAX, RHO_MIN,
                                      AvailabilityModel, BetaBinomialGLM,
                                      _sigmoid, build_design, evaluate,
-                                     pit_table, season_start_dates)
+                                     pit_table, rung_zero, season_start_dates)
 from src.models.held_out import selection_split
 from src.models.stan_utils import (GAMMA_SCALE, MU_LOW_MAX, YearTerm, chain_summary,
                                    compile_model, diagnostics_frame, pi_block,
@@ -532,8 +532,23 @@ class StanAvailability(AvailabilityModel):
         return role_bins(df, self.role_rho)
 
     def fitting_rows(self, train: pd.DataFrame) -> pd.DataFrame:
-        """The rows this head fits on — the window, applied here and nowhere upstream."""
-        return restrict_window(train, self.first_season)
+        """The rows this head fits on — rung 0, then the window, and nowhere upstream.
+
+        **`rung_zero` first, and it is the whole of §16's imputation-only claim as code.**
+        `stan.availability.lag_ladder` widens `availability_design` for every consumer of
+        it, and §16i's shipped arm scores those rows with a posterior fitted **before** the
+        ladder existed — the arm that admitted them to the fit (`staleness`) was built,
+        priced and rejected at +0.7310 [−1.4152, +2.8585]. So the recovered rows must never
+        reach a fit, and this method is the one place every path that fits this head goes
+        through: `run`, `fit_and_score`'s two point-MLE references,
+        `posteriors.availability_artifact`, `model_cards` and `src/final_evaluation.py`
+        alike. `availability_lag.fit_arms` states the same restriction for its own `impute`
+        arm, which is what this reproduces in the shipped head.
+
+        A no-op while `stan.availability.lag_ladder` is `[]`: `ladder_recovered` returns
+        all-False on a frame with no `lag_rung` column.
+        """
+        return restrict_window(rung_zero(train), self.first_season)
 
     # ── Fitting ───────────────────────────────────────────────────────────────
 

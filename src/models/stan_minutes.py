@@ -77,7 +77,7 @@ from src.data.preprocess import (FIT_WINDOWS, FULL_WINDOW, TRAIN_VAL_WINDOW,
 from src.data.fetch import _season_start_year
 from src.eda.availability import with_lags
 from src.models.availability import (EPS, FEATURE_COLS, RHO_MAX, RHO_MIN,
-                                     fit_dispersion)
+                                     fit_dispersion, rung_zero)
 from src.models.held_out import selection_split
 from src.models.stan_availability import availability_design
 from src.models.stan_utils import (YearTerm, compile_model, crps_from_samples,
@@ -176,7 +176,10 @@ def build_design(cfg: dict) -> pd.DataFrame:
     lagged = with_lags(minutes, seasons,
                        ["minutes_share", "minutes_played", "length_played",
                         "games_played"], max_lag=1)
-    design = availability_design(cfg).merge(
+    # Rung 0 only — §16's ladder widens the availability design for every consumer and
+    # this head's population must not move: §16i priced the ladder on games played and
+    # nothing here. `docs/availability-window-plan.md` §16j.
+    design = rung_zero(availability_design(cfg)).merge(
         lagged, on=["player_id", "season"], how="inner")
 
     design = design.dropna(subset=["minutes_share_lag1", "minutes_share"])

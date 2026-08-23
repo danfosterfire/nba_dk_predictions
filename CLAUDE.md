@@ -37,7 +37,9 @@ The docs are:
   which the head cannot say. Read it before changing any of those, or before pricing a head 
   change with `make strategy-sweep`. **§16 is the returnee gap, run 2026-08-22** — the head's
   own lag-recovery ladder (`stan.availability.lag_ladder`, `make availability-lag`), which
-  rung it admits, and why the refit arm lost to the imputation.
+  rung it admits, why the refit arm lost to the imputation, and (**§16j**) the second edit
+  that let the key ship — `availability.rung_zero` at every fitting path — plus
+  `make ladder-board`, the reading that prices the zero-sum minute transfer at the board.
   - composition-quadrature-plan.md: Fitting the composition's per-(player, season) 
   effect by marginalizing the latents with per-unit quadrature. **Built and measured, 
   then PARKED** on cost against reach. Read before touching `sigma_u` or 
@@ -116,10 +118,12 @@ The docs are:
   population (true rookies, returnees, thin-prior fringe), its floor pricing, the veteran
   design's **lag-recovery ladder** and the per-rung gate that admitted one rung of four,
   the per-head gates, simulator and forward-board integration, and the eight-session
-  runbook. Read before touching the scorable-unit population,
+  runbook. **§7g is the simulator integration, run 2026-08-22** — the `rookie-components`
+  posterior group, `sim/season.component_units`' two-family union, and the ladder turned
+  on. Read before touching the scorable-unit population,
   `component_rates.MIN_PRIOR_MINUTES`, `stan.components.lag_ladder`,
-  `src/models/rookie_rates.py`, or starting any of its sessions. §7f's own open item is
-  closed by `docs/availability-window-plan.md` §16i.
+  `src/models/rookie_rates.py`, `sim/season.component_units`, or starting any of its
+  sessions. §7f's own open item is closed by `docs/availability-window-plan.md` §16i.
   - shot-attempt-basis-plan.md: Plan for updating one of the box-score statistics
   models (fg3a as a beta-binomial rate over the total fga, rather than fg2a and 
   fg3a as separate poisson counts). Work completed, archival.

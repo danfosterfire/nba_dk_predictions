@@ -52,7 +52,8 @@ from src.models.availability import season_start_dates
 from src.models.stan_availability import head_design as availability_head_design
 from src.models.stan_components import head_design as component_head_design
 from src.models.stan_composition import head_frame
-from src.sim.season import FIT_WINDOW, SEED, build_context, simulate
+from src.sim.season import (FIT_WINDOW, SEED, build_context, rookie_design,
+                            simulate)
 
 #: Enough sims for a stable mean-total ranking; the seed-noise arm is what SAYS whether
 #: it was enough, which is why the floor is measured rather than assumed.
@@ -147,8 +148,24 @@ def forward_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
                                           avail_design)
     print(f"  composition frame: {len(players):,} per-player rows")
 
+    # **The rookie design's TARGET-SEASON rows are withheld, and that is a leak guard.**
+    # `rookie_rates.build_design` carves its population out of `component_targets`, so
+    # membership itself — "he played in the NBA this season" — is target-season
+    # information, which is exactly what a forward context may not read. A season nobody
+    # has played has no rows there anyway, so this changes nothing for a real 2026-27
+    # board and everything for the rehearsal on a played one. The forward rookie tier is
+    # `docs/rookie-rates-plan.md` §5g; until it exists a forward board carries no rookies,
+    # which is the state every board this project has produced.
+    rookie_head = rookie_design(cfg)
+    withheld = int((rookie_head["season"] == season).sum())
+    rookie_head = rookie_head[rookie_head["season"] != season]
+    print(f"  rookie design: {withheld:,} target-season rows WITHHELD — this arm has no "
+          f"forward rookie tier yet\n    (docs/rookie-rates-plan.md §5g), and their "
+          f"membership is target-season information. The\n    population-held-fixed arm "
+          f"is held fixed on the ROSTER and cannot fix these.")
     return build_context(cfg, season, window, n_sims, seed, composition=players,
-                         design=comp_head, availability=avail_head, panel=fwd_panel)
+                         design=comp_head, availability=avail_head, panel=fwd_panel,
+                         rookie=rookie_head)
 
 
 def board_frame(ctx: dict, sim: dict) -> pd.DataFrame:

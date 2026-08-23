@@ -84,7 +84,7 @@ from src.models.component_rates import (BIO_COLS, CONTEXT_COLS, CONVERSION_HEADS
                                         COUNT_HEADS, add_log, add_spline,
                                         build_design, carry_forward,
                                         carry_forward_conversion, fit_nb_dispersion,
-                                        impute, nb_nll)
+                                        fitting_rows, impute, lag_ladder, nb_nll)
 from src.models.held_out import selection_split
 from src.models.stan_utils import (YearTerm, compile_model, crps_from_samples,
                                    diagnostics_frame, ks_uniform, pi_block,
@@ -248,11 +248,30 @@ def head_design(cfg: dict, preseason: bool | None = None,
     The block is built by `components_preseason.attach_preseason` — the same function the 6b
     ladder measured it with — so the coefficients these heads fit are coefficients on columns
     that were measured, not on a second implementation of them.
+
+    ## The lag-recovery ladder enters HERE and nowhere else
+
+    `stan.components.lag_ladder` (`docs/rookie-rates-plan.md` §5b, gated in §7c) widens the
+    design to players whose lag-1 block is unusable but who have a usable earlier season,
+    imputed into the same `_lag1` columns the eleven shipped heads already fit coefficients
+    on. The key reaches `build_design` through this function, deliberately: twelve modules
+    call the plain builder and none of them asked for a wider population, so the widening
+    belongs to the family's own path — which is what `sim/season.py`, `sim/forward_board.py`
+    and this module's own sweep read.
+
+    **It widens the SCORING population and never the fitting one** (§3 constraint 4). A
+    caller that FITS must take its training frame through `component_rates.fitting_rows`,
+    which is rung 0 alone; `run` below, `posteriors.component_artifacts` and
+    `model_cards.component_frames` are the three that do, and each says so at the call.
+    `windowed`/`selection_split` split on season and know nothing about rungs, so wiring
+    the ladder here without that call would silently admit the recovered rows to eleven
+    heads' fits.
     """
     features_dir = Path(cfg["data"]["features_dir"])
     if design is None:
         targets = pd.read_parquet(features_dir / "component_targets.parquet")
-        design = build_design(targets, cfg["data"]["seasons"], cfg["data"]["raw_dir"])
+        design = build_design(targets, cfg["data"]["seasons"], cfg["data"]["raw_dir"],
+                              ladder=lag_ladder(cfg))
     # `design` lets the forward path (`features/forward_design.py`) bring its own rows
     # through the SAME preseason attachment; `None` is today's behaviour exactly.
     if not (PRESEASON if preseason is None else bool(preseason)):
@@ -1223,6 +1242,13 @@ def run(cfg: dict, heads: tuple[str, ...] | None = None) -> dict[str, Path]:
 
     design = head_design(cfg, preseason)
     train_full, val = selection_split(design, test_seasons)
+    # Rung 0 alone on the FIT half, and the whole design on the scoring half. The
+    # lag-recovery ladder widens the scoring population and never the fitting one (§3
+    # constraint 4 of `docs/rookie-rates-plan.md`), and `selection_split` splits on season
+    # and knows nothing about rungs — so without this the ladder would silently admit the
+    # recovered rows to eleven heads' fits. Validation keeps them deliberately: they are
+    # exactly the rows the ladder exists to score. A no-op while `lag_ladder` is `[]`.
+    train_full = fitting_rows(train_full)
     # The covered-window cut, on the FITTING rows only. Required by the block rather than
     # chosen for its own sake — see `covered_fitting_rows`.
     train = covered_fitting_rows(train_full, cfg, preseason)

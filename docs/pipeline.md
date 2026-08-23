@@ -178,9 +178,11 @@ make season-terms      # does any head need a season term, and which kind? A tre
                        #   season × role arm the availability era effect calls for.
                        #   An ABLATION over the shipped heads, so also not in `stan`;
                        #   it reads their selected specs from their artifacts.
-make posteriors        # PERSIST the fits: 20 heads refitted once at the variant their
-                       #   own sweep selected, each writing thinned draws + the design
-                       #   recipe + provenance to
+make posteriors        # PERSIST the fits: 31 heads refitted once at the variant their
+                       #   own sweep selected — the 20 chain heads plus the eleven
+                       #   `rookie-components` rate heads, ten of which are §7d's no-fit
+                       #   floors persisted as deterministic plug-ins — each writing
+                       #   thinned draws + the design recipe + provenance to
                        #   data/features/posteriors/<window>/<head>.pkl.
                        #   `make stan` throws its coefficient draws away, so without
                        #   this the simulation layer has to refit to draw anything.
@@ -206,11 +208,22 @@ make final-evaluation  # the ONE reading. Refits the shipped spec on train+valid
                        #   The three heads were taken 2026-08-21; the chain is a separate
                        #   run — docs/final-evaluation-plan.md.
 make posteriors-production
-                       # the production fit: the same 20 heads at the `full` window, for
+                       # the production fit: the same 31 heads at the `full` window, for
                        #   the upcoming season's board. Guarded twice — `--production` has
                        #   to be typed AND final_evaluation.csv has to already exist,
                        #   because deploying before measuring leaves no honest measurement
                        #   to take. Budget most of a day.
+make ladder-board      # what the AVAILABILITY lag-recovery ladder does to the board —
+                       #   `docs/availability-window-plan.md` §16j. §16i priced it on games
+                       #   played and on a season total that never re-allocates minutes;
+                       #   the allocation is zero-sum, so this is the reading that can see
+                       #   the transfer off the recovered player's teammates. Both arms,
+                       #   both validation seasons, plus the same frames re-drawn at seed+1
+                       #   as the noise floor — scored on every GROUP, because the gate is
+                       #   "the untouched units must not degrade" and a delta there is
+                       #   unreadable without its noise twin. numpy only, ~25 min.
+                       #   → outputs/predictions/availability_ladder_board.csv
+
 make production-check  # is the chain ready to price a season it has never seen? Reads
                        #   disk only, costs a second. Two halves: the MODEL half (20 heads
                        #   at `full`, matching the `train` specification) is finishable
@@ -594,8 +607,11 @@ make preseason-contest # what the PRESEASON BLOCK is worth in the contest, as a 
                        #   `contest`, then `board`: this block arrives as the allocation
                        #   MEAN rather than as shape, so a ranking is what it can move.
 
-make rookie-floor      # what it costs that no board this project produces carries a
-                       #   ROOKIE — `docs/rookie-rates-plan.md` §5a/§7a
+make rookie-floor      # what it cost that no board this project produced carried a
+                       #   ROOKIE — `docs/rookie-rates-plan.md` §5a/§7a. The
+                       #   RETROSPECTIVE half of that hole closed on 2026-08-22 (§7g);
+                       #   re-reading this floor against a rookie-inclusive board is the
+                       #   program's Session 8.
                        #   → outputs/predictions/strategy_rookie_floor.csv plus the whole
                        #   strategy_*_rookiefloor.csv set. The sweep run ASYMMETRICALLY:
                        #   the opponent field drafts every rostered player, our seat stays

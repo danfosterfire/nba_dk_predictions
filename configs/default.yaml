@@ -319,9 +319,21 @@ stan:
     #                   realized, so there is no ordering for the block to supply.
     #   no_usable_lag   -3.3232 [-13.3029, +2.9720] — straddles zero, 3 draftable rows.
     #   shipped verdict:  lag_ladder: [returnee_lag2]
-    # It is left EMPTY here for the blast-radius reason above: `make season-total-rookie-
-    # lagladder` is the arm that turns it on, for one measurement, into its own artifact.
-    lag_ladder: []
+    #
+    # ── TURNED ON 2026-08-22 (§16j), and the second edit is what made it safe ──
+    # Every path that FITS from this design now cuts to `availability.rung_zero` first, so
+    # the ladder widens the SCORING population and no head's fitting population moves:
+    #   StanAvailability.fitting_rows   the head itself — one choke point for `run`,
+    #                                   `fit_and_score`'s two point MLEs, `posteriors`,
+    #                                   `model_cards` and `final_evaluation`
+    #   stan_minutes.build_design       the marginal minutes head
+    #   stan_composition.head_frame     the composition — cut at the MERGE, not the split,
+    #                                   so its scoring block is unmoved too
+    #   stan_games_played.games_played_design
+    #   season_terms.run, availability_exchangeability.run, availability_no_prior.run
+    #   model_cards.availability_frames
+    # Emptying this key restores the pre-ladder design exactly.
+    lag_ladder: [returnee_lag2]
 
   minutes:
     # ── The preseason block, adopted 2026-08-13 (docs/preseason-plan.md P3) ──
@@ -408,11 +420,15 @@ stan:
     # 0.7873 (thin_prior), 0.5866 (returnee_thin) and 0.5977 (no_usable_lag, with `blk`
     # an anti-model at -0.632). Rung 0's own reading is 0.8919.
     #   shipped verdict:  lag_ladder: [returnee_lag2]
-    # It is left EMPTY here because turning the ladder on is two edits and Session 6 owns
-    # both — this key, AND every fitting path routing through `fitting_rows`. Flipping it
-    # alone would widen eleven heads' fitting population, which is the one thing the
-    # imputation-only form exists to prevent.
-    lag_ladder: []
+    #
+    # ── TURNED ON 2026-08-22 by Session 6 (§5f), which is the other half of the edit ──
+    # The ladder reaches the heads through `stan_components.head_design`, and the three
+    # paths that FIT rather than score take their training frame through
+    # `component_rates.fitting_rows` first: `stan_components.run`,
+    # `posteriors.component_artifacts` and `model_cards.component_frames`. `season_terms`
+    # and `components_preseason` call the plain `build_design`, so they are pre-ladder by
+    # construction and need no call. Emptying this key restores the shipped design exactly.
+    lag_ladder: [returnee_lag2]
 
     # Every head gets a spline variant and the winner is picked on a VALIDATION split,
     # rather than hard-coding "splines on fg3a and blk only". `make component-rates`

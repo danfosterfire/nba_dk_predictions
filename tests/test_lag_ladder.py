@@ -284,3 +284,72 @@ def test_the_unserved_status_quo_is_a_point_mass_at_zero():
     point_mass = np.zeros((64, len(y)))
     assert np.allclose(crps_from_samples(point_mass, y), np.abs(y))
     assert head_scores.__doc__ is not None
+
+
+# ── Turning the ladder on — docs/rookie-rates-plan.md §5f's first act ─────────
+
+def test_the_shipped_config_admits_the_one_rung_the_gate_cleared():
+    """§7c's verdict, as the key the design actually reads.
+
+    Pinned because the ladder is a config list and a silent edit widens the SCORING
+    population of eleven heads at once — the four rungs were gated separately and three of
+    them failed, so `[returnee_lag2]` is a result rather than a default.
+    """
+    import yaml
+
+    cfg = yaml.safe_load(open("configs/default.yaml"))
+    assert cfg["stan"]["components"]["lag_ladder"] == ["returnee_lag2"]
+
+
+def test_every_fitting_path_takes_its_training_frame_through_fitting_rows():
+    """§3 constraint 4, pinned by parsing rather than by discipline.
+
+    `stan_components.head_design` carries the ladder, so any module that builds a training
+    frame from it and hands that frame to a sampler is fitting on the recovered rows —
+    which the imputation-only form exists to prevent, and which nothing would raise about.
+    The three paths are named individually so a fourth one added later fails here.
+
+    `season_terms` and `components_preseason` are deliberately absent: they call
+    `component_rates.build_design` directly, which defaults to the pre-ladder design.
+    """
+    import pathlib
+
+    for module, function in (("src/models/stan_components.py", "def run("),
+                             ("src/models/posteriors.py", "def component_artifacts("),
+                             ("src/models/model_cards.py", "def component_frames(")):
+        source = pathlib.Path(module).read_text()
+        start = source.index(function)
+        end = source.index("\ndef ", start + 1)
+        body = source[start:end]
+        assert "fitting_rows(" in body, (
+            f"{module}::{function.strip('def (')} builds a training frame from "
+            f"`head_design` and does not restrict it to rung 0")
+
+    import ast
+
+    for module in ("src/models/season_terms.py", "src/models/components_preseason.py"):
+        tree = ast.parse(pathlib.Path(module).read_text())
+        reached = {alias.asname or alias.name
+                   for node in ast.walk(tree)
+                   if isinstance(node, ast.ImportFrom)
+                   and node.module == "src.models.stan_components"
+                   for alias in node.names}
+        assert "head_design" not in reached, (
+            f"{module} now reaches the ladder-carrying design; it has to route its "
+            f"training frame through `component_rates.fitting_rows` too")
+
+
+def test_no_head_fits_a_column_the_ladder_can_move():
+    """The bit-identity claim rests on WHICH columns the heads read.
+
+    `components_preseason.attach_preseason` writes a season-CENTRED twin of every
+    preseason delta, and a season mean is a property of the frame — so those eleven
+    columns do move when 189 recovered rows join the design. None of them is in any head's
+    feature list: the shipped block is the volume-shrunk delta, which is a per-row product
+    and cannot move. If a `_centered` arm is ever shipped, this fails, and the fix is to
+    compute the centring on rung 0 rather than to delete the test.
+    """
+    from src.models.stan_components import head_preseason_cols
+
+    for head in list(COUNT_HEADS) + [m for m, _ in CONVERSION_HEADS]:
+        assert not [c for c in head_preseason_cols(head, True) if c.endswith("_centered")]

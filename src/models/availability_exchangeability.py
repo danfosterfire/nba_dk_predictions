@@ -84,6 +84,7 @@ from src.models.games_played import (MISSED_SHARE_EDGES, EdgeResampler, allocate
                                      edge_blocks, fit_beta_geometric, layout_tenure,
                                      missed_share_bin, single_team_panel,
                                      spell_lengths_from)
+from src.models.availability import rung_zero
 from src.models.held_out import selection_split
 from src.models.stan_availability import (FIRST_SEASON, availability_design,
                                           restrict_window, role_bins)
@@ -590,7 +591,9 @@ def run(cfg: dict) -> dict[str, Path]:
     first_season = cfg_head.get("first_season", FIRST_SEASON)
     seed = int(cfg.get("features", {}).get("availability", {}).get("seed", 42))
 
-    design = availability_design(cfg)
+    # Rung 0 only — the recorded decomposition and spell shapes are fitted quantities and
+    # this round did not read §16's rows (`docs/availability-window-plan.md` §16j).
+    design = rung_zero(availability_design(cfg))
     train, val = selection_split(design)
     fit_rows = role_frame(restrict_window(train, first_season))
     val_rows = role_frame(val)

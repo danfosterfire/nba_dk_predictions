@@ -623,6 +623,42 @@ def head_floor(train: pd.DataFrame, test: pd.DataFrame, priors: pd.DataFrame,
                             *conversion[component], arm, seed)
 
 
+def floor_level(frame: pd.DataFrame, priors: pd.DataFrame, component: str,
+                attempted: str | None, volume_k: float,
+                conversion: tuple[float, float] | None = None,
+                arm: str = FLOOR_ARM) -> np.ndarray:
+    """The floor's prediction on the head's **own link scale**, per row.
+
+    `log(rate / 36)` for a count and `logit(p)` for a conversion — that is, the number a
+    negative-binomial or beta-binomial head would have to carry as `eta` for its own
+    inverse link to give back this floor's prediction exactly. It exists for §5f: a head
+    that ships the floor is persisted as a `PosteriorArtifact` whose single feature is this
+    column at `beta = 1`, `alpha = 0`, identical on every draw, which is what makes a
+    plug-in and a fitted head the same object to the simulator.
+
+    Third reader of the same two estimators, and deliberately not a fourth implementation:
+    counts go through `floor_arms`, conversions through `conversion_floor_p`, exactly as
+    `count_floor_predictive` and `season_total_rookie.rookie_floor_arm` do. The link is the
+    only thing added here.
+    """
+    missing = sorted(set(frame["season"]) - set(priors["season"]))
+    if missing:
+        raise KeyError(
+            f"the {component} floor carries no expanding draft-bucket prior for "
+            f"{missing}. The table travels inside the persisted artifact and covers the "
+            f"seasons the design it was built from carried, so a season nobody has played "
+            f"needs the forward tier of docs/rookie-rates-plan.md §5g — not a rebuilt "
+            f"prior with a season's own rookies inside it.")
+    if attempted is None:
+        rate = floor_arms(frame, priors, f"pre_per36_{component}", float(volume_k))[arm]
+        return np.log(np.clip(rate, EPS, None) / PER36)
+    if conversion is None:
+        raise ValueError(f"{component}|{attempted} is a conversion head and its floor "
+                         f"needs `(k pseudo-attempts, league)`; none was passed")
+    p = conversion_floor_p(frame, priors, component, float(volume_k), *conversion, arm)
+    return logit(p)
+
+
 # ── Selecting the volume shrink, inside the fitting half ──────────────────────
 
 def fit_volume_k(train: pd.DataFrame, conversion: Mapping[str, tuple[float, float]],

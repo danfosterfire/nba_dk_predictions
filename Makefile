@@ -43,7 +43,7 @@ export PYTHONUNBUFFERED = 1
         pick-log-stake mixture-value preseason-contest final-evaluation \
         posteriors-production production-check forward-rehearsal forward-board \
         rookie-floor lag-recovery lag-ladder rookie-rates stan-rookie \
-        season-total-rookie season-total-rookie-lagladder
+        season-total-rookie season-total-rookie-lagladder ladder-board
 
 venv:
 	/opt/homebrew/bin/python3.14 -m venv .venv
@@ -512,6 +512,18 @@ stan: stan-availability stan-minutes stan-game-length stan-components stan-compo
 #
 # re-does one family without touching the rest.
 #
+# THE HEAD GROUPS: game-length, availability, games-played, minutes, components,
+# composition, and — since docs/rookie-rates-plan.md §5f (2026-08-22) — rookie-components,
+# the eleven TRUE-ROOKIE rate heads. Ten of those eleven ship §7d's no-fit floor and are
+# persisted as DETERMINISTIC plug-ins (one column on the head's own link, beta = 1, the same
+# value on every draw — `no_design_availability`'s shape); only `reb` samples, and the whole
+# group is seconds rather than hours:
+#
+#   $(PYTHON) -m src.models.posteriors --groups rookie-components --window <w>
+#
+# It has to exist at ALL THREE windows or `assert_same_specification` refuses the wider
+# ones, and `sim/season.py` cannot score a rookie unit without it.
+#
 # Artifacts are namespaced by fit window — data/features/posteriors/<window>/ — because all
 # three windows are wanted at once and have different consumers:
 #   train      DEFAULT. The realized backtest scores 2022-23 / 2023-24, and `train_val`
@@ -961,8 +973,12 @@ stan-rookie:
 # Fits exactly ONE head — `reb`, §7e's single fitted arm, because no rookie posterior
 # exists until Session 6 persists one. Everything else is read off disk. ~2 minutes.
 # Requires `make stan-rookie`, `make lag-ladder` and `make posteriors WINDOW=train`.
+# `--lag-ladder` with NO rungs, explicitly: §7f's table is the plug-in treatment, and
+# since 2026-08-22 `stan.availability.lag_ladder` ships ON — so reading the config here
+# would silently make this target produce the OTHER arm's numbers under this arm's name.
+# Both targets name their arm; neither inherits the default.
 season-total-rookie:
-	$(PYTHON) -m src.models.season_total_rookie
+	$(PYTHON) -m src.models.season_total_rookie --lag-ladder
 
 # THE SAME READOUT UNDER §16's AVAILABILITY LADDER — `docs/availability-window-plan.md`
 # §16, and the open item §7f of `docs/rookie-rates-plan.md` left. The `lag_recovered`
@@ -1159,6 +1175,21 @@ forward-rehearsal:
 # override the 2023-24 / 500 defaults.
 forward-board:
 	$(PYTHON) -m src.sim.forward_board $(if $(SEASON),--season $(SEASON),) $(if $(SIMS),--sims $(SIMS),)
+
+# WHAT THE AVAILABILITY LADDER DOES TO THE BOARD — `docs/availability-window-plan.md` §16j.
+# §16i priced the ladder at the head's own unit (draftable CRPS in games, 17.6175 -> 8.3662)
+# and at the season-total unit through `season_total.evaluate`. NEITHER re-allocates
+# minutes, and the allocation is zero-sum: taking Kawhi Leonard from the plug-in's 24.7
+# available games to the head's ~49.7 does not add minutes to the league, it moves them off
+# his teammates in the ~25 team-games he is newly available for, at the veteran share the
+# composition already gives him. This is the reading that can see that transfer.
+#
+# Both arms, both validation seasons, one seed, plus the SAME frames re-drawn at seed+1 as
+# the noise floor — scored on every group, because the gate is "the untouched units must not
+# degrade" and a delta there is unreadable without the noise it has to beat. numpy only, no
+# sampler; ~25 min at the 500-sim default. SEASON/SIMS override.
+ladder-board:
+	$(PYTHON) -m src.sim.ladder_board $(if $(SEASON),--season $(SEASON),) $(if $(SIMS),--sims $(SIMS),)
 
 # Every quoted figure in the plan docs, checked against the artifact behind it. Unlike
 # dashboard-audit this one is a GATE — it exits non-zero on a disagreement, because a doc

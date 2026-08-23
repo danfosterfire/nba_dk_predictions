@@ -10545,23 +10545,39 @@ REGISTRY: tuple[Decision, ...] = (
     Decision(
         id="the-ladder-is-built-and-gated-but-not-yet-on",
         topic="components",
-        claim="**The lag-recovery ladder ships OFF (`stan.components.lag_ladder: []`) "
-              "until Session 6 wires it**, even though its gate has run. Turning it on is "
-              "two edits, not one: the config key, AND every fitting path taking its "
-              "training frame through `component_rates.fitting_rows`.",
-        because="`posteriors.windowed()` splits the design on SEASON and knows nothing "
-                "about rungs, so passing the ladder to `stan_components.head_design` "
-                "without the second edit would put the recovered rows into the FIT as "
-                "well as the score — silently widening the fitting population of eleven "
-                "heads and breaching the constraint the whole imputation-only form exists "
-                "to satisfy ([[one-ladder-rung-of-four-clears-its-gate]]). "
-                "`tests/test_lag_ladder.py` pins rung 0 coming back bit-identical NaN for "
-                "NaN on every shared column, which is the design-side half of that "
-                "guarantee; the artifact-side half is a seeded veteran-unit spot-check "
-                "that belongs with the posterior round-trips in Session 6. Leaving the "
-                "key at `[]` with the verdict in its comment is the honest state: nothing "
-                "downstream changed this session.",
-        status="open",
+        claim="**The lag-recovery ladder is ON — `stan.components.lag_ladder: "
+              "[returnee_lag2]`, turned on 2026-08-22 by Session 6.** It shipped OFF for "
+              "the round that gated it, because turning it on is two edits and not one: "
+              "the config key, AND every fitting path taking its training frame through "
+              "`component_rates.fitting_rows`. The design goes from 10,194 rows to "
+              "10,383, and the fitting population does not move.",
+        because="`posteriors.windowed()` and `held_out.selection_split` split the design "
+                "on SEASON and know nothing about rungs, so passing the ladder to "
+                "`stan_components.head_design` without the second edit would put the "
+                "recovered rows into the FIT as well as the score — silently widening the "
+                "fitting population of eleven heads and breaching the constraint the whole "
+                "imputation-only form exists to satisfy "
+                "([[one-ladder-rung-of-four-clears-its-gate]]). Three paths fit rather "
+                "than score and all three route through `fitting_rows`: "
+                "`stan_components.run`, `posteriors.component_artifacts`, and "
+                "`model_cards.component_frames` — the last because it re-derives each "
+                "head's fitted state (imputation means, spline knots) and checks the "
+                "persisted recipe against it at 1e-9, so a widened training frame would "
+                "fail heads that are correct. `season_terms` and `components_preseason` "
+                "call `component_rates.build_design` directly and are pre-ladder by "
+                "construction. `tests/test_lag_ladder.py` pins all five by parsing, so a "
+                "fourth fitting path fails there rather than silently. **Rung 0 comes "
+                "back bit-identical on all 48 columns any head reads**, checked through "
+                "`head_design` rather than `build_design` — one layer further out than "
+                "the design-side test. Eleven columns do move and are named rather than "
+                "glossed: `attach_preseason`'s season-CENTRED delta twins are a property "
+                "of the frame, and 189 new rows shift the season means. None is in any "
+                "head's feature list — the shipped block is the volume-shrunk delta, a "
+                "per-row product — and a test asserts no head's preseason block names a "
+                "`_centered` column, so shipping the `own_delta_centered` ablation arm "
+                "would fail rather than quietly refit on a moved column.",
+        status="built",
+        reproduce="make lag-ladder → outputs/predictions/lag_ladder.csv",
         source="docs/rookie-rates-plan.md",
         reviewed="2026-08-22",
         date="2026-08-22",
@@ -10970,5 +10986,162 @@ REGISTRY: tuple[Decision, ...] = (
         reviewed="2026-08-22",
         date="2026-08-22",
         tags=("methodology", "strategy", "head"),
+    ),
+    Decision(
+        id="the-simulators-scorable-units-are-the-union-of-two-rate-families",
+        topic="simulations",
+        claim="**A board can contain a rookie: `build_context`'s scorable units are the "
+              "UNION of the veteran rate design and the true-rookie one**, disjoint "
+              "populations of one chain, each scored through its own posterior. 2023-24 "
+              "goes from 387 scorable units to 467 (74 true rookies, 6 lag-recovered "
+              "returnees) and 2022-23 from 386 to 471; Victor Wembanyama is on a board "
+              "for the first time. The eleven `rookie-components` posteriors exist at all "
+              "three fit windows and `make production-check` is green on 31 of 31 heads.",
+        because="Every board this project produced carried zero true rookies and the "
+                "mechanism was structural, not a threshold "
+                "([[the-rookie-rate-heads-are-scheduled-as-one-design-for-the-whole-gap]]). "
+                "**Ten of the eleven rookie heads ship "
+                "[[the-true-rookie-design-is-built-and-its-floors-beat-the-shipping-incumbent]]'s "
+                "no-fit floor and one (`reb`) ships fitted** "
+                "([[one-rookie-head-of-eleven-clears-the-ship-gate]]), so a floor-shipped "
+                "head is persisted as a `DesignRecipe` with ONE step writing the floor on "
+                "the head's own link — `log(rate/36)` for a count, `logit(p)` for a "
+                "conversion — at `beta = 1`, `alpha = 0`, identical on every draw. The "
+                "family's inverse link hands the floor's prediction straight back, which "
+                "makes a plug-in and a fitted head the same object to the simulator, and "
+                "it is `no_design_availability`'s shape one family over: no posterior, so "
+                "the predictive does not integrate over one. The draws are 1,000 IDENTICAL "
+                "rows rather than one, because `build_context` takes `min(n_draws)` across "
+                "the bundle. `manifest_row` gains `family_population` and `deterministic` "
+                "and both enter `SPECIFICATION_COLUMNS`, so a plug-in cannot be deployed "
+                "at `full` under a fitted head's name. Scoring the mixed frame through one "
+                "recipe would NOT raise — `DesignRecipe._block` fills a missing column "
+                "with zero and standardizes it, pricing a rookie off the veteran design's "
+                "mean prior season — so `component_rates` branches on rows and scatters "
+                "the blocks back, and disjointness is asserted on every build because a "
+                "player in both families would take two tensor entries and two board slots "
+                "with every marginal still looking plausible. **The veteran block is "
+                "bit-identical**: same rates, same dispersions, same shapes as scoring "
+                "those rows alone. Checked at the rates rather than at the tensor because "
+                "adding rows moves the RNG stream by construction.",
+        status="built",
+        reproduce="make posteriors → data/features/posteriors/full/manifest.csv, "
+                  "data/features/posteriors/train/manifest.csv",
+        source="docs/rookie-rates-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("head", "components", "simulations"),
+    ),
+    Decision(
+        id="the-rookie-inclusive-tensors-are-not-rebuilt-yet",
+        topic="simulations",
+        claim="**The wiring is live and the tensors on disk are NOT.** "
+              "`make simulate-season` was deliberately not re-run after the union landed, "
+              "so every downstream artifact — the strategy sweep, Gate A, the mixture "
+              "arms, the draft room's board — still describes the rookie-less population. "
+              "Re-running any of them now produces different numbers from the ones "
+              "recorded, and that is the change being live rather than a regression.",
+        because="What the union is WORTH in contest units is a measurement, and it has an "
+                "owner: Session 8's symmetric rookie-inclusive replay against "
+                "[[the-rookie-floor-is-173-dk-pts-on-the-cut-and-unresolved-in-the-contest]]. "
+                "Regenerating the tensors as a side effect of a plumbing session would "
+                "move dozens of audited figures with no reading attached to them, and "
+                "would spend the comparison the floor exists to be read against. "
+                "`priceable_room`'s '101 of 105 board rows dropped' is the same case one "
+                "level down: it reads the tensor's `scorable` mask, so it moves only when "
+                "the tensor is rebuilt. The forward board IS re-run, because Session 6 "
+                "changed its retrospective arm — on the 387 units both arms share the "
+                "mechanics reading is unchanged (Spearman 0.9988 against a 0.9990 "
+                "seed-noise floor, where 2026-08-21 read 0.9989 against 0.9990) and the "
+                "population column carries the whole move.",
+        status="open",
+        source="docs/rookie-rates-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("methodology", "simulations", "strategy"),
+    ),
+    Decision(
+        id="the-recovered-returnees-are-in-the-tensor-at-the-plug-ins-24-7-games",
+        topic="availability",
+        claim="**The lag-recovery ladder's returnees now enter the tensor and their games "
+              "played still come from the plug-in** — 24.7 against a realized 46.9. "
+              "`stan.availability.lag_ladder` is still `[]` while "
+              "`stan.components.lag_ladder` is `[returnee_lag2]`, so these units are "
+              "scored by a rate family built for them and an availability level built for "
+              "someone else.",
+        because="The two ladders have different blast radii and that is the whole of it. "
+                "The component one enters a SCORING population only "
+                "([[the-ladder-is-built-and-gated-but-not-yet-on]]); the availability "
+                "design feeds the minutes head, the composition, the spell process and the "
+                "simulator's `present` mask at once, and because the minutes allocation is "
+                "zero-sum a recovered player takes minutes from his teammates rather than "
+                "appearing beside them. `docs/availability-window-plan.md` §16c made "
+                "turning it on a separate decision from measuring it and §16i measured it: "
+                "the gain is 543.3167 → 305.7897 draftable season-total MAE, about half "
+                "the gap, with predicted games going 24.7376 → 49.6575. The rookie "
+                "program's runbook interleaved §16 ahead of "
+                "[[the-simulators-scorable-units-are-the-union-of-two-rate-families]] "
+                "precisely so these rows would not be wired in at 24.7 games, and they "
+                "were, because the key stayed off for the blast-radius reason. Neither "
+                "document is wrong; what changed is that the consequence is now priced "
+                "rather than hypothetical, and the decision belongs before the contest "
+                "replay reads it.",
+        status="withdrawn",
+        replaced_by="[[the-availability-ladder-ships-and-the-minute-transfer-is-measured]] "
+                    "— the key is on, every fitting path cuts to `rung_zero`, and the "
+                    "recovered rows are given 39.71 and 35.88 simulated games against "
+                    "realized 38.00 and 33.33.",
+        caught_by="`docs/rookie-rates-plan.md` §7g's own 'what it does not settle', which "
+                  "recorded the gap the same day it was created rather than leaving it to "
+                  "be found downstream.",
+        reproduce="make ladder-board → outputs/predictions/availability_ladder_board.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("head", "availability", "simulations"),
+    ),
+    Decision(
+        id="the-availability-ladder-ships-and-the-minute-transfer-is-measured",
+        topic="availability",
+        claim="**`stan.availability.lag_ladder: [returnee_lag2]` is ON, and the zero-sum "
+              "minute transfer §16c warned about is measured rather than assumed.** "
+              "`make ladder-board` simulates both arms on both validation seasons: the "
+              "recovered players are worth **−214.76** and **−82.23** dk_pts of "
+              "season-total MAE, the teammates who lose the minutes pay **+3.93** and "
+              "**+3.88** against seed-noise deltas of −4.66 and +7.20, and the untouched "
+              "units do not degrade (+0.89 and −1.31 against +2.23 and −0.72). "
+              "League-wide it is **−4.03** and **−1.29** MAE.",
+        because="§16i measured the ladder at the head's own unit and stopped short of "
+                "shipping it, because `availability.build_design` reaches seven consumers "
+                "and the minutes allocation is zero-sum "
+                "([[the-recovered-returnees-are-in-the-tensor-at-the-plug-ins-24-7-games]] "
+                "is what made the decision urgent). Two things had to be true. **The "
+                "second edit**: `availability.rung_zero` existed after §16i and NOTHING in "
+                "`src/` called it, so flipping the key alone would have widened four "
+                "heads' fitting populations — the cut is now at eight paths, of which "
+                "`StanAvailability.fitting_rows` covers five by itself and "
+                "`stan_composition.head_frame` is cut at its MERGE rather than its split, "
+                "because `variants` fits on `FEATURE_COLS` and would otherwise flip 5,710 "
+                "player-game rows from `design_missing` to present and move `impute`'s "
+                "train means. Verified rather than asserted: the availability head's "
+                "design matrix, `pi` block and trials are bit-identical on 5,821 rows, the "
+                "minutes head (9,804), the composition (736,410) and the spell process "
+                "(11,272) are bit-identical on every column, `make model-cards` passes its "
+                "1e-9 recipe check with `n_fit` unchanged at 4,027 and validation 883 → "
+                "902, and the `full` manifest's recorded availability fitting rows are the "
+                "rung-0 count to the row, so no posterior is refitted at any window. "
+                "**The measurement**: `season_total.evaluate` holds games per player and "
+                "is structurally blind to the transfer, so the reading had to be at the "
+                "simulator. The board moves more than seed noise (Spearman 0.9873 and "
+                "0.9957 against 0.9990, largest rank move 191 and 159 against 20 and 34) "
+                "and that is the ladder working — thirteen and six players priced at half "
+                "their games are being re-priced — while top-16 overlap IMPROVES on the "
+                "noise floor, 15/16 and 16/16 against 14/16 and 15/16.",
+        status="settled",
+        reproduce="make ladder-board → outputs/predictions/availability_ladder_board.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("head", "availability", "simulations", "methodology"),
     ),
 )

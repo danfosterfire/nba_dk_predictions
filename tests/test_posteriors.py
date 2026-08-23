@@ -893,3 +893,147 @@ def test_a_mixture_recipe_without_its_scaler_is_refused_twice():
                   steps=[], builder="test", pi_features=["age"], pi_scaler=None,
                   extras={"dispersion": "rho_draws"}, window="train", cfg_stan={},
                   draws_kept=64, seconds=0.0)
+
+
+# ── The rookie family's plug-in artifacts — docs/rookie-rates-plan.md §5f ─────
+
+def _rookie_frame(n: int = 40, seed: int = 3) -> pd.DataFrame:
+    """A true-rookie design frame: a season, a draft bucket, and a preseason reading."""
+    rng = np.random.default_rng(seed)
+    buckets = ["top_5", "lottery", "late_first", "second_round", "undrafted"]
+    frame = pd.DataFrame({
+        "player_id": np.arange(n),
+        "season": np.where(np.arange(n) % 2 == 0, "2022-23", "2023-24"),
+        "draft_bucket": [buckets[i % len(buckets)] for i in range(n)],
+        "min_pre": rng.uniform(0, 220, n),
+        "total_minutes": rng.uniform(200, 2200, n),
+        "pre_per36_reb": rng.uniform(1.0, 12.0, n),
+        "fg3m_pre": rng.integers(0, 12, n).astype(float),
+        "fg3a_pre": rng.integers(3, 30, n).astype(float),
+    })
+    # A third of the population has no preseason reading at all, which is the row whose
+    # blend weight has to fall out of its own volume rather than out of a special case.
+    frame.loc[frame.index[::3], "min_pre"] = 0.0
+    frame["fg3m"] = np.rint(frame["fg3a_pre"] * 0.34)
+    frame["fg3a"] = frame["fg3a_pre"] * 3
+    frame["reb"] = np.rint(frame["pre_per36_reb"] * frame["total_minutes"] / 36.0)
+    return frame
+
+
+def _rookie_priors(frame: pd.DataFrame, target: str) -> pd.DataFrame:
+    return pd.DataFrame([
+        {"season": season, "draft_bucket": bucket, "prior": float(0.5 + 0.1 * i)}
+        for season in sorted(frame["season"].unique())
+        for i, bucket in enumerate(sorted(frame["draft_bucket"].unique()))])
+
+
+def test_the_rookie_floor_step_rebuilds_the_floors_own_prediction():
+    """The plug-in's whole claim: `exp(eta)` is the floor's per-minute rate, exactly.
+
+    The step writes the floor on the head's own LINK and the artifact carries `beta = 1`,
+    `alpha = 0`, so the family's inverse link has to give the rate back. Checked against
+    `rookie_rates.floor_arms` rather than against the step, which is the only way the
+    comparison is between two paths instead of one path and itself.
+    """
+    from src.models import rookie_rates as rr
+
+    frame = _rookie_frame()
+    priors = _rookie_priors(frame, "reb_p36")
+    step = {"kind": "rookie_floor", "name": "floor_reb", "component": "reb",
+            "attempted": None, "priors": priors, "volume_k": 160.0,
+            "conversion": None, "arm": rr.FLOOR_ARM}
+    eta = P._apply_step(step, frame)["floor_reb"].to_numpy(float)
+
+    rate = rr.floor_arms(frame, priors, "pre_per36_reb", 160.0)[rr.FLOOR_ARM]
+    np.testing.assert_allclose(np.exp(eta) * rr.PER36, rate, rtol=1e-12)
+
+
+def test_the_rookie_floor_step_carries_a_conversion_on_the_logit_scale():
+    """The beta-binomial half, and its second shrink.
+
+    `k_attempts` pulls the preseason percentage toward the rookie league mean by ATTEMPTS
+    and `volume_k` blends the result with the bucket prior by MINUTES. Passing one where
+    the other belongs is the mistake `conversion_floor` names; here the check is only that
+    `sigmoid(eta)` is the percentage the floor itself predicts.
+    """
+    from src.models import rookie_rates as rr
+
+    frame = _rookie_frame()
+    priors = _rookie_priors(frame, "fg3m_pct")
+    step = {"kind": "rookie_floor", "name": "floor_fg3m", "component": "fg3m",
+            "attempted": "fg3a", "priors": priors, "volume_k": 10.0,
+            "conversion": (2.07, 0.2754), "arm": rr.FLOOR_ARM}
+    eta = P._apply_step(step, frame)["floor_fg3m"].to_numpy(float)
+
+    p = rr.conversion_floor_p(frame, priors, "fg3m", 10.0, 2.07, 0.2754, rr.FLOOR_ARM)
+    np.testing.assert_allclose(1.0 / (1.0 + np.exp(-eta)), p, rtol=1e-12)
+
+
+def test_the_rookie_floor_refuses_a_season_its_prior_table_never_saw():
+    """A forward season is `docs/rookie-rates-plan.md` §5g's tier, not an extrapolation.
+
+    The prior table travels inside the artifact and is expanding by construction, so a
+    season it does not cover has no point-in-time-safe answer. Raising names the gap; an
+    `arm_predictions` NaN would price a 2026-27 lottery pick off nothing.
+    """
+    from src.models import rookie_rates as rr
+
+    frame = _rookie_frame()
+    priors = _rookie_priors(frame, "reb_p36")
+    forward = frame.assign(season="2026-27")
+    with pytest.raises(KeyError, match="2026-27"):
+        rr.floor_level(forward, priors, "reb", None, 160.0)
+
+
+def test_a_deterministic_plug_in_has_no_posterior_width():
+    """`no_design_availability`'s shape, one family over: constant across draws.
+
+    A plugged-in empirical prior has no posterior, so the predictive must not integrate
+    over one — and the draws are `n` identical rows rather than one row, so a consumer
+    taking `min(a.n_draws ...)` over the bundle is not collapsed to a single draw for the
+    twenty heads that do have a posterior.
+    """
+    from sklearn.preprocessing import StandardScaler
+    from src.models import rookie_rates as rr
+
+    frame = _rookie_frame()
+    priors = _rookie_priors(frame, "reb_p36")
+    art = P.PosteriorArtifact(
+        head="rookie_reb", head_label="rookie reb", family="negbinomial",
+        response="mean_count",
+        recipe=P.DesignRecipe(
+            "no_fit_floor", ["floor_reb"],
+            StandardScaler(with_mean=False, with_std=False).fit(np.zeros((1, 1))),
+            steps=({"kind": "rookie_floor", "name": "floor_reb", "component": "reb",
+                    "attempted": None, "priors": priors, "volume_k": 160.0,
+                    "conversion": None, "arm": rr.FLOOR_ARM},),
+            builder=P.ROOKIE_BUILDER),
+        draws={"alpha_draws": np.zeros(64), "beta_draws": np.ones((64, 1)),
+               "phi_draws": np.full(64, 7.0)},
+        extras={"component": "reb", "exposure": "total_minutes",
+                "dispersion": "phi_draws", "deterministic": True},
+        provenance={"fit_window": "train"})
+
+    mu = art.mu_draws(frame)
+    assert mu.shape == (64, len(frame))
+    assert np.ptp(mu, axis=0).max() == 0.0
+    # And the reported mean is the floor's own count prediction on realized minutes.
+    rate = rr.floor_arms(frame, priors, "pre_per36_reb", 160.0)[rr.FLOOR_ARM]
+    np.testing.assert_allclose(art.predict(frame),
+                               rate * frame["total_minutes"].to_numpy(float) / rr.PER36,
+                               rtol=1e-10)
+
+
+def test_the_rookie_prefix_cannot_collide_with_a_veteran_head():
+    """One window directory, two families — the names have to be disjoint by construction."""
+    from src.models.component_rates import CONVERSION_HEADS, COUNT_HEADS
+
+    veteran = set(COUNT_HEADS) | {f"{m}_given_{a}" for m, a in CONVERSION_HEADS}
+    rookie = {P.rookie_head(name) for name in veteran}
+    assert not (veteran & rookie)
+    assert all(name.startswith(P.ROOKIE_PREFIX) for name in rookie)
+
+
+def test_the_rookie_group_is_in_the_head_group_vocabulary():
+    """`--groups rookie-components` has to be a name `run` accepts, not a typo."""
+    assert "rookie-components" in P.GROUPS

@@ -347,6 +347,7 @@ SEASON_TOTAL_ROOKIE = "outputs/predictions/season_total_rookie.csv"
 SEASON_TOTAL_ROOKIE_LADDER = "outputs/predictions/season_total_rookie_lagladder.csv"
 # §16 — the availability head's own lag-recovery ladder and its gate, 2026-08-22.
 AVAIL_LAG = "outputs/predictions/availability_lag.csv"
+LADDER_BOARD = "outputs/predictions/availability_ladder_board.csv"
 SWEEP_FLOOR = "outputs/predictions/strategy_sweep_rookiefloor.csv"
 
 
@@ -7327,6 +7328,103 @@ def _availability_lag() -> list[Claim]:
     return C
 
 
+def _ladder_board() -> list[Claim]:
+    """`docs/availability-window-plan.md` §16j — the ladder at the BOARD.
+
+    Every group figure is claimed against its own noise twin, because the gate is a
+    comparison and not a level: "the untouched units do not degrade" is a statement about
+    +0.89 against +2.23, and a doc that quoted only the first half would be auditable and
+    would say nothing. The `on_vs_off` Spearman is claimed beside the seed-noise floor for
+    the same reason `_forward_board`'s is.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, actual, label: str, **kw) -> None:
+        C.append(_c(quoted, LADDER_BOARD, actual, label, doc=AWIN, **kw))
+
+    def m(season: str, arm: str, group: str, metric: str) -> float:
+        return cell(LADDER_BOARD, "value", season=season, arm=arm, group=group,
+                    metric=metric)
+
+    def delta(season: str, group: str, metric: str, arm: str = "on") -> float:
+        return m(season, arm, group, metric) - m(season, "off", group, metric)
+
+    for season, rows in (("2022-23", [("recovered", "13", "520.65", "305.89", "−214.76",
+                                       "−169.49", "−5.14"),
+                                      ("teammates", "160", "377.67", "381.61", "+3.93",
+                                       "+3.92", "−4.66"),
+                                      ("untouched", "298", "329.21", "330.11", "+0.89",
+                                       "+0.84", "+2.23"),
+                                      ("all", "471", "350.96", "346.93", "−4.03",
+                                       "−2.82", "−0.31")]),
+                         ("2023-24", [("recovered", "6", "474.88", "392.65", "−82.23",
+                                       "−90.86", "+18.18"),
+                                      ("teammates", "95", "371.94", "375.82", "+3.88",
+                                       "+4.37", "+7.20"),
+                                      ("untouched", "366", "358.35", "357.05", "−1.31",
+                                       "−0.65", "−0.72"),
+                                      ("all", "467", "362.61", "361.32", "−1.29",
+                                       "−0.79", "+1.13")])):
+        for group, n, off, on, d_mae, d_crps, d_noise in rows:
+            add(n, lambda s=season, g=group: m(s, "off", g, "n"),
+                f"{season} {group} units")
+            add(off, lambda s=season, g=group: m(s, "off", g, "mae"),
+                f"{season} {group} MAE, ladder off")
+            add(on, lambda s=season, g=group: m(s, "on", g, "mae"),
+                f"{season} {group} MAE, ladder on")
+            add(d_mae, lambda s=season, g=group: delta(s, g, "mae"),
+                f"{season} {group} MAE delta")
+            add(d_crps, lambda s=season, g=group: delta(s, g, "crps"),
+                f"{season} {group} CRPS delta")
+            add(d_noise, lambda s=season, g=group: delta(s, g, "mae", "seed_noise"),
+                f"{season} {group} MAE seed-noise delta")
+
+    for season, off, on, realized in (("2022-23", "22.17", "39.71", "38.00"),
+                                      ("2023-24", "21.39", "35.88", "33.33")):
+        add(off, lambda s=season: m(s, "off", "recovered", "mean_predicted_gp"),
+            f"{season} recovered games, ladder off")
+        add(on, lambda s=season: m(s, "on", "recovered", "mean_predicted_gp"),
+            f"{season} recovered games, ladder on")
+        add(realized, lambda s=season: m(s, "off", "recovered", "mean_realized_gp"),
+            f"{season} recovered games, realized")
+
+    for season, spearman, top16, noise16, top100 in (("2022-23", "0.9873", "15", "14", "99"),
+                                                     ("2023-24", "0.9957", "16", "15", "99")):
+        add(spearman, lambda s=season: m(s, "on_vs_off", "board", "spearman"),
+            f"{season} board Spearman, ladder against no ladder")
+        add(top16, lambda s=season: m(s, "on_vs_off", "board", "overlap_16"),
+            f"{season} top-16 overlap, ladder against no ladder")
+        add(noise16, lambda s=season: m(s, "seed_noise", "board", "overlap_16"),
+            f"{season} top-16 overlap, seed-noise floor")
+        add(top100, lambda s=season: m(s, "on_vs_off", "board", "overlap_100"),
+            f"{season} top-100 overlap, ladder against no ladder")
+    add("0.9990", lambda: m("2022-23", "seed_noise", "board", "spearman"),
+        "board Spearman, seed-noise floor (ladder board)")
+    for season, move in (("2022-23", "191"), ("2023-24", "159")):
+        add(move, lambda s=season: m(s, "on_vs_off", "board", "max_rank_move"),
+            f"{season} largest rank move under the ladder")
+    for season, move in (("2022-23", "20"), ("2023-24", "34")):
+        add(move, lambda s=season: m(s, "seed_noise", "board", "max_rank_move"),
+            f"{season} largest rank move from re-seeding")
+
+    # The design and frame counts §16j states the second edit on. All from the design
+    # rather than from this artifact, so they are presence-checked against the doc and
+    # value-checked where an artifact carries them.
+    add("189", lambda: cell(AVAIL_LAG, "value", measurement="population",
+                            group="returnee_lag2", metric="n_design"),
+        "design rows the admitted availability rung recovers")
+    add("11,272", lambda: cell(AVAIL_LAG, "value", measurement="population", group="all",
+                               metric="n_design_today"),
+        "availability design rows before the ladder (§16j)")
+    add("11,461", lambda: (cell(AVAIL_LAG, "value", measurement="population", group="all",
+                                metric="n_design_today")
+                           + cell(AVAIL_LAG, "value", measurement="population",
+                                  group="returnee_lag2", metric="n_design")),
+        "availability design rows with the admitted rung")
+    return C
+
+
+
 def _availability_no_design_level() -> list[Claim]:
     """`docs/availability-window-plan.md` §8b — the no-design availability LEVEL.
 
@@ -9296,8 +9394,8 @@ def _build() -> tuple[Claim, ...]:
                  + _composition_preseason_fit_covered()
                  + _preseason_contest()
                  + _final_evaluation() + _rookie_floor() + _lag_recovery()
-                 + _lag_ladder() + _rookie_rates() + _rookie_heads()
-                 + _season_total_rookie())
+                 + _lag_ladder() + _ladder_board() + _rookie_rates() + _rookie_heads()
+                 + _season_total_rookie() + _rookie_persistence())
 
 
 def _final_evaluation() -> list[Claim]:
@@ -9471,26 +9569,40 @@ def _final_evaluation() -> list[Claim]:
                             "forward_fixed_population_vs_retro", "forward_vs_retro")
     add("0.9990", lambda: brd("spearman", _NOISE),
         "board Spearman, seed-noise floor", artifact=FORWARD_BOARD)
-    add("0.9989", lambda: brd("spearman", _FIXED),
+    add("0.9988", lambda: brd("spearman", _FIXED),
         "board Spearman, forward with population held fixed", artifact=FORWARD_BOARD)
-    add("0.9831", lambda: brd("spearman", _FWD),
+    add("0.9828", lambda: brd("spearman", _FWD),
         "board Spearman, forward from the snapshot", artifact=FORWARD_BOARD)
-    add("21.03", lambda: brd("mean_abs_total_diff", _NOISE),
+    add("20.35", lambda: brd("mean_abs_total_diff", _NOISE),
         "mean season-total gap, seed noise", artifact=FORWARD_BOARD)
-    add("22.17", lambda: brd("mean_abs_total_diff", _FIXED),
+    add("23.25", lambda: brd("mean_abs_total_diff", _FIXED),
         "mean season-total gap, fixed population", artifact=FORWARD_BOARD)
-    add("104.90", lambda: brd("mean_abs_total_diff", _FWD),
+    add("105.11", lambda: brd("mean_abs_total_diff", _FWD),
         "mean season-total gap, snapshot population", artifact=FORWARD_BOARD)
     add("89", lambda: brd("overlap_100", _FWD),
         "top-100 overlap, forward from the snapshot", artifact=FORWARD_BOARD)
-    add("99", lambda: brd("overlap_100", _FIXED),
+    add("98", lambda: brd("overlap_100", _FIXED),
         "top-100 overlap, fixed population", artifact=FORWARD_BOARD)
-    add("33", lambda: brd("n_ref_only", _FWD),
+    add("98", lambda: brd("overlap_100", _NOISE),
+        "top-100 overlap, seed-noise floor", artifact=FORWARD_BOARD)
+    add("113", lambda: brd("n_ref_only", _FWD),
         "retro-board players the snapshot arm is missing", artifact=FORWARD_BOARD)
+    # The rookie family and the ladder's returnees, which §5f of docs/rookie-rates-plan.md
+    # put on the retro board and §5g has yet to put on a forward one.
+    add("80", lambda: brd("n_ref_only", _FIXED),
+        "retro-board players the fixed-population arm is missing", artifact=FORWARD_BOARD)
+    add("467", lambda: brd("n_shared", _NOISE),
+        "units on the 2023-24 retrospective board", artifact=FORWARD_BOARD)
     add("6", lambda: brd("missing_top100", _FWD),
         "missing players inside the retro top 100", artifact=FORWARD_BOARD)
     add("387", lambda: brd("n_shared", _FIXED),
-        "units shared by the fixed-population arm — all of them", artifact=FORWARD_BOARD)
+        "units shared by the fixed-population arm", artifact=FORWARD_BOARD)
+    # The 2026-08-21 run, kept whole beside the re-run because what did NOT move is the
+    # reading: Session 6 of docs/rookie-rates-plan.md widened the retro board's population
+    # and left the mechanics arms inside seed noise.
+    for quoted in ("0.9989", "22.17", "21.03"):
+        add(quoted, None, f"superseded 2026-08-21 forward-board figure: {quoted}",
+            historical=True)
 
     # ── §4d: the chain — Gate A on the held-out seasons, and the one-world contest ──
     def chain_a(metric: str, season: str, arm: str = "gate_a/season_total_dk") -> float:
@@ -9531,7 +9643,11 @@ def _final_evaluation() -> list[Claim]:
         "held-out 600k lift (README)", doc=README)
 
     # ── §5: the production fit ─────────────────────────────────────────────────
-    add("20", lambda: rows(FULL_MANIFEST), "heads at the full window",
+    # 20 chain heads plus the eleven `rookie-components` heads Session 6 of
+    # `docs/rookie-rates-plan.md` added on 2026-08-22. The rookie group is a production
+    # artifact like any other — `production_check` counts it and `assert_same_specification`
+    # compares it across windows — so the figure the doc quotes is the whole manifest.
+    add("31", lambda: rows(FULL_MANIFEST), "heads at the full window",
         artifact=FULL_MANIFEST)
     add("1.00608", lambda: max_of(FULL_MANIFEST, "max_rhat"),
         "worst R-hat across the production heads", artifact=FULL_MANIFEST)
@@ -10448,6 +10564,79 @@ def _season_total_rookie() -> list[Claim]:
         "veteran head at oracle GP, the cross-check cell")
     add("72.7774", lambda: metric("veteran", "oracle_gp_head", "crps_dk_total", "all"),
         "veteran head CRPS at oracle GP, the cross-check cell")
+    return C
+
+
+def _rookie_persistence() -> list[Claim]:
+    """`docs/rookie-rates-plan.md` §7g — the `rookie-components` group on disk.
+
+    Session 6 produced no metrics artifact: its deliverable IS the posteriors, so the
+    manifests are what its figures are re-derived from. The unit census and the two ADP
+    counts beside them are labelled scratch in the doc and are deliberately not here —
+    they come from a `build_context` call rather than from a saved table, and a claim that
+    can only be checked by rebuilding a context is a claim that checks nothing on a fresh
+    checkout.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, actual, label: str, artifact: str, **kw) -> None:
+        C.append(_c(quoted, artifact, actual, label, doc=ROOKIE, **kw))
+
+    def rookie_rows(manifest: str) -> float:
+        frame = table(manifest)
+        return float(frame["head"].astype(str).str.startswith("rookie_").sum())
+
+    def deterministic(manifest: str) -> float:
+        frame = table(manifest)
+        rookie = frame[frame["head"].astype(str).str.startswith("rookie_")]
+        return float(rookie["deterministic"].astype(str).str.lower().eq("true").sum())
+
+    def rookie_cell(manifest: str, column: str, head: str = "rookie_reb") -> float:
+        return cell(manifest, column, head=head)
+
+    TRAIN_MANIFEST = "data/features/posteriors/train/manifest.csv"
+    add("31", lambda: rows(FULL_MANIFEST), "heads at the full window (rookie doc)",
+        artifact=FULL_MANIFEST)
+    add("189", lambda: cell(LAG_LADDER, "value", gate="population",
+                            group="returnee_lag2", metric="n_design"),
+        "design rows the admitted rung recovers", artifact=LAG_LADDER)
+    add("10,194", lambda: cell(LAG_LADDER, "value", gate="population", group="all",
+                               metric="n_design_today"),
+        "design rows before the ladder (§7g)", artifact=LAG_LADDER)
+    # 10,194 + 189, so the sum is claimed rather than the addends alone — the sentence a
+    # later session reads is "the design goes from 10,194 to 10,383".
+    add("10,383", lambda: (cell(LAG_LADDER, "value", gate="population", group="all",
+                                metric="n_design_today")
+                           + cell(LAG_LADDER, "value", gate="population",
+                                  group="returnee_lag2", metric="n_design")),
+        "design rows with the admitted rung", artifact=LAG_LADDER)
+    for window, manifest, fit_rows in (
+            ("train", TRAIN_MANIFEST, "1,161"),
+            ("train_val", TV_MANIFEST, "1,307"),
+            ("full", FULL_MANIFEST, "1,438")):
+        add("11", lambda m=manifest: rookie_rows(m),
+            f"rookie heads at `{window}`", artifact=manifest)
+        add("10", lambda m=manifest: deterministic(m),
+            f"deterministic rookie plug-ins at `{window}`", artifact=manifest)
+        add(fit_rows, lambda m=manifest: rookie_cell(m, "n_fit_rows"),
+            f"rookie fitting rows at `{window}`", artifact=manifest)
+    add("1.0014", lambda: rookie_cell(TRAIN_MANIFEST, "max_rhat"),
+        "the fitted rookie head's R-hat at `train`", artifact=TRAIN_MANIFEST)
+    add("1.0032", lambda: rookie_cell(TV_MANIFEST, "max_rhat"),
+        "the fitted rookie head's R-hat at `train_val`", artifact=TV_MANIFEST)
+    add("1.00418", lambda: rookie_cell(FULL_MANIFEST, "max_rhat"),
+        "the fitted rookie head's R-hat at `full`", artifact=FULL_MANIFEST)
+    # A COST figure: `_note_columns` marks it so the audit presence-checks it rather than
+    # value-checking it, which is the standing rule for `fit_seconds` — wall clock measures
+    # the machine. The ten floors are the substantive half and they never touch a sampler.
+    def group_seconds() -> float:
+        _note_columns("fit_seconds")
+        frame = table(FULL_MANIFEST)
+        rookie = frame[frame["head"].astype(str).str.startswith("rookie_")]
+        return float(rookie["fit_seconds"].sum())
+
+    add("4.7", group_seconds,
+        "sampler seconds for the whole rookie group at `full`", artifact=FULL_MANIFEST)
     return C
 
 

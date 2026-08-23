@@ -106,7 +106,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import yaml
-from sklearn.preprocessing import SplineTransformer
+from sklearn.preprocessing import SplineTransformer, StandardScaler
 
 from src.models.availability import split_seasons
 from src.models.held_out import (HeldOutLocked, assert_unlocked, selection_split,
@@ -142,7 +142,15 @@ POSTERIOR_DIR = "posteriors"
 # Head groups, in the order `make posteriors` runs them: cheapest first, so a failure in
 # the plumbing surfaces in three minutes rather than three hours.
 GROUPS = ("game-length", "availability", "games-played", "minutes", "components",
-          "composition")
+          "composition", "rookie-components")
+
+# The rookie rate family's artifact namespace (`docs/rookie-rates-plan.md` §5f). The two
+# families are disjoint populations of ONE chain and share a window directory, so the
+# prefix is what stops a rookie `reb` from overwriting the head that scores everybody else.
+ROOKIE_PREFIX = "rookie_"
+# The raw frame every rookie recipe expects — `rookie_rates.head_design`, which is
+# `build_design` plus the volume-shrunk preseason level at the constants Session 3 fitted.
+ROOKIE_BUILDER = "src.models.rookie_rates.head_design"
 
 
 # ── The design recipe ─────────────────────────────────────────────────────────
@@ -246,6 +254,28 @@ def _apply_step(step: dict, frame: pd.DataFrame) -> pd.DataFrame:
                      np.asarray(step["edges"], dtype=float), labels=False)
         out[step["name"]] = (np.nan_to_num(np.asarray(idx, dtype=float), nan=0.0)
                              .astype(int) + 1)
+    elif kind == "rookie_floor":
+        # §7d's no-fit floor, expressed as ONE column on the head's own link scale — the
+        # whole recipe of a head that ships the floor rather than a fitted arm
+        # (`docs/rookie-rates-plan.md` §5f). Paired with `beta = 1`, `alpha = 0` identical
+        # on every draw, the family's inverse link gives back the floor's own prediction:
+        # `exp(log(rate/36))` is a per-minute rate and `sigmoid(logit(p))` is `p`.
+        #
+        # The expanding draft-bucket prior table travels INSIDE the step, for the reason
+        # the `join` block below states — a rebuilt `rookie_rate_floors.csv` must not
+        # silently change what a persisted posterior scores. It is point-in-time by
+        # construction (season S averages true rookies from seasons strictly before S), so
+        # carrying it is not carrying an answer; a season the table does not cover raises
+        # in `floor_level` rather than being extrapolated.
+        #
+        # A function-level import so a consumer that never applies this step never pays
+        # for `src.models.rookie_rates`.
+        from src.models.rookie_rates import floor_level
+
+        out = frame.copy()
+        out[step["name"]] = floor_level(frame, step["priors"], step["component"],
+                                        step["attempted"], step["volume_k"],
+                                        step["conversion"], step["arm"])
     elif kind == "join":
         # A per-unit feature block joined on keys, with ONE missingness indicator for the
         # whole block and train means for the holes — `stan_composition.attach_team_context`
@@ -613,7 +643,7 @@ def require_window(artifacts: dict, window: str = FIT_WINDOW) -> None:
 #: of them are two models, and comparing them across windows compares the wrong thing.
 SPECIFICATION_COLUMNS = ("family", "variant", "fit_first_season", "n_features",
                          "preseason", "preseason_columns", "player_season_effect",
-                         "sigma_u")
+                         "sigma_u", "family_population", "deterministic")
 
 
 def assert_same_specification(cfg: dict, window: str,
@@ -1150,7 +1180,8 @@ def _minutes_steps(tr: pd.DataFrame, variant: str, features: list[str], own: str
 def component_artifacts(cfg: dict, window: str, draws_kept: int):
     """The seven negative-binomial counts and four beta-binomial conversions."""
     from src.models.component_rates import (BIO_COLS, CONTEXT_COLS, CONVERSION_HEADS,
-                                            COUNT_HEADS, build_design)
+                                            COUNT_HEADS, build_design,
+                                            fitting_rows as component_fitting_rows)
     from src.models.stan_components import (SPLINE_KNOTS, StanConversion, StanCount,
                                             conversion_variants, count_variants)
 
@@ -1176,6 +1207,14 @@ def component_artifacts(cfg: dict, window: str, draws_kept: int):
     preseason = bool(cfg_stan.get("components", {}).get("preseason", True))
     design = head_design(cfg, preseason)
     fit_frame_full, val = windowed(design, window, test_seasons)
+    # Rung 0 alone on the fit half. `head_design` carries the lag-recovery ladder since
+    # `docs/rookie-rates-plan.md` §5f turned it on, and `windowed` splits on SEASON — it
+    # knows nothing about rungs, so without this the recovered rows would enter eleven
+    # heads' fits at every window and breach §3 constraint 4, which is the whole reason the
+    # imputation-only form was the one gated. The probe keeps them: a recovered row is
+    # exactly what the round-trip should be able to score. A no-op while `lag_ladder` is
+    # `[]`.
+    fit_frame_full = component_fitting_rows(fit_frame_full)
     # The covered-window cut, on the FITTING rows only — required by the block, not chosen,
     # and applied PER HEAD: a head that carries no preseason column has no era dummy to
     # protect against and keeps its full window. `stan_components.head_fitting_rows` states
@@ -1285,6 +1324,245 @@ def _conversion_steps(train: pd.DataFrame, tr: pd.DataFrame, variant: str,
     names = [c for c in features if c.startswith(f"{logit_name}__s")]
     steps.append(_spline_step(tr, logit_name, n_knots, names))
     return steps
+
+
+# ── The rookie rate family ────────────────────────────────────────────────────
+
+def rookie_head(head: str) -> str:
+    """`reb` -> `rookie_reb`, `fg3a_given_fga` -> `rookie_fg3a_given_fga`.
+
+    The two families are **disjoint populations of one chain**, not two chains, so their
+    artifacts share a window directory and need names that cannot collide — a rookie `reb`
+    landing on `reb.pkl` would overwrite the head that scores everybody else. The prefix is
+    also what lets `sim.season.component_rates` pick a family per unit with one lookup
+    instead of a second artifact dictionary.
+    """
+    return f"{ROOKIE_PREFIX}{head}"
+
+
+def rookie_priors_table(history: pd.DataFrame, component: str, attempted: str | None,
+                        covered: list[str]) -> pd.DataFrame:
+    """One head's expanding draft-bucket prior table — `stan_rookie.head_priors` verbatim.
+
+    Named here only so the artifact and §4's gate cannot reach two different tables; the
+    construction and the reason the history is the whole window (not the fitting half) both
+    live in that function.
+    """
+    from src.models.stan_rookie import head_priors
+
+    return head_priors(history, component, attempted, covered)
+
+
+def _floor_artifact(head: str, head_label_: str, component: str, attempted: str | None,
+                    priors: pd.DataFrame, constants, probe: pd.DataFrame,
+                    fit_frame: pd.DataFrame, window: str, cfg_stan: dict,
+                    draws_kept: int, started: float) -> PosteriorArtifact:
+    """A head that ships §7d's no-fit floor, persisted as a plug-in the simulator can draw.
+
+    **Constant across draws, and that is the claim rather than a shortcut.**
+    `sim.season.no_design_availability` is the precedent this mirrors: a plugged-in
+    empirical prior has no posterior, so the predictive must not integrate over one. The
+    draws are therefore `draws_kept` identical rows — identical rather than one row, so
+    `build_context`'s `min(a.n_draws ...)` is not collapsed to a single posterior draw for
+    the twenty heads that do have one.
+
+    The dispersion is not constant *in the same sense*: `phi` / `rho` are fitted on the
+    head's own fitting rows by `count_floor_predictive` / `conversion_floor_predictive`, so
+    the plug-in is a distribution rather than a point. It is a point estimate of a
+    dispersion, repeated per draw, which is exactly what §7d scored the floor's CRPS with.
+    """
+    from src.models import rookie_rates as rr
+    from src.models.stan_rookie import FLOOR_VARIANT, fitting_rows as rookie_fitting_rows
+
+    train = rookie_fitting_rows(fit_frame, priors)
+    name = f"floor_{component}"
+    step = {"kind": "rookie_floor", "name": name, "component": component,
+            "attempted": attempted, "priors": priors.copy(),
+            "volume_k": float(constants.volume[component]),
+            "conversion": (tuple(constants.conversion[component])
+                           if attempted is not None else None),
+            "arm": rr.FLOOR_ARM}
+
+    if attempted is None:
+        _, mu, _, dispersion = rr.count_floor_predictive(
+            train, probe, priors, component, constants.volume[component], rr.FLOOR_ARM)
+        reference = mu
+        family, response = "negbinomial", "mean_count"
+        extras = {"component": component, "exposure": "total_minutes",
+                  "dispersion": "phi_draws"}
+        draws = {"alpha_draws": np.zeros(draws_kept),
+                 "beta_draws": np.ones((draws_kept, 1)),
+                 "phi_draws": np.full(draws_kept, float(dispersion))}
+    else:
+        # One call for both halves: `rho` is fitted on the head's own fitting rows and
+        # `p` is the floor's percentage on the probe, taken from the SCORING path rather
+        # than recomputed beside it.
+        _, _, reference, _, dispersion = rr.conversion_floor_predictive(
+            train, probe, priors, component, attempted, constants.volume[component],
+            *constants.conversion[component], rr.FLOOR_ARM)
+        family, response = "betabinomial", "mean_mu"
+        extras = {"made": component, "attempted": attempted, "trials": attempted,
+                  "dispersion": "rho_draws"}
+        draws = {"alpha_draws": np.zeros(draws_kept),
+                 "beta_draws": np.ones((draws_kept, 1)),
+                 "rho_draws": np.full(draws_kept, float(dispersion))}
+
+    # An identity scaler, so `beta = 1` means one on the column the step wrote rather than
+    # one on a standardized version of it. `StandardScaler` with both flags off is the
+    # honest way to say "this block is not standardized" — the alternative is a fitted
+    # scaler plus a compensating `beta`, which hides the plug-in inside two constants that
+    # have to agree.
+    scaler = StandardScaler(with_mean=False, with_std=False).fit(np.zeros((1, 1)))
+    recipe = DesignRecipe(variant=FLOOR_VARIANT, features=[name], scaler=scaler,
+                          steps=(step,), builder=ROOKIE_BUILDER)
+    artifact = PosteriorArtifact(
+        head=head, head_label=head_label_, family=family, response=response,
+        recipe=recipe, draws=draws,
+        extras={**extras, "family_population": rr.ROOKIE_GROUP, "deterministic": True,
+                "floor_arm": rr.FLOOR_ARM,
+                "volume_k": float(constants.volume[component]),
+                "n_prior_rows": int(len(priors))},
+        provenance=_provenance(window, train, draws_kept, draws_kept, cfg_stan,
+                               # Nothing sampled, so there is nothing to have converged —
+                               # reported as a clean fit rather than as a failure, with
+                               # `variant == no_fit_floor` and `deterministic` on the
+                               # manifest as the columns that say which it is.
+                               {"max_rhat": 1.0, "divergences": 0, "converged": True},
+                               # The real build cost, which is the two dispersion fits and
+                               # the round-trip rather than a sampler — measured rather
+                               # than reported as zero, so the manifest's `fit_seconds`
+                               # means the same thing in both columns of this group.
+                               time.perf_counter() - started),
+        reference={"frame": probe.copy(),
+                   "design": recipe.matrix(probe),
+                   "prediction": np.asarray(reference, dtype=float)})
+
+    check = artifact.roundtrip()
+    if not check["passes"]:
+        raise AssertionError(
+            f"{head}: the persisted plug-in does not reproduce §7d's own floor — "
+            f"prediction error {check['max_prediction_error']:.3e} (bar "
+            f"{PREDICTION_TOL:.0e}). The recipe's `rookie_floor` step and "
+            f"`rookie_rates.floor_level` have come apart from `count_floor_predictive` / "
+            f"`conversion_floor_p`; do not loosen the tolerance.")
+    return artifact
+
+
+def rookie_component_artifacts(cfg: dict, window: str, draws_kept: int):
+    """The eleven true-rookie rate heads — §7e's ship split, persisted.
+
+    One artifact per head either way, because a unit has to carry all eleven quantities to
+    enter the tensor at all: `ships` decides which ARM is persisted, never whether the head
+    is. Today that is `reb` fitted at `slot_interaction_spline` and ten deterministic
+    floors, read out of `rookie_rate_metrics.csv` rather than pinned here.
+
+    The prior table each floor blends toward is built on the **window's own** history —
+    `fit_frame` plus the validation probe — so a `train` artifact's floors have never seen
+    a test season and the `full` artifact's have seen everything there is. The expanding
+    window inside `bucket_priors` is what makes that point-in-time safe season by season;
+    the fit window is what keeps it split-safe.
+    """
+    from src.models import rookie_rates as rr
+    from src.models import stan_rookie as sr
+    from src.eda.preseason_value import attach_season_start_roster, covered_seasons
+    from src.models.stan_components import SPLINE_KNOTS, StanConversion, StanCount
+
+    cfg_stan = cfg.get("stan", {})
+    test_seasons = int(cfg.get("features", {}).get("availability", {})
+                       .get("test_seasons", 2))
+    n_knots = int(cfg_stan.get("components", {}).get("spline_knots", SPLINE_KNOTS))
+    out_dir = Path(cfg["evaluation"]["predictions_dir"])
+    eda_dir = Path(cfg["evaluation"].get("eda_dir", "outputs/eda"))
+
+    constants = rr.rookie_constants(out_dir / "rookie_rate_floors.csv")
+    ships = sr.ship_arms(out_dir / "rookie_rate_metrics.csv")
+    covered = covered_seasons(pd.read_csv(eda_dir / "preseason_coverage.csv"))
+
+    design = rr.head_design(cfg)
+    window_games = int(cfg.get("features", {}).get("team_context", {})
+                       .get("roster_window_games", 10))
+    design = attach_season_start_roster(design, list(cfg["data"]["seasons"]),
+                                        cfg["data"]["raw_dir"], window_games)
+    fit_frame, val = windowed(design, window, test_seasons)
+    # The window's whole readable history, which is what the expanding prior may average
+    # over. `drop_duplicates` because `train_val` hands back a fit frame that already
+    # contains the probe.
+    history = pd.concat([fit_frame, val], ignore_index=True).drop_duplicates(
+        subset=["season", "player_id"])
+    probe_raw = probe_rows(val)
+
+    for label, component, attempted in rr.head_list():
+        head = rookie_head(component if attempted is None
+                           else f"{component}_given_{attempted}")
+        priors = rookie_priors_table(history, component, attempted, covered)
+        variant = ships.get(label, sr.FLOOR_VARIANT)
+        started = time.perf_counter()
+
+        if variant == sr.FLOOR_VARIANT:
+            yield _floor_artifact(head, f"rookie {label}", component, attempted, priors,
+                                  constants, sr.live_rows(probe_raw, attempted),
+                                  fit_frame, window, cfg_stan, draws_kept, started)
+            continue
+
+        # The fitted arm. Both the rows and the variant come from §7e's own module, so a
+        # persisted head cannot be fitted on a population the gate did not read: the
+        # sampler and the floor share `fitting_rows`, which drops the one covered season
+        # with no expanding prior behind it.
+        train = sr.fitting_rows(fit_frame, priors)
+        probe = sr.live_rows(probe_raw, attempted)
+        tr, pr, features = sr.variants(train, probe, component, n_knots)[variant]
+        steps = _rookie_steps(tr, variant, features, component, n_knots)
+
+        if attempted is None:
+            model = StanCount(features, component,
+                              name=f"posteriors/rookie/{label}/{variant}",
+                              chains=int(cfg_stan.get("chains", 4)),
+                              seed=int(cfg_stan.get("seed", 42)), metric=sr.METRIC,
+                              **sr._iters(cfg_stan)).fit(tr)
+            family, response = "negbinomial", "mean_count"
+            extras = {"component": component, "exposure": "total_minutes",
+                      "dispersion": "phi_draws"}
+        else:
+            model = StanConversion(features, component, attempted,
+                                   name=f"posteriors/rookie/{label}/{variant}",
+                                   chains=int(cfg_stan.get("chains", 4)),
+                                   seed=int(cfg_stan.get("seed", 42)), metric=sr.METRIC,
+                                   **sr._iters(cfg_stan)).fit(tr)
+            family, response = "betabinomial", "mean_mu"
+            extras = {"made": component, "attempted": attempted, "trials": attempted,
+                      "dispersion": "rho_draws"}
+
+        yield _finish(
+            head=head, head_label=f"rookie {label}", family=family, response=response,
+            variant=variant, features=features, model=model, fit_frame=train,
+            probe_transformed=pr, probe_raw=probe, steps=steps,
+            builder=ROOKIE_BUILDER,
+            extras={**extras, "family_population": rr.ROOKIE_GROUP,
+                    "deterministic": False},
+            window=window, cfg_stan=cfg_stan, draws_kept=draws_kept,
+            seconds=time.perf_counter() - started)
+
+
+def _rookie_steps(tr: pd.DataFrame, variant: str, features: list[str], component: str,
+                  n_knots: int) -> list[dict]:
+    """`stan_rookie.variants`' fitted state — a spline on the shrunk level, or nothing.
+
+    **No imputation step, and that is a property of the design rather than an omission.**
+    Every block of `rookie_rates.head_design` is built to be exactly 0 where its
+    information is absent, so there is no NaN for `impute` to fill and a flag set derived
+    from one would be constant zero. `variants` says the same thing from the other side.
+    """
+    from src.models.rookie_rates import shrunk_column
+    from src.models.stan_rookie import VARIANTS
+
+    if variant not in VARIANTS:
+        raise KeyError(f"no recipe for the rookie variant {variant!r}; the ladder is "
+                       f"{list(VARIANTS)}")
+    if variant != "slot_interaction_spline":
+        return []
+    level = shrunk_column(component)
+    names = [c for c in features if c.startswith(f"{level}__s")]
+    return [_spline_step(tr, level, n_knots, names)]
 
 
 def composition_artifact(cfg: dict, window: str, draws_kept: int) -> PosteriorArtifact:
@@ -1661,6 +1939,14 @@ def manifest_row(artifact: PosteriorArtifact, check: dict, dest: Path) -> dict:
         "preseason": bool(artifact.extras.get("preseason", False)
                           or artifact.extras.get("preseason_blend_k") is not None),
         "preseason_columns": str(artifact.extras.get("preseason_columns", "")),
+        # Which population's chain this head belongs to, and whether it sampled at all.
+        # Both are on the manifest for `player_season_effect`'s reason — they change what
+        # the head IS, and a reader should not have to unpickle to find out. A `true_rookie`
+        # head with `deterministic` true is §7d's no-fit floor persisted as a plug-in: its
+        # `n_draws` are identical rows, so a consumer averaging them gets a point estimate
+        # and a consumer sampling them gets no posterior width, which is the honest shape.
+        "family_population": str(artifact.extras.get("family_population", "veteran")),
+        "deterministic": bool(artifact.extras.get("deterministic", False)),
         "max_design_error": check["max_design_error"],
         "max_prediction_error": check["max_prediction_error"],
         "roundtrip_passes": check["passes"],
@@ -1695,6 +1981,7 @@ def run(cfg: dict, window: str = FIT_WINDOW, groups: tuple[str, ...] = GROUPS,
         "minutes": lambda: [minutes_artifact(cfg, window, draws_kept)],
         "components": lambda: component_artifacts(cfg, window, draws_kept),
         "composition": lambda: [composition_artifact(cfg, window, draws_kept)],
+        "rookie-components": lambda: rookie_component_artifacts(cfg, window, draws_kept),
     }
     unknown = [g for g in groups if g not in builders]
     if unknown or not groups:

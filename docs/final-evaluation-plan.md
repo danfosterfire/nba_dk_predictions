@@ -351,8 +351,8 @@ rookie-and-fringe scope limitation showing up as market names the model cannot r
 
 ## 5. The production fit
 
-`make posteriors-production` — the same twenty heads at the `full` window, fitted on every
-season there is, written to `data/features/posteriors/full/`. It is the artifact
+`make posteriors-production` — the same twenty chain heads at the `full` window, fitted on
+every season there is, written to `data/features/posteriors/full/`. It is the artifact
 `docs/preseason-plan.md`'s October runbook consumes, and the runbook's key structural fact
 is why it can be built in August at all: **the heads fit on historical seasons, so the
 2026-27 preseason enters only as prediction-time design rows, never as fitting data.** Every
@@ -368,7 +368,15 @@ Taken 2026-08-21; the last sampler (the composition, the long pole) exited at 23
 specification on the 8 columns** — `assert_same_specification` passes for `train_val`
 and `full` alike, which is the §2 check doing the job it was built for on the day it
 was built. Across the 20 heads the manifest reads max R-hat **1.00608**, **0**
-divergences, **0** round-trip failures. The composition fitted **553,716** player-rows
+divergences, **0** round-trip failures.
+
+**The manifest holds 31 rows since 2026-08-22**, not 20: Session 6 of
+`docs/rookie-rates-plan.md` (§5f) added the `rookie-components` group — eleven true-rookie
+rate heads, ten of them deterministic plug-ins and one fitted — at all three windows, and
+the specification comparison gained `family_population` and `deterministic` so a plug-in
+cannot be deployed under a fitted head's name. It changes nothing above: the group is
+additive, the twenty chain heads are untouched, and `1.00608` is still the worst R-hat
+because the one rookie head that samples reads 1.00418. The composition fitted **553,716** player-rows
 over 2004-05–2025-26 — against **500,759** at `train_val`, the two held-out seasons'
 rows being the difference and the point — at R-hat 1.0026.
 
@@ -641,18 +649,33 @@ own population, because the minutes allocation is zero-sum: a missing player is 
 missing row, he is minutes handed to every shared teammate, and only a fixed-population
 arm can separate that from the forward frames themselves.
 
+⚠️ **Re-run 2026-08-22** after Session 6 of `docs/rookie-rates-plan.md` (§5f) put two more
+populations on the retrospective board — the lag-recovery ladder's admitted returnees and
+the true-rookie rate family. The table below is that run; the numbers it supersedes are
+kept in the paragraph after it, because what moved and what did not is the reading.
+
 | arm | shared players | Spearman | mean \|Δ season total\| | top-16 | top-48 | top-100 |
 |---|---|---|---|---|---|---|
-| retro vs retro, seed noise | 387 | 0.9990 | 21.03 | 15 | 46 | 99 |
-| **forward, population held fixed** | **387** | **0.9989** | 22.17 | **15** | **47** | **99** |
-| forward, snapshot population | 354 | 0.9831 | 104.90 | 14 | 44 | 89 |
+| retro vs retro, seed noise | 467 | 0.9990 | 20.35 | 15 | 45 | 98 |
+| **forward, population held fixed** | **387** | **0.9988** | 23.25 | **15** | **47** | **98** |
+| forward, snapshot population | 354 | 0.9828 | 105.11 | 14 | 43 | 89 |
 
-**With the population held fixed, the forward board is indistinguishable from seed
-noise** — every one of the retro board's 387 units shared, Spearman **0.9989** against a
-**0.9990** floor, the same top-16/100 overlaps, a mean season-total gap of **22.17**
-dk_pts against the floor's **21.03**. Every input difference the earlier parts
-classified — the draft-number sourcing, the filler games, the schedule-sourced
-denominator — amounts to nothing the board can see.
+**The mechanics reading did not move and the population bound widened by exactly the new
+units.** On the 387 units both arms share, Spearman is **0.9988** against a **0.9990**
+floor and a mean season-total gap of **23.25** dk_pts against **20.35** — against 0.9989,
+0.9990, 22.17 and 21.03 on the 2026-08-21 run, which is seed noise on seed noise. Every
+input difference the earlier parts classified — the draft-number sourcing, the filler
+games, the schedule-sourced denominator — still amounts to nothing the board can see.
+
+What *did* move is the population column: the retro board is **467** units where it was
+387, and the fixed-population arm is missing **80** of them (74 true rookies and 6
+lag-recovered returnees in 2023-24). That arm holds the **roster** fixed, and these rows
+are not a roster question — `rookie_rates.build_design` carves its population out of
+`component_targets`, so "he played in the NBA this season" is target-season information a
+forward context may not read. `forward_context` therefore withholds the target season's
+rookie rows and says how many, on both forward arms. The forward rookie tier is
+`docs/rookie-rates-plan.md` §5g; until it lands, a forward board carries no rookies, which
+is the state every board this project has produced.
 
 ⚠️ The first run of this arm reported 18 units it could not share, and the sentence
 written for them — a permanent qualification fringe — was wrong. Profiling the 18 found
@@ -662,22 +685,22 @@ frames and not the fourth. The membership frame now flows through the component 
 too, the arm shares all 387, and the wrong diagnosis is recorded here because it
 briefly claimed a production limitation that does not exist.
 
-The whole headline gap (**0.9831**, **89**/100) is therefore the population bound Part B
-measured, priced here at the board: **33** players the 2023-24 snapshot no longer lists
-(traded or waived away before it was taken, invisible in the file), **6** of them inside
-the retro top 100, reaching it partly through the redistribution of their minutes onto
-everyone else. Neither contamination exists for a snapshot taken before the opener,
-which is the production case — and **0** spurious players, in both arms, again.
+The whole headline gap (**0.9828**, **89**/100) is therefore the population bound Part B
+measured, priced here at the board: **113** players the forward arm does not carry, **6**
+of them inside the retro top 100, reaching it partly through the redistribution of their
+minutes onto everyone else. **80** of the 113 are the two new populations above and are
+a missing forward *builder*; the remaining 33 are what the 2026-08-21 run measured — the
+players the 2023-24 snapshot no longer lists, traded or waived away before it was taken
+and invisible in the file. Neither contamination exists for a snapshot taken before the
+opener, which is the production case — and **0** spurious players, in both arms, again.
 
-What IS real and permanent — and predates the forward path entirely — is that **no
-board this project produces contains a true rookie**, forward or retrospective: the
-2023-24 retrospective design carries **0** players in their first season, because every
-rate feature is a lag and `component_rates.MIN_PRIOR_MINUTES` (200) is a statement that
-the features do not exist below it, not a threshold to relax. Rookies absorb minutes
-(the composition's draft-bucket priors) and carry an availability rate (the graded
-no-design level), so their teammates' totals are right — but their own dk_pts are never
-scored, and a 2026 draftee cannot appear on the 2026-27 board while the ADP field
-drafts him. Parked with a measurement plan as `docs/potential-to-dos.md` §16.
+⚠️ **The sentence that used to stand here — "no board this project produces contains a
+true rookie" — was true until 2026-08-22 and is now half true.** The retrospective board
+carries **74** of them in 2023-24 and 72 in 2022-23, because `docs/rookie-rates-plan.md`
+§5f made the simulator's scorable units the union of the veteran rate design and the
+true-rookie one. The forward board still carries none, which is the id-map and
+forward-design work §5g owns, and it is the reason the 2026-27 production board cannot
+take a 2026 draftee **yet** — no longer because the features structurally do not exist.
 
 ---
 
