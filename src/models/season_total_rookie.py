@@ -115,6 +115,7 @@ from src.models.posteriors import load_all, posteriors_dir
 from src.models.season_terms import DK_LINEAR_WEIGHTS
 from src.models.season_total import (POPULATION_COLUMN, POPULATION_GROUPS,
                                      evaluate)
+from src.models.availability import lag_ladder as availability_lag_ladder
 from src.models.stan_availability import head_design as availability_head_design
 from src.models.stan_components import (PRESEASON, SPLINE_KNOTS, _beta_shapes,
                                         head_design as component_head_design)
@@ -802,6 +803,14 @@ def run(cfg: dict) -> Path:
           "`held_out.selection_split`;\n  this is §16's settling gate and it is read on "
           "VALIDATION.")
 
+    # §16's ladder, if it is on, changes ONE thing in this readout — which rows the
+    # availability head has a design row for — and that is precisely the open item §7f
+    # left. It writes its own artifact rather than overwriting the shipped one, on
+    # `make rookie-floor`'s `_rookiefloor` precedent: the two are the same code on the
+    # same worlds under two availability treatments, and a reader has to be able to put
+    # them side by side.
+    suffix = LADDER_SUFFIX if availability_lag_ladder(cfg) is not None else ""
+
     parts = build_frame(cfg)
     frame = pd.concat([parts[f]["val"] for f in FAMILY_ORDER], ignore_index=True)[
         ["season", "player_id", POPULATION_COLUMN, "dk_total", "dk_linear_total",
@@ -853,13 +862,20 @@ def run(cfg: dict) -> Path:
         print(f"\n/!\\  {len(unconverged)} of {len(diagnostics)} fits did not converge: "
               + ", ".join(sorted(d["label"] for d in unconverged)))
 
-    dest = out_dir / "season_total_rookie.csv"
+    dest = out_dir / f"season_total_rookie{suffix}.csv"
     table.to_csv(dest, index=False)
     print(f"\nSaved {len(table):,} season-total rookie rows → {dest}")
-    pred_dest = out_dir / "season_total_rookie_predictions.csv"
+    pred_dest = out_dir / f"season_total_rookie{suffix}_predictions.csv"
     pd.concat(predictions, ignore_index=True).to_csv(pred_dest, index=False)
     print(f"Saved {sum(len(p) for p in predictions):,} prediction rows → {pred_dest}")
     return dest
+
+
+#: The artifact suffix the §16 availability-ladder arm writes under. The shipped run and
+#: the ladder run differ in the availability treatment of the `lag_recovered` group and in
+#: nothing else, so they are two readings and not two versions — `make rookie-floor`'s
+#: `_rookiefloor` precedent, for its reason.
+LADDER_SUFFIX = "_lagladder"
 
 
 #: Short labels for the report only — the artifact carries `ORDER` verbatim.
@@ -923,6 +939,23 @@ def _report(table: pd.DataFrame, frame: pd.DataFrame) -> None:
 
 
 if __name__ == "__main__":
+    import argparse
+
+    from src.models.component_rates import LADDER_RUNGS
     from src.models.season_total_rookie import run as _run
 
-    _run(yaml.safe_load(open("configs/default.yaml")))
+    # The §16 arm is a CLI flag rather than a config edit, so both readings are
+    # reproducible from a make target and neither can be produced by accident. It
+    # overrides `stan.availability.lag_ladder` for this process only and writes
+    # `LADDER_SUFFIX`'d artifacts, so the shipped table is never overwritten by it.
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--lag-ladder", nargs="*", default=None, choices=LADDER_RUNGS,
+                        help="availability-ladder rungs to admit for this run "
+                             "(docs/availability-window-plan.md §16); omit for the "
+                             "shipped plug-in treatment")
+    args = parser.parse_args()
+    _cfg = yaml.safe_load(open("configs/default.yaml"))
+    if args.lag_ladder is not None:
+        _cfg.setdefault("stan", {}).setdefault("availability", {})["lag_ladder"] = \
+            list(args.lag_ladder)
+    _run(_cfg)

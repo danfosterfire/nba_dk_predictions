@@ -35,7 +35,9 @@ The docs are:
   the shipped mixture is worth in the contest, how players the head has no row for are 
   treated, and the simulator's **availability layout** — where a player's missed games fall, 
   which the head cannot say. Read it before changing any of those, or before pricing a head 
-  change with `make strategy-sweep`.
+  change with `make strategy-sweep`. **§16 is the returnee gap, run 2026-08-22** — the head's
+  own lag-recovery ladder (`stan.availability.lag_ladder`, `make availability-lag`), which
+  rung it admits, and why the refit arm lost to the imputation.
   - composition-quadrature-plan.md: Fitting the composition's per-(player, season) 
   effect by marginalizing the latents with per-unit quadrature. **Built and measured, 
   then PARKED** on cost against reach. Read before touching `sigma_u` or 
@@ -116,7 +118,8 @@ The docs are:
   the per-head gates, simulator and forward-board integration, and the eight-session
   runbook. Read before touching the scorable-unit population,
   `component_rates.MIN_PRIOR_MINUTES`, `stan.components.lag_ladder`,
-  `src/models/rookie_rates.py`, or starting any of its sessions.
+  `src/models/rookie_rates.py`, or starting any of its sessions. §7f's own open item is
+  closed by `docs/availability-window-plan.md` §16i.
   - shot-attempt-basis-plan.md: Plan for updating one of the box-score statistics
   models (fg3a as a beta-binomial rate over the total fga, rather than fg2a and 
   fg3a as separate poisson counts). Work completed, archival.

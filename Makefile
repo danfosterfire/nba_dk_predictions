@@ -22,6 +22,7 @@ export PYTHONUNBUFFERED = 1
         boxscore-status availability-model availability-window \
         availability-weighting availability-regime availability-exchangeability \
         availability-no-prior availability-absence availability-preseason \
+        availability-lag \
         rookie-priors \
         capture-status \
         capture-calendar \
@@ -42,7 +43,7 @@ export PYTHONUNBUFFERED = 1
         pick-log-stake mixture-value preseason-contest final-evaluation \
         posteriors-production production-check forward-rehearsal forward-board \
         rookie-floor lag-recovery lag-ladder rookie-rates stan-rookie \
-        season-total-rookie
+        season-total-rookie season-total-rookie-lagladder
 
 venv:
 	/opt/homebrew/bin/python3.14 -m venv .venv
@@ -371,6 +372,35 @@ availability-preseason:
 # `MIN_CELL` and `graded_share` falls 0.7926 -> 0.5524. Nothing ships. numpy only.
 availability-no-prior:
 	$(PYTHON) -m src.models.availability_no_prior
+
+# §16 — THE RETURNEE GAP, `docs/availability-window-plan.md`. `availability.build_design`
+# drops a player-season on `gp_share_lag1` ALONE, so a player who missed all of S-1 has no
+# row no matter how complete S-2 is, and falls to `no_design_availability` — whose shipped
+# `tenure_draft` key is the bare string "returning" for every non-rookie, one scalar per
+# season for the whole population. `docs/rookie-rates-plan.md` §7f found it from the other
+# end: the component ladder recovered these rows' RATE side (predicted dk_pts per game
+# within a point of realized) and their season totals were still 8.4x off, all of it games.
+#
+# This fits the ladder's two constants on the fitting half, builds the widest design, and
+# scores four arms on the 382 rows it adds:
+#   plugin     what one of these players is given today — the graded level at the fringe
+#              role dispersion, which is the predictive the simulator actually applies
+#   shipped    §16e arm 1 — the persisted train-window posterior on the imputed row,
+#              NOTHING refitted, one design edit
+#   impute     the same arm as a point MLE, fitted on rung 0 alone. The control that
+#              PRICES the staleness column: a refit that beats a plug-in has beaten
+#              nothing in particular; one that beats the same rows imputed has not.
+#   staleness  §16e arm 2 — the recovered rows enter the FIT with three columns saying the
+#              block is stale, so the head learns the shrink rather than being handed it
+# Gate: validation paired-bootstrap CRPS in games below zero against `plugin` on the
+# DRAFTABLE rows, plus the rolling-origin harness agreeing at a majority of origins —
+# §12e and §14f are why, two blocks on this head won validation and did not survive it.
+#
+# Does NOT turn the ladder on: `stan.availability.lag_ladder` stays `[]` and is a separate
+# decision, because `build_design` reaches seven consumers and the minutes allocation is
+# zero-sum. numpy/scipy point MLE plus persisted draws, a few minutes.
+availability-lag:
+	$(PYTHON) -m src.models.availability_lag
 
 # P4(b): the OTHER thing a no-prior player gets from his draft slot. `stan_composition.
 # rookie_share_priors` hands him an expanding-window mean of what past players in his draft
@@ -933,6 +963,19 @@ stan-rookie:
 # Requires `make stan-rookie`, `make lag-ladder` and `make posteriors WINDOW=train`.
 season-total-rookie:
 	$(PYTHON) -m src.models.season_total_rookie
+
+# THE SAME READOUT UNDER §16's AVAILABILITY LADDER — `docs/availability-window-plan.md`
+# §16, and the open item §7f of `docs/rookie-rates-plan.md` left. The `lag_recovered`
+# group's rate side is already right (predicted dk_pts per game played within a point of
+# realized) and its season totals were 8.4x off because `no_design_availability` gave those
+# players 24.7 games against a realized 46.9. This admits the rung §16 gated into
+# `availability.build_design` FOR THIS RUN ONLY, so the same rows are scored by the
+# availability head instead of the flat plug-in, and writes `_lagladder` artifacts — the
+# shipped `season_total_rookie.csv` is never overwritten, on `make rookie-floor`'s
+# `_rookiefloor` precedent. The two tables are the same code on the same worlds under two
+# availability treatments and the gap between them is the number. ~2 minutes.
+season-total-rookie-lagladder:
+	$(PYTHON) -m src.models.season_total_rookie --lag-ladder returnee_lag2
 
 # The pick-log stake, priced at the stake it would actually be: 20 entries at $1 in
 # 15k_and_one — the likely first real entries, whose purpose is capturing pick-log data

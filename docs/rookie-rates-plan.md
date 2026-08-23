@@ -5,7 +5,7 @@ a component-rate head family for the players the veteran heads structurally cann
 — true rookies, returnees, and thin-prior fringe — so they can appear on a board and be
 drafted. Seven sessions, each with its own prompt (§6), each appending its results here.
 
-## 🚧 STATUS: SESSIONS 1-5 RUN 2026-08-22 (§7a, §7c, §7d, §7e, §7f). DESIGN REVISED 2026-08-22 (§7b). SESSION 6 IS NEXT.
+## 🚧 STATUS: SESSIONS 1-5 RUN 2026-08-22 (§7a, §7c, §7d, §7e, §7f). DESIGN REVISED 2026-08-22 (§7b). THE INTERLEAVED ROUND — `docs/availability-window-plan.md` §16 — RAN 2026-08-22 AND §7f HAS ITS NUMBER. ⏭ NEXT IS SESSION 6.
 
 **The program is eight sessions, not seven, and the rookie head serves a smaller
 population than the one it was scheduled for.** §7b measured that a player with *any* prior
@@ -416,6 +416,14 @@ mass matrix that made the rolling half affordable in Stan.
 One prompt per session, for a fresh session each. Sessions 2-8 end by appending results
 here and updating `dashboard/decisions.py` where a ship decision lands.
 
+**One interleaved session sits between 5 and 6 and is not part of this program's eight.**
+§7f found a defect on the *availability* head — it drops exactly the rows §5b's ladder
+recovers, and the plug-in that catches them hands every returning player in the league one
+scalar. It is scheduled as `docs/availability-window-plan.md` §16 and it runs **before**
+Session 6, because Session 6 is what wires these rows into the simulator and would otherwise
+wire them in with 24.7 games each. The rookie sessions keep their numbers; nothing here is
+renumbered.
+
 1. ✅ **Done 2026-08-22 — §7a.**
    > I'm working on the NBA prediction project (CLAUDE.md). Read
    > docs/rookie-rates-plan.md and execute **Session 1 (§5a): price the rookie floor** —
@@ -450,6 +458,25 @@ here and updating `dashboard/decisions.py` where a ship decision lands.
    > readout** — rookie-admitting frame, `rookie` AND `lag_recovered` groups in
    > `season_total.evaluate`, head-vs-floor at the season-total unit on validation. This
    > is §16's settling gate; record it.
+
+✅ **Done 2026-08-22 — `docs/availability-window-plan.md` §16i, not a session of this
+program.** One rung of three admitted (`returnee_lag2`), imputation only, and §7f's open
+item measured at 543.3167 → 305.7897 draftable season-total MAE. The prompt below is §16h
+verbatim; keep the two in step if either is edited.
+
+   > I'm working on the NBA prediction project (CLAUDE.md). Read
+   > docs/availability-window-plan.md and execute **§16: the returnee gap** — raise
+   > `availability.build_design` to recover a missing `gp_share_lag1` block from the nearest
+   > usable season (importing `lag_recovery`'s helpers and `component_rates`' rung
+   > vocabulary, not restating them), behind a config key, with `lag_source` / `lag_rung` /
+   > `lag_minutes` on every row. Run **both** arms of §16e — imputation-only scored by the
+   > shipped posterior first, then the refit with a staleness column at `train_val` and
+   > `full` — against §16f's gate on the draftable and `all` populations, with rung 0 as the
+   > bar. Tests for the rung boundaries and for rung 0 coming back bit-identical. Record the
+   > result there and in the decisions registry, add the quotable figures to
+   > `make docs-audit`, and re-run `make season-total-rookie` so §7f of
+   > docs/rookie-rates-plan.md gets its number.
+
 6. > I'm working on the NBA prediction project (CLAUDE.md). Read
    > docs/rookie-rates-plan.md and execute **Session 6 (§5f): persistence and simulator
    > integration** — the `rookie-components` posterior group at `train_val` and `full`,
@@ -1322,11 +1349,17 @@ posteriors would move it. The chain is composing what it says it is composing.
 - **Not settled**: whether the fitted `reb` arm is worth anything downstream. 108 rows
   cannot separate a −2.8 CRPS effect from zero, and §5h's contest replay is where a
   season-total effect this size would or would not become a bracket effect.
-- **Not measured, and now the largest open item**: what the recovered returnees are worth
-  once their availability comes from something other than a level fitted on fringe roster
-  rows. 543.3167 → 64.4025 under an oracle is the size of that prize, on 14 draftable
-  validation rows. It belongs in `docs/availability-window-plan.md`'s territory rather than
-  this program's, and §5g should not be read as covering it.
+- **Measured 2026-08-22 by `docs/availability-window-plan.md` §16i, and it is worth about
+  half the prize.** That round gave the availability head its own lag-recovery ladder and
+  admitted the rung these rows sit on, so they are scored by the head instead of by
+  `no_design_availability`: predicted games go **24.7376 → 49.6575** against a realized
+  46.8571, and the `lag_recovered` draftable season-total MAE falls **543.3167 → 305.7897**
+  (CRPS 510.9946 → 249.8303) against the same unmoved oracle floor of 64.4025 — **49.60% of
+  the gap**. `make season-total-rookie-lagladder` is that arm and writes its own
+  `_lagladder` artifact; `season_total_rookie.csv` re-runs bit-identical, and every
+  `oracle_gp`, `veteran` and `rookie` cell is unchanged to the digit, which is the check
+  that the ladder moved only the population it was built for. The residual 241.3872 dk_pts
+  is not availability-recoverable on fourteen rows.
 
 #### Why every recovered returnee gets the same number of games, and the fork that follows
 
@@ -1375,3 +1408,14 @@ column the head can learn a slope for — which the component program declined o
 eleven heads and two windows. **The availability head is one head.** That asymmetry is the
 argument, and it is a measurement for `docs/availability-window-plan.md` to take, not this
 program.
+
+**Scheduled there as §16 on 2026-08-22 and run the same day, ahead of Session 6** — because
+the rows it recovers are the ones §5f is about to wire into the simulator, and it would
+otherwise have wired them in at 24.7 games each. §16i is the readout. **The fork resolved
+the opposite way to the expectation above**: the refit-with-a-staleness-column arm was built
+and priced and does not beat the imputation (+0.7310 [−1.4152, +2.8585] on the draftable
+rows), because it learns its discount from the pooled recovered population and over-applies
+it to the draftable one — the plug-in's own defect, one level up. The imputation-only arm
+ships at one rung of three, `returnee_lag2`, exactly as §7c's component ladder did on the
+same vocabulary. `n_prior_seasons` now counts real seasons rather than depth, and
+`lag_interior_gaps` sees the 130 `(1,0,1)` rows.

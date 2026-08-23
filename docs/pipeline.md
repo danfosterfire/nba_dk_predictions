@@ -723,6 +723,38 @@ make stan-rookie       # THE ELEVEN ROOKIE ARMS, FITTED, AND §4's PER-HEAD SHIP
                        #   treedepth. ~400 small fits, ~30 minutes.
                        #   Requires `make rookie-rates` for the design's constants.
 
+make availability-lag
+                       # §16 — THE RETURNEE GAP, `docs/availability-window-plan.md`
+                       #   §16i → outputs/predictions/availability_lag.csv.
+                       #   `availability.build_design` drops a player-season on
+                       #   `gp_share_lag1` ALONE, so a man who missed all of S-1 has no row
+                       #   however complete S-2 is, and falls to `no_design_availability` —
+                       #   one scalar per season for EVERY returning player. This gives the
+                       #   head the same lag-recovery ladder the component design got,
+                       #   behind `stan.availability.lag_ladder`, on
+                       #   `component_rates.LADDER_RUNGS`' vocabulary and reusing
+                       #   `lag_recovery`'s helpers. 11,272 design rows -> 11,654, and rung
+                       #   0 comes back bit-identical.
+                       #   Four arms on the 382 rows it adds: `plugin` (the bar — the
+                       #   graded level at the fringe role dispersion), `shipped` (the
+                       #   persisted train posterior on the imputed row, NOTHING refitted),
+                       #   `impute` (the same arm as a point MLE, the control that prices
+                       #   the staleness column and the twin the rolling harness carries),
+                       #   `impute_raw` (a `k = 0` carry, which prices the shrink) and
+                       #   `staleness` (the recovered rows in the FIT with three columns
+                       #   saying the block is stale).
+                       #   ONE RUNG OF THREE cleared: `returnee_lag2`, 17.6175 -> 8.3662
+                       #   CRPS games on the draftable rows, confirmed at 5 of 7 rolling
+                       #   origins. `returnee_thin` fails on the WRONG side and
+                       #   `no_usable_lag` straddles zero. THE CHEAP ARM WON — the refit
+                       #   learns its discount from the pooled recovered population and
+                       #   over-applies it to the draftable one by 8.7 games, which is the
+                       #   plug-in's own defect one level up.
+                       #   Does NOT turn the ladder on: the key stays `[]`, because
+                       #   `build_design` reaches seven consumers and the minutes
+                       #   allocation is zero-sum. ~11 minutes.
+                       #   Requires `make posteriors WINDOW=train`.
+
 make season-total-rookie
                        # THE SEASON-TOTAL READOUT, AND §16's OWN SETTLING GATE —
                        #   `docs/rookie-rates-plan.md` §5e/§7f →
@@ -758,6 +790,24 @@ make season-total-rookie
                        #   Everything else is read off disk. ~2 minutes.
                        #   Requires `make stan-rookie`, `make lag-ladder` and
                        #   `make posteriors WINDOW=train`.
+
+make season-total-rookie-lagladder
+                       # THE SAME READOUT UNDER §16's AVAILABILITY LADDER —
+                       #   `docs/availability-window-plan.md` §16i →
+                       #   outputs/predictions/season_total_rookie_lagladder.csv.
+                       #   §7f left one open item: the `lag_recovered` group's RATE side is
+                       #   already right (predicted dk_pts per game within a point of
+                       #   realized) and its season totals were 8.4x off because the
+                       #   plug-in gave those players 24.7376 games against a realized
+                       #   46.8571. This admits the rung `make availability-lag` gated,
+                       #   FOR THIS RUN ONLY, so the same rows are scored by the
+                       #   availability head instead: draftable season-total MAE
+                       #   543.3167 -> 305.7897, 49.60% of the gap to the oracle.
+                       #   Writes `_lagladder` artifacts on `make rookie-floor`'s
+                       #   `_rookiefloor` precedent — the shipped `season_total_rookie.csv`
+                       #   re-runs bit-identical, and every `oracle_gp`, `veteran` and
+                       #   `rookie` cell is unchanged, which is the check that the ladder
+                       #   moved only the population it was built for. ~2 minutes.
 ```
 
 **After `make posteriors`, nothing else in the simulation layer needs CmdStan.** That is the

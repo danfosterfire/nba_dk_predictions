@@ -276,6 +276,53 @@ stan:
     # than hopeful, and the point MLE fitted mu_low = 0.0999, well clear of it.
     mu_low_max: 0.5
 
+    # ── The lag-recovery ladder, docs/availability-window-plan.md §16 ──
+    # Which rungs of the ladder `availability.build_design` admits. A LIST on
+    # `component_rates.LADDER_RUNGS`' vocabulary, so the design's `lag_rung` column
+    # reconciles with the component design's without a mapping table; `[]` builds the
+    # pre-ladder design EXACTLY (no gp/team_games lags, no provenance columns, the same
+    # `gp_share_lag1` drop test).
+    #
+    # The defect: the design drops a player-season on `gp_share_lag1` ALONE, so a player
+    # who missed all of S-1 has no row however complete S-2 is, and falls to
+    # `sim/season.no_design_availability` — whose `tenure_draft` key is the bare string
+    # "returning" for every non-rookie, one scalar per season for the whole population.
+    #
+    # `thin_prior` is structurally empty here and that is the asymmetry with
+    # `stan.components.lag_ladder`: a thin lag-1 still HAS a `gp_share_lag1`, so the
+    # availability design has always carried it. The rungs that recover rows are
+    #   returnee_lag2  lag-1 missing, a FULL season at lag 2 (189 rows)
+    #   returnee_thin  lag-1 missing, a thin season at lag 2 (97 rows)
+    #   no_usable_lag  away two seasons — lag 3 (96 rows)
+    #
+    # ⚠️ WIDER BLAST RADIUS THAN THE COMPONENT LADDER'S. `availability.build_design` is
+    # imported by `stan_minutes`, `stan_composition`, `stan_games_played`, `model_cards`,
+    # `sim/season`, `season_terms` and `final_evaluation`, and because the minutes
+    # allocation is zero-sum a recovered player takes minutes from his teammates rather
+    # than appearing beside them. The component ladder's rows entered a SCORING population
+    # only. So this defaults off and turning it on is a separate decision from measuring it.
+    #
+    # ⚠️ IMPUTATION ONLY, and here that is a MEASURED verdict rather than a cost decision.
+    # §16e named the refit-with-a-staleness-column arm as the favourite and it was run: the
+    # staleness block learns the discount from the POOLED 134 recovered fitting rows, which
+    # are mostly fringe roster churn, and over-applies it to the draftable ones by 8.7
+    # games. Against the imputation arm it reads +0.7310 [-1.4152, +2.8585] draftable, so
+    # §16g's second falsifier fires and the cheap form ships. The recovered rows are scored
+    # by a posterior fitted before the ladder existed; no head is refitted.
+    #
+    # ── THE GATE'S VERDICT, `make availability-lag` 2026-08-22 (§16i) ──
+    # ONE RUNG OF THREE CLEARED, on the draftable rows against the plug-in, in CRPS games:
+    #   returnee_lag2   17.6175 -> 8.3662, -9.2514 [-15.4431, -3.1316], 5 of 7 rolling
+    #                   origins. The plug-in gives him 24.7376 games; he plays 46.8571.
+    #   returnee_thin   +2.7839 [+1.4553, +3.6516] — the head is WORSE than one flat
+    #                   scalar there, and the carried share correlates -0.3490 with
+    #                   realized, so there is no ordering for the block to supply.
+    #   no_usable_lag   -3.3232 [-13.3029, +2.9720] — straddles zero, 3 draftable rows.
+    #   shipped verdict:  lag_ladder: [returnee_lag2]
+    # It is left EMPTY here for the blast-radius reason above: `make season-total-rookie-
+    # lagladder` is the arm that turns it on, for one measurement, into its own artifact.
+    lag_ladder: []
+
   minutes:
     # ── The preseason block, adopted 2026-08-13 (docs/preseason-plan.md P3) ──
     # Five columns appended to every variant: the SEASON-CENTRED preseason minutes delta

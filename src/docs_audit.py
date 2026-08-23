@@ -341,6 +341,12 @@ ROOKIE_RATES = "outputs/predictions/rookie_rate_floors.csv"
 ROOKIE_METRICS = "outputs/predictions/rookie_rate_metrics.csv"
 # The eleven composed into a season total, and §16's own settling gate, 2026-08-22.
 SEASON_TOTAL_ROOKIE = "outputs/predictions/season_total_rookie.csv"
+# The same readout under §16's availability ladder — the open item §7f left, measured.
+# A SECOND artifact rather than a replacement: the two are the same code on the same worlds
+# under two availability treatments, so both have to be readable side by side.
+SEASON_TOTAL_ROOKIE_LADDER = "outputs/predictions/season_total_rookie_lagladder.csv"
+# §16 — the availability head's own lag-recovery ladder and its gate, 2026-08-22.
+AVAIL_LAG = "outputs/predictions/availability_lag.csv"
 SWEEP_FLOOR = "outputs/predictions/strategy_sweep_rookiefloor.csv"
 
 
@@ -7005,6 +7011,322 @@ def _availability_absence_mixture() -> list[Claim]:
     return C
 
 
+def _availability_lag() -> list[Claim]:
+    """`docs/availability-window-plan.md` §16i — the availability head's own lag ladder.
+
+    **A round whose result reverses its own plan is claimed on both sides of the reversal.**
+    §16e named the refit as the favourite and the imputation won, so the artifact has to
+    protect the *losing* arm's figures as carefully as the winner's: without
+    `staleness`'s draftable CRPS and its margin over `impute`, the section's central
+    sentence — the refit reproduces the plug-in's defect one level up — would be prose with
+    nothing behind it.
+
+    Four families, each here for its own reason.
+
+    **The census and the two constants.** 382 recovered rows split three ways is what makes
+    every per-rung reading below interpretable, and the 130 `(1,0,1)` rows are §16d's number
+    arriving from the code rather than from a scratch query. The anchor is claimed *beside
+    the veteran level it is deliberately not* — the whole argument for fitting it on the
+    recovered population is that 0.2875 and 0.6310 point in opposite directions, and a claim
+    on either alone would let that sentence rot.
+
+    **The carry table, on all three rungs.** §16b's design brief was measured on rung A and
+    the round found it false on B and C, where the correlation is negative. Claiming only
+    the rung that shipped would turn a three-population finding back into the
+    one-population assumption the scoping made.
+
+    **Every arm at both populations, plus the rolling half.** The verdict is a conjunction
+    of two interval statements and a majority of origins, so all three are claimed. The
+    `impute` / `impute_raw` pair is what prices the shrink and both halves are needed for
+    the difference to mean anything; the `shipped` / `impute` pair on rung 0 is the control
+    that licenses substituting one for the other in the rolling harness.
+
+    **The downstream table**, from a second artifact. The `oracle_gp` cells are claimed
+    *because they did not move* — an availability change that altered them would be a
+    defect, and "unchanged to the digit" is only checkable if the digits are written down.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, actual, label: str, artifact: str = AVAIL_LAG, **kw) -> None:
+        C.append(_c(quoted, artifact, actual, label, doc=AWIN, **kw))
+
+    def gate(arm: str, group: str, population: str, metric: str) -> float:
+        return cell(AVAIL_LAG, "value", measurement="gate", arm=arm, group=group,
+                    population=population, metric=metric)
+
+    def roll(arm: str, population: str, metric: str) -> float:
+        return cell(AVAIL_LAG, "value", measurement="rolling", arm=arm, group="recovered",
+                    population=population, metric=metric)
+
+    def blank(measurement: str, group: str, population: str, metric: str) -> float:
+        """A row whose `arm` is the empty string — NaN after a CSV round-trip."""
+        f = table(AVAIL_LAG)
+        if f is None:
+            return float("nan")
+        hit = f[(f["measurement"] == measurement) & (f["group"] == group)
+                & (f["arm"].fillna("") == "") & (f["population"] == population)
+                & (f["metric"] == metric)]
+        return float(hit["value"].iloc[0]) if len(hit) else float("nan")
+
+    def ladder_cell(group: str, treatment: str, column: str,
+                    restriction: str = "draftable") -> float:
+        return cell(SEASON_TOTAL_ROOKIE_LADDER, "value", measurement="metric",
+                    restriction=restriction, group=group, treatment=treatment,
+                    metric=column)
+
+    def ladder_ctx(group: str, column: str, restriction: str = "draftable") -> float:
+        return cell(SEASON_TOTAL_ROOKIE_LADDER, "value", measurement="context",
+                    restriction=restriction, group=group, metric=column)
+
+    # ── the census, and the columns §16d asked for ────────────────────────────
+    add("11,272", lambda: blank("population", "all", "all", "n_design_today"),
+        "§16 design rows before the ladder", tol=0.5)
+    add("11,654", lambda: blank("population", "all", "all", "n_design_ladder"),
+        "§16 design rows with every rung", tol=0.5)
+    add("382", lambda: (blank("population", "all", "all", "n_design_ladder")
+                        - blank("population", "all", "all", "n_design_today")),
+        "§16 rows the ladder recovers", tol=0.5)
+    for quoted, rung in (("189", "returnee_lag2"), ("97", "returnee_thin"),
+                         ("96", "no_usable_lag")):
+        add(quoted, lambda r=rung: blank("population", r, "all", "n_design"),
+            f"§16 design rows at {rung}", tol=0.5)
+    # `thin_prior` is structurally empty here and the asymmetry with the component ladder
+    # is a claim, not an aside: it is the one place the two vocabularies diverge.
+    add("0", lambda: blank("population", "thin_prior", "all", "n_design"),
+        "§16 thin_prior rows, structurally empty on this head", tol=0.5)
+
+    # ── the two fitted constants, and the level the anchor is NOT ─────────────
+    add("246.4703", lambda: blank("constants", "recovered", "all", "k_games"),
+        "§16 the carried share's shrinkage in pseudo-games")
+    add("0.287527", lambda: blank("constants", "recovered", "all", "anchor_share"),
+        "§16 the anchor the carried share is shrunk toward")
+    add("134", lambda: cell(AVAIL_LAG, "n", measurement="constants", group="recovered",
+                            metric="k_games"),
+        "§16 fitting-half recovered rows the constants are fitted on", tol=0.5)
+
+    # ── §16b's table, re-read on the rows that ship ───────────────────────────
+    carry = [("veteran", "all", "0.6310", "0.6397", "0.9864", "+0.5726"),
+             ("returnee_lag2", "all", "0.4454", "0.6133", "0.7263", "+0.6496"),
+             ("returnee_lag2", "draftable", "0.5714", "0.6901", "0.8280", "+0.3998"),
+             ("returnee_thin", "all", "0.1398", "0.1130", "1.2374", "−0.3490"),
+             ("no_usable_lag", "all", "0.2576", "0.2648", "0.9728", "−0.4726"),
+             ("recovered", "all", "0.3085", "0.3810", "0.8098", "+0.5807")]
+    for group, population, realized, carried, ratio, corr in carry:
+        for quoted, metric in ((realized, "realized_share"), (carried, "carried_share"),
+                               (ratio, "level_ratio"),
+                               (corr, "corr_carried_realized")):
+            add(quoted, lambda g=group, p=population, m=metric: blank("carry", g, p, m),
+                f"§16 carry {group}/{population} {metric}")
+
+    # ── the gate, both populations ────────────────────────────────────────────
+    draftable = [
+        ("veteran", "shipped", "8.8241", "54.0039", None),
+        ("veteran", "impute", "8.8264", "53.9932", None),
+        ("returnee_lag2", "plugin", "17.6175", "24.7376", None),
+        ("returnee_lag2", "shipped", "8.3662", "47.7617",
+         ("−9.2514", "−15.4431", "−3.1316")),
+        ("returnee_lag2", "impute", "8.3722", "47.4586",
+         ("−9.2453", "−15.3833", "−3.1724")),
+        ("returnee_lag2", "impute_raw", "9.0145", "52.6608",
+         ("−8.6030", "−16.1417", "−1.1853")),
+        ("returnee_lag2", "staleness", "9.9376", "38.1435",
+         ("−7.6799", "−11.7033", "−4.0255")),
+        ("returnee_thin", "plugin", "5.8340", "24.6863", None),
+        ("returnee_thin", "impute", "8.6179", "33.7142",
+         ("+2.7839", "+1.4553", "+3.6516")),
+        ("no_usable_lag", "plugin", "10.8957", "24.6415", None),
+        ("no_usable_lag", "impute", "7.5726", "37.1292",
+         ("−3.3232", "−13.3029", "+2.9720")),
+        ("recovered", "plugin", "14.8417", "24.7155", None),
+        ("recovered", "shipped", "8.2656", "44.0369",
+         ("−6.5761", "−11.4792", "−1.9573")),
+        ("recovered", "impute", "8.2891", "43.8476",
+         ("−6.5526", "−11.4046", "−1.9714")),
+        ("recovered", "impute_raw", "8.7952", "47.1441",
+         ("−6.0465", "−11.6267", "−0.5779")),
+        ("recovered", "staleness", "9.0201", "34.8024",
+         ("−5.8216", "−8.9593", "−3.0105")),
+    ]
+    for group, arm, crps, games, margin in draftable:
+        add(crps, lambda a=arm, g=group: gate(a, g, "draftable", "crps"),
+            f"§16 draftable {group} {arm} CRPS")
+        add(games, lambda a=arm, g=group: gate(a, g, "draftable", "mean_games"),
+            f"§16 draftable {group} {arm} predicted games")
+        if margin is None:
+            continue
+        point, lo, hi = margin
+        for quoted, metric in ((point, "crps_vs_plugin"), (lo, "crps_vs_plugin_lo"),
+                               (hi, "crps_vs_plugin_hi")):
+            add(quoted, lambda a=arm, g=group, m=metric: gate(a, g, "draftable", m),
+                f"§16 draftable {group} {arm} {metric}")
+
+    for group, quoted in (("returnee_lag2", "46.8571"), ("recovered", "40.5500"),
+                          ("returnee_thin", "18.3333")):
+        add(quoted, lambda g=group: gate("plugin", g, "draftable", "realized_games"),
+            f"§16 draftable {group} realized games")
+
+    pooled = [("recovered", "plugin", "11.7209", None),
+              ("recovered", "shipped", "8.6650", ("−3.0558", "−6.0181", "−0.2716")),
+              ("recovered", "impute", "8.6614", None),
+              ("recovered", "impute_raw", "9.0263", None),
+              ("recovered", "staleness", "7.5482", ("−4.1726", "−6.0637", "−2.5211")),
+              ("veteran", "shipped", "9.1356", None),
+              ("veteran", "impute", "9.1390", None)]
+    for group, arm, crps, margin in pooled:
+        add(crps, lambda a=arm, g=group: gate(a, g, "all", "crps"),
+            f"§16 pooled {group} {arm} CRPS")
+        if margin is None:
+            continue
+        point, lo, hi = margin
+        for quoted, metric in ((point, "crps_vs_plugin"), (lo, "crps_vs_plugin_lo"),
+                               (hi, "crps_vs_plugin_hi")):
+            add(quoted, lambda a=arm, g=group, m=metric: gate(a, g, "all", m),
+                f"§16 pooled {group} {arm} {metric}")
+    # The control that licenses `impute` standing in for `shipped` in the rolling harness.
+    add("0.0033", lambda: (gate("impute", "veteran", "all", "crps")
+                           - gate("shipped", "veteran", "all", "crps")),
+        "§16 the point MLE against the persisted posterior on rung 0", tol=0.00005)
+    add("883", lambda: cell(AVAIL_LAG, "n", measurement="gate", arm="shipped",
+                            group="veteran", population="all", metric="crps"),
+        "§16 rung 0 validation rows", tol=0.5)
+    add("772", lambda: cell(AVAIL_LAG, "n", measurement="gate", arm="shipped",
+                            group="veteran", population="draftable", metric="crps"),
+        "§16 draftable rung 0 validation rows", tol=0.5)
+    for quoted, group in (("14", "returnee_lag2"), ("20", "recovered")):
+        add(quoted, lambda g=group: cell(AVAIL_LAG, "n", measurement="gate", arm="plugin",
+                                         group=g, population="draftable", metric="crps"),
+            f"§16 draftable {group} validation rows", tol=0.5)
+
+    # ── §16g's second falsifier, which is what decided the arm ────────────────
+    for population, (point, lo, hi) in (
+            ("draftable", ("+0.7310", "−1.4152", "+2.8585")),
+            ("all", ("−1.1132", "−2.5677", "+0.3892"))):
+        for quoted, metric in ((point, "crps_vs_impute"), (lo, "crps_vs_impute_lo"),
+                               (hi, "crps_vs_impute_hi")):
+            add(quoted,
+                lambda p=population, m=metric: gate("staleness", "recovered", p, m),
+                f"§16 {population} staleness against the imputation ({metric})")
+    # The two derived readings the mechanism paragraph rests on: the refit over-shrinks on
+    # the population it is USED on and wins on the one it was FITTED on. Both are
+    # differences of cells claimed above, and both are sign statements.
+    add("8.7", lambda: (gate("plugin", "returnee_lag2", "draftable", "realized_games")
+                        - gate("staleness", "returnee_lag2", "draftable", "mean_games")),
+        "§16 games the staleness arm over-shrinks a draftable rung-A returnee by", tol=0.06)
+    add("6.6", lambda: (gate("impute_raw", "recovered", "draftable", "mean_games")
+                        - gate("plugin", "recovered", "draftable", "realized_games")),
+        "§16 games the raw carry over-predicts on the draftable recovered rows", tol=0.06)
+    add("3.3", lambda: (gate("impute", "recovered", "draftable", "mean_games")
+                        - gate("plugin", "recovered", "draftable", "realized_games")),
+        "§16 games the shrunk carry over-predicts on the same rows", tol=0.06)
+    add("−0.51", lambda: (gate("impute", "recovered", "draftable", "crps_vs_plugin")
+                          - gate("impute_raw", "recovered", "draftable",
+                                 "crps_vs_plugin")),
+        "§16 what the shrink is worth over the raw carry", tol=0.006)
+
+    # ── the rolling half ──────────────────────────────────────────────────────
+    rolling = [("draftable", "impute", ("−5.0374", "−8.7958", "−1.6026"), "5"),
+               ("draftable", "impute_raw", ("−2.8373", "−7.7797", "+1.7064"), "4"),
+               ("draftable", "staleness", ("−4.8392", "−8.0077", "−1.9194"), "6"),
+               ("all", "impute", ("−1.7340", "−3.4351", "−0.0705"), "5"),
+               ("all", "impute_raw", ("−0.5512", "−2.5754", "+1.5315"), "3"),
+               ("all", "staleness", ("−3.3761", "−4.7856", "−2.0321"), "6")]
+    for population, arm, (point, lo, hi), won in rolling:
+        for quoted, metric in ((point, "crps_vs_plugin"), (lo, "crps_vs_plugin_lo"),
+                               (hi, "crps_vs_plugin_hi")):
+            add(quoted, lambda a=arm, p=population, m=metric: roll(a, p, m),
+                f"§16 rolling {population} {arm} {metric}")
+        add(won, lambda a=arm, p=population: roll(a, p, "origins_won_vs_plugin"),
+            f"§16 rolling {population} {arm} origins won", tol=0.5)
+    add("7", lambda: roll("impute", "draftable", "origins_vs_plugin"),
+        "§16 rolling origins", tol=0.5)
+    add("90", lambda: cell(AVAIL_LAG, "n", measurement="rolling", arm="impute",
+                           group="recovered", population="all", metric="crps"),
+        "§16 recovered rows pooled across the rolling origins", tol=0.5)
+    add("32", lambda: cell(AVAIL_LAG, "n", measurement="rolling", arm="impute",
+                           group="recovered", population="draftable", metric="crps"),
+        "§16 draftable recovered rows pooled across the rolling origins", tol=0.5)
+
+    # ── downstream: §7f's open item, from the SECOND artifact ─────────────────
+    downstream = [("floor", "mae_dk_total", "305.7897"),
+                  ("floor", "crps_dk_total", "249.8303"),
+                  ("head", "mae_dk_total", "316.2041"),
+                  ("oracle_gp_floor", "mae_dk_total", "64.4025"),
+                  ("oracle_gp_floor", "crps_dk_total", "47.1678"),
+                  ("oracle_gp_head", "mae_dk_total", "63.6246"),
+                  ("oracle_gp_head", "crps_dk_total", "44.9040"),
+                  ("unserved", "mae_dk_total", "1062.4643")]
+    for treatment, column, quoted in downstream:
+        add(quoted, lambda t=treatment, c=column: ladder_cell("lag_recovered", t, c),
+            f"§16 downstream draftable lag_recovered {treatment} {column}",
+            artifact=SEASON_TOTAL_ROOKIE_LADDER)
+    for treatment, column, quoted in (("floor", "mae_dk_total", "276.9327"),
+                                      ("floor", "crps_dk_total", "227.6806")):
+        add(quoted,
+            lambda t=treatment, c=column: ladder_cell("lag_recovered", t, c, "all"),
+            f"§16 downstream pooled lag_recovered {treatment} {column}",
+            artifact=SEASON_TOTAL_ROOKIE_LADDER)
+    # The pooled pair the ladder is quoted AGAINST comes from the shipped artifact, which
+    # is the whole point of the two living side by side.
+    for column, quoted in (("mae_dk_total", "444.9010"), ("crps_dk_total", "414.0311")):
+        add(quoted, lambda c=column: cell(
+                SEASON_TOTAL_ROOKIE, "value", measurement="metric", restriction="all",
+                group="lag_recovered", treatment="floor", metric=c),
+            f"§16 downstream pooled lag_recovered floor {column} under the plug-in",
+            artifact=SEASON_TOTAL_ROOKIE)
+    add("49.6575", lambda: ladder_ctx("lag_recovered", "mean_predicted_gp"),
+        "§16 downstream draftable predicted games under the ladder",
+        artifact=SEASON_TOTAL_ROOKIE_LADDER)
+    add("46.8571", lambda: ladder_ctx("lag_recovered", "mean_gp_played"),
+        "§16 downstream draftable realized games",
+        artifact=SEASON_TOTAL_ROOKIE_LADDER)
+    add("0.0000", lambda: ladder_ctx("lag_recovered", "no_design_share"),
+        "§16 downstream share still served by the plug-in",
+        artifact=SEASON_TOTAL_ROOKIE_LADDER)
+    # The two figures the section leads on, both DIFFERENCES across the two artifacts —
+    # which is the only shape that protects the sentence rather than its halves.
+    add("543.3167", lambda: cell(SEASON_TOTAL_ROOKIE, "value", measurement="metric",
+                                 restriction="draftable", group="lag_recovered",
+                                 treatment="floor", metric="mae_dk_total"),
+        "§16 downstream draftable lag_recovered MAE under the shipped plug-in",
+        artifact=SEASON_TOTAL_ROOKIE)
+    add("237.5", lambda: (cell(SEASON_TOTAL_ROOKIE, "value", measurement="metric",
+                               restriction="draftable", group="lag_recovered",
+                               treatment="floor", metric="mae_dk_total")
+                          - ladder_cell("lag_recovered", "floor", "mae_dk_total")),
+        "§16 season-total MAE the ladder recovers", tol=0.06,
+        artifact=SEASON_TOTAL_ROOKIE_LADDER)
+    add("49.60%", lambda: (
+            (cell(SEASON_TOTAL_ROOKIE, "value", measurement="metric",
+                  restriction="draftable", group="lag_recovered", treatment="floor",
+                  metric="mae_dk_total")
+             - ladder_cell("lag_recovered", "floor", "mae_dk_total"))
+            / (cell(SEASON_TOTAL_ROOKIE, "value", measurement="metric",
+                    restriction="draftable", group="lag_recovered", treatment="floor",
+                    metric="mae_dk_total")
+               - ladder_cell("lag_recovered", "oracle_gp_floor", "mae_dk_total"))),
+        "§16 share of §7f's gap the ladder closes",
+        artifact=SEASON_TOTAL_ROOKIE_LADDER)
+    add("241.3871", lambda: (ladder_cell("lag_recovered", "floor", "mae_dk_total")
+                             - ladder_cell("lag_recovered", "oracle_gp_floor",
+                                           "mae_dk_total")),
+        "§16 season-total MAE left after the ladder",
+        artifact=SEASON_TOTAL_ROOKIE_LADDER)
+    add("510.9946", lambda: cell(SEASON_TOTAL_ROOKIE, "value", measurement="metric",
+                                 restriction="draftable", group="lag_recovered",
+                                 treatment="floor", metric="crps_dk_total"),
+        "§16 downstream draftable lag_recovered CRPS under the shipped plug-in",
+        artifact=SEASON_TOTAL_ROOKIE)
+    add("24.7376", lambda: cell(SEASON_TOTAL_ROOKIE, "value", measurement="context",
+                                restriction="draftable", group="lag_recovered",
+                                metric="mean_predicted_gp"),
+        "§16 downstream draftable predicted games under the plug-in",
+        artifact=SEASON_TOTAL_ROOKIE)
+    add("1,062", lambda: ladder_ctx("lag_recovered", "mean_dk_total"),
+        "§16 the realized season total these rows carry", tol=0.5,
+        artifact=SEASON_TOTAL_ROOKIE_LADDER)
+    return C
+
+
 def _availability_no_design_level() -> list[Claim]:
     """`docs/availability-window-plan.md` §8b — the no-design availability LEVEL.
 
@@ -8967,6 +9289,7 @@ def _build() -> tuple[Claim, ...]:
                  + _availability_regime() + _availability_exchangeability()
                  + _availability_absence() + _availability_absence_mixture()
                  + _availability_no_design_level() + _availability_population()
+                 + _availability_lag()
                  + _preseason()
                  + _preseason_no_prior() + _composition_preseason()
                  + _composition_preseason_fit()

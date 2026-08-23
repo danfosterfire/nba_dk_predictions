@@ -10740,6 +10740,169 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("head", "availability", "drafting"),
     ),
     Decision(
+        id="the-returnee-availability-ladder-is-scheduled-refit-first",
+        topic="availability",
+        claim="**The availability head gets its own lag-recovery ladder, scheduled as "
+              "`docs/availability-window-plan.md` §16 and running NEXT** — and unlike the "
+              "component side ([[one-ladder-rung-of-four-clears-its-gate]]) the "
+              "imputation-only arm is **not** the favourite. Two arms: fill the `_lag1` "
+              "block from the nearest usable season and score with the shipped posterior, "
+              "then refit with a **staleness column** at `train_val` and `full`. The gate "
+              "is stated in advance: validation paired-bootstrap CRPS in GAMES against the "
+              "plug-in with the interval below zero on the draftable rows, the "
+              "rolling-origin harness agreeing, and rung 0 bit-identical.",
+        because="`availability.build_design` drops a player-season on `gp_share_lag1` "
+                "ALONE, so a man who missed all of S-1 has no row however complete S-2 is "
+                "— 286 rows recoverable from lag-2 and 96 from lag-3 — and he falls to a "
+                "plug-in that gives EVERY returning player in the league one scalar "
+                "([[the-recovered-returnees-are-limited-by-availability-not-by-their-rates]]). "
+                "The head already computes `gp_share_lag2/lag3` and already FITS "
+                "coefficients on them, and already backfills lag2/lag3 FROM lag1; only the "
+                "mirror fill is missing. Scratch pre-round readings say the ordering is on "
+                "the row and the level is not: corr(lag-2, realized share) is +0.691 "
+                "against the shipped design's own +0.573 on lag-1, while the level runs "
+                "0.746x high pooled and 0.855x high draftable. **What decides the fork is "
+                "that `n_prior_seasons` counts depth, not gaps**: after recovery the 82 "
+                "`(0,1,0)` rows are indistinguishable from 1,730 healthy `(1,1,0)` "
+                "veterans and the 204 `(0,1,1)` rows from 7,276 `(1,1,1)` ones, so a pure "
+                "imputation hands the head a false structural fact it has no column to "
+                "contradict — and the head already carries 130 `(1,0,1)` rows with that "
+                "same defect today. For a RATE head the nearest real rate is a good "
+                "estimate of this year's rate; for an AVAILABILITY head the missing season "
+                "is the signal. The refit was declined on the component side at eleven "
+                "heads x two windows; this is one head. **The key defaults OFF**: unlike "
+                "`stan.components.lag_ladder`, this `build_design` is imported by "
+                "`stan_minutes`, `stan_composition`, `stan_games_played`, `model_cards`, "
+                "`sim/season`, `season_terms` and `final_evaluation`, and the minutes "
+                "allocation is zero-sum, so a recovered player takes minutes from his "
+                "teammates rather than appearing beside them.",
+        status="withdrawn",
+        reproduce="make availability-lag → outputs/predictions/availability_lag.csv",
+        replaced_by="[[the-availability-lag-ladder-ships-at-one-rung-and-the-cheap-arm-won]] "
+                    "— the ladder is worth a great deal and the imputation-only arm is what "
+                    "delivers it. The SCHEDULING half of this entry stands: the round ran "
+                    "where it said it would, on the gate it stated in advance, and the "
+                    "structural argument about `n_prior_seasons` counting depth was right "
+                    "enough to become two columns. What is withdrawn is the PREDICTION that "
+                    "the refit would be the arm worth having.",
+        caught_by="`make availability-lag` running both arms, 2026-08-22. The refit against "
+                  "the imputation on the same rows is +0.7310 [−1.4152, +2.8585] draftable "
+                  "— §16g's second falsifier, stated before the run "
+                  "([[a-staleness-column-is-not-the-missing-piece-a-population-matched-estimate-is]] "
+                  "is why).",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("head", "availability", "components"),
+    ),
+    Decision(
+        id="the-availability-lag-ladder-ships-at-one-rung-and-the-cheap-arm-won",
+        topic="availability",
+        claim="**§16 ran and the availability head gets a lag-recovery ladder at ONE rung "
+              "of three — `returnee_lag2` — as pure IMPUTATION.** On the draftable "
+              "validation rows, in CRPS games against the plug-in: **17.6175 → 8.3662, "
+              "−9.2514 [−15.4431, −3.1316]**, confirmed at 5 of 7 rolling origins "
+              "(−5.0374 [−8.7958, −1.6026]). The plug-in gives that player **24.7376** "
+              "games and he plays **46.8571**; the head says 47.7617. `returnee_thin` is "
+              "rejected on the WRONG side (+2.7839 [+1.4553, +3.6516] — the head is worse "
+              "than one flat scalar) and `no_usable_lag` straddles zero. The design widens "
+              "11,272 → 11,654 rows (+382: 189 / 97 / 96) and rung 0 comes back "
+              "bit-identical, design and posterior. `stan.availability.lag_ladder` stays "
+              "`[]`; the verdict is recorded there and turning it on is a separate "
+              "decision, because this `build_design` reaches seven consumers and the "
+              "minutes allocation is zero-sum.",
+        because="This is [[the-recovered-returnees-are-limited-by-availability-not-by-their-rates]] "
+                "answered on the head that owns it. The defect was one line — the design "
+                "drops on `gp_share_lag1` ALONE and already backfills lag2/lag3 FROM lag1 "
+                "— and the fix reuses `lag_recovery`'s helpers and "
+                "`component_rates.LADDER_RUNGS` verbatim, so a board reconciles the two "
+                "designs' `lag_rung` columns without a mapping table. **`thin_prior` is "
+                "structurally empty here**, which is the one asymmetry: that design's "
+                "boundary is a 200-minute test and this one's is a presence test. The "
+                "shrink is load-bearing and is priced separately — the raw carry passes "
+                "validation and FAILS the rolling confirmation (−2.8373 [−7.7797, "
+                "+1.7064], 4 of 7), over-predicting by 6.6 games, which is §16b's 0.746x "
+                "level gap arriving as a prediction error. The two constants are fitted on "
+                "the fitting half's 134 recovered rows (k = 246.4703 pseudo-games toward "
+                "0.287527) and the anchor is deliberately NOT a league mean: a carried "
+                "`gp_share` is biased HIGH by exactly the fact it erased, so shrinking "
+                "toward the veteran level of 0.6310 would move it the wrong way.",
+        status="settled",
+        reproduce="make availability-lag → outputs/predictions/availability_lag.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("head", "availability", "drafting"),
+    ),
+    Decision(
+        id="a-staleness-column-is-not-the-missing-piece-a-population-matched-estimate-is",
+        topic="availability",
+        claim="**The refit-with-a-staleness-column arm §16e named as the favourite was "
+              "run, and it does not earn its place.** Against the imputation arm on the "
+              "same rows it reads **+0.7310 [−1.4152, +2.8585]** draftable and −1.1132 "
+              "[−2.5677, +0.3892] pooled — spanning zero at both readings, on the wrong "
+              "side where the verdict is read. §16g stated this case before the run, so "
+              "the cheap form ships. The three columns "
+              "(`lag_recovered`, `lag_gap_seasons`, `lag_interior_gaps`) stay in the "
+              "design as provenance and are fitted by nothing.",
+        because="**The refit reproduces the plug-in's own defect one level up, and that is "
+                "the finding rather than the null.** The staleness block does exactly what "
+                "it was built to do — it learns the discount and takes the prediction from "
+                "47.5 games to 38.1 — but it learns it from the POOLED 134 recovered "
+                "fitting rows, which are dominated by fringe roster churn, and then "
+                "applies it to the draftable ones, over-shrinking by 8.7 games on "
+                "precisely the population a board prices. The evidence that this is the "
+                "mechanism and not a coincidence is that it WINS on the pooled population "
+                "(−4.1726 against the imputation arm's −3.0595), i.e. it is better exactly "
+                "where it was fitted and worse exactly where it is used — the same shape "
+                "as [[no-design-availability-is-graded-by-tenure-and-draft-slot]]'s own "
+                "limitation. What separates the two populations is not a new column; it is "
+                "the head's existing covariates, which the imputation arm hands it. This "
+                "belongs beside "
+                "[[the-mixtures-boundary-selection-does-not-transfer-to-the-draft-pool]], "
+                "where the same head was last found to have been read on a frame it is "
+                "not applied to.",
+        status="null",
+        reproduce="make availability-lag → outputs/predictions/availability_lag.csv",
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("head", "availability"),
+    ),
+    Decision(
+        id="the-ladder-closes-half-the-returnees-season-total-gap",
+        topic="availability",
+        claim="**§16's ladder closes 49.60% of the season-total gap §7f measured on the "
+              "recovered returnees.** On the 14 draftable validation rows the floor "
+              "family's season-total MAE falls **543.3167 → 305.7897** and CRPS "
+              "**510.9946 → 249.8303**, against an oracle-on-games floor of 64.4025 that "
+              "does not move; predicted games go 24.7376 → **49.6575** against a realized "
+              "46.8571, and the share served by `no_design_availability` goes 1.0 → 0.0. "
+              "On the unrestricted 19 rows, 444.9010 → 276.9327 MAE. §16f said about 42% "
+              "of the gap was available to a scratch carry-forward; the fitted head beats "
+              "that.",
+        because="§7f left this as 'not measured, and now the largest open item' and the "
+                "prize it named — 543.3167 → 64.4025 under an oracle — is exactly what an "
+                "availability treatment could reach. `make season-total-rookie-lagladder` "
+                "runs the identical readout with the admitted rung on and writes its own "
+                "`_lagladder` artifact, on `make rookie-floor`'s precedent, so the two are "
+                "readable side by side; the shipped `season_total_rookie.csv` re-runs "
+                "bit-identical. The check that the ladder moved only what it should is "
+                "in the table itself: every `oracle_gp` cell and every `veteran` and "
+                "`rookie` cell is unchanged to the digit, because the oracle does not read "
+                "the availability treatment and those groups were never plugged in. The "
+                "residual 241.3872 dk_pts of MAE is what an availability head cannot reach "
+                "on fourteen rows, and whether any of it becomes a bracket effect is a "
+                "question for the rookie program's Session 8 replay, not for this round.",
+        status="measured",
+        reproduce=("make season-total-rookie-lagladder → "
+                   "outputs/predictions/season_total_rookie_lagladder.csv"),
+        source="docs/availability-window-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("head", "availability", "drafting"),
+    ),
+    Decision(
         id="the-rookie-rate-head-program-is-eight-sessions-for-true-rookies-only",
         topic="components",
         claim="**The rookie rate head program is scheduled as eight sessions** "

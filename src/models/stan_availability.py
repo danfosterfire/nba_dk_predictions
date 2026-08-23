@@ -310,12 +310,28 @@ def availability_design(cfg: dict) -> pd.DataFrame:
 
     Shared with `stan_minutes.py`, which needs the identical feature block — the minutes
     head is `min | available`, the next link in the same chain.
+
+    ## The §16 lag-recovery ladder enters HERE, and that is the whole of its blast radius
+
+    `stan.availability.lag_ladder` is read at this one point, because this function is the
+    choke point `stan_minutes`, `stan_composition`, `stan_games_played`, `model_cards`,
+    `season_terms`, `availability_no_prior` and the simulator all reach their rows through.
+    An empty list — the default — builds the pre-ladder design exactly and nothing below
+    can tell the difference.
+
+    ⚠️ **A non-empty list moves all seven of them at once**, which is deliberate and is why
+    the key defaults off: a recovered player is a real roster spot, and because the minutes
+    allocation is zero-sum he takes minutes from his teammates rather than appearing beside
+    them. `docs/availability-window-plan.md` §16c states the list; turning the key on is a
+    separate decision from measuring the ladder.
     """
     from src.features.availability import load_artifacts
+    from src.models.availability import lag_ladder
 
     raw_dir = Path(cfg["data"]["raw_dir"])
     features_dir = Path(cfg["data"]["features_dir"])
     seasons = cfg["data"]["seasons"]
+    ladder = lag_ladder(cfg)
 
     panel_path = features_dir / "availability_panel.parquet"
     try:
@@ -329,7 +345,11 @@ def availability_design(cfg: dict) -> pd.DataFrame:
         panel = build_panel(seasons, raw_dir)
         frame = season_availability(panel, "full")
 
-    design = build_design(frame, seasons, raw_dir, season_start_dates(panel))
+    if ladder is not None:
+        print(f"  §16 lag-recovery ladder ON at rung(s) {list(ladder.rungs)} — this "
+              f"widens the design for EVERY consumer of it")
+    design = build_design(frame, seasons, raw_dir, season_start_dates(panel),
+                          ladder=ladder)
     return assert_binomial_support(design)
 
 
