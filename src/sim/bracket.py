@@ -144,7 +144,7 @@ from dashboard import economics
 from dashboard.economics import ROUND_ONE_POD
 from src.models.component_rates import build_design as component_build_design
 from src.sim.season import (RUNG_ZERO, VETERAN_FAMILY, assert_season_allowed,
-                            validation_seasons)
+                            assert_tensor_current, validation_seasons)
 
 # ── The slate, and the eight inequalities that decide a lineup ────────────────
 
@@ -747,13 +747,20 @@ def top_roster(masks: np.ndarray, key: np.ndarray) -> np.ndarray:
 
 # ── 6. The entry point ────────────────────────────────────────────────────────
 
-def load_tensor(features_dir: Path, season: str, label: str = "") -> dict:
+def load_tensor(features_dir: Path, season: str, label: str = "",
+                raw_dir: str | None = None) -> dict:
     """The season's tensor. `label` names a VARIANT written beside the shipped one.
 
     `docs/rookie-rates-plan.md` §5h: the rookie-inclusive replay needs a tensor drawn over
     a wider unit population without overwriting the one every audited downstream artifact
     was built on, so the label rides on the filename exactly as `--field`'s suffix rides
     on the sweep's. A labelled tensor is a different measurement, never a re-decision.
+
+    `raw_dir` arms the staleness guard (`season.assert_tensor_current`): a production
+    tensor built without the season's preseason log is refused the moment that log exists
+    on disk. Opt-in by the caller because the guard needs the raw directory and the one
+    consumer that must never serve the August board under October's name is the draft
+    room — `draft_room.load_room` passes it.
     """
     path = features_dir / f"sim_tensor_{season}{label}.npz"
     if not path.exists():
@@ -774,6 +781,14 @@ def load_tensor(features_dir: Path, season: str, label: str = "") -> dict:
                               else np.full(n, VETERAN_FAMILY))
         out["lag_rung"] = (z["lag_rung"].astype(str) if "lag_rung" in z
                            else np.full(n, RUNG_ZERO))
+        # C6's honesty stamp (`docs/rookie-inclusive-tensors-plan.md` §5b). `None` marks
+        # a tensor from before the stamp existed; the guard skips those.
+        out["preseason_coverage"] = (float(z["preseason_coverage"])
+                                     if "preseason_coverage" in z else None)
+        out["preseason_log_rows"] = (int(z["preseason_log_rows"])
+                                     if "preseason_log_rows" in z else None)
+    if raw_dir is not None:
+        assert_tensor_current(raw_dir, out)
     return out
 
 

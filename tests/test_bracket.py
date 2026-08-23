@@ -587,3 +587,52 @@ def test_the_split_guard_refuses_a_test_season(monkeypatch):
     with unlocked("a test"):
         B.assert_season_allowed("2025-26", design)
     B.assert_season_allowed("2023-24", design)         # validation is always legal
+
+
+# ── The tensor's preseason stamp and the staleness guard at the read path ────
+
+def _tensor_npz(tmp_path, season="2026-27", **extra):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    keys = dict(dk_pts=np.zeros((2, 3, 4), dtype=np.float32),
+                player_id=np.array([7, 9]), tournament_round=np.array([1, 1, 2]),
+                season=np.array(season), fit_window=np.array("full"),
+                n_sims=np.array(4))
+    keys.update(extra)
+    np.savez(tmp_path / f"sim_tensor_{season}.npz", **keys)
+    return tmp_path
+
+
+def test_load_tensor_surfaces_the_preseason_stamp_and_none_for_legacy(tmp_path):
+    """A consumer holding two tensors has no other way to tell the August board apart,
+    and a tensor from before the stamp existed must read back as unstamped, not as 0%."""
+    _tensor_npz(tmp_path, preseason_coverage=np.array(0.25),
+                preseason_log_rows=np.array(0))
+    out = B.load_tensor(tmp_path, "2026-27")
+    assert out["preseason_coverage"] == pytest.approx(0.25)
+    assert out["preseason_log_rows"] == 0
+
+    legacy = B.load_tensor(_tensor_npz(tmp_path / "l", season="2022-23"), "2022-23")
+    assert legacy["preseason_coverage"] is None
+    assert legacy["preseason_log_rows"] is None
+
+
+def test_load_tensor_arms_the_staleness_guard_only_when_given_the_raw_dir(tmp_path):
+    """Both states at the read path: silent while no preseason log exists, a hard refusal
+    the moment one lands beside a tensor stamped as built without it (C6)."""
+    features = tmp_path / "features"
+    features.mkdir()
+    raw = tmp_path / "raw"
+    (raw / "nbastats").mkdir(parents=True)
+    _tensor_npz(features, preseason_coverage=np.array(0.0),
+                preseason_log_rows=np.array(0))
+
+    # August: the log does not exist, and the armed read is silent.
+    assert B.load_tensor(features, "2026-27", raw_dir=str(raw))["n_sims"] == 4
+
+    # October: the log lands; the armed read refuses, the unarmed one still loads —
+    # the guard belongs to the consumer that names the raw dir (the draft room).
+    (raw / "nbastats" / "game_logs_pre_season_2026_27.csv").write_text(
+        "GAME_ID,PLAYER_ID,MIN\n1,7,12.0\n2,9,20.0\n")
+    with pytest.raises(RuntimeError, match="STALE"):
+        B.load_tensor(features, "2026-27", raw_dir=str(raw))
+    assert B.load_tensor(features, "2026-27")["n_sims"] == 4

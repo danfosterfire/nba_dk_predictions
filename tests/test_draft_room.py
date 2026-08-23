@@ -681,3 +681,71 @@ def test_the_field_cache_is_keyed_by_composition_and_need_weight(tmp_path):
     assert R.load_field(path, cfg, 3, None) is not None
     assert R.load_field(path, cfg, 3, ["adp_need"] * 12) is None
     assert R.load_field(path, replace(cfg, need_weight=8.0), 3, ["adp"] * 12) is None
+
+
+# ── The tensor fingerprint on the field cache, and the production admission ──
+
+def test_the_field_cache_is_keyed_by_the_tensor_it_was_scored_on(tmp_path):
+    """A rebuild at the same filename was invisible to the key — the two validation
+    caches on disk were older than the tensors they were read against, and draft night
+    priced our entry against a field drafted off a board that no longer existed."""
+    path = tmp_path / "field.npz"
+    field = np.zeros((4, 2, 3), dtype=np.float32)
+    cfg = D.FieldConfig(noise_model="tiered", rank_noise_sd=2.0)
+    R.save_field(path, field, "2022-23", "train", cfg, 1, ["adp"] * 12,
+                 tensor_fingerprint="aaaa")
+    assert R.load_field(path, cfg, 3, ["adp"] * 12,
+                        tensor_fingerprint="aaaa") is not None
+    assert R.load_field(path, cfg, 3, ["adp"] * 12,
+                        tensor_fingerprint="bbbb") is None
+
+    # A legacy cache carries no fingerprint, and a caller who names the tensor —
+    # `load_room` always does — must never be served one.
+    R.save_field(path, field, "2022-23", "train", cfg, 1, ["adp"] * 12)
+    assert R.load_field(path, cfg, 3, ["adp"] * 12,
+                        tensor_fingerprint="aaaa") is None
+    assert R.load_field(path, cfg, 3, ["adp"] * 12) is not None
+
+
+def test_the_tensor_fingerprint_tracks_content_not_name_or_mtime(tmp_path):
+    a = tmp_path / "sim_tensor_x.npz"
+    a.write_bytes(b"board one")
+    b = tmp_path / "sim_tensor_y.npz"
+    b.write_bytes(b"board one")
+    assert R.tensor_fingerprint(a) == R.tensor_fingerprint(b)
+    b.write_bytes(b"board two")
+    assert R.tensor_fingerprint(a) != R.tensor_fingerprint(b)
+
+
+def test_a_production_tensor_admits_its_own_season_on_its_window(monkeypatch):
+    """`fit_window == "full"` is evidence only the production unlock can have written,
+    and the split frame is not even built to check it — the season it names has no rows
+    there. Every other tensor still faces the split guard, with the wrong seasons
+    refused."""
+    from src.models import held_out
+    from src.models.held_out import HeldOutLocked
+
+    def _boom():
+        raise AssertionError("the split frame must not be built for a production tensor")
+
+    R.season_admissible({"fit_window": "full", "season": "2026-27"}, _boom)
+
+    monkeypatch.setattr(held_out, "_unlocked", False, raising=False)
+    seasons = [f"20{y:02d}-{y + 1:02d}" for y in range(15, 25)]
+    design = pd.DataFrame({"season": np.repeat(seasons, 2),
+                           "player_id": np.tile([1, 2], len(seasons))})
+    with pytest.raises(HeldOutLocked):
+        R.season_admissible({"fit_window": "train_val", "season": seasons[-1]},
+                            lambda: design)
+    R.season_admissible({"fit_window": "train", "season": seasons[-3]}, lambda: design)
+
+
+def test_the_room_lists_season_boards_only_never_labelled_variants(tmp_path):
+    """`sim_tensor_2022-23_rookieinclusive.npz` is a measurement, not a board — globbed
+    naively its label parses as a 'season' the room then fails to open."""
+    from dashboard.draft_room import seasons_with_a_tensor
+
+    for name in ("sim_tensor_2022-23.npz", "sim_tensor_2022-23_rookieinclusive.npz",
+                 "sim_tensor_2026-27.npz", "sim_tensor_notes.txt"):
+        (tmp_path / name).write_bytes(b"")
+    assert seasons_with_a_tensor(tmp_path) == ["2022-23", "2026-27"]

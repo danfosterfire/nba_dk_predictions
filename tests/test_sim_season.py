@@ -11,6 +11,8 @@ Plain `assert` with synthetic builders, no fixtures or classes, mirroring
 `tests/test_preprocess.py`.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -762,3 +764,172 @@ def test_a_frame_with_no_family_column_is_all_veteran():
     families = S.unit_families(vet)
     assert len(families) == 1 and families[0][0] == S.VETERAN_FAMILY
     np.testing.assert_array_equal(families[0][1], np.arange(3))
+
+
+# ── The production unlock and the rehearsal stamp (§5b) ──────────────────────
+
+def _production_cfg(tmp_path, played=("2024-25", "2025-26")) -> dict:
+    """A cfg whose played-game record carries exactly `played` seasons."""
+    features = tmp_path / "features"
+    features.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "raw").mkdir(exist_ok=True)
+    pd.DataFrame({"season": list(played),
+                  "player_id": range(len(played))}).to_parquet(
+        features / "component_targets.parquet")
+    return {"data": {"features_dir": str(features), "raw_dir": str(tmp_path / "raw")}}
+
+
+def _preseason_log(raw_dir: str, season: str, n: int) -> None:
+    """A raw preseason log with `n` data rows (0 = header-only)."""
+    directory = Path(raw_dir) / "nbastats"
+    directory.mkdir(parents=True, exist_ok=True)
+    lines = ["GAME_ID,PLAYER_ID,MIN"] + [f"{i},{i},12.0" for i in range(n)]
+    (directory / f"game_logs_pre_season_{season.replace('-', '_')}.csv").write_text(
+        "\n".join(lines) + "\n")
+
+
+def test_the_production_unlock_must_be_typed_and_diagnoses_deployment(tmp_path):
+    """`--window full` alone is a value that gets passed around; the unlock is an act.
+
+    And the refusal has to carry the RIGHT diagnosis: an unplayed season has no data to
+    leak, so a message about the test split would send the operator to the wrong guard.
+    """
+    cfg = _production_cfg(tmp_path)
+    with pytest.raises(RuntimeError, match="deployment act"):
+        S.assert_production_season(cfg, "2026-27", "full", production=False)
+    with pytest.raises(RuntimeError, match="simulate-production"):
+        S.assert_production_season(cfg, "2026-27", "full", production=False)
+
+
+def test_the_production_unlock_never_names_a_played_season(tmp_path):
+    """C1: the held-out tensors are frozen by decision, and `--production` must not be
+    the second unlock the split does not have — nor a re-draw path for any played season."""
+    cfg = _production_cfg(tmp_path)
+    for season in ("2024-25", "2025-26"):
+        with pytest.raises(RuntimeError, match="has been played"):
+            S.assert_production_season(cfg, season, "full", production=True)
+
+
+def test_the_production_unlock_requires_the_full_window(tmp_path):
+    cfg = _production_cfg(tmp_path)
+    with pytest.raises(RuntimeError, match="`full`"):
+        S.assert_production_season(cfg, "2026-27", "train", production=True)
+
+
+def test_the_production_unlock_admits_an_unplayed_season_without_the_split_key(
+        tmp_path, monkeypatch):
+    """The unlock is the deployment one and NEVER `held_out.unlocked` — the split stays
+    locked before, during and after a legal production check."""
+    monkeypatch.setattr(held_out, "_unlocked", False, raising=False)
+    cfg = _production_cfg(tmp_path)
+    S.assert_production_season(cfg, "2026-27", "full", production=True)
+    assert held_out._unlocked is False
+
+
+def test_unplayed_reads_the_played_record_not_a_design_frame(tmp_path):
+    """The forward path CONCATS target-season rows into the design, so a design-frame
+    test would call the production season played the moment its frames were built."""
+    cfg = _production_cfg(tmp_path, played=("2023-24", "2024-25", "2025-26"))
+    assert S.unplayed_season(cfg, "2026-27")
+    assert not S.unplayed_season(cfg, "2025-26")
+
+
+def test_preseason_log_rows_counts_data_rows_and_header_only_is_absent(tmp_path):
+    """`production_check`'s convention: an empty fetch that reached disk self-heals."""
+    raw = str(tmp_path / "raw")
+    assert S.preseason_log_rows(raw, "2026-27") == 0
+    _preseason_log(raw, "2026-27", 0)
+    assert S.preseason_log_rows(raw, "2026-27") == 0
+    _preseason_log(raw, "2026-27", 3)
+    assert S.preseason_log_rows(raw, "2026-27") == 3
+
+
+def test_unit_preseason_coverage_is_the_min_pre_share_and_nan_without_a_block():
+    units = pd.DataFrame({"min_pre": [0.0, 2.0, np.nan, 5.0]})
+    assert S.unit_preseason_coverage(units) == pytest.approx(0.5)
+    assert np.isnan(S.unit_preseason_coverage(pd.DataFrame({"player_id": [1]})))
+
+
+def test_the_staleness_guard_is_silent_in_august_and_refuses_in_october(tmp_path):
+    """Both states of C6's self-arming guard, the October one taken today by writing the
+    file — which is the reason the guard is written against the input's existence."""
+    raw = str(tmp_path / "raw")
+    meta = {"season": "2026-27", "preseason_log_rows": 0}
+
+    # August: no preseason exists anywhere, and the tensor is honest.
+    S.assert_tensor_current(raw, meta)
+
+    # October: the log lands, and the same tensor becomes a hard refusal that names the
+    # rebuild command.
+    _preseason_log(raw, "2026-27", 5)
+    with pytest.raises(RuntimeError, match="STALE"):
+        S.assert_tensor_current(raw, meta)
+    with pytest.raises(RuntimeError, match="simulate-production"):
+        S.assert_tensor_current(raw, meta)
+
+    # A tensor built WITH the log is current, and one with no stamp predates the stamp —
+    # a played-season tensor from the retrospective builders — and is left alone.
+    S.assert_tensor_current(raw, {"season": "2026-27", "preseason_log_rows": 5})
+    S.assert_tensor_current(raw, {"season": "2026-27", "preseason_log_rows": None})
+    S.assert_tensor_current(raw, {"season": "2026-27"})
+
+
+def test_save_tensor_stamps_the_preseason_coverage_and_log_rows(tmp_path):
+    """The stamp travels with the artifact, beside the variant and the layout, because a
+    consumer holding two tensors has no other way to tell the August board apart."""
+    units = pd.DataFrame({"player_id": [7, 9], "total_minutes_lag1": [800.0, 0.0]})
+    ctx = {"units": units, "unit_ids": np.array([7, 9]), "season": "2026-27",
+           "window": "full", "n_sims": 4, "n_draws": 2, "seed": 0,
+           "ps_sigma": np.full((2, 1), 0.375), "sigma_source": "role",
+           "composition_variant": "x", "layout": "spells",
+           "no_design_level": "team", "preseason_coverage": 0.25,
+           "preseason_log_rows": 0}
+    sim = {"dk_pts": np.zeros((2, 3, 4), dtype=np.float32),
+           "games_played": np.zeros((2, 3, 4), dtype=np.uint8),
+           "season_minutes": np.zeros((4, 2), dtype=np.float32)}
+    dest = S.save_tensor(sim, ctx, tmp_path / "sim_tensor_2026-27.npz")
+
+    with np.load(dest, allow_pickle=False) as z:
+        assert float(z["preseason_coverage"]) == pytest.approx(0.25)
+        assert int(z["preseason_log_rows"]) == 0
+        assert str(z["fit_window"]) == "full"
+
+
+def test_the_forward_tier_appends_the_unplayed_seasons_expanding_prior_in_memory():
+    """The §5b rehearsal's own find: the persisted floor tables cover the seasons the
+    fitted design carried, so a production target one past their end had no row and
+    `floor_level` refused. The forward row pools played rookie rows STRICTLY before the
+    target — no refit, no leakage, and the pickle on disk is never touched."""
+    from types import SimpleNamespace
+
+    rng = np.random.default_rng(0)
+    history = pd.DataFrame({
+        "season": np.repeat(["2023-24", "2024-25", "2025-26"], 40),
+        "player_id": np.arange(120),
+        "draft_bucket": np.tile(["top5", "undrafted"], 60),
+        "reb_p36": rng.uniform(2.0, 8.0, 120)})
+    forward = pd.DataFrame({"season": ["2026-27"], "player_id": [999],
+                            "draft_bucket": ["top5"], "reb_p36": [np.nan]})
+    rookie = pd.concat([history, forward], ignore_index=True)
+
+    old = pd.DataFrame({"season": ["2024-25", "2025-26"],
+                        "draft_bucket": ["top5", "top5"], "prior": [4.0, 4.5],
+                        "prior_n": [20, 40], "pooled_prior": [4.0, 4.5]})
+    step = {"kind": "rookie_floor", "name": "floor_reb", "component": "reb",
+            "attempted": None, "priors": old.copy(), "volume_k": 200.0,
+            "conversion": None, "arm": "blended"}
+    art = SimpleNamespace(recipe=SimpleNamespace(steps=(step,)))
+    artifacts = {f"{P.ROOKIE_PREFIX}reb": art, "reb": SimpleNamespace(recipe=None)}
+
+    assert S.extend_rookie_priors(artifacts, rookie, "2026-27") == 1
+    table = art.recipe.steps[0]["priors"]
+    added = table[table["season"] == "2026-27"]
+    assert len(added) > 0, "the target season gained no prior row"
+    top5 = added[added["draft_bucket"] == "top5"].iloc[0]
+    pool = history[history["draft_bucket"] == "top5"]["reb_p36"]
+    assert top5["prior"] == pytest.approx(pool.mean())
+    assert int(top5["prior_n"]) == len(pool)
+    # The pre-existing rows are untouched, and a second call is a no-op.
+    pd.testing.assert_frame_equal(table[table["season"] != "2026-27"]
+                                  .reset_index(drop=True), old)
+    assert S.extend_rookie_priors(artifacts, rookie, "2026-27") == 0

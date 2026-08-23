@@ -52,7 +52,10 @@ is `[returnee_lag2]`, the eleven `rookie-components` posteriors exist at all thr
 **union** of the two rate families — **471** and **467** units on the two validation seasons
 against 386 and 387, with Victor Wembanyama on a board for the first time. `make
 production-check` is green on 31 of 31 heads. **The tensors on disk were not regenerated**:
-what the change is worth in contest units is §5h's replay against §7a's floor.
+what the change is worth in contest units is §5h's replay against §7a's floor. *(They were,
+one round later — `docs/rookie-inclusive-tensors-plan.md` §7c re-drew the shipped set over
+the union 2026-08-22, reproducing §7i's labelled pair bit-for-bit, and §7e retired the
+label.)*
 
 **The floor is closed at the unit that resolves** (§7i): `make rookie-recovery` re-reads
 §7a's Round-1 bar against a **nested ladder of board masks** on a labelled rookie-inclusive
@@ -66,8 +69,11 @@ contest half, and it settles a different thing than it was asked to: the sweep *
 `lineup_value_blend30` on all four multi-entry structures** with simulated lift rising
 0.2369 → **0.2645** on the 600k flagship, while the realized lift delta (**+0.0160** for the
 shipped arm, 17 of 24 arms losing at a median of −0.0683) refuses to resolve exactly as §7a
-said it would — and this time is not even paired, because the tensor moved under it. The
-eleven rookie heads are
+said it would — and this time is not even paired, because the tensor moved under it. *(The
+label retired 2026-08-23 — `docs/rookie-inclusive-tensors-plan.md` §7e: `make
+rookie-recovery` now reads the shipped tensor with zero movement, and `make
+strategy-sweep-rookie` is gone because `make strategy-sweep` reproduces it bit-for-bit.)*
+The eleven rookie heads are
 **declared in the chain and deliberately not carded** (`docs/model-cards-plan.md`), and
 `docs/final-evaluation-plan.md` §7 records that the held-out figures measured the
 rookie-less workflow.
@@ -687,6 +693,31 @@ is the readout. `make rookie-floor` prints this in the run header.
   the floor is context for what the head is worth, not a gate on building it. Session 2
   (§5b) is next.
 
+> **Superseded 2026-08-23 — the floor was re-run on the union board and it is closed**
+> (`docs/rookie-inclusive-tensors-plan.md` §7d; every figure above is the rookie-less
+> record, kept under the audit's historical flag). With the shipped tensors carrying both
+> rate families, `make rookie-floor`'s asymmetry is the market-silent fringe rather than
+> the rookie class: our seat prices **411** of the field's **448** rows in 2022-23 and
+> **417** of **464** in 2023-24, the **37** and **47** masked rows carry **0** and **3**
+> ADP prices between them, and the field takes **0.0000** and **0.0111** unpriceable
+> players per sixteen-man entry (0.00% and 1.11% of its entries hold one, against 73-75%
+> before). The bar the field sets moves **+25.4** dk_pts on 2022-23 (15,653.5 → 15,678.9)
+> and **−29.0** on 2023-24 (15,534.4 → 15,505.4) — reproducing §7i's `rookie`-rung residual
+> **to the digit** (+25.416667 / −28.958333) out of the separate module, which is the same
+> licence check §7a ran at rung 0, one rung up. The 2023-24 sign is §7i's reading 2
+> arriving live: what is still outside our board realizes less than what the field would
+> otherwise take, so the remaining hole is the field's handicap, not ours. Gate C
+> reproduces the shipped run to **0.0** on all 12 rows in *both* arms, so the two runs are
+> the same code on the same worlds. The contest half still does not resolve and is not
+> asked to (shipped arm **−0.0496** over the eight multi-entry readings, spanning
+> **−0.2937** to **+0.0440** with **5** of 8 negative; **18** of 24 arms lose at a median
+> of **−0.0225**, range **−0.1064** to **+0.0428**; the single-entry 88k reads **+0.0420**
+> and **−0.5489** at symmetric realized P(advance) **0.9544** / **0.9477** and stays out of
+> every pooled figure). And the simulated arm's uniform positivity — §5a's predicted
+> artifact — collapses with its cause: **+0.0057** for the shipped arm against the +0.0603
+> above, because a field that takes 0.01 zero-scoring players an entry no longer hands us
+> a handicap of the tensor's making.
+
 ### 7b. The design reversal — where the veteran design's boundary belongs (2026-08-22)
 
 **`make lag-recovery`** (`src/models/lag_recovery.py` → `outputs/predictions/lag_recovery.csv`).
@@ -771,7 +802,11 @@ is what withdrew §3 constraint 2.
 Counted on `draft_pool.parquet`, the same file the drafting layer builds its board from.
 **The census reconciles exactly with the drafting layer** — 347 and 359 rows served today,
 and 16 and 21 ADP-priced rows unserved, which are `strategy_injection.csv`'s own figures
-arrived at from the opposite direction.
+arrived at from the opposite direction. *(Superseded 2026-08-22: with the union shipped and
+the tensors re-drawn, the live injection record reads **0** and **3** ADP-priced rows
+unserved on boards of 411 and 417 — the reconciliation above is the record of the pre-union
+board, and the census side of it still carries the 16 / 21;
+`docs/rookie-inclusive-tensors-plan.md` §7d.)*
 
 | | 2022-23 rows (ADP-priced) | 2023-24 rows (ADP-priced) |
 |---|---:|---:|
@@ -1827,6 +1862,14 @@ which is `--field`'s discipline one layer down; a labelled tensor labels the gat
 because Gate A is one pooled table whose extremes `make docs-audit` re-derives and a variant
 population writing into it would move audited figures by replacing rows.
 
+*(2026-08-23 — the label is retired, `docs/rookie-inclusive-tensors-plan.md` §7e. The
+shipped tensors carry this population, so `make rookie-recovery` now reads them directly —
+re-deriving `rookie_recovery.csv` with zero movement on every value — and
+`make strategy-sweep-rookie` is gone because `make strategy-sweep` reproduces it
+bit-for-bit. The labelled tensors are deleted; the labelled CSVs stay on disk as this
+session's frozen record, and `--tensor-label` stays as machinery for the next variant
+population.)*
+
 #### The readout is a ladder of boards, and it is not three more sweeps
 
 §7a split the floor in two and only one half resolved. The half that does: the Round-1 bar
@@ -1854,7 +1897,11 @@ have bought three more readings of the half that already refused to resolve.
 **The rung-0 row reproduces `make rookie-floor`'s own number to the digit** — **+173.1** and
 **+111.9**, out of a different module, on a different tensor, through a different code path.
 That is the check that licenses reading the rest of the ladder as the same quantity §7a
-priced, and it is the direct analogue of §7a's own Gate C reproduction.
+priced, and it is the direct analogue of §7a's own Gate C reproduction. *(After the tensor
+round's Session 4 re-ran the floor on the union board, the live cross-check sits one rung
+up: `strategy_rookie_floor.csv`'s cut delta now reproduces this table's `rookie`-rung
+residual to the digit — **25.416667** and **−28.958333** on both sides — and the rung-0
+pair above is this table's own record; `docs/rookie-inclusive-tensors-plan.md` §7d.)*
 
 #### The board ladder, validation seasons, realized
 
@@ -1911,6 +1958,16 @@ denominator changed under a mean. It is recorded because the two Gate A tables n
 and a reader holding both needs to be told which comparison they support: the shipped table
 is the one the bars were set against, and the labelled one describes a different population.
 
+> **Superseded 2026-08-22 — the shipped table now IS this population**
+> (`docs/rookie-inclusive-tensors-plan.md` §7c). Session 3 of the tensor round re-drew the
+> shipped 2022-23 / 2023-24 tensors and they reproduce the labelled pair **bit-for-bit** —
+> every shared array identical, every Gate A cell equal to the last digit — so
+> `sim_season_gate_a.csv` now carries the 471- and 467-unit rows and the union adds **0**
+> units over the labelled table. The 386- / 387-unit column above (MAE 360.80 / 373.63,
+> CRPS 250.68 / 256.92, R² 0.7116 / 0.7106) is the rookie-less record, kept under the
+> audit's historical flag; the two Gate A tables no longer differ, which is what licenses
+> §5e of that round to retire the label.
+
 #### The contest half, replayed — and it refuses to resolve exactly as §7a said it would
 
 `make strategy-sweep-rookie` is the shipped sweep, symmetric, on the rookie-inclusive
@@ -1928,6 +1985,21 @@ moves `rho` 0.3582 → 0.3443 and 0.3172 → 0.2825, and the scale moves 1.1337 
 **400.4586** either side), so the gate is working; what is gone is the licence to treat the
 difference as a board change alone. This is why the recovery readout above lives at the cut
 line and not here.
+
+> **Superseded 2026-08-22 — the shipped sweep now IS the labelled sweep**
+> (`docs/rookie-inclusive-tensors-plan.md` §7d). Session 4 of the tensor round re-ran
+> `make strategy-sweep` on the re-drawn shipped tensors and it reproduces this labelled run
+> **bit-for-bit**: the two uninjected worlds agree to a max gap of **0.0** across all 12
+> Gate C rows, every one of the 240 sweep rows and 240 realized rows matches to the last
+> digit, and the solved rotation and scale are equal to the digit — so **0.3443** / **1.1875**
+> and **0.2825** / **1.1811** are now the *live* `strategy_injection.csv` values, the shipped
+> board is **411** and **417** rows (the sweep gains **0** rows over the labelled board), and
+> every labelled-minus-shipped delta in this block reads 0 from the live artifacts. The
+> left-hand figures above (14.57, 0.3582 / 1.1337, 0.3172 / 1.1405, the +0.0160 / −0.0682 /
+> +0.1839 spread, 17 of 24 at −0.0683, +0.0329, 0.2369, 64 and 58) are the rookie-less-to-union
+> transition, kept under the audit's historical flag. The un-paired caveat stands as the
+> record of *that* comparison; the live sweep needs no such caveat because it is not a
+> comparison at all.
 
 Read with that caveat, the shipped arm's realized Round-1 lift moves **+0.0160** on average
 over the eight multi-entry readings, spanning **−0.0682 to +0.1839** and losing lift in 3 of
@@ -2024,6 +2096,20 @@ more than fitting itself on several heads (`docs/preseason-plan.md`).
   Nothing in this program requires it: the production board is built by
   `make posteriors-production` and `make forward-board`, which read the posteriors and not
   these tensors.
+
+  > **Superseded 2026-08-22/23 — that round ran and the label is retired**
+  > (`docs/rookie-inclusive-tensors-plan.md` §7c–§7e). The shipped tensors now carry this
+  > population, bit-for-bit equal to the labelled pair, and the whole downstream chain was
+  > re-run inside the round's own documentation discipline. `make rookie-recovery` reads
+  > the shipped tensor and re-derives `rookie_recovery.csv` with **zero movement**;
+  > `make strategy-sweep-rookie` retired, because `make strategy-sweep` reproduces it
+  > bit-for-bit; the labelled tensors (and their field caches) are deleted, while the
+  > labelled `strategy_*_rookieinclusive.csv` and `sim_season_gate_a_rookieinclusive.csv`
+  > stay on disk as this session's presence-checked record. One clause above was measured
+  > wrong before it could matter: "the mixture arms" do **not** move under a tensor re-run
+  > — `make mixture-value` reads its own frozen capture
+  > (`outputs/predictions/mixture_arms/`), which is now a snapshot of a superseded chain
+  > with its numbers untouched (that round's C5).
 - **⚠️ The held-out figures do not transfer.** `docs/final-evaluation-plan.md` §7 now records
   it: every figure of the 2026-08-21 round measured the rookie-less workflow, the head
   coefficients are untouched but the population they describe is narrower than the one that

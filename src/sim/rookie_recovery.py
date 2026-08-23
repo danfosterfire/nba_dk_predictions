@@ -31,12 +31,14 @@ are attributable rather than inferred because the rungs are nested by constructi
 
 **This is deliberately not a re-run of the sweep.** Running the 24-arm table three more
 times would cost about three hours and produce three more readings of the quantity §7a
-already showed does not resolve at N = 2. `make strategy-sweep TENSOR_LABEL=...` is the
-rookie-inclusive replay of the contest half, run once, and its caveats are §7a's.
+already showed does not resolve at N = 2. The contest half's replay was run once, on the
+`_rookieinclusive` labelled variant, and its caveats are §7a's; since
+`docs/rookie-inclusive-tensors-plan.md` §7d, `make strategy-sweep` reproduces it
+bit-for-bit, so the shipped sweep IS that replay.
 
 Usage:
     python -m src.sim.rookie_recovery
-    python -m src.sim.rookie_recovery --season 2022-23 --tensor-label _rookieinclusive
+    python -m src.sim.rookie_recovery --season 2022-23 --tensor-label _variant
 """
 
 from __future__ import annotations
@@ -56,10 +58,11 @@ from src.sim.season import (ROOKIE_FAMILY, VETERAN_FAMILY, assert_season_allowed
 from src.sim.strategy import (N_FIELD_DRAFTS, ROUND_ONE_CUT, SEED, field_cut_line,
                               priceable_room, realized_tensor, split_frame)
 
-# The default variant. `docs/rookie-rates-plan.md` §7g wrote the tensors on disk before the
-# two families were unioned and deliberately did not overwrite them, so the rookie-inclusive
-# tensor lives beside them under a label rather than over them.
-TENSOR_LABEL = "_rookieinclusive"
+# The shipped tensor. §7i first read this ladder off a `_rookieinclusive` labelled variant,
+# because the tensors on disk were still rookie-less; `docs/rookie-inclusive-tensors-plan.md`
+# §5c re-drew the shipped set over the union (bit-for-bit equal to the labelled pair) and
+# §5e retired the label. `--tensor-label` stays as machinery for the next variant population.
+TENSOR_LABEL = ""
 
 # `n_sims` only sizes the room's simulated arrays, which nothing here reads: every figure
 # below comes off the REALIZED tensor. Kept small so the load is seconds rather than a
@@ -216,7 +219,7 @@ def _report(table: pd.DataFrame) -> None:
     print("  `floor` is the bar an unrestricted field sets minus this rung's — Session 1's")
     print("  quantity, re-measured. `recovered` is what the rung above gave back.")
     print("  The CONTEST half of the floor is not here and does not resolve at two seasons;")
-    print("  `make strategy-sweep TENSOR_LABEL=_rookieinclusive` is its rookie-inclusive replay.")
+    print("  `make strategy-sweep` is its replay — the shipped tensor carries this population.")
 
 
 if __name__ == "__main__":

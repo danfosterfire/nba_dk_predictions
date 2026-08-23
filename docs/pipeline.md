@@ -653,21 +653,17 @@ make rookie-recovery   # HOW MUCH OF THAT FLOOR THE TWO POPULATION CHANGES GIVE 
                        #   the rung-0 row reproduces `make rookie-floor`'s own +173.1 /
                        #   +111.9 from a different module.
                        #   Reads the tensor for ONE thing, the `scorable` mask; every
-                       #   figure is scored on the season that happened. Needs the
-                       #   labelled tensor first:
-                       #     python -m src.sim.season --season 2022-23 --season 2023-24 \
-                       #       --tensor-label _rookieinclusive
-                       #   Minutes, numpy only. NOT a re-run of the 24-arm sweep — three
-                       #   more sweeps would cost ~3 hours to re-read the half that does
-                       #   not resolve.
-
-make strategy-sweep-rookie
-                       # the CONTEST half of §7i: the shipped sweep, symmetric, on the
-                       #   rookie-inclusive tensor. Artifacts carry `_rookieinclusive` and
-                       #   the audited strategy_*.csv set is untouched. ~50 min. Read it
-                       #   against §7a's caveats and not past them — two realized seasons
-                       #   are two worlds, and the tensor moved under it as well as the
-                       #   board, so it is not paired with the shipped symmetric arm.
+                       #   figure is scored on the season that happened. Reads the SHIPPED
+                       #   tensor since 2026-08-23 — the `_rookieinclusive` label §7i first
+                       #   ran it under retired when the shipped tensors became the union
+                       #   (`docs/rookie-inclusive-tensors-plan.md` §7e; the re-derivation
+                       #   moved nothing). Minutes, numpy only. NOT a re-run of the 24-arm
+                       #   sweep — three more sweeps would cost ~3 hours to re-read the
+                       #   half that does not resolve. §7i's contest half was
+                       #   `make strategy-sweep-rookie` (the shipped sweep on the labelled
+                       #   tensor); it retired in the same session because
+                       #   `make strategy-sweep` reproduces it bit-for-bit — its
+                       #   strategy_*_rookieinclusive.csv record stays on disk.
 
 make lag-recovery      # WHERE THE VETERAN DESIGN'S BOUNDARY BELONGS — `docs/rookie-rates
                        #   -plan.md` §7b → outputs/predictions/lag_recovery.csv.

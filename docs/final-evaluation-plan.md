@@ -333,7 +333,10 @@ quoted only because leaving a hole would look like an omission.)
 
 **The honest reading: the held-out chain does not confirm the drafting edge, and that is
 the result rather than a caveat.** The sweep's simulated worlds put the shipped
-strategy's Round-1 lift at ~0.24 and the validation-season replay at ~0.20; the one
+strategy's Round-1 lift at ~0.24 and the validation-season replay at ~0.20 (the values at
+this reading, on the rookie-less chain it measured; the 2026-08-22 tensor round re-read
+them at ~0.26 / ~0.31 on the rookie-inclusive tensors — the held-out figures here stay
+frozen per §7, `docs/rookie-inclusive-tensors-plan.md` §7d); the one
 admissible held-out world puts it **negative on two structures including the 600k
 flagship** and at +0.03 to +0.07 on the other three, with every ROI negative against
 hurdles of +10.45% to +17.60% — and the plain-ADP ranking outperforms the shipped

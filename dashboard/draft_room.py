@@ -53,6 +53,7 @@ wrapper cannot inherit the exemption by sharing a basename.
   confident than the model.
 """
 
+import re
 import sys
 import time
 from datetime import datetime
@@ -112,8 +113,13 @@ CELL_STYLE = "font-size:0.92rem"
 # ── Loading ───────────────────────────────────────────────────────────────────
 
 def seasons_with_a_tensor(features: Path) -> list[str]:
-    return sorted(p.name[len("sim_tensor_"):-len(".npz")]
-                  for p in features.glob("sim_tensor_*.npz"))
+    """Season labels only, `NNNN-NN`. A labelled variant tensor
+    (`sim_tensor_2022-23_rookieinclusive.npz`) is a measurement written beside the
+    shipped one, not a board — globbed naively its label parses as a "season" the room
+    then fails to open (`docs/rookie-inclusive-tensors-plan.md` §5b)."""
+    names = (p.name[len("sim_tensor_"):-len(".npz")]
+             for p in features.glob("sim_tensor_*.npz"))
+    return sorted(name for name in names if re.fullmatch(r"\d{4}-\d{2}", name))
 
 
 @st.cache_data(show_spinner=False, ttl=300)
@@ -341,12 +347,33 @@ def render() -> None:
                    f"{coverage['unmatched']} listed players are not draftable here"
                    + (f"; **{coverage['ambiguous']} ambiguous names left unattached**"
                       if coverage["ambiguous"] else ""))
+        coverage = room.preseason_coverage
+        stamped = coverage is not None and np.isfinite(coverage)
         st.caption(
             f"`{room.season}` board · {room.board.n_players:,} players, "
             f"{int(room.scorable.sum()):,} priceable · {room.n_sims:,} sims at the "
             f"`{room.fit_window}` window · field {room.field_round.shape[0]:,} entries "
             f"at `{room.field_cfg.noise_model}` noise "
-            f"{room.field_cfg.rank_noise_sd:.2f}")
+            f"{room.field_cfg.rank_noise_sd:.2f}"
+            + (f" · preseason coverage {coverage:.0%}" if stamped else ""))
+
+    # C6's banner (`docs/rookie-inclusive-tensors-plan.md` §5b): a production tensor
+    # knows whether the season's preseason existed when it was drawn, and the person who
+    # needs that fact is looking at a board on a thirty-second clock — so it is a banner,
+    # never a provenance line. The staleness guard already refused a tensor the October
+    # log has overtaken; what reaches this page is either current or an honest rehearsal.
+    if room.fit_window == "full":
+        if not room.preseason_log_rows:
+            st.warning(
+                f"🚧 **REHEARSAL board** — `{room.season}` was simulated **without its "
+                f"preseason** (coverage "
+                + (f"{coverage:.0%}" if stamped else "unstamped")
+                + f"): every player is priced on his missing-preseason arm — the August "
+                f"board. Practice on it; do not draft off it. Rebuild after the October "
+                f"preseason fetch: `make preseason && make simulate-production`.")
+        else:
+            st.info(f"`{room.season}` production board at the `full` window"
+                    + (f" — preseason coverage {coverage:.0%}." if stamped else "."))
 
     # ── The clock ────────────────────────────────────────────────────────────
     clock = st.columns([1, 1, 2, 1, 1, 1])

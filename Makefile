@@ -38,12 +38,13 @@ export PYTHONUNBUFFERED = 1
         minutes-role-sigma \
         minutes-preseason composition-effects composition-preseason \
         composition-preseason-fit composition-quadrature-check \
-        scoring-periods draft-pool simulate-season weekly-scores bracket draft-sim \
+        scoring-periods draft-pool simulate-season simulate-production weekly-scores \
+        bracket draft-sim \
         draft-sim-need draft-room draft-room-prep strategy-sweep strategy-sweep-need \
         pick-log-stake mixture-value preseason-contest final-evaluation \
         posteriors-production production-check forward-rehearsal forward-board \
         rookie-floor lag-recovery lag-ladder rookie-rates stan-rookie \
-        rookie-recovery strategy-sweep-rookie \
+        rookie-recovery \
         season-total-rookie season-total-rookie-lagladder ladder-board
 
 venv:
@@ -734,6 +735,20 @@ draft-pool:
 simulate-season:
 	$(PYTHON) -m src.sim.season
 
+# The PRODUCTION tensor — the board for the season nobody has played, and the October
+# runbook's step 3 exercised today (docs/rookie-inclusive-tensors-plan.md §5b). A
+# deployment act, guarded like one: `--production` must be TYPED (never inferred from the
+# window — `make posteriors-production`'s own rule), the target season must be UNPLAYED
+# (the held-out tensors are frozen by decision and this flag is not a second unlock), and
+# the window must be `full`. The season defaults to the live DK board's; the frames come
+# from `forward_board.forward_frames` because the season has no game log; Gate A is
+# skipped — nothing realized exists to reproduce, so the audited pooled table gains no
+# rows. Built before the preseason it is a REHEARSAL — the tensor stamps its own preseason
+# coverage, and `season.assert_tensor_current` refuses it the moment the October preseason
+# log lands beside it. `make production-check` carries the tensor as a row.
+simulate-production:
+	$(PYTHON) -m src.sim.season --production $(if $(SEASON),--season $(SEASON),) $(if $(SIMS),--n-sims $(SIMS),)
+
 # Gate A at the unit the LINEUP is set at. `make simulate-season` scores the season total,
 # the games-played pmf, the per-game bonus rate and the season-total minutes spread —
 # nothing scores dk_pts at the scoring period, which is where DK seats the best 7 of 16 and
@@ -1217,22 +1232,15 @@ ladder-board:
 # are measuring the same quantity.
 #
 # NOT a re-run of the 24-arm sweep: three more sweeps would cost ~3 hours and produce three
-# more readings of the half that does not resolve. Requires the labelled tensor:
-#
-#   $(PYTHON) -m src.sim.season --season 2022-23 --season 2023-24 --tensor-label _rookieinclusive
-#
-# and the contest half's replay is `make strategy-sweep-rookie`. Minutes, numpy only.
+# more readings of the half that does not resolve. Reads the SHIPPED tensor since the
+# `_rookieinclusive` label retired (`docs/rookie-inclusive-tensors-plan.md` §7e) — the
+# shipped 2022-23/2023-24 tensors reproduce §7i's labelled pair bit-for-bit, so this is the
+# same board. The contest half's replay was `make strategy-sweep-rookie`, retired the same
+# session: `make strategy-sweep` reproduces it bit-for-bit and IS it now (its labelled
+# `strategy_*_rookieinclusive.csv` record stays on disk, presence-checked). Minutes, numpy
+# only.
 rookie-recovery:
 	$(PYTHON) -m src.sim.rookie_recovery
-
-# THE CONTEST HALF, REPLAYED ON THE ROOKIE-INCLUSIVE BOARD — `docs/rookie-rates-plan.md` §5h.
-# The shipped sweep, symmetric, on the tensor that prices both rate families. Artifacts carry
-# `_rookieinclusive` and the audited `strategy_*.csv` set is untouched, the same discipline
-# `--field` and `--field-board` use. Read it against §7a's caveats and not past them: two
-# realized seasons are two worlds, and the tensor moved under it as well as the board, so the
-# comparison against the shipped symmetric arm is not paired.
-strategy-sweep-rookie:
-	$(PYTHON) -m src.sim.strategy --tensor-label _rookieinclusive
 
 # Every quoted figure in the plan docs, checked against the artifact behind it. Unlike
 # dashboard-audit this one is a GATE — it exits non-zero on a disagreement, because a doc

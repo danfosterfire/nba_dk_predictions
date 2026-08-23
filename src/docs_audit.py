@@ -357,7 +357,9 @@ SWEEP_FLOOR = "outputs/predictions/strategy_sweep_rookiefloor.csv"
 ROOKIE_RECOVERY = "outputs/predictions/rookie_recovery.csv"
 # The same session's Gate A, on the LABELLED tensor. A second artifact rather than a
 # replacement: the shipped table is the one the bars were set against and the labelled one
-# describes a wider population, so both have to be readable side by side.
+# described a wider population — until the tensor round re-drew the shipped set over the
+# union and retired the label (`docs/rookie-inclusive-tensors-plan.md` §7c/§7e); the
+# labelled CSV stays on disk as §7i's frozen record and these claims are its guard.
 GATE_A_ROOKIE = "outputs/predictions/sim_season_gate_a_rookieinclusive.csv"
 # §7i's contest half — the shipped sweep on the labelled tensor, and the shipped arm's own
 # baseline beside it. Both sides are claimed, never the delta alone.
@@ -4753,10 +4755,10 @@ def _readme() -> list[Claim]:
         lambda: cell(MIN_UNIF, "sd_ratio_minutes_over_composition",
                      arm="composition_minus_minutes"),
         "how much narrower the un-injected composition's season total is")
-    add("0.24", STRATEGY_SHIPPED,
+    add("0.26", STRATEGY_SHIPPED,
         lambda: cell(STRATEGY_SHIPPED, "sim_lift", tournament="600k_shootaround"),
         "shipped arm's simulated advance lift at the 600k, rounded")
-    add("0.20", STRATEGY_SHIPPED,
+    add("0.31", STRATEGY_SHIPPED,
         lambda: cell(STRATEGY_SHIPPED, "realized_lift", tournament="600k_shootaround"),
         "shipped arm's realized advance lift at the 600k, rounded")
     return C
@@ -5549,14 +5551,14 @@ def _weekly() -> list[Claim]:
     argues for its own figures. The metric table, the spreads and the per-period profile
     are checked by nothing else, and they are what a reader takes away.
     """
-    facets = (("week", "train", "13,022", "52.74", "50.02", "29.93", "−2.72", "0.3985",
-               "20.34"),
-              ("week", "validation", "13,141", "53.40", "51.8035", "27.5537", "−1.59578",
-               "0.497532", "18.578"),
-              ("double_week", "train", "2,298", "93.24", "88.43", "50.85", "−4.81",
-               "0.4542", "34.41"),
-              ("double_week", "validation", "2,319", "98.51", "96.5407", "52.0073", "−1.97226",
-               "0.430454", "35.429"))
+    facets = (("week", "train", "15,827", "47.37", "45.60", "26.60", "−1.77", "0.4720",
+               "17.96"),
+              ("week", "validation", "15,946", "47.87", "46.34", "25.99", "−1.53",
+               "0.5209", "17.35"),
+              ("double_week", "train", "2,793", "85.91", "80.98", "47.81", "−4.93",
+               "0.4780", "32.58"),
+              ("double_week", "validation", "2,814", "89.98", "87.15", "49.98", "−2.83",
+               "0.4527", "33.71"))
     columns = ("n", "observed_mean", "predicted_mean", "mae", "bias", "r2", "crps")
     C: list[Claim] = []
     for period_type, split, *quoted in facets:
@@ -5566,44 +5568,71 @@ def _weekly() -> list[Claim]:
                         f"weekly {period_type}/{split} {column}", doc=SIMS))
 
     C += [
-        _c("30,780", WEEK_INDEX, lambda: total(WEEK_INDEX, "n"),
+        _c("37,380", WEEK_INDEX, lambda: total(WEEK_INDEX, "n"),
            "player-periods scored", doc=SIMS),
         # The spread, which is what a max over sixteen players is most sensitive to.
-        _c("0.927", WEEK_INDEX, lambda: _week_spread_ratio(largest=False),
+        _c("0.938", WEEK_INDEX, lambda: _week_spread_ratio(largest=False),
            "narrowest simulated/observed sd ratio", doc=SIMS),
-        _c("0.986257", WEEK_INDEX, lambda: _week_spread_ratio(largest=True),
+        _c("0.970", WEEK_INDEX, lambda: _week_spread_ratio(largest=True),
            "widest simulated/observed sd ratio", doc=SIMS),
-        _c("29.40", WEEK_INDEX, lambda: _week("point_sd"),
+        _c("31.52", WEEK_INDEX, lambda: _week("point_sd"),
            "one-week train point-prediction sd", doc=SIMS),
-        _c("49.05", WEEK_INDEX, lambda: _week("observed_sd"),
+        _c("48.13", WEEK_INDEX, lambda: _week("observed_sd"),
            "one-week train observed sd", doc=SIMS),
         # Zero weeks — the feature a season total averages away completely, and the row the
         # `tenure_merge` layout was aimed at. Quoted as percentages, and `check_values`
         # scales a `%` claim itself.
-        _c("20.7%", WEEK_INDEX, lambda: _week("zero_share"),
+        _c("24.6%", WEEK_INDEX, lambda: _week("zero_share"),
            "one-week train observed zero share", doc=SIMS),
-        _c("19.9%", WEEK_INDEX,
+        _c("24.5%", WEEK_INDEX,
            lambda: _week("zero_share", split="validation"),
            "one-week validation observed zero share", doc=SIMS),
-        _c("17.95%", WEEK_INDEX, lambda: _week("predicted_zero_share"),
+        _c("22.43%", WEEK_INDEX, lambda: _week("predicted_zero_share"),
            "one-week train simulated zero share", doc=SIMS),
-        _c("19.7979%", WEEK_INDEX,
+        _c("23.45%", WEEK_INDEX,
            lambda: _week("predicted_zero_share", split="validation"),
            "one-week validation simulated zero share", doc=SIMS),
         # Calibration, read as a distance and never as a verdict.
-        _c("0.0127339", WEEK_INDEX, lambda: _week_extreme("ks", largest=False),
+        _c("0.0143", WEEK_INDEX, lambda: _week_extreme("ks", largest=False),
            "narrowest KS distance", doc=SIMS),
-        _c("0.0582", WEEK_INDEX, lambda: _week_extreme("ks", largest=True),
+        _c("0.0491", WEEK_INDEX, lambda: _week_extreme("ks", largest=True),
            "widest KS distance", doc=SIMS),
-        _c("0.1", WEEK_QUANTILE, lambda: _week_line_gap(largest=False),
+        _c("0.101", WEEK_QUANTILE, lambda: _week_line_gap(largest=False),
            "narrowest quantile-line gap", doc=SIMS),
-        _c("0.1607", WEEK_QUANTILE, lambda: _week_line_gap(largest=True),
+        _c("0.1241", WEEK_QUANTILE, lambda: _week_line_gap(largest=True),
            "widest quantile-line gap", doc=SIMS),
         # The only bars in the target, and both are on the budget rather than the model.
-        _c("0.00656533", WEEK_INDEX, lambda: _week_extreme("ecdf_band_mc"),
+        _c("0.0041", WEEK_INDEX, lambda: _week_extreme("ecdf_band_mc"),
            "worst ribbon half-sample disagreement", doc=SIMS),
-        _c("0.00398448", WEEK_INDEX, lambda: _week_extreme("ks_mc"),
+        _c("0.0046", WEEK_INDEX, lambda: _week_extreme("ks_mc"),
            "worst KS half-sample disagreement", doc=SIMS),
+        # The pre-population-round panel (2026-08-22, `docs/rookie-inclusive-tensors-plan.md`
+        # §7c): the rookie-less, mixed-injection readings the live figures superseded. Two
+        # changes landed in one re-draw — the union of the two rate families on all four
+        # tensors, and the training pair's stale shared σ 0.450 moving to the role-graded
+        # vector — so none of these is comparable cell-for-cell with today's panel, which
+        # is exactly why they are held here rather than corrected away (C3).
+        *[_c(quoted, WEEK_INDEX, lambda: float("nan"),
+             f"pre-population-round weekly reading, {quoted}", doc=SIMS, historical=True)
+          for quoted in ("13,022", "52.74", "50.02", "29.93", "−2.72", "0.3985", "20.34",
+                         "13,141", "53.40", "51.8035", "27.5537", "−1.59578", "0.497532",
+                         "18.578", "2,298", "93.24", "88.43", "50.85", "−4.81", "0.4542",
+                         "34.41", "2,319", "98.51", "96.5407", "52.0073", "−1.97226",
+                         "0.430454", "35.429", "30,780", "0.927", "0.986257", "29.40",
+                         "49.05", "20.7%", "19.9%", "17.95%", "19.7979%", "0.0127339",
+                         "0.0582", "0.00656533", "0.00398448")],
+        *[_c(quoted, WEEK_QUANTILE, lambda: float("nan"),
+             f"pre-population-round quantile-line gap, {quoted}", doc=SIMS,
+             historical=True)
+          for quoted in ("0.1", "0.1607")],
+        *[_c(quoted, WEEK_PERIOD, lambda: float("nan"),
+             f"pre-population-round weekly bias profile, {quoted}", doc=SIMS,
+             historical=True)
+          for quoted in ("−1.54649", "−2.51388", "−1.77884", "−1.01348", "−0.755881")],
+        _c("−9.95234", SIM_GATE_A, lambda: float("nan"),
+           "smallest season-total bias, pre-population-round", doc=SIMS, historical=True),
+        _c("−73.4", SIM_GATE_A, lambda: float("nan"),
+           "largest season-total bias, pre-population-round", doc=SIMS, historical=True),
         *[_c(quoted, WEEK_INDEX, lambda: float("nan"),
              f"pre-grading half-sample bar reading, {quoted}", doc=SIMS, historical=True)
           for quoted in ("0.0074", "0.0056")],
@@ -5638,15 +5667,15 @@ def _weekly() -> list[Claim]:
           for quoted in ("−2.93", "−2.26", "−3.61", "−1.21", "20.39", "19.63",
                          "16.9%", "18.2%", "0.920", "0.954", "0.0265", "0.0639")],
         # Where the season-total bias actually sits, week by week.
-        _c("−1.54649", WEEK_PERIOD, lambda: _week_period_bias(0),
+        _c("−1.18228", WEEK_PERIOD, lambda: _week_period_bias(0),
            "validation bias in week 1", doc=SIMS),
-        _c("−2.51388", WEEK_PERIOD, lambda: _week_period_bias(1),
+        _c("−1.79963", WEEK_PERIOD, lambda: _week_period_bias(1),
            "validation bias in week 2", doc=SIMS),
-        _c("−1.77884", WEEK_PERIOD, lambda: _week_period_bias(2),
+        _c("−1.01792", WEEK_PERIOD, lambda: _week_period_bias(2),
            "validation bias in week 3", doc=SIMS),
-        _c("−1.01348", WEEK_PERIOD, lambda: _week_period_bias(12),
+        _c("−1.37425", WEEK_PERIOD, lambda: _week_period_bias(12),
            "validation bias in week 13", doc=SIMS),
-        _c("−0.755881", WEEK_PERIOD, lambda: _week_period_bias(16),
+        _c("−1.26961", WEEK_PERIOD, lambda: _week_period_bias(16),
            "validation bias in week 17", doc=SIMS),
         # The pre-`tenure_merge` profile, quoted beside the live one because the finding is
         # that the SHAPE went away — a flat −2 where there used to be a monotone ramp.
@@ -5654,7 +5683,7 @@ def _weekly() -> list[Claim]:
              f"pre-layout weekly bias profile, {quoted}", doc=SIMS, historical=True)
           for quoted in ("−5.28", "−4.99", "−3.27", "−1.08", "−0.70")],
         # Gate A's own season-total bias, so the weekly row is read against it.
-        _c("−9.95234", SIM_GATE_A, lambda: _season_total_bias(largest=True),
+        _c("−16.5383", SIM_GATE_A, lambda: _season_total_bias(largest=True),
            "smallest season-total bias", doc=SIMS),
         # The same row's earlier readings, kept in the prose because the bullet's argument is
         # that a −69 dk_pts fault dwarfs everything measured on the head since. They are
@@ -5664,7 +5693,7 @@ def _weekly() -> list[Claim]:
         _c("−21.2", SIM_GATE_A, lambda: float("nan"),
            "season-total bias at the role-graded dispersion fix", doc=SIMS,
            historical=True),
-        _c("−73.4", SIM_GATE_A, lambda: _season_total_bias(largest=False),
+        _c("−53.9049", SIM_GATE_A, lambda: _season_total_bias(largest=False),
            "largest season-total bias", doc=SIMS),
     ]
     # The execution axis, re-read 2026-08-16 after the graded-σ chain re-run; the
@@ -5683,8 +5712,20 @@ def _weekly() -> list[Claim]:
            lambda: cell(STRATEGY_PAIRED, "gap", tournament="600k_shootaround",
                         metric="p_advance", baseline="blend_a30",
                         strategy="autodraft_blend_a30"),
-           "autodraft twin over the uncapped click of the same ranking, 600k", doc=SIMS),
+           "autodraft twin over the uncapped click, 600k (rookie-less tensor)",
+           doc=SIMS, historical=True),
         _c("0.0602481", STRATEGY_SHIPPED,
+           lambda: (cell(STRATEGY_SHIPPED, "sim_lift", tournament="600k_shootaround")
+                    - sweep_mean_lift("autodraft_blend_a30")),
+           "lift given up by autodrafting, 600k (rookie-less tensor)",
+           doc=SIMS, historical=True),
+        # The 2026-08-22 re-read on the rookie-inclusive tensors — the live pair.
+        _c("+0.0125086", STRATEGY_PAIRED,
+           lambda: cell(STRATEGY_PAIRED, "gap", tournament="600k_shootaround",
+                        metric="p_advance", baseline="blend_a30",
+                        strategy="autodraft_blend_a30"),
+           "autodraft twin over the uncapped click of the same ranking, 600k", doc=SIMS),
+        _c("0.0855400", STRATEGY_SHIPPED,
            lambda: (cell(STRATEGY_SHIPPED, "sim_lift", tournament="600k_shootaround")
                     - sweep_mean_lift("autodraft_blend_a30")),
            "lift given up by autodrafting instead of the shipped objective, 600k",
@@ -7579,14 +7620,30 @@ def _availability_no_design_level() -> list[Claim]:
                                            ("2023-24", "0.1079", "0.0992", "0.0472")):
         add(share, SIM_GATE_A, lambda: float("nan"),
             f"{season} simulated no-design league minutes share", historical=True)
-        # The bar the per-team row is read against, so "right on average and wrong on all
-        # thirty rosters" cannot drift into a claim about a number that has moved. This one
-        # is REALIZED and so is genuinely invariant to the chain — it stays value-checked.
-        add(realized, SIM_GATE_A,
-            lambda s=season: gate(s, "no_design_team_minutes_share", "bar_value"),
-            f"{season} realized no-design league minutes share")
+        # The realized bar WAS value-checked as chain-invariant, and stopped being so on
+        # 2026-08-22: it is realized minutes over the NO-DESIGN population, and §16j's
+        # ladder moved the returnee_lag2 players out of that population when the §5c
+        # tensor re-run picked it up. Population change, not drift — the pre-ladder
+        # reading is held historical and the ladder-on rows are claimed live below.
+        add(realized, SIM_GATE_A, lambda: float("nan"),
+            f"{season} realized no-design league minutes share, pre-ladder",
+            historical=True)
         add(error, SIM_GATE_A, lambda: float("nan"),
             f"{season} per-team no-design minutes share error", historical=True)
+    # The ladder-on no-design rows (2026-08-22, `docs/rookie-inclusive-tensors-plan.md`
+    # §5c): realized bar, simulated share and per-team error over the population the
+    # shipped tensors actually score around.
+    for season, realized, share, error in (("2022-23", "0.0889", "0.0853", "0.0289"),
+                                           ("2023-24", "0.0928", "0.0939", "0.0401")):
+        add(realized, SIM_GATE_A,
+            lambda s=season: gate(s, "no_design_team_minutes_share", "bar_value"),
+            f"{season} realized no-design league minutes share, ladder-on")
+        add(share, SIM_GATE_A,
+            lambda s=season: gate(s, "no_design_team_minutes_share", "value"),
+            f"{season} simulated no-design league minutes share, ladder-on")
+        add(error, SIM_GATE_A,
+            lambda s=season: gate(s, "no_design_team_minutes_share", "mae"),
+            f"{season} per-team no-design minutes share error, ladder-on")
     for quoted in ("400.55", "400.00", "278.67", "276.41", "0.6516", "0.6721", "−22.89",
                    "−64.13", "9.5291", "9.5517", "0.0355", "0.0563", "0.0984", "0.1023"):
         C.append(_c(quoted, SIM_GATE_A, lambda: float("nan"),
@@ -9466,6 +9523,33 @@ def _tensor_round() -> list[Claim]:
         "2026-27 production units the market prices, all populations")
     add("31", FULL_MANIFEST, lambda: rows(FULL_MANIFEST),
         "heads at the full window (tensor round)")
+
+    # ── §7c — the `train` re-run's own Gate A record ──────────────────────────
+    # The four fresh season-total rows, claimed here because §7c is where the re-run is
+    # recorded; the superseded rookie-less values are held historical from the docs that
+    # argued from them (`_weekly`, `_rookie_recovery`'s §7i block). The unit censuses by
+    # rung (366+6+72, 400+6+81, 386+13+72, 387+6+74) live in the `.npz` files the auditor
+    # cannot read — §7a records that gap; `n` below is the same figure one artifact later.
+    def gate7c(season: str, column: str) -> float:
+        return cell(SIM_GATE_A, column, season=season, check="season_total_dk")
+
+    for season_, n_, mae_, crps_, r2_, bias_ in (
+            ("2018-19", "444", "378.04", "261.60", "0.6957", "−53.90"),
+            ("2021-22", "487", "344.41", "241.72", "0.6976", "−36.12"),
+            ("2022-23", "471", "345.43", "238.67", "0.7323", "−16.54"),
+            ("2023-24", "467", "362.11", "250.35", "0.7209", "−52.18")):
+        add(n_, SIM_GATE_A, lambda s=season_: gate7c(s, "n"),
+            f"§7c Gate A units, {season_}")
+        add(mae_, SIM_GATE_A, lambda s=season_: gate7c(s, "mae"),
+            f"§7c Gate A season-total MAE, {season_}")
+        add(crps_, SIM_GATE_A, lambda s=season_: gate7c(s, "crps"),
+            f"§7c Gate A season-total CRPS, {season_}")
+        add(r2_, SIM_GATE_A, lambda s=season_: gate7c(s, "r2"),
+            f"§7c Gate A season-total R2, {season_}")
+        add(bias_, SIM_GATE_A, lambda s=season_: gate7c(s, "bias"),
+            f"§7c Gate A season-total bias, {season_}")
+    add("37,380", WEEK_INDEX, lambda: total(WEEK_INDEX, "n"),
+        "§7c weekly player-periods scored")
     return C
 
 
@@ -9995,17 +10079,20 @@ def _rookie_replay() -> list[Claim]:
         return float((m["uninjected_r"] - m["uninjected_s"]).abs().max())
 
     add("14.57", gate_c_gap,
-        "how far the two uninjected worlds are apart", SWEEP_ROOKIE_GATE_C)
+        "how far the two uninjected worlds are apart", SWEEP_ROOKIE_GATE_C,
+        historical=True)
     for season_, rho_s, rho_r, g_s, g_r in (("2022-23", "0.3582", "0.3443",
                                              "1.1337", "1.1875"),
                                             ("2023-24", "0.3172", "0.2825",
                                              "1.1405", "1.1811")):
         add(rho_s, lambda x=season_: cell(STRATEGY_INJECTION, "rho", season=x),
-            f"the shipped arm's solved rotation, {season_}", STRATEGY_INJECTION)
+            f"the shipped arm's solved rotation, {season_} (rookie-less tensor)",
+            STRATEGY_INJECTION, historical=True)
         add(rho_r, lambda x=season_: cell(SWEEP_ROOKIE_INJECTION, "rho", season=x),
             f"the labelled arm's solved rotation, {season_}", SWEEP_ROOKIE_INJECTION)
         add(g_s, lambda x=season_: cell(STRATEGY_INJECTION, "scale_g", season=x),
-            f"the shipped arm's solved scale, {season_}", STRATEGY_INJECTION)
+            f"the shipped arm's solved scale, {season_} (rookie-less tensor)",
+            STRATEGY_INJECTION, historical=True)
         add(g_r, lambda x=season_: cell(SWEEP_ROOKIE_INJECTION, "scale_g", season=x),
             f"the labelled arm's solved scale, {season_}", SWEEP_ROOKIE_INJECTION)
     add("400.4586",
@@ -10015,32 +10102,33 @@ def _rookie_replay() -> list[Claim]:
     # ── the realized replay ──────────────────────────────────────────────────
     add("+0.0160", lambda: shipped_arm("mean"),
         "shipped-arm realized lift delta, four multi-entry structures x two seasons",
-        SWEEP_ROOKIE_REALIZED)
+        SWEEP_ROOKIE_REALIZED, historical=True)
     add("−0.0682", lambda: shipped_arm("min"),
-        "the shipped arm's worst realized reading", SWEEP_ROOKIE_REALIZED)
+        "the shipped arm's worst realized reading", SWEEP_ROOKIE_REALIZED, historical=True)
     add("+0.1839", lambda: shipped_arm("max"),
-        "the shipped arm's best realized reading", SWEEP_ROOKIE_REALIZED)
+        "the shipped arm's best realized reading", SWEEP_ROOKIE_REALIZED, historical=True)
     add("3", lambda: shipped_arm("n_negative"),
-        "shipped-arm readings that lose lift", SWEEP_ROOKIE_REALIZED)
+        "shipped-arm readings that lose lift", SWEEP_ROOKIE_REALIZED, historical=True)
     add("17", lambda: per_arm("n_negative"),
-        "arms losing realized lift on the labelled tensor", SWEEP_ROOKIE_REALIZED)
+        "arms losing realized lift on the labelled tensor", SWEEP_ROOKIE_REALIZED, historical=True)
     add("−0.0683", lambda: per_arm("median"),
-        "median arm's realized lift delta", SWEEP_ROOKIE_REALIZED)
+        "median arm's realized lift delta", SWEEP_ROOKIE_REALIZED, historical=True)
     add("−0.3059", lambda: per_arm("min"),
-        "the worst arm's realized lift delta", SWEEP_ROOKIE_REALIZED)
+        "the worst arm's realized lift delta", SWEEP_ROOKIE_REALIZED, historical=True)
     add("+0.2382", lambda: per_arm("max"),
-        "the best arm's realized lift delta", SWEEP_ROOKIE_REALIZED)
+        "the best arm's realized lift delta", SWEEP_ROOKIE_REALIZED, historical=True)
     add("−0.0396", lambda: single("2022-23"),
-        "88k single entry, realized lift delta, 2022-23", SWEEP_ROOKIE_REALIZED)
+        "88k single entry, realized lift delta, 2022-23", SWEEP_ROOKIE_REALIZED, historical=True)
     add("+0.8823", lambda: single("2023-24"),
-        "88k single entry, realized lift delta, 2023-24", SWEEP_ROOKIE_REALIZED)
+        "88k single entry, realized lift delta, 2023-24", SWEEP_ROOKIE_REALIZED, historical=True)
 
     # ── the simulated arm, which is not the readout ──────────────────────────
     add("+0.0329", lambda: shipped_arm("mean", sim=True),
-        "shipped-arm simulated lift delta", SWEEP_ROOKIE_SIM)
+        "shipped-arm simulated lift delta", SWEEP_ROOKIE_SIM, historical=True)
     add("0.2369", lambda: cell(STRATEGY_SHIPPED, "sim_lift",
                                tournament="600k_shootaround"),
-        "the shipped arm's simulated lift, 600k, shipped tensor", STRATEGY_SHIPPED)
+        "the shipped arm's simulated lift, 600k, rookie-less shipped tensor",
+        STRATEGY_SHIPPED, historical=True)
     add("0.2645", lambda: cell(SWEEP_ROOKIE_SHIPPED, "sim_lift",
                                tournament="600k_shootaround"),
         "the shipped arm's simulated lift, 600k, labelled tensor", SWEEP_ROOKIE_SHIPPED)
@@ -10107,7 +10195,36 @@ def _rookie_replay() -> list[Claim]:
     for season_, gained in (("2022-23", "64"), ("2023-24", "58")):
         add(gained, lambda x=season_: (cell(SWEEP_ROOKIE_INJECTION, "n_board", season=x)
                                        - cell(STRATEGY_INJECTION, "n_board", season=x)),
-            f"board rows the sweep gains, {season_}", SWEEP_ROOKIE_INJECTION)
+            f"board rows the sweep gains, {season_}", SWEEP_ROOKIE_INJECTION,
+            historical=True)
+
+    # ── the 2026-08-22 supersede: the shipped sweep IS the labelled sweep ─────
+    # (`docs/rookie-inclusive-tensors-plan.md` §7d). The live values are claimed from the
+    # SHIPPED artifacts — the labelled twins above keep pinning the frozen CSVs — and the
+    # reproduction itself is claimed as the agreement it now is, the exact inverse of the
+    # "14.57" disagreement claim it supersedes.
+    add("0.0", gate_c_gap, "the two uninjected worlds now agree (max gap)",
+        STRATEGY_GATE_C, tol=1e-12)
+
+    def paired_gap(sim: bool = False) -> float:
+        m = paired(sim)
+        return float("nan") if m is None else float(m["d"].abs().max())
+
+    add("0.0", lambda: paired_gap(), "the realized replay reproduces the labelled run",
+        STRATEGY_REALIZED, tol=1e-12)
+    add("0.0", lambda: paired_gap(sim=True), "the sweep reproduces the labelled run",
+        STRATEGY_SWEEP, tol=1e-12)
+    for season_, rho_l, g_l, board_l in (("2022-23", "0.3443", "1.1875", "411"),
+                                         ("2023-24", "0.2825", "1.1811", "417")):
+        add(rho_l, lambda x=season_: cell(STRATEGY_INJECTION, "rho", season=x),
+            f"the shipped arm's solved rotation, {season_} (live)", STRATEGY_INJECTION)
+        add(g_l, lambda x=season_: cell(STRATEGY_INJECTION, "scale_g", season=x),
+            f"the shipped arm's solved scale, {season_} (live)", STRATEGY_INJECTION)
+        add(board_l, lambda x=season_: cell(STRATEGY_INJECTION, "n_board", season=x),
+            f"the shipped board, {season_} (live)", STRATEGY_INJECTION)
+    add("0.2645", lambda: cell(STRATEGY_SHIPPED, "sim_lift",
+                               tournament="600k_shootaround"),
+        "the shipped arm's simulated lift, 600k (live)", STRATEGY_SHIPPED)
     return C
 
 
@@ -10203,33 +10320,47 @@ def _rookie_recovery() -> list[Claim]:
     def gate(artifact: str, season_: str, column: str, check: str = "season_total_dk"):
         return cell(artifact, column, season=season_, check=check)
 
+    # ⚠️ The SHIPPED side of this comparison became HISTORICAL on 2026-08-22, when
+    # `docs/rookie-inclusive-tensors-plan.md` §5c re-drew the shipped tensors over the
+    # union and they reproduced the labelled pair bit-for-bit — `sim_season_gate_a.csv`
+    # now carries the 471/467-unit rows, so the 386/387-unit column is the rookie-less
+    # record §7i's movement argument rests on. The labelled side stays value-checked (the
+    # labelled CSV is §7i's frozen record and does not move); the fresh shipped rows are
+    # claimed live from `docs/rookie-inclusive-tensors-plan.md` §7c (`_tensor_round`).
     for season_, ship_mae, rk_mae, ship_crps, rk_crps, ship_r2, rk_r2 in (
             ("2022-23", "360.80", "345.43", "250.68", "238.67", "0.7116", "0.7323"),
             ("2023-24", "373.63", "362.11", "256.92", "250.35", "0.7106", "0.7209")):
-        add(ship_mae, lambda s=season_: gate(SIM_GATE_A, s, "mae"),
-            f"shipped Gate A season-total MAE, {season_}", artifact=SIM_GATE_A)
+        add(ship_mae, lambda: float("nan"),
+            f"shipped Gate A season-total MAE, {season_} (rookie-less record)",
+            artifact=SIM_GATE_A, historical=True)
         add(rk_mae, lambda s=season_: gate(GATE_A_ROOKIE, s, "mae"),
             f"rookie-inclusive Gate A season-total MAE, {season_}",
             artifact=GATE_A_ROOKIE)
-        add(ship_crps, lambda s=season_: gate(SIM_GATE_A, s, "crps"),
-            f"shipped Gate A season-total CRPS, {season_}", artifact=SIM_GATE_A)
+        add(ship_crps, lambda: float("nan"),
+            f"shipped Gate A season-total CRPS, {season_} (rookie-less record)",
+            artifact=SIM_GATE_A, historical=True)
         add(rk_crps, lambda s=season_: gate(GATE_A_ROOKIE, s, "crps"),
             f"rookie-inclusive Gate A season-total CRPS, {season_}",
             artifact=GATE_A_ROOKIE)
-        add(ship_r2, lambda s=season_: gate(SIM_GATE_A, s, "r2"),
-            f"shipped Gate A season-total R2, {season_}", artifact=SIM_GATE_A)
+        add(ship_r2, lambda: float("nan"),
+            f"shipped Gate A season-total R2, {season_} (rookie-less record)",
+            artifact=SIM_GATE_A, historical=True)
         add(rk_r2, lambda s=season_: gate(GATE_A_ROOKIE, s, "r2"),
             f"rookie-inclusive Gate A season-total R2, {season_}",
             artifact=GATE_A_ROOKIE)
     for season_, ship_n, rk_n in (("2022-23", "386", "471"), ("2023-24", "387", "467")):
-        add(ship_n, lambda s=season_: gate(SIM_GATE_A, s, "n"),
-            f"shipped Gate A units, {season_}", artifact=SIM_GATE_A)
+        add(ship_n, lambda: float("nan"),
+            f"shipped Gate A units, {season_} (rookie-less record)",
+            artifact=SIM_GATE_A, historical=True)
         add(rk_n, lambda s=season_: gate(GATE_A_ROOKIE, s, "n"),
             f"rookie-inclusive Gate A units, {season_}", artifact=GATE_A_ROOKIE)
+    # "85 and 80" is what the union added OVER THE ROOKIE-LESS TENSORS — a statement about
+    # the superseded pair, so it is presence-checked rather than derived from two tables
+    # that now describe one population (the live difference is 0 by reproduction).
     for season_, gained in (("2022-23", "85"), ("2023-24", "80")):
-        add(gained, lambda s=season_: (gate(GATE_A_ROOKIE, s, "n")
-                                       - gate(SIM_GATE_A, s, "n")),
-            f"units the union adds, {season_}", artifact=GATE_A_ROOKIE)
+        add(gained, lambda: float("nan"),
+            f"units the union added over the rookie-less tensor, {season_}",
+            artifact=GATE_A_ROOKIE, historical=True)
     return C
 
 
@@ -10302,32 +10433,35 @@ def _rookie_floor() -> list[Claim]:
     for s_, sym, asym, masked, per in (("2022-23", "347", "448", "101", "1.2556"),
                                        ("2023-24", "359", "464", "105", "1.1861")):
         add(sym, lambda x=s_: season(x, "n_board_symmetric"),
-            f"the field's priceable board, {s_}")
+            f"the field's priceable board, {s_}", historical=True)
         add(asym, lambda x=s_: season(x, "n_board_asymmetric"),
-            f"the field's whole board, {s_}")
+            f"the field's whole board, {s_}", historical=True)
         add(masked, lambda x=s_: season(x, "n_seat_masked"),
-            f"rows our seat may never take, {s_}")
+            f"rows our seat may never take, {s_}", historical=True)
         add(per, lambda x=s_: season(x, "field_unpriced_per_entry"),
-            f"unpriceable players the field drafts per entry, {s_}")
+            f"unpriceable players the field drafts per entry, {s_}", historical=True)
     # `n_dropped_priced` and the entry share live on the injection record, which the floor
     # table does not carry — claimed against the artifact that owns them.
     for s_, priced, share in (("2022-23", "16", "73.06%"), ("2023-24", "21", "74.72%")):
         add(priced, lambda x=s_: cell(STRATEGY_INJECTION, "n_dropped_priced", season=x),
-            f"unpriceable rows carrying ADP, {s_}", artifact=STRATEGY_INJECTION)
+            f"unpriceable rows carrying ADP, {s_}", artifact=STRATEGY_INJECTION,
+            historical=True)
         add(share, lambda x=s_: cell(STRATEGY_INJECTION, "field_entries_with_unpriced",
                                      season=x),
             f"field entries holding at least one unpriceable player, {s_}",
-            artifact=STRATEGY_INJECTION)
+            artifact=STRATEGY_INJECTION, historical=True)
 
     # ── 1. the bar, which resolves — both ends of both pairs ──────────────────
     for s_, sym, asym, delta in (("2022-23", "15,505.8", "15,678.9", "+173.1"),
                                  ("2023-24", "15,393.5", "15,505.4", "+111.9")):
         add(sym, lambda x=s_: season(x, "field_round1_cut_symmetric"),
-            f"the field's realized Round-1 cut on the priceable board, {s_}")
+            f"the field's realized Round-1 cut on the priceable board, {s_}",
+            historical=True)
         add(asym, lambda x=s_: season(x, "field_round1_cut_asymmetric"),
-            f"the field's realized Round-1 cut on the whole board, {s_}")
+            f"the field's realized Round-1 cut on the whole board, {s_}",
+            historical=True)
         add(delta, lambda x=s_: season(x, "d_field_round1_cut"),
-            f"how far the cut line moves, {s_}")
+            f"how far the cut line moves, {s_}", historical=True)
     add("1,200", lambda: season("2022-23", "n_field_entries_asymmetric"),
         "field entries behind each cut line")
 
@@ -10337,33 +10471,41 @@ def _rookie_floor() -> list[Claim]:
                                    ("50k_four_pt_play", "+0.1349", "−0.1649", "−0.0150"),
                                    ("600k_shootaround", "+0.1035", "−0.0680", "+0.0178")):
         add(a, lambda t=tournament: lift("2022-23", t),
-            f"shipped-arm lift delta, {tournament} 2022-23")
+            f"shipped-arm lift delta, {tournament} 2022-23", historical=True)
         add(b, lambda t=tournament: lift("2023-24", t),
-            f"shipped-arm lift delta, {tournament} 2023-24")
+            f"shipped-arm lift delta, {tournament} 2023-24", historical=True)
         add(pool, lambda t=tournament: shipped(tournament=t),
-            f"shipped-arm lift delta pooled over seasons, {tournament}")
+            f"shipped-arm lift delta pooled over seasons, {tournament}",
+            historical=True)
     add("+0.0316", lambda: shipped(),
-        "shipped-arm lift delta, four multi-entry structures x two seasons")
+        "shipped-arm lift delta, four multi-entry structures x two seasons",
+        historical=True)
     add("−0.1649", lambda: min(lift(x, t) for x in ("2022-23", "2023-24")
-                               for t in MULTI), "the shipped arm's worst reading")
+                               for t in MULTI), "the shipped arm's worst reading",
+        historical=True)
     add("+0.1349", lambda: max(lift(x, t) for x in ("2022-23", "2023-24")
-                               for t in MULTI), "the shipped arm's best reading")
+                               for t in MULTI), "the shipped arm's best reading",
+        historical=True)
     # The single-entry tier: its delta, and the two symmetric readings that are the whole
     # argument for reporting it apart from the pooled figures.
     add("−0.0065", lambda: lift("2022-23", "88k_alley_oop"),
-        "88k single entry, lift delta, 2022-23")
+        "88k single entry, lift delta, 2022-23", historical=True)
     add("+0.6851", lambda: lift("2023-24", "88k_alley_oop"),
-        "88k single entry, lift delta, 2023-24")
+        "88k single entry, lift delta, 2023-24", historical=True)
     add("0.9940", lambda: lift("2022-23", "88k_alley_oop", "p_advance_symmetric"),
-        "88k single entry, symmetric realized P(advance), 2022-23")
+        "88k single entry, symmetric realized P(advance), 2022-23", historical=True)
     add("0.0654", lambda: lift("2023-24", "88k_alley_oop", "p_advance_symmetric"),
-        "88k single entry, symmetric realized P(advance), 2023-24")
+        "88k single entry, symmetric realized P(advance), 2023-24", historical=True)
     # The whole table, which is where the sign reverses.
-    add("21", lambda: per_arm("n_negative"), "arms losing Round-1 lift")
+    add("21", lambda: per_arm("n_negative"), "arms losing Round-1 lift",
+        historical=True)
     add("24", lambda: per_arm("n_arms"), "arms in the sweep table")
-    add("−0.0765", lambda: per_arm("median"), "median arm's lift delta")
-    add("−0.2033", lambda: per_arm("min"), "the worst arm's lift delta")
-    add("+0.1385", lambda: per_arm("max"), "the best arm's lift delta")
+    add("−0.0765", lambda: per_arm("median"), "median arm's lift delta",
+        historical=True)
+    add("−0.2033", lambda: per_arm("min"), "the worst arm's lift delta",
+        historical=True)
+    add("+0.1385", lambda: per_arm("max"), "the best arm's lift delta",
+        historical=True)
 
     # ── the simulated arm, which is not the readout ──────────────────────────
     def simulated_delta() -> float:
@@ -10383,7 +10525,77 @@ def _rookie_floor() -> list[Claim]:
         return mean(a) - mean(b)
 
     add("+0.0603", simulated_delta,
-        "shipped-arm lift delta in the SIMULATED world", artifact=SWEEP_FLOOR)
+        "shipped-arm lift delta in the SIMULATED world", artifact=SWEEP_FLOOR,
+        historical=True)
+
+    # ── the 2026-08-23 supersede: the floor re-run on the union board ─────────
+    # (`docs/rookie-inclusive-tensors-plan.md` §7d). Same discipline as the block above:
+    # both ends of every pair, the 88k readings that justify their own exclusion, and the
+    # cross-module reproduction — the live floor's cut delta must equal `rookie_recovery`'s
+    # `rookie`-rung residual, which is §7a's rung-0 licence check one rung up.
+    for s_, sym, asym, masked, per in (("2022-23", "411", "448", "37", "0.0000"),
+                                       ("2023-24", "417", "464", "47", "0.0111")):
+        add(sym, lambda x=s_: season(x, "n_board_symmetric"),
+            f"the field's priceable union board, {s_}")
+        add(asym, lambda x=s_: season(x, "n_board_asymmetric"),
+            f"the field's whole board (union floor), {s_}")
+        add(masked, lambda x=s_: season(x, "n_seat_masked"),
+            f"market-silent rows our seat may not take, {s_}")
+        add(per, lambda x=s_: season(x, "field_unpriced_per_entry"),
+            f"unpriceable players the field drafts per entry (union board), {s_}")
+    for s_, sym, asym, delta in (("2022-23", "15,653.5", "15,678.9", "+25.4"),
+                                 ("2023-24", "15,534.4", "15,505.4", "−29.0")):
+        add(sym, lambda x=s_: season(x, "field_round1_cut_symmetric"),
+            f"the field's realized Round-1 cut on the union board, {s_}")
+        add(asym, lambda x=s_: season(x, "field_round1_cut_asymmetric"),
+            f"the field's realized Round-1 cut, whole board (union floor), {s_}")
+        add(delta, lambda x=s_: season(x, "d_field_round1_cut"),
+            f"how far the cut line still moves, {s_}")
+
+    def recovery_residual(season_: str) -> float:
+        """The `rookie` rung's floor from `make rookie-recovery` — the cross-check twin."""
+        f = table(ROOKIE_RECOVERY)
+        if f is None:
+            return float("nan")
+        hit = f[(f["season"] == season_) & (f["rung"] == "rookie")]
+        return float(hit["floor_vs_unrestricted"].iloc[0]) if len(hit) else float("nan")
+
+    add("25.416667", lambda: recovery_residual("2022-23"),
+        "the recovery ladder's rookie-rung residual, 2022-23 — the floor's cross-check",
+        artifact=ROOKIE_RECOVERY)
+    add("−28.958333", lambda: recovery_residual("2023-24"),
+        "the recovery ladder's rookie-rung residual, 2023-24 — the floor's cross-check",
+        artifact=ROOKIE_RECOVERY)
+    add("25.416667", lambda: season("2022-23", "d_field_round1_cut"),
+        "the live floor reproduces the rookie rung, 2022-23")
+    add("−28.958333", lambda: season("2023-24", "d_field_round1_cut"),
+        "the live floor reproduces the rookie rung, 2023-24")
+
+    add("−0.0496", lambda: shipped(),
+        "shipped-arm lift delta on the union board, eight readings")
+    add("−0.2937", lambda: min(lift(x, t) for x in ("2022-23", "2023-24")
+                               for t in MULTI),
+        "the shipped arm's worst union-board reading")
+    add("+0.0440", lambda: max(lift(x, t) for x in ("2022-23", "2023-24")
+                               for t in MULTI),
+        "the shipped arm's best union-board reading")
+    add("5", lambda: float(sum(1 for x in ("2022-23", "2023-24") for t in MULTI
+                               if lift(x, t) < 0)),
+        "shipped-arm union-board readings that lose lift", tol=1e-9)
+    add("18", lambda: per_arm("n_negative"), "arms losing Round-1 lift, union board")
+    add("−0.0225", lambda: per_arm("median"), "median arm's union-board lift delta")
+    add("−0.1064", lambda: per_arm("min"), "the worst arm's union-board lift delta")
+    add("+0.0428", lambda: per_arm("max"), "the best arm's union-board lift delta")
+    add("+0.0420", lambda: lift("2022-23", "88k_alley_oop"),
+        "88k single entry, union-board lift delta, 2022-23")
+    add("−0.5489", lambda: lift("2023-24", "88k_alley_oop"),
+        "88k single entry, union-board lift delta, 2023-24")
+    add("0.9544", lambda: lift("2022-23", "88k_alley_oop", "p_advance_symmetric"),
+        "88k single entry, symmetric realized P(advance), union board 2022-23")
+    add("0.9477", lambda: lift("2023-24", "88k_alley_oop", "p_advance_symmetric"),
+        "88k single entry, symmetric realized P(advance), union board 2023-24")
+    add("+0.0057", simulated_delta,
+        "shipped-arm SIMULATED delta with the coverage hole closed", artifact=SWEEP_FLOOR)
     return C
 
 
@@ -10540,7 +10752,14 @@ def _lag_recovery() -> list[Claim]:
         add(quoted, lambda x=season: cell(STRATEGY_INJECTION, "n_dropped_priced",
                                           season=x),
             f"ADP-priced unserved rows as the drafting layer counts them, {season}",
-            artifact=STRATEGY_INJECTION)
+            artifact=STRATEGY_INJECTION, historical=True)
+    # The live cross-check after the union shipped (2026-08-22): the drafting layer's
+    # ADP-priced hole is 0 and 3 — claimed so the reconciliation note cannot drift.
+    for season, quoted in (("2022-23", "0"), ("2023-24", "3")):
+        add(quoted, lambda x=season: cell(STRATEGY_INJECTION, "n_dropped_priced",
+                                          season=x),
+            f"ADP-priced unserved rows after the union shipped, {season}",
+            artifact=STRATEGY_INJECTION, tol=1e-9)
     return C
 
 

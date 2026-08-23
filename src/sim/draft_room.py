@@ -77,10 +77,12 @@ Usage:
 """
 
 import argparse
+import hashlib
 import time
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 import pandas as pd
@@ -202,6 +204,23 @@ def field_artifact(features_dir: Path, season: str, label: str = "") -> Path:
     return Path(features_dir) / f"draft_room_field_{season}{label}.npz"
 
 
+def tensor_fingerprint(path: Path) -> str:
+    """A content hash of the tensor file a field's round totals were scored on.
+
+    The label above guards the *filename* and only fires when somebody passes one; a
+    rebuild at the same filename was invisible to the cache key, and the live recommender
+    is the one consumer that reads the cache as written — draft night priced our entry
+    against a field drafted off a board that no longer existed
+    (`docs/rookie-inclusive-tensors-plan.md` §5b). Content rather than mtime, so copying
+    or touching the tensor cannot invalidate a field that still describes it.
+    """
+    digest = hashlib.blake2b(digest_size=16)
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def build_field(frame: pd.DataFrame, board: draft.Board, dk_pts: np.ndarray,
                 masks: np.ndarray, round_of_period: np.ndarray,
                 field_cfg: draft.FieldConfig, n_drafts: int = N_FIELD_DRAFTS,
@@ -236,25 +255,35 @@ def _composition_key(seat_strategies: list[str] | None) -> str:
 
 def save_field(dest: Path, field_round: np.ndarray, season: str, fit_window: str,
                field_cfg: draft.FieldConfig, n_drafts: int,
-               seat_strategies: list[str] | None = None) -> Path:
+               seat_strategies: list[str] | None = None,
+               tensor_fingerprint: str = "") -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(dest, round_total=field_round, season=season,
                         fit_window=fit_window, n_drafts=n_drafts,
                         noise_model=field_cfg.noise_model,
                         rank_noise_sd=field_cfg.rank_noise_sd,
                         need_weight=field_cfg.need_weight,
-                        composition=_composition_key(seat_strategies))
+                        composition=_composition_key(seat_strategies),
+                        tensor_fingerprint=tensor_fingerprint)
     return dest
 
 
 def load_field(path: Path, field_cfg: draft.FieldConfig, n_sims: int,
-               seat_strategies: list[str] | None = None) -> np.ndarray | None:
+               seat_strategies: list[str] | None = None,
+               tensor_fingerprint: str = "") -> np.ndarray | None:
     """The cached field, or `None` when it does not describe the field being asked for.
 
     A field cached under a different noise model is not this field, and reusing it would
     price our entry against a population nothing calibrated. Cheaper to redraft than to
-    explain. Caches written before the field carried a composition lack the last two keys
+    explain. Caches written before the field carried a composition lack those two keys
     and are read as the legacy pure-ADP field, which is exactly what they hold.
+
+    **The tensor fingerprint is the one key that is NOT forgiven when missing.** A cache
+    without a composition still describes a knowable field; a cache without a fingerprint
+    describes a field drafted off an unknowable board, and a caller who names the tensor
+    (`load_room` always does) must never be served one. The empty-string default keeps
+    the callers that key the field by construction — the sweep's arms build their own —
+    out of the comparison entirely.
     """
     if not path.exists():
         return None
@@ -262,10 +291,13 @@ def load_field(path: Path, field_cfg: draft.FieldConfig, n_sims: int,
         held_need = float(z["need_weight"]) if "need_weight" in z else 0.0
         held_mix = (str(z["composition"]) if "composition" in z
                     else _composition_key(None))
+        held_print = (str(z["tensor_fingerprint"]) if "tensor_fingerprint" in z
+                      else "")
         if (str(z["noise_model"]) != field_cfg.noise_model
                 or float(z["rank_noise_sd"]) != field_cfg.rank_noise_sd
                 or held_need != field_cfg.need_weight
                 or held_mix != _composition_key(seat_strategies)
+                or held_print != tensor_fingerprint
                 or z["round_total"].shape[2] < n_sims):
             return None
         return np.ascontiguousarray(z["round_total"][:, :, :n_sims])
@@ -490,6 +522,11 @@ class Room:
     refs: dict[str, FieldReference]
     fit_window: str
     seats: list[str] | None = None     # opponent per seat; None = all `adp`
+    # C6's stamp, surfaced rather than buried: the person who needs to know a production
+    # board was drawn without its preseason is looking at it on a thirty-second clock.
+    # `None` on tensors from before the stamp existed.
+    preseason_coverage: float | None = None
+    preseason_log_rows: int | None = None
 
     @property
     def n_sims(self) -> int:
@@ -497,6 +534,22 @@ class Room:
 
     def new_state(self) -> draft.DraftState:
         return draft.new_state(self.board, self.pod_size, 1)
+
+
+def season_admissible(tensor: dict, split: Callable[[], pd.DataFrame]) -> None:
+    """A production tensor admits its own season on the evidence the tensor carries.
+
+    `fit_window == "full"` is a window only `season.assert_production_season` lets a
+    tensor be written at, and the season it names is unplayed — it has no rows in the
+    split frame at all, so `assert_season_allowed` would refuse it with a message about
+    the test split, which is the wrong diagnosis for a season with no data to leak
+    (`docs/rookie-inclusive-tensors-plan.md` §5b). Every other tensor still goes through
+    the split guard, on the frame `split` builds — a callable, so admitting a production
+    board does not pay for the component design it will not read.
+    """
+    if tensor["fit_window"] == "full":
+        return
+    assert_season_allowed(tensor["season"], split())
 
 
 def load_room(cfg: dict, season: str, n_sims: int | None = None,
@@ -525,9 +578,11 @@ def load_room(cfg: dict, season: str, n_sims: int | None = None,
     # contest should not have to edit config to price it.
     tournaments = tournaments or bracket_tournaments()
 
-    assert_season_allowed(season, split_frame(cfg))
-
-    tensor = load_tensor(features_dir, season, tensor_label)
+    # `raw_dir` arms the staleness guard: the room is the one consumer that must never
+    # serve the August board under October's name (`season.assert_tensor_current`).
+    tensor = load_tensor(features_dir, season, tensor_label,
+                         raw_dir=cfg["data"]["raw_dir"])
+    season_admissible(tensor, lambda: split_frame(cfg))
     pool = pd.read_parquet(features_dir / "draft_pool.parquet")
     frame = draft.build_board(pool, season)
     board = draft.to_arrays(frame, season)
@@ -537,13 +592,16 @@ def load_room(cfg: dict, season: str, n_sims: int | None = None,
     seats = draft.assign_seats(draft.field_composition(cfg), pod_size)
 
     path = field_artifact(features_dir, season, tensor_label)
-    field_round = None if rebuild_field else load_field(path, field_cfg, n_sims, seats)
+    fingerprint = tensor_fingerprint(
+        features_dir / f"sim_tensor_{season}{tensor_label}.npz")
+    field_round = (None if rebuild_field
+                   else load_field(path, field_cfg, n_sims, seats, fingerprint))
     if field_round is None:
         field_round = build_field(frame, board, dk_pts, masks,
                                   tensor["tournament_round"], field_cfg,
                                   n_field_drafts, seed, pod_size, seats)
         save_field(path, field_round, season, tensor["fit_window"], field_cfg,
-                   n_field_drafts, seats)
+                   n_field_drafts, seats, fingerprint)
     field_round = field_round[:, :, :n_sims]
 
     return Room(season=season, frame=frame, board=board, dk_pts=dk_pts,
@@ -552,7 +610,9 @@ def load_room(cfg: dict, season: str, n_sims: int | None = None,
                 projection=dk_pts.sum(axis=1).mean(axis=1),
                 pod_size=pod_size, field_cfg=field_cfg, field_round=field_round,
                 refs={t: field_reference(field_round, t) for t in tournaments},
-                fit_window=tensor["fit_window"], seats=seats)
+                fit_window=tensor["fit_window"], seats=seats,
+                preseason_coverage=tensor["preseason_coverage"],
+                preseason_log_rows=tensor["preseason_log_rows"])
 
 
 # ── 4. Completing the roster, because a payout needs a finished one ──────────

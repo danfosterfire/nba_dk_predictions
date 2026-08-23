@@ -144,8 +144,10 @@ def test_a_rung_with_no_priced_row_reports_nan_rather_than_zero():
 # ── 4. The label, which must travel or an audited artifact moves ─────────────
 
 def test_the_tensor_label_reaches_the_filename_and_the_field_cache():
+    import inspect
+
     features = Path("data/features")
-    assert (B.load_tensor.__defaults__ or ())[-1] == ""
+    assert inspect.signature(B.load_tensor).parameters["label"].default == ""
     assert (R.field_artifact(features, "2022-23", "_x")
             == features / "draft_room_field_2022-23_x.npz")
     assert (R.field_artifact(features, "2022-23")

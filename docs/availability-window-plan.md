@@ -1450,6 +1450,17 @@ predated the window round; this is the same question asked properly. Two arms of
 `strategy-sweep`, back to back on one afternoon at **60 min** and **65 min**. Only one of the
 twenty heads is refitted, which is what makes an arm an hour rather than a day.
 
+> **Provenance, 2026-08-23** (`docs/rookie-inclusive-tensors-plan.md` §7e): both arms of
+> this pair are frozen captures — `make mixture-value` reads
+> `outputs/predictions/mixture_arms/` and never the live artifacts — and the chain they
+> snapshot was superseded when the shipped tensors were re-drawn over the rookie-inclusive
+> population (that round's §5c/§5d). Every figure in this section reproduces to the digit
+> from the capture and none of them moved or will move; what changed is what they describe —
+> the rookie-less chain as it stood on 2026-08-12. Re-capturing either arm under the shipped
+> chain would need the counterfactual half refitted, which that round's C2 forbids and no
+> open question needs: §7l's verdict is about the *consumer* (the drafting layer ranks), not
+> about the population on the board.
+
 **The pair is valid, and establishing that was worth the second run on its own.** The mixture
 arm was re-run rather than remembered, and it reproduces the recorded run **exactly**: all
 seven posterior draw arrays at max |diff| **0.000e+00**, both `sim_tensor_*.npz` bit for bit
@@ -1894,6 +1905,15 @@ the entry's zero-sum argument had to be checked at the team. The graded arm give
 that league-level accuracy (its own league share drifts to +0.0087) and buys a sixth of the
 per-team error with it. That is the trade this change is: it does not know more about how many
 minutes rookies get in aggregate, it knows better **which** rookies get them.
+
+> **The realized row stopped being chain-invariant on 2026-08-22, and it is the population
+> that moved, not the season.** §16j's ladder gives `returnee_lag2` players availability
+> design rows, so the tensor re-run of `docs/rookie-inclusive-tensors-plan.md` §5c took 13
+> (2022-23) and 6 (2023-24) of them out of the no-design population, and the *realized*
+> league share fell 0.1057 → **0.0889** and 0.0992 → **0.0928** — the same seasons measured
+> over a smaller no-design set. The table above is the 2026-08-12 readout on the pre-ladder
+> population and stays as recorded; the live artifact rows now read simulated **0.0853** /
+> **0.0939** against those bars, per-team share-error MAE **0.0289** / **0.0401**.
 
 **What was re-run, and what was not.** All four tensors — the two validation seasons and the
 two training seasons `make weekly-scores` reads — because leaving a mix of arms on disk is the
@@ -4205,8 +4225,12 @@ noise.
   between them, and a Round-1 advance probability is a far coarser instrument than a
   season-total MAE — `docs/rookie-rates-plan.md` §5h is where a bracket reading would go, and
   it now has two changes to price rather than one.
-- **Not re-run**: `make simulate-season` and everything downstream of it. The tensors on disk
-  predate both this ladder and §7g's rookie union.
+- ~~**Not re-run**: `make simulate-season` and everything downstream of it. The tensors on disk
+  predate both this ladder and §7g's rookie union.~~ **Closed 2026-08-22/23**
+  (`docs/rookie-inclusive-tensors-plan.md` §7c-§7d): the four `train`-window tensors were
+  re-drawn with the ladder and the union on, the sweeps re-ran on them, and `make
+  ladder-board` re-run on the re-drawn chain reproduced this section's artifact
+  **byte-for-byte** — every figure above is the live reading.
 - **Not re-opened**: `availability_no_prior`'s level arm, on the 189-row-smaller population
   it now serves; and `src/final_evaluation.py`'s held-out figures, which measured a workflow
   with neither ladder on and do not transfer to this one.

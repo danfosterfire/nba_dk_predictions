@@ -12,7 +12,7 @@ test. Missing artifacts are *skipped*, so a fresh checkout without `make eda` is
 It guards the artifact→prose direction tightly and the prose→artifact direction loosely;
 see the module docstring for exactly what it cannot catch.
 
-**It covers twenty docs with 6,071 claims and one builder per doc**: `README.md`,
+**It covers twenty docs with 6,148 claims and one builder per doc**: `README.md`,
 `availability-plan`, `availability-window-plan`, `minutes-composition-plan`,
 `minutes-window-plan`, `draw-time-calibration-plan`, `predictions-plan`,
 `games-played-plan`, `shot-attempt-basis-plan`,
@@ -54,7 +54,7 @@ row `make weekly-scores` added, whose readings nothing else re-derives. The rest
 layer's figures are re-derived by their own targets' build gates, which is the argument
 `docs/model-cards-plan.md` makes for staying out of the audit entirely. **A low coverage
 percentage on a long doc is not a to-do list**; a *claimed* figure that stops agreeing is.
-**1,099 of the claims are superseded values held for the record**, which is the number that
+**1,161 of the claims are superseded values held for the record**, which is the number that
 grows fastest as heads move off the test split: each conversion retires a measurement
 without deleting it. The season-term conversion alone added **161** — the largest single
 jump so far, because that ablation quotes four arms across thirteen heads and five

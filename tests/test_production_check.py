@@ -115,3 +115,38 @@ def test_a_raw_csv_input_is_not_read_as_parquet(tmp_path):
     assert roster["state"] == "ready" and roster["detail"] == "2 rows"
     # A header with no data rows is not a fetch — same rule `fetch._skip_or_fetch` applies.
     assert rows.loc[str(raw / "schedule_2026_27.csv"), "state"] == "missing"
+
+
+def test_the_tensor_row_reads_the_same_staleness_guard_the_room_does(tmp_path):
+    """The readiness list used to end one step short of the artifact the draft consumes.
+
+    Three states, because for this artifact "exists" is not "current": missing before the
+    build, ready-as-REHEARSAL while no preseason exists anywhere, and STALE the moment
+    the October log lands beside a tensor stamped as built without it — read through
+    `season.assert_tensor_current` itself, so the checklist and the load-time refusal
+    cannot disagree.
+    """
+    import numpy as np
+
+    cfg = _cfg(tmp_path)
+    features = Path(cfg["data"]["features_dir"])
+    features.mkdir(parents=True, exist_ok=True)
+
+    row = production_check.tensor_row(cfg, "2026-27").iloc[0]
+    assert row["state"] == "missing"
+    assert row["target"] == "make simulate-production"
+
+    np.savez(features / "sim_tensor_2026-27.npz",
+             season=np.array("2026-27"), fit_window=np.array("full"),
+             n_sims=np.array(4), preseason_coverage=np.array(0.0),
+             preseason_log_rows=np.array(0))
+    row = production_check.tensor_row(cfg, "2026-27").iloc[0]
+    assert row["state"] == "ready" and "REHEARSAL" in row["detail"]
+
+    raw = Path(cfg["data"]["raw_dir"]) / "nbastats"
+    raw.mkdir(parents=True, exist_ok=True)
+    (raw / "game_logs_pre_season_2026_27.csv").write_text(
+        "GAME_ID,PLAYER_ID,MIN\n1,7,12.0\n")
+    row = production_check.tensor_row(cfg, "2026-27").iloc[0]
+    assert row["state"] == "stale"
+    assert "simulate-production" in row["target"]

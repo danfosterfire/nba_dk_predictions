@@ -155,7 +155,10 @@ REGISTRY: tuple[Decision, ...] = (
         id="cross-season-join",
         topic="problem",
         claim="The information set is a cross-season join: current-season roster "
-              "membership × prior-season statistics.",
+              "membership × prior-season statistics × current-season preseason "
+              "statistics — the third term added 2026-08-13, when the problem statement "
+              "changed to admit the preseason box scores "
+              "(`docs/preseason-plan.md` is the whole of it).",
         because="Before the season starts we know the schedule, the season-start "
                 "rosters and *previous*-season stats. We do not know mid-season "
                 "trades, current-season minutes, injuries or form. So team "
@@ -168,7 +171,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make team-context → data/features/team_context_tier*.parquet, "
                   "data/features/team_composition_tier*.parquet",
         source="docs/project-spec.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-27",
         tags=("constraint",),
     ),
@@ -202,7 +205,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make preseason → data/features/preseason.parquet, "
                   "outputs/eda/preseason_coverage.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-13",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("constraint",),
     ),
@@ -234,7 +237,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make preseason-value → outputs/eda/preseason_value.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-15",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("preseason", "eda"),
     ),
@@ -274,7 +277,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/components_preseason.csv, "
                   "outputs/predictions/components_preseason_rolling.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-15",
+        reviewed="2026-08-23",
         date="2026-08-15",
         tags=("preseason", "components"),
     ),
@@ -327,7 +330,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make components-preseason → "
                   "outputs/predictions/components_preseason.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-15",
+        reviewed="2026-08-23",
         date="2026-08-15",
         tags=("preseason", "components"),
     ),
@@ -358,7 +361,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/components_preseason_shrinkage.csv, "
                   "outputs/predictions/components_preseason_rolling.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-15",
+        reviewed="2026-08-23",
         date="2026-08-15",
         tags=("preseason", "components"),
     ),
@@ -387,7 +390,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make components-preseason → "
                   "outputs/predictions/components_preseason_rolling.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-15",
+        reviewed="2026-08-23",
         date="2026-08-15",
         tags=("preseason", "components", "minutes"),
     ),
@@ -423,7 +426,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-components → "
                   "outputs/predictions/stan_component_metrics.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-15",
+        reviewed="2026-08-23",
         date="2026-08-15",
         tags=("preseason", "components"),
     ),
@@ -455,7 +458,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make model-cards → outputs/predictions/model_card_index.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-16",
+        reviewed="2026-08-23",
         date="2026-08-16",
         tags=("preseason", "components", "dashboard", "method"),
     ),
@@ -491,7 +494,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/components_preseason.csv, "
                   "outputs/predictions/components_preseason_rolling.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-15",
+        reviewed="2026-08-23",
         date="2026-08-15",
         tags=("preseason", "components", "method"),
     ),
@@ -514,7 +517,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make preseason-value → outputs/eda/preseason_value.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-13",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("preseason", "eda"),
     ),
@@ -535,7 +538,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make preseason-value → outputs/eda/preseason_value.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-13",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("preseason", "eda"),
     ),
@@ -570,7 +573,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make preseason → data/features/preseason.parquet, "
                   "outputs/eda/preseason_coverage.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-13",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("capture", "preseason"),
     ),
@@ -623,7 +626,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make game-length → data/features/game_length.parquet, "
                   "outputs/eda/game_length_coverage.csv",
         source="docs/data-quirks.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("capture", "preseason"),
     ),
@@ -640,7 +643,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make context-value → outputs/eda/team_context_value_tier*.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("architecture",),
     ),
@@ -677,7 +680,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make component-targets → outputs/eda/bonus_calibration.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("architecture",),
     ),
@@ -714,7 +717,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make variance-budget → outputs/eda/variance_budget.csv",
         source="docs/provenance-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("frame",),
     ),
@@ -740,7 +743,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "which strengthens the shared-`min` draw.",
         reproduce="make variance-budget → outputs/eda/variance_budget.csv",
         source="docs/provenance-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("reversal",),
     ),
@@ -786,7 +789,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "the column.",
         reproduce="make opponent → outputs/eda/opponent_matchup_tierA.csv",
         source="docs/provenance-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("reversal",),
     ),
@@ -804,7 +807,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make feature-diagnostics → outputs/eda/feature_diagnostics.csv",
         source="docs/model-development-notes.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("architecture", "do-not-relitigate"),
     ),
@@ -825,7 +828,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/eda/target_season_totals.parquet, "
                   "outputs/eda/target_trajectories.parquet",
         source="docs/model-development-notes.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("frame",),
     ),
@@ -845,7 +848,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="deadline",
         due="standing — every day",
         source="docs/availability-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-27",
         tags=("capture",),
     ),
@@ -861,7 +864,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make report-calibration → outputs/eda/report_calibration.csv, "
                   "data/features/report_transfer.parquet",
         source="docs/availability-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-27",
         tags=("capture",),
     ),
@@ -881,7 +884,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make availability → data/features/availability_panel.parquet, "
                   "data/features/availability_features.parquet",
         source="docs/availability-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-27",
         tags=("discipline", "leakage"),
     ),
@@ -901,7 +904,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make adp-panel → outputs/eda/adp_match_audit.csv",
         source="docs/model-development-notes.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("joins", "discipline"),
     ),
@@ -918,7 +921,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make adp-panel → outputs/eda/adp_match_audit.csv",
         source="docs/model-development-notes.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("joins", "discipline"),
     ),
@@ -938,7 +941,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make report-calibration → outputs/eda/report_calibration.csv",
         source="docs/model-development-notes.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("joins", "discipline"),
     ),
@@ -960,7 +963,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make availability → data/features/availability_panel.parquet, "
                   "data/features/availability_features.parquet",
         source="docs/availability-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("capture",),
     ),
@@ -979,7 +982,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make season-matrix → data/features/coverage_report.csv, "
                   "data/features/season_matrix_*.parquet",
         source="docs/data-quirks.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-27",
         tags=("coverage",),
     ),
@@ -999,7 +1002,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make context-value → outputs/eda/roster_coverage_profile_tier*.csv",
         source="docs/provenance-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("coverage",),
     ),
@@ -1024,7 +1027,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "unaffected.",
         reproduce="make context-value → outputs/eda/roster_coverage_profile_tier*.csv",
         source="docs/provenance-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("reversal",),
     ),
@@ -1042,7 +1045,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make game-length → outputs/eda/game_length_coverage.csv, "
                   "data/features/game_length.parquet",
         source="docs/model-development-notes.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("joins", "failure-mode"),
     ),
@@ -1060,7 +1063,7 @@ REGISTRY: tuple[Decision, ...] = (
                 "V2 exactly where V2 works.",
         status="incident",
         source="docs/data-quirks.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("failure-mode", "nba-api"),
     ),
@@ -1082,7 +1085,7 @@ REGISTRY: tuple[Decision, ...] = (
                 "which is correct.",
         status="incident",
         source="docs/data-quirks.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("failure-mode", "nba-api"),
     ),
@@ -1098,7 +1101,7 @@ REGISTRY: tuple[Decision, ...] = (
                 "which is what makes leaving the diagnosis as prose honest.",
         status="incident",
         source="docs/data-quirks.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-27",
         tags=("failure-mode", "nba-api"),
     ),
@@ -1116,7 +1119,7 @@ REGISTRY: tuple[Decision, ...] = (
                 "from 2006-07 on.",
         status="incident",
         source="docs/data-quirks.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("failure-mode",),
     ),
@@ -1132,7 +1135,7 @@ REGISTRY: tuple[Decision, ...] = (
                 "request.",
         status="incident",
         source="docs/availability-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("failure-mode", "capture"),
     ),
@@ -1157,7 +1160,7 @@ REGISTRY: tuple[Decision, ...] = (
         # not a measurement, so re-deriving it would mean re-probing to no purpose.
         status="incident",
         source="docs/final-evaluation-plan.md",
-        reviewed="2026-08-21",
+        reviewed="2026-08-23",
         date="2026-08-21",
         tags=("failure-mode", "capture", "sources"),
     ),
@@ -1186,7 +1189,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make forward-rehearsal → "
                   "outputs/predictions/forward_design_rehearsal.csv",
         source="docs/final-evaluation-plan.md",
-        reviewed="2026-08-21",
+        reviewed="2026-08-23",
         date="2026-08-21",
         tags=("production", "failure-mode"),
     ),
@@ -1216,7 +1219,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make forward-rehearsal → "
                   "outputs/predictions/forward_design_rehearsal.csv",
         source="docs/final-evaluation-plan.md",
-        reviewed="2026-08-21",
+        reviewed="2026-08-23",
         date="2026-08-21",
         tags=("production",),
     ),
@@ -1254,7 +1257,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make forward-rehearsal → "
                   "outputs/predictions/forward_design_rehearsal.csv",
         source="docs/final-evaluation-plan.md",
-        reviewed="2026-08-21",
+        reviewed="2026-08-23",
         date="2026-08-21",
         tags=("production",),
     ),
@@ -1296,7 +1299,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make forward-rehearsal → "
                   "outputs/predictions/forward_design_rehearsal.csv",
         source="docs/final-evaluation-plan.md",
-        reviewed="2026-08-21",
+        reviewed="2026-08-23",
         date="2026-08-21",
         tags=("production",),
     ),
@@ -1328,7 +1331,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make simulate-season → data/features/sim_tensor_2022-23.npz",
         source="docs/final-evaluation-plan.md",
-        reviewed="2026-08-21",
+        reviewed="2026-08-23",
         date="2026-08-21",
         tags=("failure-mode", "production"),
     ),
@@ -1349,7 +1352,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make rosters → data/raw/nbastats/team_rosters_2026_27.csv",
         source="docs/final-evaluation-plan.md",
-        reviewed="2026-08-21",
+        reviewed="2026-08-23",
         date="2026-08-21",
         tags=("production", "capture"),
     ),
@@ -1358,7 +1361,11 @@ REGISTRY: tuple[Decision, ...] = (
         topic="simulations",
         claim="`make production-check` reports readiness for the upcoming season's board "
               "in two halves — the MODEL half, finishable today, and the SEASON half, "
-              "which cannot be finished early.",
+              "which cannot be finished early. Since 2026-08-22 the season half ends at "
+              "the artifact the draft actually consumes: a `sim_tensor_<season>.npz` row "
+              "with three states (missing / ready-as-REHEARSAL / STALE), read through "
+              "`season.assert_tensor_current` itself so the checklist and the load-time "
+              "refusal cannot disagree.",
         because="The October runbook's defining property is that every sampler-hour "
                 "lands before the preseason and the crunch is numpy over the pickles. "
                 "That makes readiness a question with a wrong answer available: a missing "
@@ -1374,7 +1381,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make production-check → outputs/predictions/production_readiness.csv",
         source="docs/final-evaluation-plan.md",
-        reviewed="2026-08-21",
+        reviewed="2026-08-23",
         date="2026-08-21",
         tags=("production",),
     ),
@@ -1428,7 +1435,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make forward-board → outputs/predictions/forward_board_rehearsal.csv",
         source="docs/final-evaluation-plan.md",
-        reviewed="2026-08-21",
+        reviewed="2026-08-23",
         date="2026-08-21",
         tags=("production",),
     ),
@@ -1450,7 +1457,7 @@ REGISTRY: tuple[Decision, ...] = (
         # figures-versus-incidents line in docs/provenance-plan.md.
         status="incident",
         source="docs/availability-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("sources",),
     ),
@@ -1487,7 +1494,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make persistence → outputs/eda/persistence.csv",
         source="docs/model-development-notes.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-27",
         tags=("method",),
     ),
@@ -1505,7 +1512,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make persistence → outputs/eda/persistence.csv",
         source="docs/model-development-notes.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("method",),
     ),
@@ -1523,7 +1530,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make persistence → outputs/eda/persistence.csv",
         source="docs/model-development-notes.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("method",),
     ),
@@ -1542,7 +1549,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make persistence → outputs/eda/persistence.csv",
         source="docs/model-development-notes.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("method",),
     ),
@@ -1560,7 +1567,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "data/features/archetype*.parquet, data/features/kmeans_tier*.pkl, "
                   "data/features/gmm_tier*.pkl, data/features/cluster_meta_tier*.pkl",
         source="docs/model-development-notes.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-27",
         tags=("dimension-reduction",),
     ),
@@ -1597,10 +1604,12 @@ REGISTRY: tuple[Decision, ...] = (
                 "open — the DR line is not feeding the pipeline, churn is explicitly "
                 "out of scope, and `persistence.csv`'s per-column curves already "
                 "supersede the global one. Listed so the count is a number rather than "
-                "an impression, and so a future sweep starts from a list.",
+                "an impression, and so a future sweep starts from a list. (These six are "
+                "the DR-line subset; the 2026-07-31 audit extension found eight more "
+                "prose-only figures outside the DR line — the doc lists all fourteen.)",
         status="open",
         source="docs/provenance-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("provenance",),
     ),
@@ -1619,7 +1628,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make feature-diagnostics → outputs/eda/feature_diagnostics.csv, "
                   "outputs/eda/feature_correlation_tier*.parquet",
         source="docs/model-development-notes.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("method",),
     ),
@@ -1634,7 +1643,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make feature-diagnostics → outputs/eda/feature_diagnostics.csv",
         source="docs/model-development-notes.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("method",),
     ),
@@ -1653,7 +1662,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make aging → outputs/eda/aging_curves.csv",
         source="docs/model-development-notes.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("method",),
     ),
@@ -1668,7 +1677,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="null",
         reproduce="make aging → outputs/eda/aging_curves.csv",
         source="docs/model-development-notes.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("method",),
     ),
@@ -1741,7 +1750,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make opponent → data/features/opponent_*, "
                   "outputs/eda/opponent_matchup_tierA.csv",
         source="docs/data-quirks.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("features",),
     ),
@@ -1776,7 +1785,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make season-matrix → data/features/season_matrix_*.parquet",
         source="docs/data-quirks.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-27",
         tags=("method",),
     ),
@@ -1799,7 +1808,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/availability_pit.csv, "
                   "outputs/predictions/availability_predictions.csv",
         source="docs/availability-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("head",),
     ),
@@ -1824,7 +1833,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make availability-model → "
                   "outputs/predictions/availability_metrics.csv",
         source="docs/model-development-notes.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-08-08",
         tags=("head", "reversal", "held-out-split"),
     ),
@@ -1847,7 +1856,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make availability-model → "
                   "outputs/predictions/availability_ladder_comparison.csv",
         source="docs/availability-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-08-08",
         tags=("head", "method", "held-out-split"),
     ),
@@ -1865,7 +1874,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make availability-profile → outputs/eda/availability_profile.csv",
         source="docs/availability-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("method",),
     ),
@@ -1883,7 +1892,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make availability-profile → outputs/eda/availability_profile.csv",
         source="docs/availability-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("measurement",),
     ),
@@ -1898,12 +1907,16 @@ REGISTRY: tuple[Decision, ...] = (
                 "falling from +541.9 to +6.1. Perfect games played gives 221.3 MAE "
                 "against perfect rate's 302.7, so availability carries the larger "
                 "share. `oracle_gp` is invariant to the head by construction, which "
-                "makes it the check that a GP change moved only what it should.",
+                "makes it the check that a GP change moved only what it should. (Those "
+                "are the pre-split-discipline test readings this was decided on; the "
+                "table later moved to validation — −210.2978, oracles 214.4 against "
+                "261.9 — and the one held-out reading of 2026-08-21 landed at "
+                "−211.1288, so the headline survived both re-derivations.)",
         status="built",
         reproduce="make season-total → outputs/predictions/season_total_metrics.csv, "
                   "outputs/predictions/season_total_predictions.csv",
         source="docs/availability-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("head", "downstream"),
     ),
@@ -1934,7 +1947,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make season-total → outputs/predictions/season_total_metrics.csv, "
                   "outputs/predictions/season_total_predictions.csv",
         source="docs/availability-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-30",
         tags=("reversal", "provenance"),
     ),
@@ -1949,7 +1962,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make season-total → outputs/predictions/season_total_metrics.csv",
         source="docs/availability-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("downstream",),
     ),
@@ -1970,7 +1983,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make availability-model → "
                   "outputs/predictions/availability_metrics.csv",
         source="docs/model-development-notes.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("failure-mode",),
     ),
@@ -1991,7 +2004,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make availability-profile → outputs/eda/availability_profile.csv",
         source="docs/availability-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("features",),
     ),
@@ -2005,7 +2018,7 @@ REGISTRY: tuple[Decision, ...] = (
                 "nothing reads it.",
         status="open",
         source="docs/availability-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("next",),
     ),
@@ -2029,7 +2042,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make availability-model → "
                   "outputs/predictions/availability_workload_ablation.csv",
         source="docs/availability-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("features", "held-out-split"),
     ),
@@ -2048,7 +2061,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="pytest tests/test_availability_model.py → "
                   "tests/test_availability_model.py",
         source="docs/availability-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("features", "regression-guard"),
     ),
@@ -2071,7 +2084,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make availability-model → "
                   "outputs/predictions/availability_nonlinearity.csv",
         source="docs/availability-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("method", "reversal-adjacent", "held-out-split"),
     ),
@@ -2092,7 +2105,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make availability-profile → outputs/eda/availability_profile.csv",
         source="docs/availability-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("simulator-input",),
     ),
@@ -2111,7 +2124,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make stan-availability → outputs/predictions/stan_availability_*",
         source="docs/predictions-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("head", "verification"),
     ),
@@ -2131,7 +2144,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-availability → "
                   "outputs/predictions/stan_availability_board.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("verification",),
     ),
@@ -2150,7 +2163,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-availability → "
                   "outputs/predictions/stan_availability_metrics.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("verification",),
     ),
@@ -2172,7 +2185,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-availability → "
                   "outputs/predictions/stan_availability_diagnostics.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("failure-mode",),
     ),
@@ -2190,7 +2203,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make report-calibration → outputs/eda/report_calibration.csv",
         source="docs/availability-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("features",),
     ),
@@ -2210,7 +2223,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make report-calibration → outputs/eda/report_calibration.csv",
         source="docs/availability-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("features",),
     ),
@@ -2230,7 +2243,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make report-calibration → outputs/eda/report_calibration.csv, "
                   "data/features/report_transfer.parquet",
         source="docs/availability-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("sources",),
     ),
@@ -2246,7 +2259,7 @@ REGISTRY: tuple[Decision, ...] = (
         unblocks="The archive crossing a season boundary — an October 2026 snapshot "
                  "plus the realized 2026-27 season.",
         source="docs/availability-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("next",),
     ),
@@ -2270,7 +2283,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make game-length → outputs/eda/game_length_coverage.csv, "
                   "data/features/game_length.parquet",
         source="docs/predictions-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("head",),
     ),
@@ -2291,7 +2304,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-minutes → outputs/predictions/stan_minutes_metrics.csv, "
                   "outputs/predictions/stan_minutes_diagnostics.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-08-06",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("head",),
     ),
@@ -2317,7 +2330,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make availability-model → "
                   "outputs/predictions/availability_minutes_nonlinearity.csv",
         source="docs/availability-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("features", "held-out-split"),
     ),
@@ -2340,7 +2353,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-minutes → "
                   "outputs/predictions/stan_minutes_dispersion.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-08-06",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("simulator-input",),
     ),
@@ -2362,7 +2375,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "column the artifact had never carried.",
         reproduce="make stan-minutes → outputs/predictions/stan_minutes_metrics.csv",
         source="docs/availability-plan.md",
-        reviewed="2026-08-06",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("defect",),
     ),
@@ -2384,7 +2397,7 @@ REGISTRY: tuple[Decision, ...] = (
                 "training data, different chain lengths).",
         status="open",
         source="docs/availability-plan.md",
-        reviewed="2026-08-06",
+        reviewed="2026-08-23",
         date="2026-08-06",
         tags=("next", "defect"),
     ),
@@ -2419,7 +2432,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/stan_composition_metrics.csv, "
                   "outputs/predictions/stan_composition_ppc.csv",
         source="docs/minutes-composition-plan.md",
-        reviewed="2026-08-06",
+        reviewed="2026-08-23",
         date="2026-07-31",
         tags=("simulator-input",),
     ),
@@ -2443,7 +2456,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-composition → "
                   "outputs/predictions/stan_composition_metrics.csv",
         source="docs/minutes-composition-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-31",
         tags=("specification",),
     ),
@@ -2474,7 +2487,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/stan_composition_dispersion.csv, "
                   "outputs/predictions/stan_composition_ppc.csv",
         source="docs/minutes-composition-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-31",
         tags=("specification",),
     ),
@@ -2497,7 +2510,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make stan-composition → outputs/predictions/stan_composition_ppc.csv",
         source="docs/minutes-composition-plan.md",
-        reviewed="2026-08-04",
+        reviewed="2026-08-23",
         date="2026-07-31",
         tags=("next", "methodology"),
     ),
@@ -2519,7 +2532,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-composition → "
                   "outputs/predictions/stan_composition_joint_nll.csv",
         source="docs/minutes-composition-plan.md",
-        reviewed="2026-08-04",
+        reviewed="2026-08-23",
         date="2026-07-31",
         tags=("methodology",),
     ),
@@ -2562,7 +2575,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/stan_game_length_metrics.csv, "
                   "outputs/predictions/stan_game_length_ppc.csv",
         source="docs/minutes-composition-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-07-31",
         tags=("simulator-input",),
     ),
@@ -2585,7 +2598,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-composition → "
                   "outputs/predictions/stan_composition_diagnostics.csv",
         source="docs/minutes-composition-plan.md",
-        reviewed="2026-08-04",
+        reviewed="2026-08-23",
         date="2026-07-31",
         tags=("performance", "failure-mode"),
     ),
@@ -2602,7 +2615,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-minutes → "
                   "outputs/predictions/stan_minutes_diagnostics.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-08-06",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("performance",),
     ),
@@ -2646,7 +2659,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/eda/season_effects_league_rates.csv, "
                   "outputs/eda/season_effects_carry_forward_bias.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-30",
         tags=("method", "era"),
     ),
@@ -2678,7 +2691,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make season-terms → outputs/predictions/season_term_metrics.csv, "
                   "outputs/predictions/season_term_season_total.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-31",
         tags=("era", "method"),
     ),
@@ -2708,7 +2721,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/season_term_diagnostics.csv, "
                   "outputs/predictions/season_term_bonus.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-31",
         tags=("era", "method"),
     ),
@@ -2747,7 +2760,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/season_term_roster_spread.csv, "
                   "outputs/predictions/season_term_sigma_vs_league.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-31",
         tags=("era", "correlation", "simulation"),
     ),
@@ -2777,7 +2790,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="null",
         reproduce="make season-terms → outputs/predictions/season_term_metrics.csv",
         source="docs/availability-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-31",
         tags=("era", "availability"),
     ),
@@ -2812,7 +2825,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "removing it",
         reproduce="make season-terms → outputs/predictions/season_term_metrics.csv",
         source="docs/availability-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-31",
         tags=("era", "minutes"),
     ),
@@ -2840,7 +2853,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make season-effects → outputs/eda/season_effects_regimes.csv",
         source="docs/availability-plan.md",
-        reviewed="2026-07-31",
+        reviewed="2026-08-23",
         date="2026-07-31",
         tags=("era", "method"),
     ),
@@ -2865,7 +2878,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make season-effects → "
                   "outputs/eda/season_effects_shock_correlation.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-07-31",
+        reviewed="2026-08-23",
         date="2026-07-31",
         tags=("era", "correlation"),
     ),
@@ -2886,7 +2899,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="null",
         reproduce="make serial-correlation → outputs/eda/serial_correlation.csv",
         source="docs/model-development-notes.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("simulator-input",),
     ),
@@ -2912,7 +2925,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make component-rates → "
                   "outputs/predictions/component_rate_metrics.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-08-06",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("benchmark",),
     ),
@@ -2933,7 +2946,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make component-rates → "
                   "outputs/predictions/component_rate_metrics.csv",
         source="docs/model-development-notes.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("specification",),
     ),
@@ -2961,7 +2974,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-components → "
                   "outputs/predictions/stan_component_metrics.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-30",
         tags=("reversal", "specification"),
     ),
@@ -2981,7 +2994,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make component-rates → "
                   "outputs/predictions/component_rate_metrics.csv",
         source="docs/model-development-notes.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("specification",),
     ),
@@ -3001,7 +3014,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make component-rates → "
                   "outputs/predictions/component_rate_metrics.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("benchmark",),
     ),
@@ -3024,7 +3037,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make component-rates → "
                   "outputs/predictions/component_rate_metrics.csv",
         source="docs/data-quirks.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("failure-mode", "regression-guard"),
     ),
@@ -3043,7 +3056,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make target-profile → outputs/eda/target_profile.csv",
         source="docs/model-development-notes.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("specification",),
     ),
@@ -3062,7 +3075,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make stan-components → outputs/predictions/stan_component_*",
         source="docs/predictions-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-30",
         tags=("head",),
     ),
@@ -3109,7 +3122,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-components → "
                   "outputs/predictions/stan_component_metrics.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-08-06",
+        reviewed="2026-08-23",
         date="2026-07-30",
         tags=("defect",),
     ),
@@ -3145,7 +3158,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/stan_component_substitution_sweep_diagnostics.csv, "
                   "outputs/predictions/stan_component_substitution.csv",
         source="docs/shot-attempt-basis-plan.md",
-        reviewed="2026-08-06",
+        reviewed="2026-08-23",
         date="2026-08-03",
         tags=("specification",),
     ),
@@ -3180,7 +3193,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make season-terms → outputs/predictions/season_term_metrics.csv, "
                   "outputs/predictions/season_term_season_total.csv",
         source="docs/predictions-plan.md",
-        reviewed="2026-08-04",
+        reviewed="2026-08-23",
         date="2026-08-04",
         tags=("methodology", "next"),
     ),
@@ -3210,7 +3223,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-components → "
                   "outputs/predictions/stan_component_metrics.csv",
         source="docs/shot-attempt-basis-plan.md",
-        reviewed="2026-08-06",
+        reviewed="2026-08-23",
         date="2026-08-04",
         tags=("specification",),
     ),
@@ -3234,7 +3247,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make serial-correlation → outputs/eda/serial_correlation.csv",
         source="docs/shot-attempt-basis-plan.md",
-        reviewed="2026-08-04",
+        reviewed="2026-08-23",
         date="2026-08-04",
         tags=("next", "simulator-input"),
     ),
@@ -3268,7 +3281,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-composition → "
                   "outputs/predictions/stan_composition_diagnostics.csv",
         source="docs/minutes-composition-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-08-04",
         tags=("performance", "methodology"),
     ),
@@ -3298,7 +3311,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-substitution → "
                   "outputs/predictions/stan_component_substitution_sweep.csv",
         source="docs/shot-attempt-basis-plan.md",
-        reviewed="2026-08-06",
+        reviewed="2026-08-23",
         date="2026-08-03",
         tags=("specification", "methodology"),
     ),
@@ -3323,7 +3336,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-substitution → "
                   "outputs/predictions/stan_component_substitution_sweep.csv",
         source="docs/shot-attempt-basis-plan.md",
-        reviewed="2026-08-03",
+        reviewed="2026-08-23",
         date="2026-08-03",
         tags=("failure-mode",),
     ),
@@ -3356,7 +3369,7 @@ REGISTRY: tuple[Decision, ...] = (
         # validation by 6.34. See `final-evaluation-has-not-run` for the other half.
         reproduce="make season-total → outputs/predictions/season_total_gate_e.csv",
         source="docs/train-validate-test-split.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-08-05",
         tags=("discipline",),
     ),
@@ -3416,7 +3429,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/final_evaluation_season_total.csv, "
                   "outputs/predictions/final_evaluation_availability_board.csv",
         source="docs/final-evaluation-plan.md",
-        reviewed="2026-08-21",
+        reviewed="2026-08-23",
         date="2026-08-21",
         tags=("discipline",),
     ),
@@ -3440,7 +3453,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make posteriors-production → data/features/posteriors/full/manifest.csv",
         source="docs/final-evaluation-plan.md",
-        reviewed="2026-08-21",
+        reviewed="2026-08-23",
         date="2026-08-21",
         tags=("discipline",),
     ),
@@ -3466,7 +3479,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make posteriors WINDOW=train_val → "
                   "data/features/posteriors/train_val/manifest.csv",
         source="docs/final-evaluation-plan.md",
-        reviewed="2026-08-21",
+        reviewed="2026-08-23",
         date="2026-08-21",
         tags=("discipline",),
     ),
@@ -3490,7 +3503,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="python -m src.final_evaluation chain → "
                   "outputs/predictions/final_evaluation_adp_coverage.csv",
         source="docs/final-evaluation-plan.md",
-        reviewed="2026-08-21",
+        reviewed="2026-08-23",
         date="2026-08-21",
         tags=("adp", "discipline"),
     ),
@@ -3503,7 +3516,10 @@ REGISTRY: tuple[Decision, ...] = (
               "does not confirm the drafting edge**: the shipped strategy's Round-1 lift "
               "is −0.0725 on the 600k flagship and −0.11 to +0.07 across the five "
               "structures, against ~0.24 in simulated worlds and ~0.20 in the validation "
-              "replay, with every realized ROI negative.",
+              "replay, with every realized ROI negative. (The ~0.24 / ~0.20 reference "
+              "pair is the rookie-less chain this reading was taken on; the 2026-08-22 "
+              "tensor round re-read it at ~0.26 / ~0.31 on the rookie-inclusive tensors, "
+              "while the held-out figures here stay frozen per that round's C1.)",
         because="The chain is the workflow's figure rather than a head's: a board from "
                 "the deployed `train_val` posterior, drafted under the shipped strategy "
                 "against an ADP field, scored on the box scores that happened. Gate A "
@@ -3534,7 +3550,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/final_evaluation_chain.csv, "
                   "outputs/predictions/sim_season_gate_a_final.csv",
         source="docs/final-evaluation-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-21",
         tags=("drafting", "discipline"),
     ),
@@ -3563,7 +3579,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make final-evaluation → "
                   "outputs/predictions/final_evaluation_season_total.csv",
         source="docs/final-evaluation-plan.md",
-        reviewed="2026-08-21",
+        reviewed="2026-08-23",
         date="2026-08-21",
         tags=("discipline",),
     ),
@@ -3583,7 +3599,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make component-rates → "
                   "outputs/predictions/component_rate_metrics.csv",
         source="docs/train-validate-test-split.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-08-05",
         tags=("discipline",),
     ),
@@ -3607,7 +3623,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make stan-components → outputs/predictions/stan_component_*",
         source="docs/predictions-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("architecture",),
     ),
@@ -3639,7 +3655,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make residual-correlation → outputs/eda/residual_correlation.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("simulator-input",),
     ),
@@ -3686,7 +3702,7 @@ REGISTRY: tuple[Decision, ...] = (
         # Sourced to `README.md` until the 2026-08-20 condensation; the fit-window
         # inventory and the consume-by-scoring-target rule live in the sim-inputs plan.
         source="docs/sim-inputs-plan.md",
-        reviewed="2026-08-20",
+        reviewed="2026-08-23",
         date="2026-08-04",
         tags=("simulator-input",),
     ),
@@ -3705,7 +3721,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make residual-correlation → outputs/eda/residual_correlation.csv",
         source="docs/provenance-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("simulator-input",),
     ),
@@ -3722,7 +3738,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make serial-correlation → outputs/eda/serial_correlation.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("simulator-input",),
     ),
@@ -3741,7 +3757,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make component-targets → outputs/eda/bonus_calibration.csv",
         source="docs/provenance-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("simulator-input",),
     ),
@@ -3770,7 +3786,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "minutes variation whose *relative* size differs by bucket.",
         reproduce="make component-targets → outputs/eda/bonus_calibration.csv",
         source="docs/provenance-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("reversal", "simulator-input"),
     ),
@@ -3786,7 +3802,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make component-targets → outputs/eda/bonus_calibration.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("simulator-input",),
     ),
@@ -3816,7 +3832,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/stan_games_played_collapse.csv, "
                   "outputs/predictions/stan_games_played_spells.csv",
         source="docs/games-played-plan.md",
-        reviewed="2026-08-05",
+        reviewed="2026-08-23",
         date="2026-08-05",
         tags=("architecture", "simulator-input"),
     ),
@@ -3839,7 +3855,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make games-played → "
                   "outputs/predictions/stan_games_played_collapse.csv",
         source="docs/games-played-plan.md",
-        reviewed="2026-08-05",
+        reviewed="2026-08-23",
         date="2026-08-05",
         tags=("architecture",),
     ),
@@ -3873,7 +3889,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "are untouched and still correct measurements of what they measure.",
         reproduce="make availability-profile → outputs/eda/availability_profile.csv",
         source="docs/availability-plan.md",
-        reviewed="2026-08-05",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("reversal", "simulator-input"),
     ),
@@ -3920,7 +3936,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/stan_games_played_pit.csv, "
                   "outputs/predictions/stan_games_played_predictions.csv",
         source="docs/games-played-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-08-05",
         tags=("reversal", "simulator-input"),
     ),
@@ -3946,7 +3962,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-games-played → "
                   "outputs/predictions/stan_games_played_metrics.csv",
         source="docs/games-played-plan.md",
-        reviewed="2026-08-05",
+        reviewed="2026-08-23",
         date="2026-08-05",
         tags=("next",),
     ),
@@ -3966,7 +3982,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-games-played → "
                   "outputs/predictions/stan_games_played_metrics.csv",
         source="docs/games-played-plan.md",
-        reviewed="2026-08-05",
+        reviewed="2026-08-23",
         date="2026-08-05",
         tags=(),
     ),
@@ -3992,7 +4008,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make season-total → outputs/predictions/season_total_gate_e.csv",
         source="docs/games-played-plan.md",
-        reviewed="2026-08-06",
+        reviewed="2026-08-23",
         date="2026-08-05",
         tags=("gate",),
     ),
@@ -4026,7 +4042,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make model-cards → outputs/predictions/model_card_ecdf.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-11",
+        reviewed="2026-08-23",
         date="2026-08-11",
         tags=("head", "calibration"),
     ),
@@ -4050,7 +4066,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make availability-window → "
                   "outputs/predictions/availability_window.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-11",
+        reviewed="2026-08-23",
         date="2026-08-11",
         tags=("era",),
     ),
@@ -4084,7 +4100,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/availability_window.csv, "
                   "outputs/predictions/availability_window_rolling.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-11",
+        reviewed="2026-08-23",
         date="2026-08-11",
         tags=("era", "null"),
     ),
@@ -4106,7 +4122,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make availability-weighting → "
                   "outputs/predictions/availability_weighting.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-11",
+        reviewed="2026-08-23",
         date="2026-08-11",
         tags=("era",),
     ),
@@ -4139,7 +4155,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/availability_weighting.csv, "
                   "outputs/predictions/availability_weighting_confirmation.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-11",
         tags=("era", "null"),
     ),
@@ -4167,7 +4183,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/availability_regime.csv, "
                   "outputs/predictions/availability_regime_confirmation.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("era", "null"),
     ),
@@ -4193,7 +4209,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make availability-regime → "
                   "outputs/predictions/availability_regime.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("era",),
     ),
@@ -4219,7 +4235,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/availability_shrinkage.csv, "
                   "outputs/predictions/availability_regime_confirmation.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("era", "null"),
     ),
@@ -4249,7 +4265,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make availability-regime → "
                   "outputs/predictions/availability_shrinkage.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("era",),
     ),
@@ -4288,7 +4304,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/availability_window.csv, "
                   "outputs/predictions/availability_window_rolling.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-11",
+        reviewed="2026-08-23",
         date="2026-08-11",
         tags=("head", "calibration"),
     ),
@@ -4322,7 +4338,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/stan_availability_metrics.csv, "
                   "outputs/predictions/stan_availability_board.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-11",
+        reviewed="2026-08-23",
         date="2026-08-11",
         tags=("head", "calibration"),
     ),
@@ -4382,7 +4398,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/availability_likelihood.csv, "
                   "outputs/predictions/availability_likelihood_rolling.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-11",
+        reviewed="2026-08-23",
         date="2026-08-11",
         tags=("head", "calibration"),
     ),
@@ -4431,7 +4447,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/availability_likelihood.csv, "
                   "outputs/predictions/availability_likelihood_rolling.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-11",
+        reviewed="2026-08-23",
         date="2026-08-11",
         tags=("head", "calibration"),
     ),
@@ -4454,7 +4470,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make availability-window → "
                   "outputs/predictions/availability_likelihood.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-11",
+        reviewed="2026-08-23",
         date="2026-08-11",
         tags=("head",),
     ),
@@ -4492,7 +4508,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/availability_likelihood.csv, "
                   "outputs/predictions/availability_likelihood_rolling.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-11",
         tags=("head", "calibration"),
     ),
@@ -4541,7 +4557,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/stan_availability_mixture_parameters.csv, "
                   "outputs/predictions/stan_availability_mixture_chains.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("head", "calibration", "stan"),
     ),
@@ -4577,7 +4593,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "data/features/posteriors/train/availability.pkl, "
                   "outputs/predictions/model_card_coefficients.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("head", "provenance"),
     ),
@@ -4606,7 +4622,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-availability → "
                   "outputs/predictions/stan_availability_coefficients.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("head", "stan", "provenance"),
     ),
@@ -4640,7 +4656,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/stan_games_played_gates.csv, "
                   "outputs/predictions/season_total_gate_e.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("head", "provenance"),
     ),
@@ -4651,7 +4667,13 @@ REGISTRY: tuple[Decision, ...] = (
               "Round-1 advance lift reads **+0.1890** [+0.1037, +0.2789] in the 600k "
               "Shootaround against a recorded **0.2107**, and the realized readout "
               "**+0.1713** against 0.1268 — but neither difference can be attributed to the "
-              "mixture, because the baseline was measured on a **pre-window** tensor.",
+              "mixture, because the baseline was measured on a **pre-window** tensor. "
+              "(2026-08-12 readings, the record of the confound; `strategy_shipped.csv` "
+              "has since been re-run twice — P5's chain and the 2026-08-22 "
+              "rookie-inclusive re-draw, where the 600k pair reads 0.2645 / 0.3112. The "
+              "attribution lesson is the entry; the mixture's own paired counterfactual "
+              "is [[availability-mixture-contest-value-is-a-null]], read from its frozen "
+              "capture.)",
         because="The recorded figures predate the 2012-13 window, the role-graded `rho` and "
                 "the simulator's `rho`-gather fix. The window round rebuilt the tensors and "
                 "deliberately did not re-run the sweep, reasoning that the propagation "
@@ -4679,7 +4701,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make strategy-sweep → outputs/predictions/strategy_shipped.csv, "
                   "outputs/predictions/strategy_gate_d.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("head", "simulations", "provenance"),
     ),
@@ -4705,7 +4727,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make simulate-season → data/features/sim_tensor_2022-23.npz",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("simulations", "head"),
     ),
@@ -4764,7 +4786,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "it can apply per cell — and was corrected before any code was written.",
         reproduce="make simulate-season → data/features/sim_tensor_2022-23.npz",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-11",
+        reviewed="2026-08-23",
         date="2026-08-11",
         tags=("head", "simulator"),
     ),
@@ -4809,7 +4831,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/availability_window.csv, "
                   "outputs/predictions/availability_likelihood.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-11",
+        reviewed="2026-08-23",
         date="2026-08-11",
         tags=("head", "calibration"),
     ),
@@ -4847,7 +4869,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make availability-window → "
                   "outputs/predictions/availability_likelihood.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-11",
+        reviewed="2026-08-23",
         date="2026-08-11",
         tags=("head", "calibration", "null"),
     ),
@@ -4876,7 +4898,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make simulate-season → data/features/sim_tensor_2022-23.npz, "
                   "outputs/predictions/sim_season_gate_a.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-07-29",
         tags=("next",),
     ),
@@ -4891,7 +4913,12 @@ REGISTRY: tuple[Decision, ...] = (
               "spread given games played reads **322.05** / **319.32** against **302.75**. "
               "The **bonus is +11% / +5% high**, and on REALIZED minutes the identical draw "
               "reads **0.1535** / **0.1477** against a realized 0.1559 / 0.1626 — so the "
-              "component chain is calibrated and the miss is the minutes draw's.",
+              "component chain is calibrated and the miss is the minutes draw's. **These "
+              "are the 2026-08-09 chain's readings, kept as the record of what the gate "
+              "caught**; the live artifact was re-drawn 2026-08-22 over the two-family "
+              "union and reads season-total MAE 345.43 / 362.11, CRPS 238.67 / 250.35 on "
+              "the validation pair "
+              "([[the-train-tensors-reproduce-the-labelled-pair-bit-for-bit]]).",
         because="An assembly bug is silent: every input head is already calibrated, so a "
                 "simulator that misses a marginal it was handed has a wiring fault rather "
                 "than a modelling one. It caught two, both of which produced a completely "
@@ -4908,7 +4935,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make simulate-season → outputs/predictions/sim_season_gate_a.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("gate",),
     ),
@@ -4919,7 +4946,11 @@ REGISTRY: tuple[Decision, ...] = (
               "a player's minutes.** Implied game-level overdispersion is **7.70** from the "
               "head's own draws on realized availability against **4.22** realized on "
               "2022-23 — at `sigma = 0`, so the injected player-season effect is not the "
-              "cause — and the simulator inherits **8.42**.",
+              "cause — and the simulator inherits **8.42**. On the 2026-08-22 "
+              "rookie-inclusive re-draw the inherited figure reads **7.43 / 7.59** "
+              "(2022-23 / 2023-24) against the 4.72 train diagnostic bar — narrower, "
+              "still too wide, same standing item; the head's own 7.70-against-4.22 "
+              "reading is a fit-time figure and did not move (nothing was refitted).",
         because="This is the diagnostic `stan_minutes_dispersion.csv`'s 4.65x was demoted to "
                 "when `make minutes-unification` moved it from simulator INPUT to a number "
                 "the composition's draws are checked against, and the first time it ran it "
@@ -4937,7 +4968,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make simulate-season → outputs/predictions/sim_season_gate_a.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("simulator-input", "next"),
     ),
@@ -4954,7 +4985,9 @@ REGISTRY: tuple[Decision, ...] = (
                 "tenth of the frailty correlation producing it. Inverting the relation at the "
                 "population mean per-game count and projecting back to a valid correlation "
                 "matrix takes the simulated off-diagonal mean from **−0.002** to **+0.017** "
-                "against a target of **+0.022**, max cell error 0.057. **4 of the 21 count "
+                "against a target of **+0.022**, max cell error 0.057 (the 2026-08-22 "
+                "re-draw holds the mean — 0.0174 / 0.0149 on the validation pair against "
+                "the same 0.0216 target — at max cell error 0.075). **4 of the 21 count "
                 "pairs saturate** at the inversion, which is a finding rather than a "
                 "nuisance: the measured residual coupling sits at the ceiling a frailty of "
                 "this variance can produce, so the bonus overdispersion (0.025) and the "
@@ -4967,7 +5000,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make simulate-season → outputs/predictions/sim_season_gate_a.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("simulator-input",),
     ),
@@ -5005,7 +5038,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make posteriors → data/features/posteriors/train/manifest.csv, "
                   "data/features/posteriors/train/availability.pkl",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-08-08",
         tags=("architecture",),
     ),
@@ -5036,7 +5069,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/stan_composition_dispersion.csv, "
                   "outputs/predictions/minutes_unification.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-08",
         tags=("architecture",),
     ),
@@ -5078,7 +5111,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make minutes-unification → outputs/predictions/minutes_unification.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("architecture",),
     ),
@@ -5122,7 +5155,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make minutes-unification → outputs/predictions/minutes_unification.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("architecture",),
     ),
@@ -5161,7 +5194,7 @@ REGISTRY: tuple[Decision, ...] = (
                  "(see [[composition-carries-an-optional-player-season-effect]]); what is "
                  "still open is which window it is committed at",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("next", "architecture"),
     ),
@@ -5197,7 +5230,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make test → tests/test_stan_composition.py, tests/test_posteriors.py",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("architecture",),
     ),
@@ -5264,7 +5297,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/composition_effects_metrics.csv, "
                   "outputs/predictions/composition_effects_season.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("architecture", "cost"),
     ),
@@ -5371,7 +5404,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/composition_quadrature_check.csv, "
                   "tests/test_stan_composition.py, src/stan/composition_glm.stan",
         source="docs/composition-quadrature-plan.md",
-        reviewed="2026-08-16",
+        reviewed="2026-08-23",
         date="2026-08-16",
         tags=("architecture", "cost"),
     ),
@@ -5408,7 +5441,7 @@ REGISTRY: tuple[Decision, ...] = (
                  "iteration counts with a paired bootstrap — minutes rather than hours, and "
                  "it gates whether the expensive head is worth re-scoping",
         source="docs/potential-to-dos.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("next", "architecture", "cost"),
     ),
@@ -5435,7 +5468,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make composition-effects → "
                   "outputs/predictions/composition_effects_deviation.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("architecture", "provenance"),
     ),
@@ -5467,7 +5500,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make composition-effects → "
                   "outputs/predictions/composition_effects_deviation.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("architecture",),
     ),
@@ -5516,7 +5549,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "own preseason block — both CRPS grids moved their optimum to 0.375",
         reproduce="make minutes-unification → outputs/predictions/minutes_unification.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("architecture",),
     ),
@@ -5551,7 +5584,7 @@ REGISTRY: tuple[Decision, ...] = (
         unblocks="the P5 chain, which draws minutes through this constant",
         reproduce="make minutes-unification → outputs/predictions/minutes_unification.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-14",
+        reviewed="2026-08-23",
         date="2026-08-14",
         tags=("architecture", "head"),
     ),
@@ -5601,7 +5634,7 @@ REGISTRY: tuple[Decision, ...] = (
                  "pre-graded strategy_*.csv retained first",
         reproduce="make minutes-role-sigma → outputs/predictions/minutes_role_sigma.csv",
         source="docs/draw-time-calibration-plan.md",
-        reviewed="2026-08-16",
+        reviewed="2026-08-23",
         date="2026-08-16",
         tags=("architecture", "simulation"),
     ),
@@ -5641,7 +5674,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make minutes-unification → outputs/predictions/minutes_unification.csv",
         source="docs/sim-inputs-plan.md",
-        reviewed="2026-08-16",
+        reviewed="2026-08-23",
         date="2026-08-16",
         tags=("dashboard", "simulation", "provenance"),
     ),
@@ -5670,7 +5703,7 @@ REGISTRY: tuple[Decision, ...] = (
         # precisely because that row was always right.
         reproduce="make minutes-unification → outputs/predictions/minutes_unification.csv",
         source="docs/draw-time-calibration-plan.md",
-        reviewed="2026-08-16",
+        reviewed="2026-08-23",
         date="2026-08-16",
         tags=("provenance",),
     ),
@@ -5682,7 +5715,11 @@ REGISTRY: tuple[Decision, ...] = (
               "(2023-24), bias −26.50 → **−15.4388** and −71.15 → **−66.6411**; the 600k "
               "Shootaround's shipped arm lifts Round-1 advance probability **0.1890 → 0.2358** "
               "simulated and **0.1713 → 0.204098** realized. **Gate D still fails at 0 of 6.** "
-              "⚠️ **None of it is attributable to the preseason block.**",
+              "⚠️ **None of it is attributable to the preseason block.** (These are P5's own "
+              "2026-08-14 readings, kept as that re-run's record; the chain was re-drawn "
+              "again 2026-08-22 over the rookie-inclusive population — the live figures are "
+              "[[the-train-tensors-reproduce-the-labelled-pair-bit-for-bit]] and "
+              "[[the-sweep-re-read-confirms-the-selections-and-closes-the-floor]].)",
         because="`docs/preseason-plan.md` P5. The chain is the only instrument that prices a "
                 "head change in the unit the contest cares about, and it had been stale since "
                 "items 6-7 shipped without re-running it. What it says is that the chain under "
@@ -5711,7 +5748,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/strategy_shipped.csv, "
                   "outputs/predictions/sim_season_gate_a.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-14",
+        reviewed="2026-08-23",
         date="2026-08-14",
         tags=("next",),
     ),
@@ -5743,7 +5780,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="open",
         unblocks="a window-aware `allocate_spells`, scored at Gate A's own season-total bias row",
         source="docs/potential-to-dos.md",
-        reviewed="2026-08-14",
+        reviewed="2026-08-23",
         date="2026-08-14",
         tags=("next",),
     ),
@@ -5781,7 +5818,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make minutes-unification → outputs/predictions/minutes_unification.csv",
         source="docs/minutes-window-plan.md",
-        reviewed="2026-08-14",
+        reviewed="2026-08-23",
         date="2026-08-14",
         tags=("architecture",),
     ),
@@ -5839,7 +5876,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "which reversed the gap a second time and moved sigma with it",
         reproduce="make minutes-unification → outputs/predictions/minutes_unification.csv",
         source="docs/minutes-window-plan.md",
-        reviewed="2026-08-14",
+        reviewed="2026-08-23",
         date="2026-08-14",
         tags=("architecture",),
     ),
@@ -5880,7 +5917,7 @@ REGISTRY: tuple[Decision, ...] = (
         unblocks="build item 3d, then item 4 consumes whatever it settles",
         reproduce="make minutes-unification → outputs/predictions/minutes_unification.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("next", "architecture"),
     ),
@@ -5916,7 +5953,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/stan_game_length_depth.csv, "
                   "outputs/predictions/stan_game_length_diagnostics.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-08",
         tags=("architecture",),
     ),
@@ -5942,7 +5979,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make stan-game-length → outputs/predictions/stan_game_length_depth.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("simulator-input",),
     ),
@@ -5967,7 +6004,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-game-length → "
                   "outputs/predictions/stan_game_length_metrics.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("null-result",),
     ),
@@ -6004,7 +6041,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-game-length → "
                   "outputs/predictions/stan_game_length_metrics.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-08",
         tags=("season-effects",),
     ),
@@ -6032,7 +6069,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-game-length → "
                   "outputs/predictions/stan_game_length_ppc.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-08",
         tags=("architecture",),
     ),
@@ -6064,7 +6101,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make posteriors → data/features/posteriors/train/manifest.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-08-08",
         tags=("methodology", "leakage"),
     ),
@@ -6074,7 +6111,10 @@ REGISTRY: tuple[Decision, ...] = (
         claim="The simulator's contract to everything downstream is a "
               "`player x scoring_period x sim` tensor of dk_pts — **never a player-game "
               "array**. **Built 2026-08-09**: 386 x 20 x 2,000 plus a `uint8` games-played "
-              "twin, **77 MB** per season at **76 s** of numpy.",
+              "twin, **77 MB** per season at **76 s** of numpy. The contract is unchanged "
+              "since; the population inside it widened 2026-08-22 to the two-family union "
+              "(444–487 units on the `train` seasons, ~92–101 MB), and the 2026-27 "
+              "production tensor is 541 × 20 × 2,000.",
         because="Best ball scores by scoring period, and there are only 20 of them (Round "
                 "1's 17 weeks plus three double weeks). At ~550 players and 2,000 sims "
                 "that is ~88 MB in float32 — small enough to hold for a whole strategy "
@@ -6100,7 +6140,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "data/features/sim_tensor_2023-24.npz, "
                   "outputs/predictions/sim_season_gate_a.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-08",
         tags=("architecture",),
     ),
@@ -6126,7 +6166,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make strategy-sweep → outputs/predictions/strategy_gate_c.csv, "
                   "outputs/predictions/strategy_injection.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-08",
         tags=("methodology",),
     ),
@@ -6156,7 +6196,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "rested on and nobody had taken",
         reproduce="make strategy-sweep → outputs/predictions/strategy_gate_c.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("methodology", "strategy"),
     ),
@@ -6179,26 +6219,32 @@ REGISTRY: tuple[Decision, ...] = (
                 "0.81-0.95 floor band, i.e. the injected world is harder to rank in than "
                 "reality. The 0.81-0.95 band is the COUNT heads' carry-forward floor; read "
                 "off the selected rows of the same file it becomes [0.13, 0.96], which no "
-                "world could fail, and a test pins which rows it comes from.",
+                "world could fail, and a test pins which rows it comes from. Re-solved on "
+                "every tensor generation since — 0.3582 / 0.3172 on the 2026-08-16 chain, "
+                "**0.3443 / 0.2825 (g 1.1875 / 1.1811)** on the rookie-inclusive tensors "
+                "(2026-08-23), `achieved_mae` on target each time — the mechanism is "
+                "unchanged through three populations.",
         status="measured",
         reproduce="make strategy-sweep → outputs/predictions/strategy_gate_c.csv, "
                   "outputs/predictions/strategy_injection.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("methodology", "market", "strategy"),
     ),
     Decision(
         id="sweep-runs-on-the-priceable-board",
         topic="simulations",
-        claim="The strategy sweep restricts the draft board to the **347-359 players the "
-              "tensor can price**, symmetrically for our entries and for the field.",
-        because="`make simulate-season` scores 386 of 539 rostered players and pads the "
-                "rest with ZEROS so a draft can still run into them. A model-ranked "
+        claim="The strategy sweep restricts the draft board to the players the tensor "
+              "can price, symmetrically for our entries and for the field — **411 and 417 "
+              "of the two validation boards since the union shipped**, 347-359 on the "
+              "rookie-less tensors this rule was written against.",
+        because="`make simulate-season` pads unscorable rostered players with ZEROS so a "
+                "draft can still run into them. A model-ranked "
                 "strategy never takes one; measured on every run by drafting thirty pods on "
-                "the unrestricted board, the ADP field takes 1.2556 and 1.1861 per "
+                "the unrestricted board, the ADP field took 1.2556 and 1.1861 per "
                 "sixteen-man entry across the two validation seasons and 73.06% / 74.72% of "
-                "its entries hold at least one, each a roster spot scoring nothing all "
+                "its entries held at least one, each a roster spot scoring nothing all "
                 "season. That is a coverage hole in the tensor arriving as a "
                 "handicap on one side of the comparison, and it was worth more than every "
                 "strategy axis combined: in a reduced-budget diagnostic before the fix a "
@@ -6206,14 +6252,17 @@ REGISTRY: tuple[Decision, ...] = (
                 "0.1667, and model_mean read 0.43. "
                 "`make bracket` sees the same thing from the other end, where "
                 "the best-available benchmark reads p_advance = 1.0 in all five "
-                "tournaments. The cost is stated rather than hidden — who is on the board "
-                "at pick k changes, by 101 of 448 rows in 2022-23 and 16 of the 196 the "
-                "market prices — and the right fix is upstream, by pricing those players.",
+                "tournaments. The right fix was upstream and it landed 2026-08-22: the "
+                "rookie rate family plus the lag-recovery ladder "
+                "([[the-simulators-scorable-units-are-the-union-of-two-rate-families]]) "
+                "closed the hole to 37 and 47 rows, 0 and 3 of them ADP-priced, with the "
+                "field taking 0.00 / 0.01 unpriceable players per entry — the restriction "
+                "stays as machinery and now removes only the market-silent fringe.",
         status="settled",
         reproduce="make strategy-sweep → outputs/predictions/strategy_injection.csv, "
                   "outputs/predictions/strategy_null.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("methodology", "strategy"),
     ),
@@ -6244,7 +6293,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/eda/scoring_periods_audit.csv, "
                   "outputs/eda/scoring_periods_rounds.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-08-08",
         tags=("rules",),
     ),
@@ -6263,7 +6312,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="blocked",
         unblocks="the NBA publishes the 2026-27 schedule; poll ScheduleLeagueV2",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-23",
         date="2026-08-08",
         tags=("capture", "production"),
     ),
@@ -6322,7 +6371,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make adp-profile → outputs/eda/adp_profile.csv, "
                   "data/features/adp_transfer.parquet",
         source="docs/adp-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("architecture",),
     ),
@@ -6339,7 +6388,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make adp-draftkings → data/features/adp_draftkings.parquet, "
                   "data/features/adp_dk_id_map.parquet",
         source="docs/adp-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("joins",),
     ),
@@ -6357,7 +6406,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make adp-panel → data/features/adp_panel.parquet, "
                   "data/features/adp_fantasypros.parquet",
         source="docs/adp-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("joins", "failure-mode"),
     ),
@@ -6380,7 +6429,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make adp-profile → outputs/eda/adp_profile.csv, "
                   "data/features/adp_transfer.parquet",
         source="docs/adp-plan.md",
-        reviewed="2026-07-31",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("market",),
     ),
@@ -6398,7 +6447,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="deadline",
         due="2026-10-15",
         source="docs/adp-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("capture",),
     ),
@@ -6416,7 +6465,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="deadline",
         due="2026-08-01",
         source="docs/adp-plan.md",
-        reviewed="2026-07-30",
+        reviewed="2026-08-23",
         date="2026-07-28",
         tags=("capture",),
     ),
@@ -6449,7 +6498,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "data/raw/dk_best_ball_tournament_metadata.csv, "
                   "data/raw/dk_best_ball_tournament_prize_structure.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-11",
+        reviewed="2026-08-23",
         date="2026-08-08",
         tags=("economics", "strategy"),
     ),
@@ -6478,7 +6527,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make strategy-sweep → outputs/predictions/strategy_shipped.csv",
         unblocks="build item 10, the one-shot test-split risk readout",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-08",
         tags=("methodology", "split"),
     ),
@@ -6503,7 +6552,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/draft_field.csv",
         unblocks="dashboard/draft_room.py",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-08",
         tags=("strategy", "product"),
     ),
@@ -6532,7 +6581,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make draft-sim → outputs/predictions/draft_gate_b.csv, "
                   "outputs/predictions/draft_adp_curve.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("artifact", "market", "gate"),
     ),
@@ -6564,7 +6613,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make draft-sim → outputs/predictions/draft_gate_b.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("market", "gate", "caveat"),
     ),
@@ -6591,7 +6640,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make draft-sim → outputs/predictions/draft_field.csv, "
                   "outputs/predictions/draft_gate_b.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("architecture", "strategy"),
     ),
@@ -6649,7 +6698,7 @@ REGISTRY: tuple[Decision, ...] = (
         unblocks="a field model calibrated on behaviour rather than on aggregates, and "
                  "the `composition` share becoming a measurement",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-11",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("market", "capture", "strategy"),
     ),
@@ -6689,7 +6738,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make draft-room-prep → outputs/predictions/draft_room_stability.csv, "
                   "outputs/predictions/draft_room_null.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-08",
         tags=("methodology", "strategy"),
     ),
@@ -6715,7 +6764,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make strategy-sweep → outputs/predictions/strategy_gate_d.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("economics", "strategy"),
     ),
@@ -6743,7 +6792,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make strategy-sweep → outputs/predictions/strategy_paired.csv, "
                   "outputs/predictions/strategy_shipped.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("market", "strategy"),
     ),
@@ -6765,7 +6814,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="null",
         reproduce="make strategy-sweep → outputs/predictions/strategy_paired.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("strategy",),
     ),
@@ -6789,7 +6838,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make strategy-sweep → outputs/predictions/strategy_paired.csv, "
                   "outputs/predictions/strategy_sweep.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("strategy",),
     ),
@@ -6812,7 +6861,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make strategy-sweep → outputs/predictions/strategy_paired.csv, "
                   "outputs/predictions/strategy_sweep.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("economics", "strategy"),
     ),
@@ -6837,7 +6886,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make strategy-sweep → outputs/predictions/strategy_realized.csv, "
                   "outputs/predictions/strategy_shipped.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("methodology", "strategy"),
     ),
@@ -6864,7 +6913,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make draft-room-prep → outputs/predictions/draft_room_gate_e.csv, "
                   "src/sim/draft_room.py",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("performance", "correctness"),
     ),
@@ -6886,7 +6935,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make draft-room-prep → outputs/predictions/draft_room_gate_e.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("performance", "gate"),
     ),
@@ -6914,7 +6963,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make draft-room-prep → outputs/predictions/draft_room_picks.csv, "
                   "src/sim/draft_room.py",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("methodology", "strategy"),
     ),
@@ -6945,7 +6994,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make draft-room → src/sim/draft_room.py, dashboard/draft_room.py",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("product", "leakage"),
     ),
@@ -6972,7 +7021,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make draft-room → src/sim/draft_room.py, dashboard/draft_room.py",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("capture", "product"),
     ),
@@ -7003,7 +7052,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make test → tests/test_dashboard.py, dashboard/README.md",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("architecture", "conventions"),
     ),
@@ -7038,7 +7087,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "in either board.",
         reproduce="make draft-pool → outputs/eda/draft_pool_position_audit.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-08",
         tags=("joins", "rules", "reversal"),
     ),
@@ -7071,7 +7120,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make draft-pool → outputs/eda/draft_pool_position_audit.csv, "
                   "data/features/draft_pool.parquet",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("joins", "rules"),
     ),
@@ -7101,7 +7150,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make draft-pool → data/features/draft_pool.parquet, "
                   "outputs/eda/draft_pool_coverage.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("artifact",),
     ),
@@ -7123,7 +7172,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make draft-pool → outputs/eda/draft_pool_coverage.csv",
         source="docs/adp-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("joins", "leakage"),
     ),
@@ -7153,7 +7202,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make bracket → src/sim/bracket.py, outputs/predictions/"
                   "bracket_structure.csv, outputs/predictions/bracket_entries.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("contest-rules", "algorithm"),
     ),
@@ -7182,7 +7231,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make bracket → src/sim/bracket.py, outputs/predictions/"
                   "bracket_null.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("gate", "economics"),
     ),
@@ -7238,7 +7287,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make bracket → src/sim/bracket.py, outputs/predictions/"
                   "bracket_structure.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("contest-rules", "monte-carlo"),
     ),
@@ -7264,7 +7313,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make bracket → src/sim/bracket.py, outputs/predictions/"
                   "bracket_structure.csv, outputs/predictions/bracket_null.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("contest-rules", "simplification"),
     ),
@@ -7286,7 +7335,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make bracket → outputs/predictions/bracket_null.csv, "
                   "data/raw/dk_best_ball_tournament_metadata.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("economics", "contest-rules"),
     ),
@@ -7310,7 +7359,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make bracket → src/sim/bracket.py, src/models/held_out.py",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-09",
+        reviewed="2026-08-23",
         date="2026-08-09",
         tags=("split", "leakage"),
     ),
@@ -7335,7 +7384,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make dashboard → dashboard/app.py, dashboard/views/fingerprints.py",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard", "performance"),
     ),
@@ -7372,7 +7421,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/model_card_calibration.csv, "
                   "outputs/predictions/model_card_sample.parquet",
         source="docs/model-cards-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard", "provenance", "split"),
     ),
@@ -7404,7 +7453,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make model-cards → outputs/predictions/model_card_index.csv",
         source="docs/model-cards-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard", "provenance"),
     ),
@@ -7432,7 +7481,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make model-cards → outputs/predictions/model_card_features.csv",
         source="docs/model-cards-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard",),
     ),
@@ -7455,7 +7504,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make model-cards → outputs/predictions/model_card_coefficients.csv",
         source="docs/model-cards-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard",),
     ),
@@ -7497,7 +7546,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/model_card_calibration.csv, "
                   "outputs/predictions/model_card_sample.parquet",
         source="docs/model-cards-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard", "provenance"),
     ),
@@ -7536,7 +7585,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make model-cards → outputs/predictions/model_card_ecdf.csv, "
                   "outputs/predictions/model_card_index.csv",
         source="docs/model-cards-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard", "performance", "provenance"),
     ),
@@ -7570,7 +7619,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/model_card_feature_corr.csv, "
                   "outputs/predictions/model_card_feature_density.parquet",
         source="docs/model-cards-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard",),
     ),
@@ -7641,7 +7690,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make model-cards → "
                   "outputs/predictions/model_card_feature_density.parquet",
         source="docs/model-cards-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard", "performance"),
     ),
@@ -7669,7 +7718,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make model-cards → outputs/predictions/model_card_index.csv",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard",),
     ),
@@ -7744,7 +7793,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make posteriors → data/features/posteriors/train/manifest.csv",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard", "provenance"),
     ),
@@ -7769,7 +7818,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make model-cards → outputs/predictions/model_card_calibration.csv, "
                   "outputs/predictions/model_card_sample.parquet",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard",),
     ),
@@ -7801,7 +7850,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make dashboard → dashboard/app.py",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard", "provenance"),
     ),
@@ -7834,7 +7883,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make dashboard → dashboard/views/overview.py",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard",),
     ),
@@ -7871,7 +7920,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make dashboard → dashboard/views/overview.py, dashboard/overview.py",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard",),
     ),
@@ -7895,7 +7944,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make dashboard → dashboard/shell.py, dashboard/app.py",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard",),
     ),
@@ -8002,7 +8051,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make dashboard → dashboard/draft_room.py, dashboard/views/draft_room.py",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard", "product"),
     ),
@@ -8029,7 +8078,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make dashboard → dashboard/shell.py, dashboard/draft_room.py",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard", "product"),
     ),
@@ -8062,7 +8111,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make dashboard → dashboard/app.py",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard", "provenance"),
     ),
@@ -8092,7 +8141,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/strategy_realized.csv, "
                   "outputs/predictions/bracket_structure.csv",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard", "drafting"),
     ),
@@ -8121,7 +8170,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make strategy-sweep → outputs/predictions/strategy_sweep.csv",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard", "drafting", "economics"),
     ),
@@ -8149,7 +8198,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make strategy-sweep → outputs/predictions/strategy_paired.csv",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard", "drafting"),
     ),
@@ -8173,7 +8222,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make model-cards → outputs/predictions/model_card_index.csv",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard",),
     ),
@@ -8199,7 +8248,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make stan-components → outputs/predictions/stan_component_metrics.csv",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard", "components"),
     ),
@@ -8227,7 +8276,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make model-cards → outputs/predictions/model_card_features.csv",
         source="docs/shot-attempt-basis-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard", "components"),
     ),
@@ -8253,7 +8302,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-game-length → outputs/predictions/stan_game_length_ppc.csv, "
                   "outputs/predictions/stan_game_length_depth.csv",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard", "components"),
     ),
@@ -8281,7 +8330,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make dashboard → dashboard/views/model_page.py",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard",),
     ),
@@ -8307,7 +8356,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make minutes-unification → outputs/predictions/minutes_unification.csv",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard", "minutes"),
     ),
@@ -8330,7 +8379,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make dashboard → dashboard/views/minutes.py",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard",),
     ),
@@ -8353,7 +8402,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make dashboard → dashboard/charts.py",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard", "palette"),
     ),
@@ -8377,7 +8426,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make dashboard → dashboard/charts.py",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard", "palette"),
     ),
@@ -8401,7 +8450,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make model-cards → outputs/predictions/model_card_index.csv",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard", "minutes"),
     ),
@@ -8428,7 +8477,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make capture-calendar → outputs/eda/capture_calendar.csv, "
                   "outputs/eda/capture_programs.csv",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("capture", "dashboard"),
     ),
@@ -8448,7 +8497,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make capture-calendar → outputs/eda/capture_calendar.csv",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("capture", "dashboard"),
     ),
@@ -8467,7 +8516,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make dashboard → dashboard/inputs.py",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard", "palette", "capture"),
     ),
@@ -8485,7 +8534,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make capture-calendar → outputs/eda/capture_programs.csv",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("capture", "dashboard"),
     ),
@@ -8508,7 +8557,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make dashboard → outputs/eda/residual_correlation.csv",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard", "leakage", "simulations"),
     ),
@@ -8530,7 +8579,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make dashboard → dashboard/charts.py",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard", "palette"),
     ),
@@ -8549,7 +8598,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make dashboard → dashboard/charts.py",
         source="docs/dashboard-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard", "palette"),
     ),
@@ -8574,7 +8623,12 @@ REGISTRY: tuple[Decision, ...] = (
                 "season — -5.28 in week 1 sliding to -0.70 by week 17. The spread, which "
                 "is what a max over sixteen players is most sensitive to, comes in at "
                 "**0.92-0.95x** the observed, and about **a fifth of player-weeks score "
-                "nothing at all** against 15-18% simulated. Three of the twenty periods "
+                "nothing at all** against 15-18% simulated. (Those are the 2026-08-10 "
+                "panel's readings; the 2026-08-22 re-draw rebuilt the panel at 37,380 "
+                "player-periods on one minutes injection — one-week bias now −1.77 / "
+                "−1.53, R^2 0.472 / 0.521, zero weeks ~24.6% observed against 22.4-23.4% "
+                "simulated — the full readout beside the facet table in "
+                "`docs/simulations-plan.md`.) Three of the twenty periods "
                 "are DOUBLE weeks (Rounds 2-4), so every panel is faceted by period "
                 "length rather than pooled: a two-week total in a distribution of one-week "
                 "ones is a right tail that is a calendar fact. The KS distance is reported "
@@ -8586,7 +8640,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/weekly_score_period.csv, "
                   "outputs/predictions/weekly_score_quantile.csv",
         source="docs/dashboard-revision-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("dashboard", "simulations", "provenance"),
     ),
@@ -8617,7 +8671,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "data/features/sim_tensor_2021-22.npz, "
                   "outputs/predictions/sim_season_gate_a.csv",
         source="docs/dashboard-revision-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("simulations", "provenance"),
     ),
@@ -8638,7 +8692,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make simulate-season → outputs/predictions/sim_season_gate_a.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-10",
+        reviewed="2026-08-23",
         date="2026-08-10",
         tags=("simulations", "provenance"),
     ),
@@ -8674,7 +8728,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/availability_l2_sweep.csv, "
                   "outputs/predictions/availability_l2_verdict.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-11",
+        reviewed="2026-08-23",
         date="2026-08-11",
         tags=("head", "calibration"),
     ),
@@ -8714,7 +8768,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make simulate-season → outputs/predictions/sim_season_gate_a.csv, "
                   "data/features/sim_tensor_2022-23.npz",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-11",
+        reviewed="2026-08-23",
         date="2026-08-11",
         tags=("simulations", "availability", "head"),
     ),
@@ -8745,7 +8799,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/draft_adp_curve_need.csv, "
                   "outputs/predictions/strategy_*_adp_need_w8.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-11",
+        reviewed="2026-08-23",
         date="2026-08-11",
         tags=("drafting", "field-model"),
     ),
@@ -8771,7 +8825,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make strategy-sweep → outputs/predictions/strategy_sweep.csv, "
                   "outputs/predictions/strategy_paired.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-11",
+        reviewed="2026-08-23",
         date="2026-08-11",
         tags=("drafting", "execution"),
     ),
@@ -8803,7 +8857,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/strategy_shipped.csv, "
                   "outputs/predictions/strategy_null.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-11",
+        reviewed="2026-08-23",
         date="2026-08-11",
         tags=("drafting", "contest-structure"),
     ),
@@ -8829,13 +8883,18 @@ REGISTRY: tuple[Decision, ...] = (
                 "stake's actual purpose the execution choice is moot: pick-log data "
                 "is written at draft time, so autodrafting all 20 collects identical "
                 "data for zero clicks; the ~320 live picks buy only the "
-                "objective-dependent contest outcome on $20.",
+                "objective-dependent contest outcome on $20. Provenance: a 2026-08-11 "
+                "snapshot of the rookie-less chain — `make pick-log-stake` was not among "
+                "the five targets the 2026-08-22 tensor round re-ran, so its two CSVs "
+                "still describe that chain; the reading's use (execution is "
+                "objective-dependent, and moot for data capture) is not "
+                "population-sensitive.",
         status="measured",
         reproduce="make pick-log-stake → "
                   "outputs/predictions/strategy_pick_log_stake.csv, "
                   "outputs/predictions/strategy_pick_log_paired.csv",
         source="docs/simulations-plan.md",
-        reviewed="2026-08-11",
+        reviewed="2026-08-23",
         date="2026-08-11",
         tags=("drafting", "execution", "capture"),
     ),
@@ -8874,7 +8933,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make minutes-window → outputs/predictions/minutes_window_era.csv, "
                   "outputs/predictions/minutes_window_break.csv",
         source="docs/minutes-window-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("architecture",),
     ),
@@ -8912,7 +8971,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make minutes-window → outputs/predictions/minutes_window.csv, "
                   "outputs/predictions/minutes_window_rolling.csv",
         source="docs/minutes-window-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("next", "architecture"),
     ),
@@ -8922,7 +8981,11 @@ REGISTRY: tuple[Decision, ...] = (
         claim="**`sim.minutes.player_season_sigma = 0.450` stands.** A short-window "
               "marginal head narrows its predictive by 12.0% and moves the composition's "
               "tie boundary the WRONG way, 0.200 -> 0.300 — and the constant was never "
-              "calibrated against the marginal head in the first place.",
+              "calibrated against the marginal head in the first place. (The constant "
+              "later moved 0.450 -> 0.375 on 2026-08-14 — the composition's preseason "
+              "blend shifted the grid it is read off, "
+              "[[the-injected-sigma-moves-to-0.375-with-the-blended-head]] — which is not "
+              "the window axis; the null here is about the window and stands.)",
         because="This was `docs/availability-window-plan.md` §9 item 1, the only open item "
                 "there that could revise a shipped decision: if the marginal head's "
                 "season-level spread — the sole reason it ships, per "
@@ -8951,7 +9014,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="null",
         reproduce="make minutes-window → outputs/predictions/minutes_window_stake.csv",
         source="docs/minutes-window-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("architecture",),
     ),
@@ -8982,7 +9045,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make minutes-preseason → outputs/predictions/minutes_preseason.csv, "
                   "outputs/predictions/minutes_preseason_rolling.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-13",
+        reviewed="2026-08-23",
         date="2026-08-13",
         tags=("preseason", "specification"),
     ),
@@ -9013,7 +9076,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make minutes-preseason → outputs/predictions/minutes_preseason.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-13",
+        reviewed="2026-08-23",
         date="2026-08-13",
         tags=("preseason", "specification"),
     ),
@@ -9039,7 +9102,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make minutes-preseason → outputs/predictions/minutes_preseason.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-13",
+        reviewed="2026-08-23",
         date="2026-08-13",
         tags=("preseason", "methodology"),
     ),
@@ -9063,7 +9126,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make minutes-preseason → "
                   "outputs/predictions/minutes_preseason_shrinkage.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-13",
+        reviewed="2026-08-23",
         date="2026-08-13",
         tags=("preseason", "next"),
     ),
@@ -9103,7 +9166,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/availability_preseason.csv, "
                   "outputs/predictions/availability_preseason_rolling.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-13",
+        reviewed="2026-08-23",
         date="2026-08-13",
         tags=("preseason", "specification"),
     ),
@@ -9135,7 +9198,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make availability-preseason → "
                   "outputs/predictions/availability_preseason.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-13",
+        reviewed="2026-08-23",
         date="2026-08-13",
         tags=("preseason", "methodology"),
     ),
@@ -9168,7 +9231,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make availability-preseason → "
                   "outputs/predictions/availability_preseason_effects.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-13",
+        reviewed="2026-08-23",
         date="2026-08-13",
         tags=("preseason", "specification"),
     ),
@@ -9208,7 +9271,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/availability_preseason_rolling.csv, "
                   "outputs/predictions/availability_preseason.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-13",
+        reviewed="2026-08-23",
         date="2026-08-13",
         tags=("preseason", "specification"),
     ),
@@ -9251,7 +9314,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make availability-preseason → "
                   "outputs/predictions/availability_preseason_rolling.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-13",
+        reviewed="2026-08-23",
         date="2026-08-13",
         tags=("preseason", "specification"),
     ),
@@ -9285,7 +9348,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/availability_preseason_block.csv, "
                   "outputs/predictions/availability_preseason.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-13",
+        reviewed="2026-08-23",
         date="2026-08-13",
         tags=("preseason", "specification"),
     ),
@@ -9317,7 +9380,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make availability-preseason → "
                   "outputs/predictions/availability_preseason.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-13",
+        reviewed="2026-08-23",
         date="2026-08-13",
         tags=("preseason", "methodology"),
     ),
@@ -9351,7 +9414,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make availability-preseason → "
                   "outputs/predictions/availability_preseason.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-13",
+        reviewed="2026-08-23",
         date="2026-08-13",
         tags=("preseason", "availability"),
     ),
@@ -9390,7 +9453,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make mixture-value → "
                   "outputs/predictions/availability_mixture_contest.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("head", "calibration", "architecture"),
     ),
@@ -9427,7 +9490,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make mixture-value → "
                   "outputs/predictions/availability_mixture_contest.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("architecture", "calibration"),
     ),
@@ -9466,7 +9529,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/availability_exchangeability.csv, "
                   "outputs/predictions/availability_clustering.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("head", "calibration", "architecture"),
     ),
@@ -9513,7 +9576,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/availability_exchangeability.csv, "
                   "outputs/predictions/availability_clustering.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("simulator", "calibration"),
     ),
@@ -9588,7 +9651,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/availability_exchangeability.csv, "
                   "outputs/predictions/availability_clustering.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("simulator", "calibration", "architecture"),
     ),
@@ -9671,7 +9734,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make availability-no-prior → "
                   "outputs/predictions/availability_no_prior.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-11",
         tags=("head", "simulator"),
     ),
@@ -9712,7 +9775,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make availability-no-prior → "
                   "outputs/predictions/availability_no_design_level.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("head", "simulator", "simulations"),
     ),
@@ -9759,7 +9822,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make composition-preseason → "
                   "outputs/predictions/composition_preseason.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-13",
+        reviewed="2026-08-23",
         date="2026-08-14",
         tags=("head", "next"),
     ),
@@ -9805,7 +9868,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/composition_preseason_fit_arms.csv, "
                   "outputs/predictions/composition_preseason_fit_diagnostics.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-14",
+        reviewed="2026-08-23",
         date="2026-08-13",
         tags=("head", "next"),
     ),
@@ -9857,7 +9920,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/composition_preseason_fit_covered_arms.csv, "
                   "outputs/predictions/composition_preseason_fit_covered_diagnostics.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-14",
+        reviewed="2026-08-23",
         date="2026-08-14",
         tags=("head", "next"),
     ),
@@ -9914,7 +9977,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make stan-composition → outputs/predictions/stan_composition_metrics.csv, "
                   "outputs/predictions/stan_composition_diagnostics.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-14",
+        reviewed="2026-08-23",
         date="2026-08-14",
         tags=("head", "next"),
     ),
@@ -9954,7 +10017,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make availability-no-prior → "
                   "outputs/predictions/availability_no_prior_preseason.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-14",
+        reviewed="2026-08-23",
         date="2026-08-14",
         tags=("head", "simulator"),
     ),
@@ -9986,7 +10049,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make availability-no-prior → "
                   "outputs/predictions/availability_no_prior_preseason.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-14",
+        reviewed="2026-08-23",
         date="2026-08-14",
         tags=("head", "simulator", "next"),
     ),
@@ -10023,17 +10086,23 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make rookie-priors → outputs/predictions/rookie_priors.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-14",
+        reviewed="2026-08-23",
         date="2026-08-14",
         tags=("head",),
     ),
     Decision(
         id="no-design-players-are-scored-through-the-team-minutes-pot",
         topic="simulations",
-        claim="**The no-design availability level is priced at the TEAM, because that is its "
-              "only channel.** Not one of these players is a scorable unit — **0 of 106** in "
-              "2022-23 — so Gate A gains a `no_design_team_minutes_share` row rather than "
-              "reading its player-level ones alone.",
+        claim="**The no-design availability level is priced at the TEAM, because that was "
+              "its only channel.** When the row shipped, not one of these players was a "
+              "scorable unit — **0 of 106** in 2022-23 — so Gate A gains a "
+              "`no_design_team_minutes_share` row rather than reading its player-level "
+              "ones alone. The 2026-08-22 rookie-inclusive re-draw changed the overlap, "
+              "not the mechanism: a true rookie is now availability-no-design AND "
+              "component-scorable, the ladder's returnees left the no-design set "
+              "entirely, and the row's REALIZED bar moved with the population "
+              "(0.1057 → 0.0889 and 0.0992 → 0.0928) — the team pot is still the only "
+              "channel for the rostered players the tensor cannot score.",
         because="`docs/potential-to-dos.md` item 7 proposed reading the change on Gate A "
                 "'since these players are in the tensor'. They are in the **grid** and not "
                 "the tensor: a player with no prior season clears neither the component "
@@ -10047,11 +10116,15 @@ REGISTRY: tuple[Decision, ...] = (
                 "accumulates minutes per ROSTERED player as well as per unit; realized "
                 "minutes are joined on `(player_id, game_id)` against the simulator's own "
                 "grid, so a traded player contributes exactly the games the grid gave him "
-                "and both sides share a denominator.",
+                "and both sides share a denominator. The realized bar was believed "
+                "chain-invariant and is in fact population-dependent — "
+                "[[the-train-tensors-reproduce-the-labelled-pair-bit-for-bit]] is where "
+                "that broke, and `docs/availability-window-plan.md` §8b now claims the "
+                "pre-ladder readings as historical beside the ladder-on ones.",
         status="built",
         reproduce="make simulate-season → outputs/predictions/sim_season_gate_a.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("simulations", "provenance"),
     ),
@@ -10102,7 +10175,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/availability_absence_block.csv, "
                   "outputs/predictions/availability_absence_rolling.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("head", "features", "calibration"),
     ),
@@ -10151,7 +10224,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/availability_absence_mixture_interaction.csv, "
                   "outputs/predictions/availability_absence_mixture_rolling.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("head", "features", "calibration"),
     ),
@@ -10188,7 +10261,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/availability_absence_mixture.csv, "
                   "outputs/predictions/availability_absence_mixture_interaction.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("head", "features", "null"),
     ),
@@ -10237,7 +10310,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/availability_absence_lambda.csv, "
                   "outputs/predictions/availability_absence.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-12",
+        reviewed="2026-08-23",
         date="2026-08-12",
         tags=("head", "null", "architecture"),
     ),
@@ -10285,7 +10358,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "outputs/predictions/availability_absence_population.csv, "
                   "outputs/predictions/availability_absence_population_rolling.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-13",
+        reviewed="2026-08-23",
         date="2026-08-13",
         tags=("head", "calibration", "population"),
     ),
@@ -10325,7 +10398,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make availability-no-prior → "
                   "outputs/predictions/availability_no_prior_recency.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-13",
+        reviewed="2026-08-23",
         date="2026-08-13",
         tags=("simulator", "null", "population"),
     ),
@@ -10370,7 +10443,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make preseason-contest → "
                   "outputs/predictions/preseason_block_contest.csv",
         source="docs/preseason-plan.md",
-        reviewed="2026-08-15",
+        reviewed="2026-08-23",
         date="2026-08-15",
         tags=("preseason", "drafting", "simulator"),
     ),
@@ -10469,7 +10542,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "away the best feature the returnee half has.",
         reproduce="make lag-recovery → outputs/predictions/lag_recovery.csv",
         source="docs/rookie-rates-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-22",
         tags=("head", "drafting", "reversal"),
     ),
@@ -10508,7 +10581,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make lag-recovery → outputs/predictions/lag_recovery.csv",
         source="docs/rookie-rates-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-22",
         tags=("head", "components", "drafting"),
     ),
@@ -10549,7 +10622,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="measured",
         reproduce="make lag-ladder → outputs/predictions/lag_ladder.csv",
         source="docs/rookie-rates-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-22",
         tags=("head", "components", "drafting"),
     ),
@@ -10590,7 +10663,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make lag-ladder → outputs/predictions/lag_ladder.csv",
         source="docs/rookie-rates-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-22",
         tags=("head", "components"),
     ),
@@ -10637,7 +10710,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make rookie-rates → outputs/predictions/rookie_rate_floors.csv",
         source="docs/rookie-rates-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-22",
         tags=("head", "components", "drafting"),
     ),
@@ -10689,7 +10762,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make stan-rookie → outputs/predictions/rookie_rate_metrics.csv",
         source="docs/rookie-rates-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-22",
         tags=("head", "components", "drafting"),
     ),
@@ -10730,7 +10803,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make season-total-rookie → outputs/predictions/season_total_rookie.csv",
         source="docs/rookie-rates-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-22",
         tags=("head", "components", "drafting"),
     ),
@@ -10762,7 +10835,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="open",
         reproduce="make season-total-rookie → outputs/predictions/season_total_rookie.csv",
         source="docs/rookie-rates-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-22",
         tags=("head", "availability", "drafting"),
     ),
@@ -10818,7 +10891,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "([[a-staleness-column-is-not-the-missing-piece-a-population-matched-estimate-is]] "
                   "is why).",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-22",
         tags=("head", "availability", "components"),
     ),
@@ -10857,7 +10930,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make availability-lag → outputs/predictions/availability_lag.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-22",
         tags=("head", "availability", "drafting"),
     ),
@@ -10892,7 +10965,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="null",
         reproduce="make availability-lag → outputs/predictions/availability_lag.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-22",
         tags=("head", "availability"),
     ),
@@ -10925,7 +10998,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce=("make season-total-rookie-lagladder → "
                    "outputs/predictions/season_total_rookie_lagladder.csv"),
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-22",
         tags=("head", "availability", "drafting"),
     ),
@@ -10959,7 +11032,7 @@ REGISTRY: tuple[Decision, ...] = (
                 "artifacts.",
         status="open",
         source="docs/rookie-rates-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-22",
         tags=("head", "drafting"),
     ),
@@ -10989,12 +11062,20 @@ REGISTRY: tuple[Decision, ...] = (
                 "NOT the readout — it scores the field's unscorable picks at literal zero. "
                 "The population is not marginal: Wembanyama realized 3,244 dk_pts at ADP "
                 "21.9, and the ADP-priced unpriceable rows out-realize the board we can "
-                "price (1,398.6 against 1,271.8 in 2022-23).",
+                "price (1,398.6 against 1,271.8 in 2022-23). **Superseded 2026-08-23** "
+                "— `make rookie-floor` re-run on the shipped union tensors "
+                "(docs/rookie-inclusive-tensors-plan.md §7d): the masked population is 37 "
+                "and 47 market-silent rows (0 and 3 ADP-priced), the cut delta falls to "
+                "+25.4 / −29.0 — reproducing the recovery ladder's rookie rung to the "
+                "digit ([[the-rookie-floor-is-closed-at-the-unit-that-resolves]]) — and "
+                "the simulated-arm artifact collapses with its cause, +0.0603 → +0.0057. "
+                "The figures above are the rookie-less record, kept under the audit's "
+                "historical flag.",
         status="measured",
         reproduce="make rookie-floor → outputs/predictions/strategy_rookie_floor.csv, "
                   "outputs/predictions/strategy_*_rookiefloor.csv",
         source="docs/rookie-rates-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-22",
         tags=("methodology", "strategy", "head"),
     ),
@@ -11039,7 +11120,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make posteriors → data/features/posteriors/full/manifest.csv, "
                   "data/features/posteriors/train/manifest.csv",
         source="docs/rookie-rates-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-22",
         tags=("head", "components", "simulations"),
     ),
@@ -11069,7 +11150,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make adp-draftkings → data/features/adp_dk_id_map.parquet",
         source="docs/rookie-rates-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-22",
         tags=("data", "adp", "simulations"),
     ),
@@ -11100,7 +11181,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="built",
         reproduce="make forward-board → outputs/predictions/forward_board_population.csv",
         source="docs/rookie-rates-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-22",
         tags=("methodology", "simulations", "head"),
     ),
@@ -11125,44 +11206,86 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make forward-board SEASON=2026-27 FRAMES_ONLY=1 → "
                   "outputs/predictions/forward_board_population_2026_27.csv",
         source="docs/rookie-rates-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-22",
         tags=("methodology", "simulations"),
     ),
     Decision(
         id="the-rookie-inclusive-tensors-are-not-rebuilt-yet",
         topic="simulations",
-        claim="**The wiring is live and the tensors on disk are NOT.** "
-              "`make simulate-season` was deliberately not re-run after the union landed, "
-              "so every downstream artifact — the strategy sweep, Gate A, the mixture "
-              "arms, the draft room's board — still describes the rookie-less population. "
-              "Re-running any of them now produces different numbers from the ones "
-              "recorded, and that is the change being live rather than a regression.",
-        because="What the union is WORTH in contest units is a measurement, and it has an "
-                "owner: Session 8's symmetric rookie-inclusive replay against "
-                "[[the-rookie-floor-is-173-dk-pts-on-the-cut-and-unresolved-in-the-contest]]. "
-                "Regenerating the tensors as a side effect of a plumbing session would "
-                "move dozens of audited figures with no reading attached to them, and "
-                "would spend the comparison the floor exists to be read against. "
-                "`priceable_room`'s '101 of 105 board rows dropped' is the same case one "
-                "level down: it reads the tensor's `scorable` mask, so it moves only when "
-                "the tensor is rebuilt. **Scheduled 2026-08-22 as its own round** — "
-                "`docs/rookie-inclusive-tensors-plan.md`, which ships the wider population "
-                "over the `train` tensors and builds the `full` one that has never "
-                "existed, and prices the doc cost at 359 audited claims "
-                "([[shipping-the-wider-population-is-a-documentation-round-not-a-compute-round]]). "
-                "The held-out pair is explicitly NOT in it "
-                "([[the-held-out-tensors-are-frozen-rookie-less-by-decision]]). "
-                "The forward board IS re-run, because Session 6 "
-                "changed its retrospective arm — on the 387 units both arms share the "
-                "mechanics reading is unchanged (Spearman 0.9988 against a 0.9990 "
-                "seed-noise floor, where 2026-08-21 read 0.9989 against 0.9990) and the "
-                "population column carries the whole move.",
-        status="open",
-        source="docs/rookie-rates-plan.md",
-        reviewed="2026-08-22",
+        claim="**The deferral is closed on both halves.** Session 3 of the tensor "
+              "round (2026-08-22) re-ran `make simulate-season` over 2018-19, 2021-22, "
+              "2022-23 and 2023-24 — Gate A, the weekly panel, the bracket and Gate B "
+              "describe the rookie-inclusive population — and Session 4 (2026-08-23) "
+              "re-ran the sweeps: `strategy_*`, `strategy_rookie_floor.csv`, the "
+              "draft-room prep and `availability_ladder_board.csv` (byte-identical on "
+              "re-run) now describe the union board too. Session 5 (2026-08-23) closed "
+              "the last consumer: `rookie_recovery.csv` re-derived off the shipped "
+              "tensor with ZERO movement across every value column, and the "
+              "`_rookieinclusive` label is retired — labelled tensors deleted, labelled "
+              "CSVs kept as §7i's presence-checked record.",
+        because="The deferral did what it was for: the union was priced at the cut line "
+                "first (§7i), and the tensors were re-drawn only inside their own "
+                "documentation round, where the 153 audited claims on "
+                "`sim_season_gate_a.csv` and `weekly_score_*` moved with them rather "
+                "than dangling ([[shipping-the-wider-population-is-a-documentation-round-not-a-compute-round]]). "
+                "The fresh validation draws reproduce §7i's labelled pair bit-for-bit "
+                "([[the-train-tensors-reproduce-the-labelled-pair-bit-for-bit]]), so the "
+                "labelled and shipped populations are provably one thing. The held-out "
+                "pair stays out permanently "
+                "([[the-held-out-tensors-are-frozen-rookie-less-by-decision]]). The "
+                "sweep half kept its own session because Gate C's rho and scale and the "
+                "sweep's shipped arm are SELECTIONS — re-read from the re-run artifact "
+                "under the round's C4, never hand-edited — and because two realized "
+                "seasons do not become informative by re-running them. Session 4's "
+                "re-read confirmed the selections rather than moving them: the shipped "
+                "sweep reproduces the labelled run bit-for-bit and re-selects "
+                "`lineup_value_blend30` on every multi-entry tier "
+                "([[the-shipped-strategy-survives-both-population-changes]]).",
+        status="built",
+        reproduce="make simulate-season → data/features/sim_tensor_2022-23.npz, "
+                  "data/features/sim_tensor_2023-24.npz, "
+                  "outputs/predictions/sim_season_gate_a.csv",
+        source="docs/rookie-inclusive-tensors-plan.md",
+        reviewed="2026-08-23",
         date="2026-08-22",
         tags=("methodology", "simulations", "strategy"),
+    ),
+    Decision(
+        id="the-sweep-re-read-confirms-the-selections-and-closes-the-floor",
+        topic="simulations",
+        claim="**Session 4 of the tensor round re-ran the five sweep targets on the "
+              "shipped rookie-inclusive tensors and every selection survives.** Gate C "
+              "re-solves at rho **0.3443 / 0.2825** (scale 1.1875 / 1.1811) with "
+              "`achieved_mae` on target; the sweep re-selects `lineup_value_blend30` on "
+              "all four multi-entry tiers (the single-entry 88k stays `lineup_value`); "
+              "Gate B's field noise is unchanged at tiered 4.00; the README headline "
+              "moves to **~0.26 simulated / ~0.31 replayed** at the 600k. The rookie "
+              "floor re-read on the union board is the closed one — cut delta **+25.4 / "
+              "−29.0** with 0 and 3 ADP-priced rows masked — and `make ladder-board` "
+              "reproduces its artifact **byte-for-byte**.",
+        because="C4: a selection is re-run and re-read, never hand-edited. The "
+                "reproduction is exact because Session 3's re-drawn tensors are "
+                "bit-identical to §7i's labelled pair, so `make strategy-sweep` "
+                "reproduces the labelled sweep to the digit (Gate C gap 0.0, 240 of 240 "
+                "rows) — the re-read confirms the artifacts describe the tensors on "
+                "disk, which is what it was for, and adds NO realized season: nothing "
+                "here is new contest evidence, exactly as §7a of the round said in "
+                "advance. The ~136 audited claims on `strategy_*` and the ladder board "
+                "moved with the artifacts, the rookie-less figures superseded under "
+                "Claim(historical=True) rather than deleted (C3). One incidental "
+                "confirmation: the asymmetric floor's simulated arm collapses +0.0603 → "
+                "+0.0057 once the field takes ~0 zero-scoring picks, which pins §5a's "
+                "predicted artifact to its mechanism.",
+        status="measured",
+        reproduce="make strategy-sweep && make strategy-sweep-need && make rookie-floor "
+                  "&& make draft-room-prep && make ladder-board → "
+                  "outputs/predictions/strategy_*.csv, "
+                  "outputs/predictions/availability_ladder_board.csv",
+        source="docs/rookie-inclusive-tensors-plan.md",
+        reviewed="2026-08-23",
+        date="2026-08-23",
+        tags=("simulations", "strategy", "methodology"),
     ),
     Decision(
         id="the-recovered-returnees-are-in-the-tensor-at-the-plug-ins-24-7-games",
@@ -11200,7 +11323,7 @@ REGISTRY: tuple[Decision, ...] = (
                   "be found downstream.",
         reproduce="make ladder-board → outputs/predictions/availability_ladder_board.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-22",
         tags=("head", "availability", "simulations"),
     ),
@@ -11244,7 +11367,7 @@ REGISTRY: tuple[Decision, ...] = (
         status="settled",
         reproduce="make ladder-board → outputs/predictions/availability_ladder_board.csv",
         source="docs/availability-window-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-22",
         tags=("head", "availability", "simulations", "methodology"),
     ),
@@ -11260,7 +11383,7 @@ REGISTRY: tuple[Decision, ...] = (
               "can reach is now one our seat can rank (196 of 196; 2023-24 reaches 225 of "
               "228).",
         because="Session 1 priced rookie-lessness in two halves and only one resolved "
-                "([[the-rookie-floor-is-not-zero-and-only-half-of-it-resolves]]): the cut "
+                "([[the-rookie-floor-is-173-dk-pts-on-the-cut-and-unresolved-in-the-contest]]): the cut "
                 "line averages 1,200 realized field entries, while the lift delta "
                 "straddled zero at two seasons. So the recovery is measured on the same "
                 "half, as a NESTED LADDER of board masks on the rookie-inclusive tensor — "
@@ -11278,11 +11401,22 @@ REGISTRY: tuple[Decision, ...] = (
                 "board width and this is the first measurement that shows it. The split "
                 "lands on §7c's admitted-rung census to the row (the ladder adds 10 and 4 "
                 "board rows, 7 and 3 ADP-priced) out of a separate code path, and what the "
-                "rows are WORTH does not follow their count.",
+                "rows are WORTH does not follow their count. **Confirmed live "
+                "2026-08-23**: Session 4 of the tensor round re-ran `make rookie-floor` "
+                "on the shipped union tensors and the live floor artifact now carries "
+                "the closed reading itself — cut delta +25.416667 / −28.958333, equal to "
+                "this ladder's rookie rung to the digit, with Gate C reproducing at 0.0 "
+                "in both arms — so the closure is measured by two modules on the shipped "
+                "chain rather than one on a labelled variant. Session 5 then moved this "
+                "ladder itself onto the shipped chain: `make rookie-recovery` re-derived "
+                "`rookie_recovery.csv` off the shipped tensor with ZERO movement on every "
+                "value column, and the `_rookieinclusive` label it first ran under is "
+                "retired "
+                "([[the-rookieinclusive-label-is-retired-and-the-labelled-csvs-are-its-record]]).",
         status="measured",
         reproduce="make rookie-recovery → outputs/predictions/rookie_recovery.csv",
         source="docs/rookie-rates-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-22",
         tags=("methodology", "strategy", "simulations"),
     ),
@@ -11310,17 +11444,54 @@ REGISTRY: tuple[Decision, ...] = (
                 "a labelled asymmetric arm cannot be compared against an unlabelled "
                 "baseline, which is `docs/availability-window-plan.md` §7l's "
                 "unknown-vintage lesson arriving through the back door. **The machinery "
-                "outlives the label**: `docs/rookie-inclusive-tensors-plan.md` §5e retires "
-                "`_rookieinclusive` once the shipped tensor IS the rookie-inclusive one — "
-                "at which point the suffix names a variant of nothing — and keeps "
-                "`--tensor-label` for the next population change.",
+                "outlived the label**: `docs/rookie-inclusive-tensors-plan.md` §7e retired "
+                "`_rookieinclusive` on 2026-08-23, once the shipped tensor WAS the "
+                "rookie-inclusive one and the suffix named a variant of nothing — the "
+                "labelled tensors and their field caches were deleted after a final "
+                "bit-for-bit check against the shipped pair, the labelled CSVs stay as "
+                "§7i's presence-checked record, and `--tensor-label` is kept end to end "
+                "for the next population change "
+                "([[the-rookieinclusive-label-is-retired-and-the-labelled-csvs-are-its-record]]).",
         status="built",
         reproduce="python -m src.sim.season --tensor-label _rookieinclusive → "
-                  "data/features/sim_tensor_2022-23_rookieinclusive.npz, "
                   "outputs/predictions/sim_season_gate_a_rookieinclusive.csv",
         source="docs/rookie-rates-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-22",
+        tags=("methodology", "simulations", "provenance"),
+    ),
+    Decision(
+        id="the-rookieinclusive-label-is-retired-and-the-labelled-csvs-are-its-record",
+        topic="simulations",
+        claim="**The `_rookieinclusive` label is retired: `make rookie-recovery` reads "
+              "the shipped tensor and re-derives `rookie_recovery.csv` with ZERO "
+              "movement on every value column** (max absolute numeric difference 0.0 "
+              "across all 8 rows; only the `tensor_label` column changed). "
+              "`make strategy-sweep-rookie` is deleted, the two labelled tensors and "
+              "their field caches are deleted, and the nine labelled CSVs stay on disk "
+              "as §7i's frozen record. `--tensor-label` stays end to end as the "
+              "machinery for the next population change.",
+        because="Once the shipped tensor IS the rookie-inclusive one, the label names a "
+                "variant of nothing: §7c proved the shipped and labelled tensors "
+                "bit-identical and §7d proved the sweep artifacts equal to the digit, so "
+                "the re-derivation's non-movement was the plan's own acceptance check — "
+                "observed, not assumed (the shipped pair was re-verified against the "
+                "labelled pair immediately before deletion: all 20 shared arrays "
+                "bit-identical, censuses 471 = 386 + 13 + 72 and 467 = 387 + 6 + 74). "
+                "**The asymmetry between what goes and what stays is the audit's own "
+                "shape**: the tensors were 195 MB of duplicate bits nothing claims, "
+                "while the labelled CSVs carry §7i's ~30 presence- and value-checked "
+                "claims and `make docs-audit` SKIPS a missing artifact rather than "
+                "failing it — deleting a claimed CSV would silently retire its guard. "
+                "The same session recorded C5's provenance note: both frozen "
+                "counterfactuals (`outputs/predictions/mixture_arms/`, "
+                "`preseason_arms/`) are snapshots of a superseded chain, in prose, "
+                "numbers untouched.",
+        status="settled",
+        reproduce="make rookie-recovery → outputs/predictions/rookie_recovery.csv",
+        source="docs/rookie-inclusive-tensors-plan.md",
+        reviewed="2026-08-23",
+        date="2026-08-23",
         tags=("methodology", "simulations", "provenance"),
     ),
     Decision(
@@ -11392,14 +11563,25 @@ REGISTRY: tuple[Decision, ...] = (
                 "finding about `alpha`. ⚠️ The shipped tensors on disk are still the "
                 "rookie-less ones: this ran on a labelled variant beside them, so "
                 "`make simulate-season` and everything after it still produces different "
-                "numbers from the audited artifacts.",
+                "numbers from the audited artifacts. **That caveat closed 2026-08-23** "
+                "(docs/rookie-inclusive-tensors-plan.md §7c-§7d): the shipped tensors "
+                "were re-drawn and `make strategy-sweep` reproduces this labelled run "
+                "bit-for-bit — Gate C gap 0.0, all 240 sweep and 240 realized rows equal, "
+                "rho and scale to the digit — so this selection IS the shipped selection, "
+                "0.2645 at the 600k is the live figure, and the not-paired caveat retires "
+                "with the comparison it qualified. `make strategy-sweep-rookie` retired "
+                "with it (2026-08-23, that plan's §7e): a target that reproduces "
+                "`make strategy-sweep` bit-for-bit is a second name for it, and the "
+                "labelled CSV set below stays on disk as this run's frozen record.",
         status="measured",
         # A glob, on `make rookie-floor`'s `_rookiefloor` precedent: eight files written by
         # one run, and the orphan check matches by fnmatch so naming the set is naming them.
-        reproduce="make strategy-sweep-rookie → "
+        # The make target retired 2026-08-23; the flagged module invocation is the machinery
+        # that wrote (and would rewrite) the set.
+        reproduce="python -m src.sim.strategy --tensor-label _rookieinclusive → "
                   "outputs/predictions/strategy_*_rookieinclusive.csv",
         source="docs/rookie-rates-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-22",
         tags=("drafting", "strategy", "simulations", "methodology"),
     ),
@@ -11427,7 +11609,7 @@ REGISTRY: tuple[Decision, ...] = (
         reproduce="make final-evaluation → data/features/sim_tensor_2024-25.npz, "
                   "data/features/sim_tensor_2025-26.npz",
         source="docs/final-evaluation-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-22",
         tags=("methodology", "simulations", "provenance"),
     ),
@@ -11450,99 +11632,207 @@ REGISTRY: tuple[Decision, ...] = (
                 "re-capturing either arm would need the counterfactual half refitted — 1 h "
                 "of CmdStan for the mixture and ~3.5 h for the preseason block, each twice "
                 "— which this round forbids. What changes for those two is provenance and "
-                "not arithmetic: both are now snapshots of a superseded chain. A further "
-                "93 of the 359 are `historical=True` and presence-checked rather than "
-                "value-checked, which is what takes the live rewrite to 266.",
-        status="open",
+                "not arithmetic: both are now snapshots of a superseded chain — recorded "
+                "in prose 2026-08-23 (§7e) in `docs/availability-window-plan.md` §7l and "
+                "`docs/preseason-plan.md`'s paired-counterfactual chain section, the two "
+                "docs whose claims read the captures, with every number untouched. A "
+                "further 93 of the 359 are `historical=True` and presence-checked rather "
+                "than value-checked, which is what takes the live rewrite to 266. **The "
+                "round closed 2026-08-23 with the gate green at 6,193 claims, 0 "
+                "disagreements, 0 stale** — the rewrite the inventory sized is done, and "
+                "the figures here stay as the scoping record. They are properties of "
+                "`src/docs_audit.py` itself, re-derivable in one pass over `CLAIMS`, and "
+                "deliberately not claimed in the registry the numbers describe.",
+        status="measured",
+        reproduce="make docs-audit → src/docs_audit.py",
         source="docs/rookie-inclusive-tensors-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-22",
         tags=("methodology", "provenance", "simulations"),
     ),
     Decision(
+        id="the-train-tensors-reproduce-the-labelled-pair-bit-for-bit",
+        topic="simulations",
+        claim="**Session 3 re-drew the four `train`-window tensors over the two-family "
+              "union, and the fresh 2022-23 / 2023-24 draws reproduce the "
+              "`_rookieinclusive` labelled pair bit-for-bit** — every shared array "
+              "identical, every Gate A cell to the digit; the only difference is the two "
+              "preseason-stamp keys Session 2 added to `save_tensor`. Gate A now reads "
+              "**444 / 487 / 471 / 467** units (2018-19 / 2021-22 / 2022-23 / 2023-24) "
+              "at MAE **378.04 / 344.41 / 345.43 / 362.11**, and the weekly panel scores "
+              "**37,380** player-periods on one injection.",
+        because="The check was REPORTED rather than gated because `src/sim/season.py` was "
+                "edited between the labelled draw and this one, and 'looks additive' is "
+                "not a reproduction check — §7a carried it as the round's open item. It "
+                "holding means §7i's every labelled-pair comparison is a statement about "
+                "the shipped tensors, and licenses §5e retiring the label with "
+                "`rookie_recovery`'s 49 claims expected not to move. Two changes landed "
+                "in one re-draw and stay entangled by design: the union widened the "
+                "population AND the two training tensors moved off a two-generations-"
+                "stale shared sigma 0.450 onto the role-graded vector, which is most of "
+                "the train-side movement (2018-19 MAE 437.51 → 378.04, R² 0.5892 → "
+                "0.6957) and why none of this is quotable as rookie value — the cut-line "
+                "ladder stays the pricing instrument. One invariance broke on the way: "
+                "`docs/availability-window-plan.md` §8b's REALIZED no-design league "
+                "minutes share was value-checked as chain-invariant, but the §16j ladder "
+                "moved the returnee_lag2 players out of the no-design population and the "
+                "realized bar fell 0.1057 → **0.0889** and 0.0992 → **0.0928** — it is "
+                "population-dependent, and is now claimed as such.",
+        status="measured",
+        reproduce="make simulate-season && make weekly-scores → "
+                  "data/features/sim_tensor_2022-23.npz, "
+                  "outputs/predictions/sim_season_gate_a.csv, "
+                  "outputs/predictions/weekly_score_index.csv",
+        source="docs/rookie-inclusive-tensors-plan.md",
+        reviewed="2026-08-23",
+        date="2026-08-22",
+        tags=("gate", "simulations", "provenance"),
+    ),
+    Decision(
         id="the-cached-field-key-does-not-cover-the-tensor-it-was-scored-on",
         topic="drafting",
-        claim="**`draft_room.load_field` accepts a cached field drafted off a different "
-              "board, and the two validation caches on disk are already stale.** The key "
-              "carries the field's CONFIGURATION — noise model, rank noise, need weight, "
-              "seat composition, sim count — and the filename carries `--tensor-label`; "
-              "nothing carries the tensor's content. `draft_room_field_2022-23.npz` is "
-              "2026-08-12 and `2023-24` is 2026-08-11, both older than the 2026-08-16 "
-              "tensors they are read against.",
-        because="`field_artifact`'s docstring states the hazard exactly — 'a field cached "
-                "against the shipped tensor is not a field for a tensor drawn over a wider "
-                "population' — but the guard it installed is the FILENAME LABEL, which "
-                "only fires when somebody passes a label "
-                "([[a-variant-unit-population-writes-a-labelled-tensor-not-over-the-shipped-one]]). "
-                "A rebuild at the same filename is invisible to it. **The blast radius is "
-                "the live recommender and only the live recommender, and the sweep escapes "
-                "for a narrower reason than it looks.** Every arm `src/sim/strategy.py` "
-                "reports calls `draft_room.build_field` on the tensor it is scoring — "
-                "`gate_c`, `field_cut_line`, the realized replay and the pick-log stake all "
-                "build their own — so `Room.field_round` never reaches a reported figure. "
-                "`priceable_room` rebuilds it as well, but only on the SYMMETRIC path: "
-                "`restrict=False` returns the room with its cached field intact, so the "
-                "asymmetric arm behind `make rookie-floor` carries a stale cache it happens "
-                "not to consume, and is one refactor from consuming it. Meanwhile "
-                "`dashboard/draft_room.py` and `make draft-room-prep` load the cache as "
-                "written, which is to say draft night prices our entry against a field "
-                "drafted off a board that no longer exists. Scheduled "
-                "as `docs/rookie-inclusive-tensors-plan.md` §5b, ahead of the re-run, "
-                "because fixing it after the tensors move is a wider window than fixing it "
-                "before.",
-        status="open",
+        claim="**The field cache is keyed by a content fingerprint of the tensor it was "
+              "scored on** (`draft_room.tensor_fingerprint`, blake2b over the file), "
+              "beside the configuration keys — noise model, rank noise, need weight, seat "
+              "composition, sim count. A cache without the fingerprint is never served to "
+              "a caller who names the tensor, which `load_room` always now does, and the "
+              "two stale validation caches (2026-08-11 / 2026-08-12, older than the "
+              "2026-08-16 tensors they were read against) were deleted rather than "
+              "grandfathered.",
+        because="Shipped 2026-08-22 by `docs/rookie-inclusive-tensors-plan.md` §5b, ahead "
+                "of the tensor re-run, because fixing it after the tensors move is a "
+                "wider window than fixing it before. The defect: `field_artifact`'s "
+                "docstring stated the hazard exactly — 'a field cached against the "
+                "shipped tensor is not a field for a tensor drawn over a wider "
+                "population' — but the guard it installed was the FILENAME LABEL, which "
+                "only fires when somebody passes one "
+                "([[a-variant-unit-population-writes-a-labelled-tensor-not-over-the-shipped-one]]); "
+                "a rebuild at the same filename was invisible. **The blast radius was the "
+                "live recommender and only the live recommender**: every arm "
+                "`src/sim/strategy.py` reports calls `draft_room.build_field` on the "
+                "tensor it is scoring, so `Room.field_round` never reaches a reported "
+                "figure — but `dashboard/draft_room.py` and `make draft-room-prep` read "
+                "the cache as written, which is to say draft night priced our entry "
+                "against a field drafted off a board that no longer existed. Content "
+                "rather than mtime, so copying or touching the tensor cannot invalidate "
+                "a field that still describes it; the legacy caches that remain "
+                "(2025-26, the labelled pair) invalidate themselves on next open, at "
+                "~12 s per rebuild.",
+        status="built",
+        reproduce="make draft-room-prep → data/features/draft_room_field_*.npz",
         source="docs/rookie-inclusive-tensors-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-22",
         tags=("drafting", "simulations", "methodology"),
     ),
     Decision(
         id="the-production-board-has-no-tensor-and-the-draft-room-cannot-open-one",
         topic="simulations",
-        claim="**Nothing writes a production tensor, and the live recommender cannot open "
-              "a 2026-27 board at all.** `make forward-board` simulates in memory and "
-              "persists only the population census, `sim/season.run` refuses a season "
-              "outside the selection split under every window, and there is no production "
-              "unlock in the simulator. `dashboard/draft_room.py` globs "
-              "`sim_tensor_*.npz` and goes through `load_room`, whose "
-              "`assert_season_allowed` raises for the one season a draft is actually "
-              "held for. **And the tensor that could be built today is not the one to "
-              "draft off**: the 2026-27 preseason has not been played, so 0 of 489 "
-              "forward availability rows, 0 of 425 component rows and 0 of 116 "
-              "true-rookie rows carry a preseason block.",
-        because="The forward path was built to be VERIFIED rather than to be shipped "
-                "(`docs/final-evaluation-plan.md` §6h), and its production case stops at "
-                "the frames "
-                "([[a-test-season-is-censused-from-its-frames-because-it-cannot-be-simulated]]). "
-                "Everything it needs now exists: 31 heads at the `full` window with "
-                "`make production-check` green, `forward_board.forward_frames` building "
-                "every frame `build_context` wants for a season with no game log, and a "
-                "2026-27 census of **419** veteran + **6** lag-recovered + **116** "
-                "true-rookie units, 197 of them ADP-priced. What is missing is the unlock "
-                "and the persistence. Scheduled as "
-                "`docs/rookie-inclusive-tensors-plan.md` §5b on "
-                "`posteriors.assert_production`'s precedent — a typed `--production` flag "
-                "and a stated reason, **never** the test-split unlock, because simulating "
-                "an unplayed season is a deployment act and the thing that has read the "
-                "held-out seasons is the fit window rather than the target. **The path "
-                "ships this round and the BOARD ships in October**, because the gate is "
-                "data rather than code: `preseason.parquet` ends at 2025-26, every "
-                "`pre_*` column is NaN or zero on the 2026-27 frames, and the four "
-                "age-split missing indicators fire on 100% of the availability design "
-                "(108 / 214 / 104 / 63). Every head therefore scores 2026-27 on its "
-                "missing-preseason arm, and `docs/preseason-plan.md` measures that block "
-                "as worth more than fitting itself on several heads. So the persisted "
-                "tensor is a REHEARSAL that stamps its own preseason coverage and carries "
-                "a **self-arming** staleness guard — silent in August when no preseason "
-                "exists anywhere, a hard refusal in October the moment "
-                "`game_logs_pre_season_2026_27.csv` lands beside a tensor that does not "
-                "carry it. Written against the input's existence rather than against the "
-                "coverage figure, because a coverage-is-zero warning would nag now and go "
-                "quiet exactly when it matters.",
-        status="open",
+        claim="**The production path is BUILT and exercised end to end: "
+              "`make simulate-production` writes `sim_tensor_2026-27.npz` at `full` "
+              "(541 units — 419 rung-0 veterans + 6 lag-recovered returnees + 116 true "
+              "rookies — × 20 periods × 2,000 sims) and the live draft room opens it**, "
+              "with both recovered populations rankable (34 rookies and all 6 returnees "
+              "priceable on the 457-player board) and the first-pick recompute at "
+              "0.22 s against Gate E's 1.0 s. The unlock is `--production`, typed, on "
+              "`posteriors.assert_production`'s precedent — **never** the test-split "
+              "unlock — and it refuses a played season, an untyped window-only request, "
+              "and any window but `full`. `load_room` admits the season on the evidence "
+              "the tensor carries (`fit_window == \"full\"`), and the room's season glob "
+              "no longer reads a labelled variant as a season.",
+        because="Shipped 2026-08-22 by `docs/rookie-inclusive-tensors-plan.md` §5b. "
+                "Before it, `make forward-board` simulated in memory and persisted only "
+                "the census, `sim/season.run` refused a season outside the selection "
+                "split under every window — with a message about the test split, the "
+                "wrong diagnosis for a season that has no data to leak — and "
+                "`load_room`'s `assert_season_allowed` raised for the one season a draft "
+                "is actually held for. Simulating an unplayed season is a deployment "
+                "act: the thing that has read the held-out seasons is the fit window, "
+                "already guarded at fitting time, so the simulator's guard is the "
+                "deployment one (`season.assert_production_season`), and its "
+                "played-season refusal is what keeps `--production` from becoming the "
+                "second unlock the spent split does not have "
+                "([[the-held-out-tensors-are-frozen-rookie-less-by-decision]]). **The "
+                "BOARD still ships in October** (the tensor is a rehearsal — see "
+                "[[the-production-tensor-is-a-rehearsal-that-knows-it]]), and the "
+                "rehearsal did its job: it caught the rookie floors' missing forward "
+                "prior tier "
+                "([[the-rookie-floor-prior-extends-forward-in-memory-at-score-time]]) "
+                "with two months of slack instead of during the crunch.",
+        status="built",
+        reproduce="make simulate-production → data/features/sim_tensor_2026-27.npz",
         source="docs/rookie-inclusive-tensors-plan.md",
-        reviewed="2026-08-22",
+        reviewed="2026-08-23",
         date="2026-08-22",
         tags=("simulations", "drafting", "dashboard"),
+    ),
+    Decision(
+        id="the-production-tensor-is-a-rehearsal-that-knows-it",
+        topic="simulations",
+        claim="**`save_tensor` stamps every tensor's preseason state — "
+              "`preseason_coverage` (share of scorable units with the season's own "
+              "preseason minutes) and `preseason_log_rows` (the raw log's row count at "
+              "build time) — and a production tensor built without the log is refused "
+              "the moment the log exists** (`season.assert_tensor_current`, armed at "
+              "`load_room`'s read and read again by `make production-check`'s tensor "
+              "row). The 2026-27 rehearsal tensor is stamped 0.0% / 0 rows, the room "
+              "shows it as a banner — 'the August board; practice on it, do not draft "
+              "off it' — and the guard passes today because no 2026-27 preseason exists "
+              "anywhere.",
+        because="C6 of `docs/rookie-inclusive-tensors-plan.md`: with 0 of 489 "
+                "availability rows, 0 of 425 component rows and 0 of 116 rookie rows "
+                "carrying a preseason block, every head scores 2026-27 on its "
+                "missing-preseason arm, and `docs/preseason-plan.md` measures that block "
+                "as worth more than fitting itself on several heads — so a tensor built "
+                "in August under the shipped name, with nothing saying so, would be the "
+                "August board impersonating the October one. The guard is **self-arming "
+                "and written against the input's existence rather than the coverage "
+                "figure**, deliberately: a coverage-is-zero warning would nag all "
+                "August, when the tensor is the honest best available, and go quiet "
+                "exactly when it matters; this fires only when it can be acted on, and "
+                "the refusal names the rebuild (`make preseason && "
+                "make simulate-production`). The stamp sits beside "
+                "`composition_variant` and `availability_layout` for the reason those "
+                "two are there: it changes the board materially while leaving the file "
+                "format identical. Tensors from before the stamp read back as unstamped "
+                "(`None`) and the guard skips them — they were drawn for played seasons "
+                "through the retrospective builders, where the design and the log "
+                "cannot desynchronize this way.",
+        status="built",
+        reproduce="make simulate-production → data/features/sim_tensor_2026-27.npz",
+        source="docs/rookie-inclusive-tensors-plan.md",
+        reviewed="2026-08-23",
+        date="2026-08-22",
+        tags=("simulations", "provenance", "methodology"),
+    ),
+    Decision(
+        id="the-rookie-floor-prior-extends-forward-in-memory-at-score-time",
+        topic="components",
+        claim="**The rookie floors' expanding draft-bucket prior gains the unplayed "
+              "season's row in memory at score time** (`season.extend_rookie_priors`, "
+              "production path only, 10 floor heads on 2026-27) — the persisted "
+              "artifact is never rebuilt and never rewritten. Found by §5b's rehearsal: "
+              "the table travels inside the artifact and covers the seasons the fitted "
+              "design carried, so the first attempt to score a 2026-27 rookie raised "
+              "`rookie_rates.floor_level`'s own refusal.",
+        because="The refusal was correct and stays: an artifact must never be rebuilt "
+                "with the target season's own rookies inside it. But the row a FORWARD "
+                "season needs is computable with no refit and no leakage, because "
+                "`bucket_priors` is expanding over seasons STRICTLY before the target — "
+                "the 2026-27 row pools exactly the played rookie rows the design "
+                "already carries, knowable in September like every other row of the "
+                "table, and the forward rows themselves cannot enter the pool (their "
+                "realized targets are NaN and their season is not before the target). "
+                "In-memory rather than persisted, mirroring the artifact rule "
+                "everywhere else: the pickle on disk stays exactly what "
+                "`make posteriors-production` wrote. This is the October-crunch bug the "
+                "rehearsal exists to find (`docs/preseason-plan.md`'s runbook asked for "
+                "exactly this dry run), and it surfaced with two months of slack.",
+        status="built",
+        reproduce="make simulate-production → data/features/sim_tensor_2026-27.npz",
+        source="docs/rookie-inclusive-tensors-plan.md",
+        reviewed="2026-08-23",
+        date="2026-08-22",
+        tags=("models", "simulations", "methodology"),
     ),
 )
