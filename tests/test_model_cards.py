@@ -256,15 +256,16 @@ def test_the_declared_draw_path_is_what_the_simulator_actually_reads():
     Availability class intro came to describe five heads as two alternates.
 
     Since §5f of `docs/rookie-rates-plan.md` the simulator also reads a second rate family,
-    and those eleven heads deliberately have no `HeadSpec` yet — §5h decides whether they
-    get a card. That deferral is checked rather than exempted: the deferred keys must be
-    EXACTLY the component heads' rookie twins, so a rookie head the simulator stops
-    reading, or a twelfth one it starts reading, fails here.
+    and §5h declared all eleven — so the equality is now over the WHOLE set rather than
+    over the set minus a deferral, which is the stronger claim. Whether a declared head
+    earns a card *page* is a separate question with its own assertion below: the uncarded
+    keys must be EXACTLY the component heads' rookie twins, so a rookie head the simulator
+    stops reading, or a twelfth one it starts reading, fails here.
     """
     keys = _sim_artifact_keys()
-    deferred = {key for key in keys if M.deferred(key)}
-    assert keys - deferred == M.draw_path_heads()
-    assert deferred == {f"{S.ROOKIE_PREFIX}{name}" for name in _component_keys()}
+    assert keys == M.draw_path_heads()
+    assert ({key for key in keys if M.uncarded(key)}
+            == {f"{S.ROOKIE_PREFIX}{name}" for name in _component_keys()})
 
 
 def test_the_availability_chain_is_a_count_head_and_a_layout_head():
@@ -678,8 +679,15 @@ def test_the_four_component_conversion_heads_declare_their_own_row_filter():
 # ── The predictive: which rows it is drawn over ───────────────────────────────
 
 def test_every_head_that_declares_a_unit_also_declares_what_its_predictive_is_of():
-    """A page cannot label an axis it has to guess at."""
-    assert set(M.RESPONSES) == set(M.SPECS)
+    """A page cannot label an axis it has to guess at.
+
+    Over the CARDED heads: a `ResponseSpec` is the label a card's own ECDF and scatter are
+    drawn on, and §5h's uncarded rookie family never reaches `predictive_tables`. Requiring
+    one there would be a declaration nothing reads, which is the kind of config the
+    conventions call out — and it would make the family's real declaration, its chain role,
+    look like a page that exists.
+    """
+    assert set(M.RESPONSES) == {h for h in M.SPECS if not M.uncarded(h)}
     assert all(r.label and r.observed for r in M.RESPONSES.values())
     assert all(r.check in ("mean", "p_one", "none") for r in M.RESPONSES.values())
 
@@ -1318,7 +1326,11 @@ def test_the_shipped_index_carries_each_head_s_role_in_the_shipped_chain():
         assert column in index.columns, column
         assert index[column].notna().all(), column
     assert set(index["chain_role"]) <= set(M.CHAIN_ROLES)
-    assert set(index[index["in_draw_path"]].index) == M.draw_path_heads()
+    # The declared draw path minus the heads §5h declared and deliberately did not card:
+    # the index is the CARD index, so a head with no page cannot appear in it, and asserting
+    # over the whole declared path here would fail for a reason that is not about the index.
+    assert (set(index[index["in_draw_path"]].index)
+            == {h for h in M.draw_path_heads() if not M.uncarded(h)})
     # Label and note both carry text, since either one empty renders as a dash on the page.
     assert (index["chain_role_label"].str.len() > 0).all()
     assert (index["chain_role_note"].str.len() > 0).all()

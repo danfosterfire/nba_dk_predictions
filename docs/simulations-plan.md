@@ -1311,6 +1311,18 @@ make strategy-sweep ✅ src/sim/strategy.py         the sweep: Gate C's error in
                                                    --field adp_need --need-weight 8 is the
                                                    robustness probe (make
                                                    strategy-sweep-need), suffixed artifacts
+                                                   --field-board unrestricted is the rookie
+                                                   floor (make rookie-floor), and
+                                                   --tensor-label reads a VARIANT tensor and
+                                                   suffixes every artifact with the same
+                                                   label (make strategy-sweep-rookie) —
+                                                   docs/rookie-rates-plan.md §5a, §5h
+
+make rookie-recovery ✅ src/sim/rookie_recovery.py what the two population changes give
+                                                   back of that floor, at the unit that
+                                                   resolves: the field's realized Round-1
+                                                   bar on a NESTED ladder of board masks
+                                                   -> outputs/predictions/rookie_recovery.csv
 
 make draft-room-prep ✅ src/sim/draft_room.py      the engine: the cached reference field,
                                                    the null check and Gate E
@@ -1573,13 +1585,24 @@ Both would have produced a completely plausible board.
 `data/features/sim_tensor_<season>.npz`: `dk_pts` (float32), `games_played` (uint8),
 `player_id`, `season_minutes`, `prior_minutes`, the round map for the twenty slots, and the
 provenance a consumer needs to refuse the wrong one — fit window, sim count, posterior draw
-count, seed, the composition variant, and the player-season sigma with its source.
+count, seed, the composition variant, and the player-season sigma with its source. Since
+`docs/rookie-rates-plan.md` §5h it also carries **`unit_family` and `lag_rung` per unit**,
+so a board can be audited by which rate family scored it without rebuilding two designs to
+classify it; a tensor written before that reads back as one family rather than raising.
 
-- **The tensor scores 386 of 539 rostered players.** The missing 153 have no component-head
-  design row (`>= 200 prior minutes`), and they are *kept in the minutes allocation* —
-  dropping them would hand their minutes to their teammates — but cannot be scored. Pricing
-  them is item 4's open question and belongs with the 2026 draft class the board build
-  already flagged.
+**`--tensor-label` writes a variant beside the shipped tensor rather than over it**, and it
+labels the cached field, Gate A and every sweep artifact with it. A labelled tensor labels
+Gate A **by default**: Gate A is one pooled table whose extremes `make docs-audit`
+re-derives and `merge_gate` merges by season, so a variant population writing into it would
+move audited figures by replacing rows with nothing looking wrong.
+
+- **The tensor scores 386 of 539 rostered players** — 471 and 467 since
+  `docs/rookie-rates-plan.md` §5f unioned the two rate families, though the tensors on disk
+  predate that and the labelled `_rookieinclusive` pair is where the wider population is
+  drawn. The missing rows have no component-head design row (`>= 200 prior minutes`), and
+  they are *kept in the minutes allocation* — dropping them would hand their minutes to
+  their teammates — but cannot be scored. Pricing them was item 4's open question and is
+  what that program closed.
 - **The season total is scored over DK's window, not the schedule.** Round 4 closes before
   the NBA season does, so the tensor carries 20 of ~24 weeks and both sides of the Gate A
   comparison are restricted to it. Games played is scored over the whole schedule, because

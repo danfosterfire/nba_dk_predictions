@@ -1303,7 +1303,7 @@ def field_cut_line(cfg: dict, room: draft_room.Room, season: str, seed: int = SE
 
 
 def rookie_floor_table(out_dir: Path, realized: pd.DataFrame,
-                       cut_lines: list[dict]) -> pd.DataFrame:
+                       cut_lines: list[dict], tensor_label: str = "") -> pd.DataFrame:
     """The floor: the asymmetric arm against the SHIPPED symmetric run, one row per
     (season, tournament, strategy).
 
@@ -1319,10 +1319,16 @@ def rookie_floor_table(out_dir: Path, realized: pd.DataFrame,
     denormalization `strategy_injection.csv` already uses — one artifact, one groupby,
     and no figure in the doc that needs two files joined by hand.
     """
-    path = out_dir / "strategy_realized.csv"
+    # The baseline has to be the symmetric arm on the SAME tensor. A labelled asymmetric
+    # run reading the unlabelled symmetric file would be comparing two populations and one
+    # board change at once, which is the vintage mistake this docstring warns about
+    # arriving through the back door.
+    path = out_dir / f"strategy_realized{tensor_label}.csv"
     if not path.exists():
         raise FileNotFoundError(f"the symmetric arm {path} is the baseline this floor is "
-                                f"measured against — run `make strategy-sweep` first")
+                                f"measured against — run `make strategy-sweep"
+                                + (f" TENSOR_LABEL={tensor_label}" if tensor_label else "")
+                                + "` first")
     key = ["season", "tournament", "strategy"]
     sym = pd.read_csv(path)[key + ["p_advance", "lift_vs_null", "roi", "n_entries"]]
     out = sym.merge(realized[key + ["p_advance", "lift_vs_null", "roi"]], on=key,
@@ -1444,6 +1450,8 @@ def pick_log_stake(cfg: dict, seasons: list[str] | None = None,
         print(f"\n── {season} ──")
         full = draft_room.load_room(cfg, season, n_sims=n_sims)
         room, _ = priceable_room(cfg, full, seed, n_field_drafts)
+        # The shipped tensor, deliberately: this prices a stake we actually entered, and a
+        # variant population is a different question from what those twenty entries cost.
         games_played = board_games_played(features_dir, season, room, n_sims)
         truth, _, _ = gate_c(cfg, season, room.dk_pts, games_played, room.scorable,
                              room.frame["player_id"].to_numpy(), room.frame,
@@ -1539,7 +1547,8 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
         seed: int | None = None, objective_arm: bool = True,
         n_field_drafts: int | None = None, field: str = "adp",
         need_weight: float | None = None,
-        field_board: str = "priceable") -> dict[str, Path]:
+        field_board: str = "priceable",
+        tensor_label: str = "") -> dict[str, Path]:
     """The sweep, on whichever board the opponent field is allowed to draft.
 
     `field_board="unrestricted"` is the rookie floor (`docs/rookie-rates-plan.md` §5a):
@@ -1590,6 +1599,11 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
                                    need_weight=float(need_weight))
     if asymmetric:
         suffix += "_rookiefloor"
+    # A tensor drawn over a different unit population is a different measurement for the
+    # same reason a different field is, so it suffixes the artifacts the same way. Without
+    # this a rookie-inclusive replay would overwrite the audited `strategy_*.csv` set with
+    # numbers no `make` target in the shipped chain reproduces.
+    suffix += tensor_label
     cfg_sim = cfg.get("sim", {})
     cfg_strategy = cfg_sim.get("strategy", {})
     n_sims = int(n_sims or cfg_strategy.get("n_sims", N_SIMS_SWEEP))
@@ -1626,7 +1640,8 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
     pooled_any: dict = {}
     for season in seasons:
         print(f"\n── {season} ──")
-        full = draft_room.load_room(cfg, season, n_sims=n_sims)
+        full = draft_room.load_room(cfg, season, n_sims=n_sims,
+                                    tensor_label=tensor_label)
         room, dropped = priceable_room(cfg, full, seed, n_field_drafts,
                                        restrict=not asymmetric)
         if asymmetric:
@@ -1649,7 +1664,8 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
                   f"{dropped['field_entries_with_unpriced'] * 100:.0f}% of its entries "
                   f"hold at least one — a handicap on the field, not model edge "
                   f"(see `priceable_room`)")
-        games_played = board_games_played(features_dir, season, room, n_sims)
+        games_played = board_games_played(features_dir, season, room, n_sims,
+                                          tensor_label)
         truth_sims = truth_sim_index(n_sims)
 
         truth, gate, record = gate_c(cfg, season, room.dk_pts, games_played,
@@ -1729,7 +1745,7 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
     _report_gate_d(gate_d_table)
     _report_realized(realized, shipped)
 
-    floor = (rookie_floor_table(out_dir, realized, cut_lines) if asymmetric
+    floor = (rookie_floor_table(out_dir, realized, cut_lines, tensor_label) if asymmetric
              else None)
     if floor is not None:
         _report_rookie_floor(floor)
@@ -1751,7 +1767,7 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
         # Unsuffixed: the floor table IS the asymmetric measurement, so a `_rookiefloor`
         # tag on it would name the arm twice, and there is no symmetric twin it could
         # collide with.
-        dest = out_dir / "strategy_rookie_floor.csv"
+        dest = out_dir / f"strategy_rookie_floor{tensor_label}.csv"
         floor.to_csv(dest, index=False)
         print(f"Saved {len(floor):,} rookie floor rows → {dest}")
         paths["strategy_rookie_floor"] = dest
@@ -1792,14 +1808,15 @@ def _report_rookie_floor(floor: pd.DataFrame) -> None:
 
 
 def board_games_played(features_dir: Path, season: str, room: draft_room.Room,
-                       n_sims: int) -> np.ndarray:
+                       n_sims: int, tensor_label: str = "") -> np.ndarray:
     """The games-played twin, lined up with the room's board rather than the tensor's.
 
     `draft.tensor_scores` pads the tensor out to the board and marks the rows it could not
     price; the twin has to travel the same way or Gate C's availability row would be
     measured on a different player set from its dk_pts rows.
     """
-    with np.load(features_dir / f"sim_tensor_{season}.npz", allow_pickle=False) as z:
+    path = features_dir / f"sim_tensor_{season}{tensor_label}.npz"
+    with np.load(path, allow_pickle=False) as z:
         gp, player_id = z["games_played"], z["player_id"]
     rows = {int(p): i for i, p in enumerate(player_id)}
     index = room.frame["player_id"].map(rows)
@@ -1973,6 +1990,9 @@ if __name__ == "__main__":
                         help="stipulate the adp_need field's lean instead of reading "
                              "the fitted (zero) one — a robustness probe, suffixed "
                              "into the artifact names")
+    parser.add_argument("--tensor-label", default="",
+                        help="read the LABELLED tensor variant and suffix every artifact "
+                             "with the same label (docs/rookie-rates-plan.md §5h)")
     parser.add_argument("--field-board", choices=list(FIELD_BOARDS),
                         default="priceable",
                         help="which board the OPPONENT field drafts from. "
@@ -1993,4 +2013,4 @@ if __name__ == "__main__":
         run(cfg, seasons=args.season, n_sims=args.n_sims, seed=args.seed,
             objective_arm=not args.no_objective_arm, n_field_drafts=args.field_drafts,
             field=args.field, need_weight=args.need_weight,
-            field_board=args.field_board)
+            field_board=args.field_board, tensor_label=args.tensor_label)

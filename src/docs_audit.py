@@ -352,6 +352,22 @@ SEASON_TOTAL_ROOKIE_LADDER = "outputs/predictions/season_total_rookie_lagladder.
 AVAIL_LAG = "outputs/predictions/availability_lag.csv"
 LADDER_BOARD = "outputs/predictions/availability_ladder_board.csv"
 SWEEP_FLOOR = "outputs/predictions/strategy_sweep_rookiefloor.csv"
+# §7i — how much of that floor the ladder and the rookie head give back, on the
+# rookie-inclusive tensor, 2026-08-22.
+ROOKIE_RECOVERY = "outputs/predictions/rookie_recovery.csv"
+# The same session's Gate A, on the LABELLED tensor. A second artifact rather than a
+# replacement: the shipped table is the one the bars were set against and the labelled one
+# describes a wider population, so both have to be readable side by side.
+GATE_A_ROOKIE = "outputs/predictions/sim_season_gate_a_rookieinclusive.csv"
+# §7i's contest half — the shipped sweep on the labelled tensor, and the shipped arm's own
+# baseline beside it. Both sides are claimed, never the delta alone.
+STRATEGY_REALIZED = "outputs/predictions/strategy_realized.csv"
+STRATEGY_GATE_C = "outputs/predictions/strategy_gate_c.csv"
+SWEEP_ROOKIE_REALIZED = "outputs/predictions/strategy_realized_rookieinclusive.csv"
+SWEEP_ROOKIE_SIM = "outputs/predictions/strategy_sweep_rookieinclusive.csv"
+SWEEP_ROOKIE_GATE_C = "outputs/predictions/strategy_gate_c_rookieinclusive.csv"
+SWEEP_ROOKIE_INJECTION = "outputs/predictions/strategy_injection_rookieinclusive.csv"
+SWEEP_ROOKIE_SHIPPED = "outputs/predictions/strategy_shipped_rookieinclusive.csv"
 
 
 # ── Claims ────────────────────────────────────────────────────────────────────
@@ -9405,7 +9421,7 @@ def _build() -> tuple[Claim, ...]:
                  + _final_evaluation() + _rookie_floor() + _lag_recovery()
                  + _lag_ladder() + _ladder_board() + _rookie_rates() + _rookie_heads()
                  + _season_total_rookie() + _rookie_persistence()
-                 + _rookie_forward())
+                 + _rookie_forward() + _rookie_recovery() + _rookie_replay())
 
 
 def _rookie_forward() -> list[Claim]:
@@ -9858,6 +9874,318 @@ def _final_evaluation() -> list[Claim]:
 #: The three ways the availability head's shipped likelihood is expressed — the point MLE
 #: and the two Stan readings. Their spread is the port check, not a model comparison.
 _PORTS = ("mixture_mle", "stan_plug_in", "stan_posterior")
+
+
+def _rookie_replay() -> list[Claim]:
+    """`docs/rookie-rates-plan.md` §7i's contest half — the sweep replayed on the labelled
+    tensor.
+
+    **The Gate C block is claimed as a DISAGREEMENT rather than as an agreement**, which is
+    the opposite of what `_rookie_floor` claims about the same check, and the difference is
+    the whole reason §7i's headline lives at the cut line instead. §7a's licence for reading
+    an unlabelled baseline was that Gate C reproduced to 0.000e+00; here the tensor moved
+    under it, so the figure worth pinning is how far apart the two worlds are. A claim that
+    quietly started reproducing would mean the labelled run had stopped reading its own
+    tensor.
+
+    **Both arms of every lift pair are claimed.** §7a's failure mode applies unchanged: a
+    delta quoted without the two readings it is a difference of survives both drifting
+    together, and this one is not even paired.
+
+    The selection is prose rather than a figure — `lineup_value_blend30` on all four
+    multi-entry structures — so what is claimed here is the simulated lift that moved under
+    it, which is the number a reader would use to check the selection did not merely
+    survive by a hair.
+    """
+    C: list[Claim] = []
+    MULTI = ("15k_and_one", "20k_spin_move", "50k_four_pt_play", "600k_shootaround")
+    SHIP = "lineup_value_blend30"
+
+    def add(quoted: str, actual, label: str, artifact: str, **kw) -> None:
+        C.append(_c(quoted, artifact, actual, label, doc=ROOKIE, **kw))
+
+    def paired(sim: bool = False) -> pd.DataFrame | None:
+        """The shipped and labelled arms joined on (season, tournament, strategy)."""
+        a = table(STRATEGY_SWEEP if sim else STRATEGY_REALIZED)
+        b = table(SWEEP_ROOKIE_SIM if sim else SWEEP_ROOKIE_REALIZED)
+        if a is None or b is None:
+            return None
+        key = ["season", "tournament", "strategy"]
+        out = a[key + ["lift_vs_null"]].merge(b[key + ["lift_vs_null"]], on=key,
+                                              suffixes=("_s", "_r"))
+        out["d"] = out["lift_vs_null_r"] - out["lift_vs_null_s"]
+        return out
+
+    def shipped_arm(how: str, sim: bool = False) -> float:
+        m = paired(sim)
+        if m is None:
+            return float("nan")
+        d = m.loc[(m["strategy"] == SHIP) & m["tournament"].isin(MULTI), "d"]
+        return {"mean": d.mean(), "min": d.min(), "max": d.max(),
+                "n_negative": float((d < 0).sum())}[how]
+
+    def per_arm(how: str, sim: bool = False) -> float:
+        m = paired(sim)
+        if m is None:
+            return float("nan")
+        g = m[m["tournament"].isin(MULTI)].groupby("strategy")["d"].mean()
+        return {"n_negative": float((g < 0).sum()), "n_arms": float(len(g)),
+                "median": float(g.median()), "min": float(g.min()),
+                "max": float(g.max())}[how]
+
+    def single(season_: str) -> float:
+        m = paired()
+        if m is None:
+            return float("nan")
+        hit = m[(m["strategy"] == SHIP) & (m["tournament"] == "88k_alley_oop")
+                & (m["season"] == season_)]
+        return float(hit["d"].iloc[0]) if len(hit) else float("nan")
+
+    # ── Gate C, claimed as the disagreement it is ────────────────────────────
+    def gate_c_gap() -> float:
+        a, b = table(STRATEGY_GATE_C), table(SWEEP_ROOKIE_GATE_C)
+        if a is None or b is None:
+            return float("nan")
+        m = a.merge(b, on=["season", "check"], suffixes=("_s", "_r"))
+        return float((m["uninjected_r"] - m["uninjected_s"]).abs().max())
+
+    add("14.57", gate_c_gap,
+        "how far the two uninjected worlds are apart", SWEEP_ROOKIE_GATE_C)
+    for season_, rho_s, rho_r, g_s, g_r in (("2022-23", "0.3582", "0.3443",
+                                             "1.1337", "1.1875"),
+                                            ("2023-24", "0.3172", "0.2825",
+                                             "1.1405", "1.1811")):
+        add(rho_s, lambda x=season_: cell(STRATEGY_INJECTION, "rho", season=x),
+            f"the shipped arm's solved rotation, {season_}", STRATEGY_INJECTION)
+        add(rho_r, lambda x=season_: cell(SWEEP_ROOKIE_INJECTION, "rho", season=x),
+            f"the labelled arm's solved rotation, {season_}", SWEEP_ROOKIE_INJECTION)
+        add(g_s, lambda x=season_: cell(STRATEGY_INJECTION, "scale_g", season=x),
+            f"the shipped arm's solved scale, {season_}", STRATEGY_INJECTION)
+        add(g_r, lambda x=season_: cell(SWEEP_ROOKIE_INJECTION, "scale_g", season=x),
+            f"the labelled arm's solved scale, {season_}", SWEEP_ROOKIE_INJECTION)
+    add("400.4586",
+        lambda: cell(SWEEP_ROOKIE_INJECTION, "achieved_mae", season="2022-23"),
+        "the injection still hits its target on the labelled arm", SWEEP_ROOKIE_INJECTION)
+
+    # ── the realized replay ──────────────────────────────────────────────────
+    add("+0.0160", lambda: shipped_arm("mean"),
+        "shipped-arm realized lift delta, four multi-entry structures x two seasons",
+        SWEEP_ROOKIE_REALIZED)
+    add("−0.0682", lambda: shipped_arm("min"),
+        "the shipped arm's worst realized reading", SWEEP_ROOKIE_REALIZED)
+    add("+0.1839", lambda: shipped_arm("max"),
+        "the shipped arm's best realized reading", SWEEP_ROOKIE_REALIZED)
+    add("3", lambda: shipped_arm("n_negative"),
+        "shipped-arm readings that lose lift", SWEEP_ROOKIE_REALIZED)
+    add("17", lambda: per_arm("n_negative"),
+        "arms losing realized lift on the labelled tensor", SWEEP_ROOKIE_REALIZED)
+    add("−0.0683", lambda: per_arm("median"),
+        "median arm's realized lift delta", SWEEP_ROOKIE_REALIZED)
+    add("−0.3059", lambda: per_arm("min"),
+        "the worst arm's realized lift delta", SWEEP_ROOKIE_REALIZED)
+    add("+0.2382", lambda: per_arm("max"),
+        "the best arm's realized lift delta", SWEEP_ROOKIE_REALIZED)
+    add("−0.0396", lambda: single("2022-23"),
+        "88k single entry, realized lift delta, 2022-23", SWEEP_ROOKIE_REALIZED)
+    add("+0.8823", lambda: single("2023-24"),
+        "88k single entry, realized lift delta, 2023-24", SWEEP_ROOKIE_REALIZED)
+
+    # ── the simulated arm, which is not the readout ──────────────────────────
+    add("+0.0329", lambda: shipped_arm("mean", sim=True),
+        "shipped-arm simulated lift delta", SWEEP_ROOKIE_SIM)
+    add("0.2369", lambda: cell(STRATEGY_SHIPPED, "sim_lift",
+                               tournament="600k_shootaround"),
+        "the shipped arm's simulated lift, 600k, shipped tensor", STRATEGY_SHIPPED)
+    add("0.2645", lambda: cell(SWEEP_ROOKIE_SHIPPED, "sim_lift",
+                               tournament="600k_shootaround"),
+        "the shipped arm's simulated lift, 600k, labelled tensor", SWEEP_ROOKIE_SHIPPED)
+
+    # ── what the plug-in actually contains ───────────────────────────────────
+    # Claimed against the floor artifact rather than the sweep's, because the block is about
+    # the estimator and not about the replay. Every arm of every comparison is claimed: the
+    # reading is that ONE arm is unusable alone and the blend is not, so a table quoting only
+    # the winner would survive the losing arm drifting into looking fine.
+    def floor_arm(head: str, arm: str, metric: str) -> float:
+        return cell(ROOKIE_RATES, "value", measurement="floor", split="validation",
+                    population="draftable", head=head, arm=arm, metric=metric)
+
+    def arm_wins(better: str, worse: str, metric: str, lower_is_better: bool) -> float:
+        f = table(ROOKIE_RATES)
+        if f is None:
+            return float("nan")
+        keep = f[(f["measurement"] == "floor") & (f["split"] == "validation")
+                 & (f["population"] == "draftable") & (f["metric"] == metric)]
+        p_ = keep.pivot_table(index="head", columns="arm", values="value")
+        if better not in p_ or worse not in p_:
+            return float("nan")
+        return float((p_[better] < p_[worse]).sum() if lower_is_better
+                     else (p_[better] > p_[worse]).sum())
+
+    add("160", lambda: cell(ROOKIE_RATES, "value", measurement="constants",
+                            head="reb", metric="k_minutes"),
+        "the count heads' volume shrink, in preseason minutes", ROOKIE_RATES)
+    add("70.4", lambda: cell(ROOKIE_RATES, "value", measurement="population",
+                             split="validation", population="draftable",
+                             metric="median_min_pre"),
+        "median preseason minutes, draftable rookies", ROOKIE_RATES)
+    add("0.3057", lambda: (cell(ROOKIE_RATES, "value", measurement="population",
+                                split="validation", population="draftable",
+                                metric="median_min_pre")
+                           / (cell(ROOKIE_RATES, "value", measurement="population",
+                                   split="validation", population="draftable",
+                                   metric="median_min_pre")
+                              + cell(ROOKIE_RATES, "value", measurement="constants",
+                                     head="reb", metric="k_minutes"))),
+        "the median rookie's preseason weight in the count plug-in", ROOKIE_RATES)
+    add("99.1%", lambda: cell(ROOKIE_RATES, "value", measurement="population",
+                              split="validation", population="draftable",
+                              metric="preseason_coverage"),
+        "preseason coverage, draftable rookies", ROOKIE_RATES)
+    for head, arm, metric, quoted in (("fg3a|fga", "preseason", "r2", "0.6109"),
+                                      ("fg3a|fga", "draft_bucket", "r2", "−0.5989"),
+                                      ("blk", "preseason", "r2", "0.7019"),
+                                      ("blk", "draft_bucket", "r2", "0.2966"),
+                                      ("stl", "preseason", "r2", "−0.5164"),
+                                      ("stl", "draft_bucket", "r2", "0.7871"),
+                                      ("fga", "preseason", "crps", "207.03"),
+                                      ("fga", "draft_bucket", "crps", "37.73")):
+        add(quoted, lambda h=head, a=arm, m=metric: floor_arm(h, a, m),
+            f"{head} {arm} {metric}, the floor's arms scored apart", ROOKIE_RATES)
+    add("6", lambda: arm_wins("preseason", "draft_bucket", "r2", False),
+        "heads where raw preseason beats the bucket on R2", ROOKIE_RATES)
+    add("8", lambda: arm_wins("shrunk", "preseason", "crps", True),
+        "heads where the blend beats raw preseason on CRPS", ROOKIE_RATES)
+    add("11", lambda: arm_wins("shrunk", "draft_bucket", "crps", True),
+        "heads where the blend beats the bucket on CRPS", ROOKIE_RATES)
+
+    # ── the board the sweep actually drafted ─────────────────────────────────
+    for season_, gained in (("2022-23", "64"), ("2023-24", "58")):
+        add(gained, lambda x=season_: (cell(SWEEP_ROOKIE_INJECTION, "n_board", season=x)
+                                       - cell(STRATEGY_INJECTION, "n_board", season=x)),
+            f"board rows the sweep gains, {season_}", SWEEP_ROOKIE_INJECTION)
+    return C
+
+
+def _rookie_recovery() -> list[Claim]:
+    """`docs/rookie-rates-plan.md` §7i — the floor re-read against a ladder of boards.
+
+    **Both ends of every rung are claimed, never the increment alone**, for the reason
+    `_rookie_floor` states: §7i's whole shape is a bar rising along a nested ladder, and an
+    increment quoted without the two cut lines it is a difference of would survive both ends
+    drifting together. The board and ADP-priced counts are claimed for the same reason one
+    level down — reading 3 is that the split lands on §7c's admitted-rung census out of a
+    separate code path, and that claim is only worth anything while the counts reproduce.
+
+    The rung-0 cut lines are claimed against `rookie_recovery.csv` even though the identical
+    figures are already claimed against `strategy_rookie_floor.csv` in `_rookie_floor`. That
+    duplication is the point: §7i's licence for the whole ladder is that two modules agree on
+    rung 0, so a claim that silently stopped checking one of them would leave the licence
+    resting on nothing.
+
+    The Gate A block is claimed against the LABELLED artifact and paired with the shipped
+    one, because the doc's own reading is that the improvement is a population change — a
+    figure quoted from only one of the two tables is the misreading the block exists to
+    prevent.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, actual, label: str, artifact: str = ROOKIE_RECOVERY,
+            **kw) -> None:
+        C.append(_c(quoted, artifact, actual, label, doc=ROOKIE, **kw))
+
+    def rung(season_: str, rung_: str, column: str) -> float:
+        return cell(ROOKIE_RECOVERY, column, season=season_, rung=rung_)
+
+    def added(season_: str, rung_: str, previous: str, column: str) -> float:
+        return rung(season_, rung_, column) - rung(season_, previous, column)
+
+    LADDER = (("2022-23", (("veteran", "347", "180", "15,505.8", "173.1"),
+                           ("ladder", "357", "187", "15,583.3", "95.5"),
+                           ("rookie", "411", "196", "15,653.5", "25.4"),
+                           ("unrestricted", "448", "196", "15,678.9", "0.0"))),
+              ("2023-24", (("veteran", "359", "207", "15,393.5", "111.9"),
+                           ("ladder", "363", "210", "15,409.3", "96.1"),
+                           ("rookie", "417", "225", "15,534.4", "−29.0"),
+                           ("unrestricted", "464", "228", "15,505.4", "0.0"))))
+
+    for season_, ladder in LADDER:
+        for rung_, board, priced, cut, floor in ladder:
+            add(board, lambda s=season_, r=rung_: rung(s, r, "n_board"),
+                f"board rows at rung {rung_}, {season_}")
+            add(priced, lambda s=season_, r=rung_: rung(s, r, "n_priced"),
+                f"ADP-priced board rows at rung {rung_}, {season_}")
+            add(cut, lambda s=season_, r=rung_: rung(s, r, "field_round1_cut"),
+                f"the field's realized Round-1 bar at rung {rung_}, {season_}")
+            add(floor, lambda s=season_, r=rung_: rung(s, r, "floor_vs_unrestricted"),
+                f"floor left at rung {rung_}, {season_}")
+
+    # The increments, and the two totals the prose states in dk_pts rather than as a rung.
+    for season_, ladder_gain, rookie_gain in (("2022-23", "+77.5", "+70.1"),
+                                              ("2023-24", "+15.8", "+125.1")):
+        add(ladder_gain,
+            lambda s=season_: added(s, "ladder", "veteran", "field_round1_cut"),
+            f"what the lag ladder gives back, {season_}")
+        add(rookie_gain,
+            lambda s=season_: added(s, "rookie", "ladder", "field_round1_cut"),
+            f"what the rookie head gives back, {season_}")
+    add("147.7", lambda: added("2022-23", "rookie", "veteran", "field_round1_cut"),
+        "what both changes give back together, 2022-23")
+    # The ratio, not the percentage: a `%`-quoted claim is scaled by the auditor itself.
+    add("85%", lambda: (added("2022-23", "rookie", "veteran", "field_round1_cut")
+                        / rung("2022-23", "veteran", "floor_vs_unrestricted")),
+        "share of the 2022-23 floor the two changes give back")
+    add("29.0", lambda: -rung("2023-24", "rookie", "floor_vs_unrestricted"),
+        "how far past zero the 2023-24 residual goes")
+    add("47", lambda: (rung("2023-24", "unrestricted", "n_board")
+                       - rung("2023-24", "rookie", "n_board")),
+        "board rows still outside our seat's board, 2023-24")
+    add("1,200", lambda: rung("2022-23", "veteran", "n_field_entries"),
+        "field entries behind each cut line")
+
+    # Reading 3's row counts, which are what tie the split to §7c's admitted-rung census.
+    for season_, ladder_rows, ladder_priced, rookie_rows, rookie_priced in (
+            ("2022-23", "10", "7", "54", "9"), ("2023-24", "4", "3", "54", "15")):
+        add(ladder_rows, lambda s=season_: added(s, "ladder", "veteran", "n_board"),
+            f"board rows the ladder adds, {season_}")
+        add(ladder_priced, lambda s=season_: added(s, "ladder", "veteran", "n_priced"),
+            f"ADP-priced rows the ladder adds, {season_}")
+        add(rookie_rows, lambda s=season_: added(s, "rookie", "ladder", "n_board"),
+            f"board rows the rookie head adds, {season_}")
+        add(rookie_priced, lambda s=season_: added(s, "rookie", "ladder", "n_priced"),
+            f"ADP-priced rows the rookie head adds, {season_}")
+
+    # ── the incidental Gate A reading, both tables ────────────────────────────
+    def gate(artifact: str, season_: str, column: str, check: str = "season_total_dk"):
+        return cell(artifact, column, season=season_, check=check)
+
+    for season_, ship_mae, rk_mae, ship_crps, rk_crps, ship_r2, rk_r2 in (
+            ("2022-23", "360.80", "345.43", "250.68", "238.67", "0.7116", "0.7323"),
+            ("2023-24", "373.63", "362.11", "256.92", "250.35", "0.7106", "0.7209")):
+        add(ship_mae, lambda s=season_: gate(SIM_GATE_A, s, "mae"),
+            f"shipped Gate A season-total MAE, {season_}", artifact=SIM_GATE_A)
+        add(rk_mae, lambda s=season_: gate(GATE_A_ROOKIE, s, "mae"),
+            f"rookie-inclusive Gate A season-total MAE, {season_}",
+            artifact=GATE_A_ROOKIE)
+        add(ship_crps, lambda s=season_: gate(SIM_GATE_A, s, "crps"),
+            f"shipped Gate A season-total CRPS, {season_}", artifact=SIM_GATE_A)
+        add(rk_crps, lambda s=season_: gate(GATE_A_ROOKIE, s, "crps"),
+            f"rookie-inclusive Gate A season-total CRPS, {season_}",
+            artifact=GATE_A_ROOKIE)
+        add(ship_r2, lambda s=season_: gate(SIM_GATE_A, s, "r2"),
+            f"shipped Gate A season-total R2, {season_}", artifact=SIM_GATE_A)
+        add(rk_r2, lambda s=season_: gate(GATE_A_ROOKIE, s, "r2"),
+            f"rookie-inclusive Gate A season-total R2, {season_}",
+            artifact=GATE_A_ROOKIE)
+    for season_, ship_n, rk_n in (("2022-23", "386", "471"), ("2023-24", "387", "467")):
+        add(ship_n, lambda s=season_: gate(SIM_GATE_A, s, "n"),
+            f"shipped Gate A units, {season_}", artifact=SIM_GATE_A)
+        add(rk_n, lambda s=season_: gate(GATE_A_ROOKIE, s, "n"),
+            f"rookie-inclusive Gate A units, {season_}", artifact=GATE_A_ROOKIE)
+    for season_, gained in (("2022-23", "85"), ("2023-24", "80")):
+        add(gained, lambda s=season_: (gate(GATE_A_ROOKIE, s, "n")
+                                       - gate(SIM_GATE_A, s, "n")),
+            f"units the union adds, {season_}", artifact=GATE_A_ROOKIE)
+    return C
 
 
 def _rookie_floor() -> list[Claim]:

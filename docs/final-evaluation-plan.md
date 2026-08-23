@@ -768,6 +768,32 @@ draft slot, years-since-draft and age — which is what a August board can hones
   history, so those days do not come back. It does not touch anything measured here — no
   shipped head reads it — but it is the capture program with the least slack and the check
   now surfaces it.
+- **🔴 Every figure above measured the ROOKIE-LESS workflow, and the workflow moved the
+  next day.** This round ran 2026-08-21. On 2026-08-22 `docs/rookie-rates-plan.md` Sessions
+  2-7 and `docs/availability-window-plan.md` §16 turned on
+  `stan.components.lag_ladder = [returnee_lag2]`, `stan.availability.lag_ladder` behind
+  `availability.rung_zero`, and the `rookie-components` posterior group, and
+  `sim/season.build_context` now scores the **union** of two rate families. What that does
+  and does not do to the figures above splits cleanly, and both halves matter:
+  - **The head coefficients are untouched.** Every ladder rung is design-time imputation
+    into the existing lag-1 columns and the rookie family is a disjoint population, so no
+    fitting frame moved and nothing above was refitted. `make production-check` is green on
+    31 of 31 heads at `full`, on a specification comparison widened to ten columns.
+  - **The population every figure describes is narrower than the one that now ships.** §3's
+    held-out CRPS and season-total figures are over rung-0 veterans; the deployed chain also
+    scores lag-recovered returnees and true rookies, whose rates come from heads this round
+    never scored. §4d's chain reading is the sharper case: **−0.0725** on the 600k structure
+    was drafted off a board with no rookie on it, and the 2026-27 production board carries
+    **116** of them, 13 of those ADP-priced. The held-out contest reading therefore does not
+    transfer to the board that will actually be drafted — it is a reading of a workflow that
+    no longer exists, and there is no second unlock to re-take it with.
+  - **What does carry** is §6h's acceptance, because it is a mechanics check rather than a
+    value one: the rung-0 veterans' forward-versus-retrospective ordering was re-measured
+    after both population changes and is still inside seed noise (Spearman **0.9986** against
+    a **0.9988** floor, `docs/rookie-rates-plan.md` §7h).
+  - Where the two changes are priced instead is `docs/rookie-rates-plan.md` §7i, on the
+    validation seasons, at the unit that resolves — and the split's own rule below is why
+    that is the only place they could be priced.
 - **The split is spent.** Nothing above may be used to change a modelling decision. If a
   figure here motivates a change, the change is un-priced: there is no second held-out
   reading behind it, and the honest thing to record is that the estimate no longer applies

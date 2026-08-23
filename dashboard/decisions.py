@@ -3518,12 +3518,23 @@ REGISTRY: tuple[Decision, ...] = (
                 "where the validation replay left it — the held-out season bought no "
                 "confirmation, and the plain-ADP ranking beat the shipped strategy on "
                 "four of five structures in the world that happened. The test split is "
-                "spent: nothing here may pick a strategy.",
+                "spent: nothing here may pick a strategy. **Re-read 2026-08-22**: this "
+                "reading was taken on a board with no rookie on it, and the 2026-27 "
+                "production board carries 116 "
+                "([[a-forward-board-carries-true-rookies-and-lag-recovered-returnees]]), "
+                "so it does not transfer to the board that will actually be drafted and "
+                "there is no second unlock to re-take it with. Where the two population "
+                "changes ARE priced is "
+                "[[the-rookie-floor-is-closed-at-the-unit-that-resolves]], on validation.",
         status="measured",
+        # The chain's own two artifacts beside the head table, which is what a reader has to
+        # open to re-derive the figures above — `final_evaluation.csv` carries the heads.
         reproduce="python -m src.final_evaluation chain → "
-                  "outputs/predictions/final_evaluation.csv",
+                  "outputs/predictions/final_evaluation.csv, "
+                  "outputs/predictions/final_evaluation_chain.csv, "
+                  "outputs/predictions/sim_season_gate_a_final.csv",
         source="docs/final-evaluation-plan.md",
-        reviewed="2026-08-21",
+        reviewed="2026-08-22",
         date="2026-08-21",
         tags=("drafting", "discipline"),
     ),
@@ -11229,5 +11240,156 @@ REGISTRY: tuple[Decision, ...] = (
         reviewed="2026-08-22",
         date="2026-08-22",
         tags=("head", "availability", "simulations", "methodology"),
+    ),
+    Decision(
+        id="the-rookie-floor-is-closed-at-the-unit-that-resolves",
+        topic="simulations",
+        claim="**The half of the rookie floor that resolves is closed, and on one season "
+              "it is past closed.** The Round-1 bar the opponent field sets when it may "
+              "draft players our seat cannot price was **+173.1** dk_pts on 2022-23 and "
+              "**+111.9** on 2023-24; on the rookie-inclusive board it is **+25.4** and "
+              "**−29.0**. The lag ladder gives back **+77.5** and **+15.8**, the rookie "
+              "head **+70.1** and **+125.1**. On 2022-23 every ADP-priced row the field "
+              "can reach is now one our seat can rank (196 of 196; 2023-24 reaches 225 of "
+              "228).",
+        because="Session 1 priced rookie-lessness in two halves and only one resolved "
+                "([[the-rookie-floor-is-not-zero-and-only-half-of-it-resolves]]): the cut "
+                "line averages 1,200 realized field entries, while the lift delta "
+                "straddled zero at two seasons. So the recovery is measured on the same "
+                "half, as a NESTED LADDER of board masks on the rookie-inclusive tensor — "
+                "rung-0 veterans, plus the admitted `returnee_lag2` rung, plus the "
+                "true-rookie family, against the whole rostered board — which makes each "
+                "change's share attributable rather than inferred. **The licence is that "
+                "rung 0 reproduces `make rookie-floor`'s own +173.1 / +111.9 to the "
+                "digit**, out of a different module on a different tensor, which is the "
+                "direct analogue of §7a's own Gate C reproduction. Three more 53-minute "
+                "sweeps would have bought three more readings of the half that already "
+                "refused to resolve. **The 2023-24 residual is negative and that is a "
+                "result rather than noise**: the 47 rows still outside our board realize "
+                "less than what the field would otherwise take, so the remaining hole is a "
+                "handicap on the field and not on us — the floor was never monotone in "
+                "board width and this is the first measurement that shows it. The split "
+                "lands on §7c's admitted-rung census to the row (the ladder adds 10 and 4 "
+                "board rows, 7 and 3 ADP-priced) out of a separate code path, and what the "
+                "rows are WORTH does not follow their count.",
+        status="measured",
+        reproduce="make rookie-recovery → outputs/predictions/rookie_recovery.csv",
+        source="docs/rookie-rates-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("methodology", "strategy", "simulations"),
+    ),
+    Decision(
+        id="a-variant-unit-population-writes-a-labelled-tensor-not-over-the-shipped-one",
+        topic="simulations",
+        claim="**`--tensor-label` suffixes the tensor, the draft room's cached field, "
+              "Gate A and every sweep artifact**, so a run that draws the same seasons "
+              "over a different unit population lands beside the shipped artifacts rather "
+              "than over them. A labelled tensor labels Gate A **by default**.",
+        because="§5f wired two rate families into `build_context` and deliberately left "
+                "the tensors on disk alone "
+                "([[the-simulators-scorable-units-are-the-union-of-two-rate-families]]), "
+                "because every audited downstream artifact was drawn on the rookie-less "
+                "ones — so §5h's replay needed a second tensor rather than a replacement. "
+                "This is `--field`'s own discipline one layer down. **The Gate A default "
+                "is the guard rather than a convenience**: Gate A is one pooled table "
+                "whose extremes `make docs-audit` re-derives, `merge_gate` merges BY "
+                "SEASON, and a variant population writing into it would move audited "
+                "figures by replacing that season's rows with nothing looking wrong. The "
+                "cached field carries the label for the same reason the tensor does — a "
+                "field is a set of rosters drafted off a board, so reusing a rookie-less "
+                "field would price the rookie-inclusive board against the wrong "
+                "population. `rookie_floor_table` reads `strategy_realized{label}.csv` so "
+                "a labelled asymmetric arm cannot be compared against an unlabelled "
+                "baseline, which is `docs/availability-window-plan.md` §7l's "
+                "unknown-vintage lesson arriving through the back door.",
+        status="built",
+        reproduce="python -m src.sim.season --tensor-label _rookieinclusive → "
+                  "data/features/sim_tensor_2022-23_rookieinclusive.npz, "
+                  "outputs/predictions/sim_season_gate_a_rookieinclusive.csv",
+        source="docs/rookie-rates-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("methodology", "simulations", "provenance"),
+    ),
+    Decision(
+        id="the-rookie-heads-are-declared-in-the-chain-and-deliberately-not-carded",
+        topic="problem",
+        claim="**The eleven `rookie-components` heads declare `chain_role` "
+              "`box_score_component` and `in_draw_path` true, and get no card page.** The "
+              "declared draw path is now **27** heads; `make model-cards` still cards "
+              "**20** and prints the eleven it does not, by name.",
+        because="§5f left both questions open and §5h split them. **Declared**, because "
+                "that column exists to answer *does this ship?* and the simulator reads "
+                "all eleven for every true-rookie unit on a board — 74 rows of a 2023-24 "
+                "board and 116 of the 2026-27 production one "
+                "([[a-forward-board-carries-true-rookies-and-lag-recovered-returnees]]). "
+                "The population differs and, for ten of the eleven, the artifact is a "
+                "deterministic plug-in rather than a posterior; neither of those is a "
+                "chain role. **Not carded**, because of what a page would hold: ten ship "
+                "the no-fit floor at `beta = 1`, `alpha = 0` with one synthetic feature "
+                "carrying the FLOOR'S OWN PREDICTION on the head's own link — the "
+                "volume-shrunk preseason blend `w * preseason_per36 + (1 - w) * bucket` "
+                "at `w = min_pre / (min_pre + k)`, NOT the draft bucket, which on its own "
+                "is a measured anti-model — so a coefficient panel renders a 1.0 on a "
+                "column that is the answer rather than a predictor, eleven times over. "
+                "What a reader wants is "
+                "`rookie_rate_floors.csv` and `rookie_rate_metrics.csv`, both reachable "
+                "from this log, which is the project's own convention for a family with no "
+                "tab. `rookie_reb` is the one head a page would fully describe and does "
+                "not get one either, because a lone card in a family of eleven reads as "
+                "*the* rookie head rather than as the one arm that beat its floor. **The "
+                "anchor test got stronger**: it used to assert set equality between the "
+                "simulator's artifact keys and the declared path AFTER subtracting the "
+                "rookie family, exempting the eleven keys the simulator really reads; it "
+                "now asserts equality over the whole set and carries the uncarded set as a "
+                "separate assertion.",
+        status="settled",
+        reproduce="make model-cards → outputs/predictions/model_card_index.csv",
+        source="docs/model-cards-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("dashboard", "provenance", "methodology"),
+    ),
+    Decision(
+        id="the-shipped-strategy-survives-both-population-changes",
+        topic="drafting",
+        claim="**The rookie-inclusive sweep re-selects the same arm on every tier that "
+              "selects.** All four multi-entry structures come back at "
+              "`lineup_value_blend30` — same ranking, same `alpha = 0.3`, same objective — "
+              "with simulated lift RISING (0.2369 → **0.2645** on the 600k flagship). The "
+              "realized lift delta is **+0.0160** for the shipped arm across readings "
+              "spanning −0.0682 to +0.1839, and 17 of 24 arms lose at a median of −0.0683 "
+              "— which does not resolve, exactly as §7a said it would not.",
+        because="Two population changes put 85 and 80 new units in the tensor and 64 and "
+                "58 new rows on the board "
+                "([[the-simulators-scorable-units-are-the-union-of-two-rate-families]]), "
+                "and the question a sweep can answer is whether the arm the project drafts "
+                "under moved. It did not. **The lift comparison is NOT paired and that is "
+                "the first thing to say about it**: §7a could read its baseline off an "
+                "older artifact because Gate C reproduced to 0.000e+00, and here the "
+                "tensor moved under it — the uninjected worlds differ by up to 14.57 "
+                "dk_pts and the solved rotation moves rho 0.3582 → 0.3443 and 0.3172 → "
+                "0.2825. The injection still hits its target on both arms (`achieved_mae` "
+                "400.4586), so the gate works; what is gone is the licence to read the "
+                "difference as a board change alone, which is why the recovery headline "
+                "lives at the cut line "
+                "([[the-rookie-floor-is-closed-at-the-unit-that-resolves]]). The one "
+                "selection flip is `88k_alley_oop`, a **single $450 entry** whose realized "
+                "readings §7a already refuses to pool and which has no portfolio for a "
+                "hedge to act on — the noisiest cell in the table changing hands, not a "
+                "finding about `alpha`. ⚠️ The shipped tensors on disk are still the "
+                "rookie-less ones: this ran on a labelled variant beside them, so "
+                "`make simulate-season` and everything after it still produces different "
+                "numbers from the audited artifacts.",
+        status="measured",
+        # A glob, on `make rookie-floor`'s `_rookiefloor` precedent: eight files written by
+        # one run, and the orphan check matches by fnmatch so naming the set is naming them.
+        reproduce="make strategy-sweep-rookie → "
+                  "outputs/predictions/strategy_*_rookieinclusive.csv",
+        source="docs/rookie-rates-plan.md",
+        reviewed="2026-08-22",
+        date="2026-08-22",
+        tags=("drafting", "strategy", "simulations", "methodology"),
     ),
 )

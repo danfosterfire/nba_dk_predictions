@@ -619,9 +619,9 @@ make preseason-contest # what the PRESEASON BLOCK is worth in the contest, as a 
 
 make rookie-floor      # what it cost that no board this project produced carried a
                        #   ROOKIE — `docs/rookie-rates-plan.md` §5a/§7a. The
-                       #   RETROSPECTIVE half of that hole closed on 2026-08-22 (§7g);
-                       #   re-reading this floor against a rookie-inclusive board is the
-                       #   program's Session 8.
+                       #   RETROSPECTIVE half of that hole closed on 2026-08-22 (§7g), and
+                       #   `make rookie-recovery` re-read this floor against the
+                       #   rookie-inclusive board the same day (§7i).
                        #   → outputs/predictions/strategy_rookie_floor.csv plus the whole
                        #   strategy_*_rookiefloor.csv set. The sweep run ASYMMETRICALLY:
                        #   the opponent field drafts every rostered player, our seat stays
@@ -640,6 +640,34 @@ make rookie-floor      # what it cost that no board this project produced carrie
                        #   both modes, so strategy_gate_c_rookiefloor.csv reproducing
                        #   strategy_gate_c.csv (it does, to 0.000e+00) says the shipped
                        #   file was written by today's code on today's tensors.
+
+make rookie-recovery   # HOW MUCH OF THAT FLOOR THE TWO POPULATION CHANGES GIVE BACK —
+                       #   `docs/rookie-rates-plan.md` §5h/§7i →
+                       #   outputs/predictions/rookie_recovery.csv. The half of the floor
+                       #   that RESOLVES — the Round-1 bar the opponent field sets,
+                       #   averaged over 1,200 realized entries — re-measured against a
+                       #   LADDER of board masks rather than one: rung-0 veterans, plus
+                       #   the ladder's recovered returnees, plus the true rookies,
+                       #   against the whole rostered board. Nested by construction, so
+                       #   each change's share is attributable rather than inferred, and
+                       #   the rung-0 row reproduces `make rookie-floor`'s own +173.1 /
+                       #   +111.9 from a different module.
+                       #   Reads the tensor for ONE thing, the `scorable` mask; every
+                       #   figure is scored on the season that happened. Needs the
+                       #   labelled tensor first:
+                       #     python -m src.sim.season --season 2022-23 --season 2023-24 \
+                       #       --tensor-label _rookieinclusive
+                       #   Minutes, numpy only. NOT a re-run of the 24-arm sweep — three
+                       #   more sweeps would cost ~3 hours to re-read the half that does
+                       #   not resolve.
+
+make strategy-sweep-rookie
+                       # the CONTEST half of §7i: the shipped sweep, symmetric, on the
+                       #   rookie-inclusive tensor. Artifacts carry `_rookieinclusive` and
+                       #   the audited strategy_*.csv set is untouched. ~50 min. Read it
+                       #   against §7a's caveats and not past them — two realized seasons
+                       #   are two worlds, and the tensor moved under it as well as the
+                       #   board, so it is not paired with the shipped symmetric arm.
 
 make lag-recovery      # WHERE THE VETERAN DESIGN'S BOUNDARY BELONGS — `docs/rookie-rates
                        #   -plan.md` §7b → outputs/predictions/lag_recovery.csv.

@@ -206,6 +206,9 @@ SCORING_COLUMNS = ("pts", "fg3m", "reb", "ast", "stl", "blk", "tov")
 VETERAN_FAMILY = "veteran"
 ROOKIE_FAMILY = "rookie"
 FAMILY_COL = "unit_family"
+# `component_rates`' own name for the lag design's rung 0, reused rather than restated so
+# the tensor's `lag_rung` column reconciles with the ladder's census without a mapping.
+RUNG_ZERO = "veteran"
 
 
 # ── The chain ─────────────────────────────────────────────────────────────────
@@ -1766,13 +1769,25 @@ def save_tensor(sim: dict, ctx: dict, dest: Path) -> Path:
         scoring_periods=np.arange(N_SCORING_PERIODS),
         tournament_round=np.r_[np.ones(ROUND_1_WEEKS, dtype=int), [2, 3, 4]],
         prior_minutes=pool["total_minutes_lag1"].to_numpy(np.float32),
+        # WHICH RATE FAMILY SCORED EACH UNIT, and at which ladder rung — the provenance
+        # `docs/rookie-rates-plan.md` §5b requires travel with every row, carried one level
+        # further so a board can be audited without rebuilding two designs to classify it.
+        # §5h's recovery readout is the first consumer: what the two changes are worth is a
+        # question about which rows they added, and the tensor is where the population is.
+        unit_family=pool[FAMILY_COL].to_numpy(str) if FAMILY_COL in pool
+        else np.full(len(pool), VETERAN_FAMILY),
+        # `veteran` is `component_rates`' own name for rung 0 and the fallback is
+        # literally true rather than a fill: the column exists only when the ladder is on,
+        # and with it off every scored unit IS rung 0.
+        lag_rung=pool["lag_rung"].to_numpy(str) if "lag_rung" in pool
+        else np.full(len(pool), RUNG_ZERO),
     )
     return dest
 
 
 def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
         window: str | None = None, seed: int | None = None,
-        label: str = "") -> dict[str, Path]:
+        label: str = "", tensor_label: str = "") -> dict[str, Path]:
     """Simulate each season and write its tensor, plus the merged Gate A table.
 
     `label` suffixes the **gate** artifact and nothing else. The tensors are already keyed
@@ -1780,10 +1795,22 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
     single pooled table whose extremes `make docs-audit` re-derives — so a run on the test
     seasons writing into it would move an audited figure by adding rows rather than by
     changing a result. `src/final_evaluation.py` passes a label for exactly that reason.
+
+    `tensor_label` suffixes the **tensor** as well, and it is a different tool for a
+    different job: a run that draws the same seasons over a different unit population is a
+    variant measurement, and every audited downstream artifact — the sweep, the bracket,
+    the draft room's cached field — was built on the unlabelled one.
+    `docs/rookie-rates-plan.md` §5h is the first caller.
     """
     features_dir = Path(cfg["data"]["features_dir"])
     out_dir = Path(cfg["evaluation"]["predictions_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
+    # A labelled TENSOR labels the gate by default, and this is a guard rather than a
+    # convenience: Gate A is one pooled table whose extremes `make docs-audit` re-derives,
+    # and a variant population writing into it moves audited figures by replacing rows for
+    # the same season. An explicit `label` still wins, because `src/final_evaluation.py`
+    # sets one for its own reason.
+    label = label or tensor_label
     cfg_sim = cfg.get("sim", {})
     window = window or str(cfg_sim.get("fit_window", FIT_WINDOW))
     n_sims = int(n_sims or cfg_sim.get("n_sims", N_SIMS))
@@ -1851,7 +1878,7 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
                   f"{ctx['n_blocks'] * n_sims:,} needed a feasibility repair "
                   f"(fewer than {MIN_AVAILABLE} available players)")
 
-        dest = features_dir / f"sim_tensor_{season}.npz"
+        dest = features_dir / f"sim_tensor_{season}{tensor_label}.npz"
         save_tensor(sim, ctx, dest)
         mb = (sim["dk_pts"].nbytes + sim["games_played"].nbytes) / 1e6
         print(f"Saved {sim['dk_pts'].size:,} dk_pts cells "
@@ -1943,8 +1970,12 @@ if __name__ == "__main__":
     parser.add_argument("--label", default="",
                         help="suffix for the Gate A artifact, so a run outside the "
                              "shipped set does not add rows to the audited table")
+    parser.add_argument("--tensor-label", default="",
+                        help="suffix for the TENSOR too — a variant population written "
+                             "beside the shipped tensor rather than over it "
+                             "(docs/rookie-rates-plan.md §5h)")
     args = parser.parse_args()
 
     cfg = yaml.safe_load(open("configs/default.yaml"))
     run(cfg, seasons=args.season, n_sims=args.n_sims, window=args.window,
-        seed=args.seed, label=args.label)
+        seed=args.seed, label=args.label, tensor_label=args.tensor_label)

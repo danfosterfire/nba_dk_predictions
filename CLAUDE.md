@@ -118,12 +118,16 @@ The docs are:
   population (true rookies, returnees, thin-prior fringe), its floor pricing, the veteran
   design's **lag-recovery ladder** and the per-rung gate that admitted one rung of four,
   the per-head gates, simulator and forward-board integration, and the eight-session
-  runbook. **§7g is the simulator integration, run 2026-08-22** — the `rookie-components`
-  posterior group, `sim/season.component_units`' two-family union, and the ladder turned
-  on. Read before touching the scorable-unit population,
+  runbook. **All eight sessions ran 2026-08-22 and the program is closed**: §7g is the
+  simulator integration (the `rookie-components` posterior group,
+  `sim/season.component_units`' two-family union, the ladder turned on) and **§7i is what
+  the two population changes are worth** — `make rookie-recovery`, the floor re-read against
+  a nested ladder of board masks, plus `--tensor-label`, the variant-population suffix.
+  Read before touching the scorable-unit population,
   `component_rates.MIN_PRIOR_MINUTES`, `stan.components.lag_ladder`,
-  `src/models/rookie_rates.py`, `sim/season.component_units`, or starting any of its
-  sessions. §7f's own open item is closed by `docs/availability-window-plan.md` §16i.
+  `src/models/rookie_rates.py`, `sim/season.component_units`, or before drawing a tensor
+  over a population the shipped artifacts were not built on. §7f's own open item is closed
+  by `docs/availability-window-plan.md` §16i.
   - shot-attempt-basis-plan.md: Plan for updating one of the box-score statistics
   models (fg3a as a beta-binomial rate over the total fga, rather than fg2a and 
   fg3a as separate poisson counts). Work completed, archival.

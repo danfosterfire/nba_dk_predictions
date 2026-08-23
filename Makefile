@@ -43,6 +43,7 @@ export PYTHONUNBUFFERED = 1
         pick-log-stake mixture-value preseason-contest final-evaluation \
         posteriors-production production-check forward-rehearsal forward-board \
         rookie-floor lag-recovery lag-ladder rookie-rates stan-rookie \
+        rookie-recovery strategy-sweep-rookie \
         season-total-rookie season-total-rookie-lagladder ladder-board
 
 venv:
@@ -1200,6 +1201,38 @@ forward-board:
 # sampler; ~25 min at the 500-sim default. SEASON/SIMS override.
 ladder-board:
 	$(PYTHON) -m src.sim.ladder_board $(if $(SEASON),--season $(SEASON),) $(if $(SIMS),--sims $(SIMS),)
+
+# WHAT THE TWO POPULATION CHANGES GIVE BACK OF THE ROOKIE FLOOR — `docs/rookie-rates-plan.md`
+# §5h. `make rookie-floor` priced rookie-lessness in two halves and only one of them
+# resolves: the Round-1 bar the opponent field sets rose +173.1 / +111.9 dk_pts when the
+# field could draft players our seat could not price, averaged over 1,200 entries, while the
+# lift delta straddled zero at two realized seasons and said so.
+#
+# This re-measures that half against a LADDER of board masks on the rookie-inclusive tensor
+# — rung-0 veterans, plus the ladder's recovered returnees, plus the true rookies, against
+# the whole rostered board — so what each change recovers is attributable rather than
+# inferred. It reads the tensor for one thing, the `scorable` mask, and every figure is
+# scored on the season that actually happened; the rung-0 row therefore reproduces
+# `make rookie-floor`'s own number from a different module, which is the check that the two
+# are measuring the same quantity.
+#
+# NOT a re-run of the 24-arm sweep: three more sweeps would cost ~3 hours and produce three
+# more readings of the half that does not resolve. Requires the labelled tensor:
+#
+#   $(PYTHON) -m src.sim.season --season 2022-23 --season 2023-24 --tensor-label _rookieinclusive
+#
+# and the contest half's replay is `make strategy-sweep-rookie`. Minutes, numpy only.
+rookie-recovery:
+	$(PYTHON) -m src.sim.rookie_recovery
+
+# THE CONTEST HALF, REPLAYED ON THE ROOKIE-INCLUSIVE BOARD — `docs/rookie-rates-plan.md` §5h.
+# The shipped sweep, symmetric, on the tensor that prices both rate families. Artifacts carry
+# `_rookieinclusive` and the audited `strategy_*.csv` set is untouched, the same discipline
+# `--field` and `--field-board` use. Read it against §7a's caveats and not past them: two
+# realized seasons are two worlds, and the tensor moved under it as well as the board, so the
+# comparison against the shipped symmetric arm is not paired.
+strategy-sweep-rookie:
+	$(PYTHON) -m src.sim.strategy --tensor-label _rookieinclusive
 
 # Every quoted figure in the plan docs, checked against the artifact behind it. Unlike
 # dashboard-audit this one is a GATE — it exits non-zero on a disagreement, because a doc

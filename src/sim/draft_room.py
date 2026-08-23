@@ -192,8 +192,14 @@ def sum_periods(values: np.ndarray, round_of_period: np.ndarray,
 
 # ── 2. The field, and the survivor population it becomes ─────────────────────
 
-def field_artifact(features_dir: Path, season: str) -> Path:
-    return Path(features_dir) / f"draft_room_field_{season}.npz"
+def field_artifact(features_dir: Path, season: str, label: str = "") -> Path:
+    """The cached field. `label` travels from the tensor, and it has to.
+
+    A field is a set of rosters drafted off a board, so a field cached against the shipped
+    tensor is not a field for a tensor drawn over a wider population — reusing it would
+    silently price the rookie-inclusive board against a rookie-less field.
+    """
+    return Path(features_dir) / f"draft_room_field_{season}{label}.npz"
 
 
 def build_field(frame: pd.DataFrame, board: draft.Board, dk_pts: np.ndarray,
@@ -495,7 +501,8 @@ class Room:
 
 def load_room(cfg: dict, season: str, n_sims: int | None = None,
               tournaments: list[str] | None = None, n_field_drafts: int | None = None,
-              seed: int = SEED, rebuild_field: bool = False) -> Room:
+              seed: int = SEED, rebuild_field: bool = False,
+              tensor_label: str = "") -> Room:
     """Open the artifacts, draft the reference field once, and cache it.
 
     Nothing here fits anything: the tensor is `make simulate-season`'s, the board is
@@ -520,7 +527,7 @@ def load_room(cfg: dict, season: str, n_sims: int | None = None,
 
     assert_season_allowed(season, split_frame(cfg))
 
-    tensor = load_tensor(features_dir, season)
+    tensor = load_tensor(features_dir, season, tensor_label)
     pool = pd.read_parquet(features_dir / "draft_pool.parquet")
     frame = draft.build_board(pool, season)
     board = draft.to_arrays(frame, season)
@@ -529,7 +536,7 @@ def load_room(cfg: dict, season: str, n_sims: int | None = None,
     field_cfg = draft.selected_field(cfg)
     seats = draft.assign_seats(draft.field_composition(cfg), pod_size)
 
-    path = field_artifact(features_dir, season)
+    path = field_artifact(features_dir, season, tensor_label)
     field_round = None if rebuild_field else load_field(path, field_cfg, n_sims, seats)
     if field_round is None:
         field_round = build_field(frame, board, dk_pts, masks,

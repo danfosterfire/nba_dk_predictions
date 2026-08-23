@@ -5,7 +5,7 @@ a component-rate head family for the players the veteran heads structurally cann
 — true rookies, returnees, and thin-prior fringe — so they can appear on a board and be
 drafted. Seven sessions, each with its own prompt (§6), each appending its results here.
 
-## 🚧 STATUS: SESSIONS 1-7 RUN 2026-08-22 (§7a, §7c, §7d, §7e, §7f, §7g, §7h). DESIGN REVISED 2026-08-22 (§7b). THE INTERLEAVED ROUND — `docs/availability-window-plan.md` §16 — RAN 2026-08-22 AND §7f HAS ITS NUMBER. ⏭ NEXT IS SESSION 8 (CLOSEOUT).
+## ✅ STATUS: ALL EIGHT SESSIONS RUN 2026-08-22 (§7a, §7c, §7d, §7e, §7f, §7g, §7h, §7i). DESIGN REVISED 2026-08-22 (§7b). THE INTERLEAVED ROUND — `docs/availability-window-plan.md` §16 — RAN 2026-08-22 AND §7f HAS ITS NUMBER. THE PROGRAM IS CLOSED.
 
 **The program is eight sessions, not seven, and the rookie head serves a smaller
 population than the one it was scheduled for.** §7b measured that a player with *any* prior
@@ -54,6 +54,24 @@ against 386 and 387, with Victor Wembanyama on a board for the first time. `make
 production-check` is green on 31 of 31 heads. **The tensors on disk were not regenerated**:
 what the change is worth in contest units is §5h's replay against §7a's floor.
 
+**The floor is closed at the unit that resolves** (§7i): `make rookie-recovery` re-reads
+§7a's Round-1 bar against a **nested ladder of board masks** on a labelled rookie-inclusive
+tensor, and rung 0 reproduces `make rookie-floor`'s own **+173.1** / **+111.9** to the digit
+— which is what licenses reading the rest of it. The floor falls to **+25.4** on 2022-23 and
+**−29.0** on 2023-24; the ladder gives back **+77.5** / **+15.8** and the rookie head
+**+70.1** / **+125.1**. The negative residual is a result rather than noise: past the rookie
+rung the rows still outside our board realize *less* than what the field would otherwise
+take, so the remaining hole is a handicap on the field. `make strategy-sweep-rookie` is the
+contest half, and it settles a different thing than it was asked to: the sweep **re-selects
+`lineup_value_blend30` on all four multi-entry structures** with simulated lift rising
+0.2369 → **0.2645** on the 600k flagship, while the realized lift delta (**+0.0160** for the
+shipped arm, 17 of 24 arms losing at a median of −0.0683) refuses to resolve exactly as §7a
+said it would — and this time is not even paired, because the tensor moved under it. The
+eleven rookie heads are
+**declared in the chain and deliberately not carded** (`docs/model-cards-plan.md`), and
+`docs/final-evaluation-plan.md` §7 records that the held-out figures measured the
+rookie-less workflow.
+
 **The forward path is wired and the production board carries rookies** (§7h): the DK id
 map gains a **roster-snapshot** tier (`no_nba_history` 162 → **91**, 71 rows resolving to
 real `nba_api` ids, no existing match moved), `forward_rookie_design` builds true-rookie rows
@@ -69,13 +87,15 @@ so its reading is `make forward-board SEASON=2026-27 FRAMES_ONLY=1`.
 into the tensor at the availability plug-in's 24.7 games. That key is now on too, so both
 ladders ship — see §7g's closing item.
 
-**§7a, §7b, §7c, §7d, §7e, §7f and §7h are in `make docs-audit`** (`_rookie_floor`,
+**§7a, §7b, §7c, §7d, §7e, §7f, §7h and §7i are in `make docs-audit`** (`_rookie_floor`,
 `_lag_recovery`, `_lag_ladder`, `_rookie_rates`, `_rookie_heads` and `_season_total_rookie`,
 plus `_final_evaluation` for §7h's board figures, which live in
-`forward_board_rehearsal.csv` and `forward_board_population.csv`,
+`forward_board_rehearsal.csv` and `forward_board_population.csv`, and `_rookie_recovery`
+for §7i,
 against `strategy_rookie_floor.csv`, the
 `_rookiefloor` artifact set, `lag_recovery.csv`, `lag_ladder.csv`, `rookie_rate_floors.csv`,
-`rookie_rate_metrics.csv` and `season_total_rookie.csv`). Every
+`rookie_rate_metrics.csv`, `season_total_rookie.csv`, `rookie_recovery.csv` and
+`sim_season_gate_a_rookieinclusive.csv`). Every
 other figure here is either audited from its own artifact elsewhere (`rookie_priors.csv`,
 `strategy_injection.csv`, `preseason_coverage.csv`) or labelled scratch — §7a labels its two
 scratch measurements inline. Each session that produces a quotable number should add it to
@@ -435,10 +455,16 @@ mass matrix that made the rolling half affordable in Stan.
 
 ### 5h. Session 8 — closeout
 
+**Run 2026-08-22 — see §7i.** The readout was taken on the half of §7a's floor that
+resolves rather than as three more sweeps, and the wording below is what it was scheduled
+against.
+
 - Optional readout: symmetric rookie-inclusive sweep replay (suffix mechanism) — how much
   of Session 1's floor the two changes recover, reported **separately for the ladder and
   the rookie head**, since they land in different parts of the board: the ladder recovers
-  7 and 6 ADP-priced rows against the rookie head's 9 and 15 (§7b).
+  7 and 6 ADP-priced rows against the rookie head's 9 and 15 (§7b). *Taken as `make
+  rookie-recovery`, a nested ladder of board masks — the ladder's admitted reach is 7 and 3
+  rather than §7b's 7 and 6, because §7c admitted one rung of four.*
 - `docs/final-evaluation-plan.md`: record that the held-out figures measured the
   rookie-less workflow and do not transfer to the rookie-inclusive one.
 - docs-audit coverage for every figure this doc quotes from its own artifacts;
@@ -523,7 +549,8 @@ verbatim; keep the two in step if either is edited.
    > docs/rookie-rates-plan.md and execute **Session 7 (§5g): forward wiring** —
    > `forward_rookie_design`, the ADP id-map roster-snapshot tier with its test, rookie
    > and lag-recovered rows on `make forward-board`, and the §4 acceptance checks.
-8. > I'm working on the NBA prediction project (CLAUDE.md). Read
+8. ✅ **Done 2026-08-22 — §7i.**
+   > I'm working on the NBA prediction project (CLAUDE.md). Read
    > docs/rookie-rates-plan.md and execute **Session 8 (§5h): closeout** — the optional
    > symmetric rookie-inclusive sweep replay against Session 1's floor, the
    > final-evaluation-plan note, docs-audit and dashboard-audit green, model-cards check.
@@ -1787,3 +1814,218 @@ retro units against 80 missing before, and the snapshot arm is missing **36** ag
   That is the largest cell and the block's honest zero, so nothing is invented — but a
   lottery pick priced as undrafted is a real mis-bucket and the fix is a draft-results
   source this project does not capture.
+
+### 7i. Session 8 — the floor re-read, and what the two changes gave back (run 2026-08-22)
+
+`make rookie-recovery` and `make strategy-sweep-rookie`, both on a **labelled tensor**.
+§7g wrote the union into `build_context` and deliberately left the tensors on disk alone,
+because every audited downstream artifact was drawn on the rookie-less ones. This session
+draws the rookie-inclusive pair beside them — `sim_tensor_<season>_rookieinclusive.npz`,
+471 and 467 units against 386 and 387 — and reads the floor against it. `--tensor-label`
+suffixes the tensor, the draft room's cached field, Gate A **and** every sweep artifact,
+which is `--field`'s discipline one layer down; a labelled tensor labels the gate by default,
+because Gate A is one pooled table whose extremes `make docs-audit` re-derives and a variant
+population writing into it would move audited figures by replacing rows.
+
+#### The readout is a ladder of boards, and it is not three more sweeps
+
+§7a split the floor in two and only one half resolved. The half that does: the Round-1 bar
+the opponent field sets, averaged over **1,200** realized entries, which rose **+173.1** and
+**+111.9** dk_pts when the field could draft players our seat could not price. The half that
+does not: the lift delta, 21 of 24 arms losing at a median of −0.0765 while the shipped arm
+gained +0.0316 — two realized seasons are two worlds, and §3 decision 1 said so in advance.
+
+So the recovery is measured on the half that resolves, and measured as a **nested ladder of
+board masks** rather than as two more asymmetric runs:
+
+| rung | who the field may draft |
+|---|---|
+| `veteran` | rung 0 of the lag design — the board every artifact before §5f was built on |
+| `ladder` | plus `returnee_lag2`, the one rung §7c's gate admitted |
+| `rookie` | plus the true-rookie family — today's priceable board |
+| `unrestricted` | every rostered player, which is what a real field actually drafts |
+
+`cut(unrestricted) − cut(rung)` is §7a's floor measured against that rung. The rungs are
+nested by construction, so each change's share is **attributable rather than inferred** —
+and because the cut line reads the tensor for one thing only, the `scorable` mask, and is
+otherwise a function of ADP order and realized totals, three more 53-minute sweeps would
+have bought three more readings of the half that already refused to resolve.
+
+**The rung-0 row reproduces `make rookie-floor`'s own number to the digit** — **+173.1** and
+**+111.9**, out of a different module, on a different tensor, through a different code path.
+That is the check that licenses reading the rest of the ladder as the same quantity §7a
+priced, and it is the direct analogue of §7a's own Gate C reproduction.
+
+#### The board ladder, validation seasons, realized
+
+| season | rung | board | ADP-priced | Round-1 bar | floor left | recovered |
+|---|---|---:|---:|---:|---:|---:|
+| 2022-23 | `veteran` | 347 | 180 | 15,505.8 | **173.1** | — |
+| 2022-23 | `ladder` | 357 | 187 | 15,583.3 | 95.5 | **+77.5** |
+| 2022-23 | `rookie` | 411 | 196 | 15,653.5 | **25.4** | **+70.1** |
+| 2022-23 | `unrestricted` | 448 | 196 | 15,678.9 | 0.0 | — |
+| 2023-24 | `veteran` | 359 | 207 | 15,393.5 | **111.9** | — |
+| 2023-24 | `ladder` | 363 | 210 | 15,409.3 | 96.1 | **+15.8** |
+| 2023-24 | `rookie` | 417 | 225 | 15,534.4 | **−29.0** | **+125.1** |
+| 2023-24 | `unrestricted` | 464 | 228 | 15,505.4 | 0.0 | — |
+
+#### Four readings, and the second is the one that was not predicted
+
+**1. The floor is closed, and on one season it is past closed.** 173.1 → **25.4** on
+2022-23 and 111.9 → **−29.0** on 2023-24. On 2022-23 the two changes gave back **147.7 of
+173.1**, 85% of a quantity Session 1 measured before any of the machinery existed.
+
+**2. The 2023-24 residual is negative, and that is a real result rather than noise in a
+figure that averages 1,200 entries.** The bar the field sets on our *rookie-inclusive*
+board is **29.0 dk_pts higher** than the bar it sets on the whole rostered board. The
+mechanism is §7a's own channel 2, arriving with its sign flipped: the 47 rows still outside
+our board realize less than what the field would otherwise have taken, so letting the field
+have them makes its entries *worse*. Past the rookie rung, the remaining hole is no longer a
+handicap on us — it is a handicap on the field, and one we do not need. The floor was never
+monotone in board width and this is the first measurement that shows it.
+
+**3. The split lands where §5h predicted, on the count it predicted it on.** The ladder adds
+**10** board rows and **7** ADP-priced ones in 2022-23 and **4** and **3** in 2023-24 —
+§7c's admitted-rung census to the row, out of a completely separate code path. The rookie
+head adds **54** and **54** board rows, **9** and **15** ADP-priced — §5h's own expectation,
+written down before this session ran. What the two are *worth* does not follow the row
+counts: in 2022-23 the ladder's 7 priced rows are worth **+77.5** against the rookie head's
+9 for **+70.1**, and in 2023-24 the ladder's 3 are worth **+15.8** against the rookie head's
+15 for **+125.1**. The ladder's rows are few, expensive and drafted early — Jamal Murray and
+Kawhi Leonard are the §7a examples — and the rookie head's are many and cheaper.
+
+**4. On 2022-23 the market-priced hole is completely closed.** At the `rookie` rung the
+board carries **196** ADP-priced rows against the unrestricted board's **196**: every player
+the DK market prices is now one our seat can rank. 2023-24 gets 225 of 228. The residual on
+both seasons is made almost entirely of market-silent rows, which is the population a draft
+reaches last and a real field reaches by accident.
+
+#### The incidental Gate A reading, which is a population change and not a win
+
+The labelled run wrote `sim_season_gate_a_rookieinclusive.csv`, and the season-total row
+**improves**: MAE 360.80 → **345.43** on 2022-23 and 373.63 → **362.11** on 2023-24, CRPS
+250.68 → 238.67 and 256.92 → 250.35, R² 0.7116 → 0.7323 and 0.7106 → 0.7209. **None of that
+is a model improvement and it must not be quoted as one.** The added 85 and 80 units are
+rookies and recovered returnees who score little and are easy to get roughly right, so the
+denominator changed under a mean. It is recorded because the two Gate A tables now differ
+and a reader holding both needs to be told which comparison they support: the shipped table
+is the one the bars were set against, and the labelled one describes a different population.
+
+#### The contest half, replayed — and it refuses to resolve exactly as §7a said it would
+
+`make strategy-sweep-rookie` is the shipped sweep, symmetric, on the rookie-inclusive
+tensor: 24 strategies × 5 structures × 2 seasons at 500 simulated worlds each, plus the
+realized replay, writing `strategy_*_rookieinclusive.csv` and leaving the audited set alone.
+
+**The comparison against the shipped symmetric arm is NOT paired, and that is the first
+thing to say about it.** §7a could read its symmetric side off the 2026-08-16 artifact
+because Gate C reproduced to **0.000e+00** across all 12 rows, which proved the two arms
+were the same code on the same worlds. Here the tensor itself moved — new units, a moved
+RNG stream, and the availability ladder of `docs/availability-window-plan.md` §16j — and
+Gate C says so: the uninjected world differs by up to **14.57** dk_pts, the solved rotation
+moves `rho` 0.3582 → 0.3443 and 0.3172 → 0.2825, and the scale moves 1.1337 → 1.1875 and
+1.1405 → 1.1811. The injection still hits its target on both arms (`achieved_mae`
+**400.4586** either side), so the gate is working; what is gone is the licence to treat the
+difference as a board change alone. This is why the recovery readout above lives at the cut
+line and not here.
+
+Read with that caveat, the shipped arm's realized Round-1 lift moves **+0.0160** on average
+over the eight multi-entry readings, spanning **−0.0682 to +0.1839** and losing lift in 3 of
+8. Across the whole 24-arm table the sign reverses again — **17 of 24 arms lose, median
+−0.0683**, from −0.3059 (`blend_a30`) to +0.2382 (`lineup_value`) — which is the same shape
+§7a reported at 21 of 24 and median −0.0765. The single-entry `88k_alley_oop` reads −0.0396
+and **+0.8823**, one roster's coin flip, and is excluded from every pooled figure for the
+reason §7a excludes it.
+
+The simulated arm is positive and uninformative for the reason §7a's was: **+0.0329** for
+the shipped arm with 0 of 8 readings negative. It is a wider board scored by a model that
+believes itself, not evidence.
+
+#### What the replay does settle, and it is not the lift
+
+**The sweep re-selects the same strategy on every tier that selects.** All four
+multi-entry structures come back at `lineup_value_blend30` — the same ranking, the same
+`alpha = 0.3`, the same objective — with simulated lift rising rather than falling (0.2369
+→ 0.2645 on the 600k flagship). Two population changes that put 85 and 80 new units in the
+tensor and 64 and 58 new rows on the board did **not** move the arm the project drafts
+under, and that is a stability result the cut-line ladder cannot give.
+
+The one flip is `88k_alley_oop`, which selects `lineup_value` (`alpha = 0`) instead. It is a
+**single $450 entry** whose realized readings §7a already refuses to pool, and a tier with
+one entry has no portfolio for a hedge to act on — so the flip is the noisiest cell in the
+table changing hands, not a finding about `alpha`.
+
+#### What the plug-ins actually contain, because "no-fit floor" invites the wrong reading
+
+**Ten of eleven heads shipping a no-fit floor is not a finding that preseason says nothing
+— the floor *is* the preseason estimator.** Recorded here because the plug-in's persisted
+shape (`beta = 1`, `alpha = 0`, one synthetic column) reads like an intercept, and it is not.
+
+That column carries `rookie_priors`' `shrunk` arm on the head's own link:
+
+    w * preseason_per36 + (1 - w) * draft_bucket_prior,   w = min_pre / (min_pre + k)
+
+with `k` = **160** preseason minutes on the seven count heads. At the draftable population's
+median **70.4** preseason minutes that is `w` = **0.3057** — so a median rookie's plug-in
+prediction is about 31% his own October per-36 and 69% the prior for players taken where he
+was taken. **Preseason coverage on that population is 99.1%**, so the blend is live for
+essentially all of them; a rookie who played no preseason gets `w = 0` by his own volume
+rather than by a special case, and lands on the bucket exactly.
+
+The three arms, scored apart (validation · draftable, `rookie_rate_floors.csv`):
+
+| | `draft_bucket` | `preseason` | `shrunk` |
+|---|---:|---:|---:|
+| heads where it wins R² against `draft_bucket` | — | **6 of 11** | 8 of 11 |
+| heads where `shrunk` beats it on CRPS | **11 of 11** | 8 of 11 | — |
+
+Three readings, and the second is the one the shape of the artifact hides:
+
+1. **Preseason carries information the draft slot cannot**, and the clearest case is
+   `fg3a|fga`: R² **0.6109** from preseason against **−0.5989** from the bucket. Where a
+   rookie shoots from is visible in October and is not a function of where he was drafted.
+   `blk` is the same story more mildly (0.7019 against 0.2966).
+2. **Raw preseason is not usable on its own** — 70 minutes is a small sample and it fails
+   badly where the rate is rare or minutes-driven: `stl` R² **−0.5164** against the bucket's
+   0.7871, and `fga` CRPS **207.03** against 37.73. So preseason wins on 6 of 11 by R² and
+   loses catastrophically on the rest.
+3. **The volume shrink is what turns one usable arm and one unusable arm into an estimator
+   that wins everywhere.** `shrunk` beats the shipping draft-bucket incumbent on CRPS on
+   **11 of 11** heads and beats raw preseason on **8 of 11**. That is P4(b)'s selected
+   estimator doing the job it was selected for, and it is why the floor is a high bar rather
+   than a null one.
+
+So §7e's verdict — one fitted arm of eleven — says that a Stan head on top of this blend
+buys nothing beyond what the blend already extracts, on ten of eleven quantities. It does
+**not** say preseason is uninformative; it says the preseason information is already in the
+floor. That is the same shape the veteran side reports, where the preseason block is worth
+more than fitting itself on several heads (`docs/preseason-plan.md`).
+
+#### What Session 8 settles, and what it does not
+
+- **Settled**: the half of §7a's floor that resolves is closed. **173.1 → +25.4** and
+  **111.9 → −29.0**, with rung 0 reproducing Session 1's own figure to the digit out of a
+  separate module, and the per-change split landing on §7c's admitted-rung census to the row.
+- **Settled**: the shipped strategy survives both population changes. Same arm on all four
+  multi-entry structures, simulated lift up rather than down.
+- **Settled**: the eleven rookie heads are **declared in the chain and deliberately not
+  carded**, and the anchor test got stronger rather than weaker for it — see
+  `docs/model-cards-plan.md`.
+- **Not settled, and not settleable here**: what the changes are worth in Round-1 advance
+  probability. The realized replay moves **+0.0160** for the shipped arm across readings
+  spanning −0.0682 to +0.1839, while 17 of 24 arms lose at a median of −0.0683. Two realized
+  seasons could not separate those in §7a and cannot now — and this time the arms are not
+  even paired, because the tensor moved.
+- **⚠️ The shipped tensors on disk are still the rookie-less ones.** §7i drew a labelled
+  pair beside them rather than over them, deliberately, so `make simulate-season` and every
+  target after it will still produce different numbers from the artifacts on disk.
+  Regenerating the shipped set moves the whole downstream chain — the audited sweep, Gate A,
+  the mixture arms, the draft room's cached board — and is a separate, unscheduled round.
+  Nothing in this program requires it: the production board is built by
+  `make posteriors-production` and `make forward-board`, which read the posteriors and not
+  these tensors.
+- **⚠️ The held-out figures do not transfer.** `docs/final-evaluation-plan.md` §7 now records
+  it: every figure of the 2026-08-21 round measured the rookie-less workflow, the head
+  coefficients are untouched but the population they describe is narrower than the one that
+  ships, and §4d's **−0.0725** chain reading was drafted off a board with no rookie on it.
+  The split is spent and there is no second unlock.

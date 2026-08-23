@@ -463,23 +463,57 @@ for _head, _what in _CONVERSION_DESCRIPTIONS.items():
                             "box_score_component")
 
 
-#: Heads that are on disk and deliberately have **no card yet**, with the session that
-#: decides whether they get one. `load_all` globs the window directory, so a new posterior
-#: group arrives here the moment it is fitted — and the raise in `chain_role` is the guard
-#: that says "declare it", which is the right default and the wrong answer for a family
-#: whose card is a scheduled decision rather than an oversight.
+# The eleven `rookie-components` heads — `docs/rookie-rates-plan.md` §5f — declared here so
+# the chain column can say what the simulator does with them. `src/sim/season.py` reads all
+# eleven for every true-rookie unit on a board, which is 74 rows of a 2023-24 retrospective
+# board and 116 of the 2026-27 production one, so leaving them undeclared meant the one
+# column that exists to answer "does this ship?" had no answer for the family whose whole
+# reason for existing is that it ships.
+#
+# They are `box_score_component` and in the draw path for the same reason their veteran
+# twins are: one rate or conversion probability per player, drawn per game against the
+# minutes the allocation gave him, in the same `DRAW_ORDER`. What differs is the population
+# and, for ten of the eleven, that the artifact is a deterministic plug-in rather than a
+# posterior — and neither of those is a chain role.
+for _rookie_head, _rookie_spec in list(SPECS.items()):
+    if _rookie_spec.model_class != "components":
+        continue
+    SPECS[f"{ROOKIE_PREFIX}{_rookie_head}"] = HeadSpec(
+        "components", "player-season", _rookie_spec.likelihood,
+        _rookie_spec.description.rstrip(".")
+        + ", for a player with no prior NBA season at any lag.",
+        "box_score_component")
+
+
+#: Heads that are declared and in the draw path but deliberately have **no card page**.
+#: `load_all` globs the window directory, so a new posterior group arrives here the moment
+#: it is fitted, and the raise in `chain_role` is the guard that says "declare it" — the
+#: right default, and a different question from whether a head earns a page.
 #:
-#: The eleven `rookie_*` heads are `docs/rookie-rates-plan.md` §5f's `rookie-components`
-#: group. §5h is where they are given a `HeadSpec` and a `chain_role` or a reason not to
-#: be; until then they are skipped by prefix and COUNTED in the run's own output, so the
-#: deferral is visible rather than silent. Nothing else may be deferred — an undeclared
-#: head outside this rule still raises.
-DEFERRED_PREFIXES = (ROOKIE_PREFIX,)
+#: **§5h decided the rookie family gets no pages, and the reason is what a page would hold.**
+#: Ten of the eleven ship §7d's no-fit floor as a deterministic plug-in: `beta = 1`,
+#: `alpha = 0`, one synthetic feature carrying the floor's own prediction on the head's own
+#: link, identical on every draw. That prediction is `rookie_priors`' volume-shrunk blend —
+#: `w * preseason_per36 + (1 - w) * draft_bucket_prior` at `w = min_pre / (min_pre + k)` —
+#: so the column is a fitted estimator's output, not a raw feature. A coefficient panel for
+#: one of those renders a 1.0 on a column that is the answer rather than a predictor, and
+#: eleven near-identical pages would say it eleven times. What a reader actually wants — the floors, and the gate that admitted one
+#: fitted arm of eleven — is `rookie_rate_floors.csv` and `rookie_rate_metrics.csv`, both
+#: already reachable from the decision log, which is this project's own convention for a
+#: family with no tab (`docs/docs-audit.md`, the orphan check).
+#:
+#: `rookie_reb` is the one head a page would fully describe, and it does not get one either,
+#: because a lone card in a family of eleven reads as *the* rookie head rather than as the
+#: one arm that beat its floor. Revisit if a second arm is ever admitted.
+#:
+#: Nothing else may go uncarded — an undeclared head outside this rule still raises, and a
+#: declared-but-uncarded head outside this prefix has no rule at all.
+UNCARDED_PREFIXES = (ROOKIE_PREFIX,)
 
 
-def deferred(head: str) -> bool:
-    """Is this head one the emitter is knowingly not carding yet?"""
-    return head.startswith(DEFERRED_PREFIXES)
+def uncarded(head: str) -> bool:
+    """Is this head declared in the chain but deliberately given no card page?"""
+    return head.startswith(UNCARDED_PREFIXES)
 
 
 def chain_role(head: str) -> ChainRole:
@@ -2307,8 +2341,8 @@ def run(cfg: dict, heads: tuple[str, ...] | None = None,
           f"  reading persisted posteriors from {source}; nothing is refitted and no "
           f"sampler runs.")
     artifacts = load_all(source, heads=list(heads) if heads else None)
-    skipped = sorted(h for h in artifacts if deferred(h))
-    artifacts = {h: a for h, a in artifacts.items() if not deferred(h)}
+    skipped = sorted(h for h in artifacts if uncarded(h))
+    artifacts = {h: a for h, a in artifacts.items() if not uncarded(h)}
     if not artifacts:
         raise FileNotFoundError(
             f"no posterior artifacts under {source}. Run `make posteriors` first — it is "
@@ -2320,9 +2354,9 @@ def run(cfg: dict, heads: tuple[str, ...] | None = None,
     print(f"  {len(artifacts)} heads at the `{WINDOW}` window. The test split is LOCKED; "
           f"every row carries `split` in {list(SPLITS)}.")
     if skipped:
-        print(f"  {len(skipped)} head(s) on disk are NOT carded, and that is a "
-              f"scheduled decision rather than an\n  oversight: "
-              f"{', '.join(skipped)}\n  — see `DEFERRED_PREFIXES` and "
+        print(f"  {len(skipped)} head(s) on disk are declared in the chain and NOT "
+              f"carded, which is a decision\n  rather than an oversight: "
+              f"{', '.join(skipped)}\n  — see `UNCARDED_PREFIXES` and "
               f"docs/model-cards-plan.md.")
 
     print("\n── rebuilding each head's own design frames ──")
