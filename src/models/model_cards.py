@@ -11,7 +11,7 @@ arbitrary frame. A dashboard holding that is a dashboard that can silently disag
 fit it is describing.
 
 So this module stands between them. It reads the pickles and each head's **own variant
-ladder**, and writes long-format tables the dashboard reads and nothing else. All nine the
+ladder**, and writes long-format tables the dashboard reads and nothing else. All ten the
 contract names land here:
 
 | artifact | grain | what it is for |
@@ -25,6 +25,7 @@ contract names land here:
 | `model_card_calibration.csv` | head × split × 2-D bin | fitted-against-observed, as density |
 | `model_card_quantile.csv` | head × split × panel × row | the scaled quantile residual — a QQ-uniform and the residual against rank-transformed predicted |
 | `model_card_sample.parquet` | head × split × row | a bounded subsample, for texture over both densities |
+| `model_card_stan.csv` | head | the head's own Stan program, verbatim, so a page shows the model rather than describing it |
 
 ## Three rules this module inherits, and the mechanism for each
 
@@ -284,7 +285,7 @@ ARTIFACTS = ("model_card_index.csv", "model_card_coefficients.csv",
              "model_card_features.csv", "model_card_feature_corr.csv",
              "model_card_feature_density.parquet", "model_card_ecdf.csv",
              "model_card_calibration.csv", "model_card_quantile.csv",
-             "model_card_sample.parquet")
+             "model_card_sample.parquet", "model_card_stan.csv")
 
 
 # ── What each head is, declared rather than derived ───────────────────────────
@@ -536,6 +537,69 @@ def draw_path_heads() -> set[str]:
     actually subscripts, rather than against this file a second time.
     """
     return {head for head in SPECS if chain_role(head).in_draw_path}
+
+
+def stan_program(head: str) -> str:
+    """The `src/stan/` program the head's likelihood is compiled from, without `.stan`.
+
+    Read from the fitting modules' **own** model constants rather than retyped here —
+    `stan_availability.MODEL` is what `compile_model` is actually handed, so a head that
+    moves to a different program moves here without an edit. Four programs serve every
+    carded head: availability / minutes / the conversions / overtime onset are one
+    beta-binomial likelihood with different data, the counts are the negative binomial,
+    the composition stands apart, and the two spell-length heads share the beta-geometric.
+    """
+    from src.models.component_rates import CONVERSION_HEADS, COUNT_HEADS
+    from src.models.stan_availability import MODEL as AVAILABILITY_MODEL
+    from src.models.stan_components import CONVERSION_MODEL, COUNT_MODEL
+    from src.models.stan_composition import MODEL as COMPOSITION_MODEL
+    from src.models.stan_games_played import BINOMIAL_MODEL, DURATION_MODEL
+    from src.models.stan_minutes import MODEL as MINUTES_MODEL
+
+    programs = {
+        "availability": AVAILABILITY_MODEL,
+        # `stan_game_length` builds its heads out of `stan_games_played`'s classes, so its
+        # two programs are read off that module rather than declared a second time.
+        "gp_entry": BINOMIAL_MODEL, "gp_exit": BINOMIAL_MODEL, "gp_onset": BINOMIAL_MODEL,
+        "game_length_ot": BINOMIAL_MODEL,
+        "gp_duration": DURATION_MODEL, "game_length_depth": DURATION_MODEL,
+        "minutes": MINUTES_MODEL,
+        "composition": COMPOSITION_MODEL,
+        **{count: COUNT_MODEL for count in COUNT_HEADS},
+        **{f"{made}_given_{att}": CONVERSION_MODEL for made, att in CONVERSION_HEADS},
+    }
+    if head not in programs:
+        raise KeyError(
+            f"no Stan program declared for {head!r}. Every carded head names the program "
+            f"its likelihood compiles from, so the page can show the code rather than "
+            f"describe it — add the head to `stan_program`.")
+    return programs[head]
+
+
+def stan_rows(heads) -> list[dict]:
+    """`model_card_stan.csv` — one row per carded head, carrying its program's source.
+
+    The source text rides in the artifact rather than being read from `src/stan/` by the
+    dashboard, for the same reason every other number on the model pages does: the
+    dashboard reads artifacts and never `src/`, and an artifact is a snapshot taken beside
+    the cards it ships with rather than a live file that can drift ahead of them. The text
+    repeats across the heads that share a program — the same deliberate repetition
+    `model_card_features.csv` makes, so a page filters to one head and has everything.
+    """
+    from src.models.stan_utils import STAN_DIR
+
+    rows = []
+    for head in sorted(heads):
+        program = stan_program(head)
+        path = Path(STAN_DIR) / f"{program}.stan"
+        if not path.exists():
+            raise FileNotFoundError(
+                f"{head!r} declares Stan program {program!r} but {path} does not exist — "
+                f"`stan_program` and `src/stan/` disagree.")
+        source = path.read_text()
+        rows.append({"head": head, "stan_file": path.name,
+                     "n_lines": len(source.splitlines()), "source": source})
+    return rows
 
 
 # Import-time, so a head added with a typo'd or missing role fails on import rather than
@@ -2324,7 +2388,7 @@ def index_row(head: str, art, frames: HeadFrames, check: dict,
 
 def run(cfg: dict, heads: tuple[str, ...] | None = None,
         write: bool = True) -> dict[str, Path]:
-    """Card every head on disk, verify each one, and write the nine artifacts.
+    """Card every head on disk, verify each one, and write the ten artifacts.
 
     `heads` is a **verification** subset, not a rebuild subset, which is why `write`
     defaults off with it at the CLI. Unlike `make posteriors` — a day of sampler time,
@@ -2431,6 +2495,7 @@ def run(cfg: dict, heads: tuple[str, ...] | None = None,
         "model_card_calibration.csv": pd.DataFrame(calibration),
         "model_card_quantile.csv": pd.DataFrame(quantile),
         "model_card_sample.parquet": pd.concat(samples, ignore_index=True),
+        "model_card_stan.csv": pd.DataFrame(stan_rows(artifacts)),
     }
     leading = {"model_card_coefficients.csv": ["head", "term", "term_family", "term_role"],
                "model_card_features.csv": ["head", "feature", "split", "bin_index"],
@@ -2441,7 +2506,8 @@ def run(cfg: dict, heads: tuple[str, ...] | None = None,
                "model_card_calibration.csv": ["head", "split", "panel", "x_index",
                                               "y_index"],
                "model_card_quantile.csv": ["head", "split", "panel", "x_index",
-                                           "y_index", "x", "y"]}
+                                           "y_index", "x", "y"],
+               "model_card_stan.csv": ["head", "stan_file", "n_lines"]}
 
     paths = {}
     print()

@@ -13,7 +13,10 @@ flags which pairs earn a joint density, and nothing had binned one. **Step 3 of
 `docs/dashboard-revision-plan.md` added the ninth**, `model_card_quantile.csv` — DHARMa's
 scaled quantile residual — and *replaced* rather than extended: the calibration file's
 `residual_fitted` panel is gone, because a raw residual is not a thing four differently
-distributed heads can be read on and a quantile residual is.
+distributed heads can be read on and a quantile residual is. **The third round added the
+tenth, 2026-08-23**: `model_card_stan.csv`, the verbatim Stan program per head, for the
+model pages' program block — see
+[`model_card_stan.csv`](#model_card_stancsv--the-program-verbatim) below.
 
 ---
 
@@ -104,7 +107,7 @@ its 5% bar, and nineteen of twenty heads are under 1%. Registered as
 
 ## What is on disk
 
-All nine under `outputs/predictions/`, all long-format, all keyed by `head`. The seven CSVs
+All ten under `outputs/predictions/`, all long-format, all keyed by `head`. The CSVs
 are written with six significant digits — the per-feature statistics repeat on every bin row
 deliberately (a page groups by feature and gets the histogram *and* the summary table from
 one read), and full float64 repr tripled the largest file for precision no histogram can
@@ -121,6 +124,7 @@ draw.
 | `model_card_calibration.csv` | head × split × panel × 2-D bin | **11,679** | 968 KB | fitted-against-observed, as density (block 6) |
 | `model_card_quantile.csv` | head × split × panel × row | **8,761** | 725 KB | the QQ-uniform and the residual against rank-transformed predicted (block 6) |
 | `model_card_sample.parquet` | head × split × row | **54,375** | 1.0 MB | the bounded scatter overlaid on both of those densities (block 6) |
+| `model_card_stan.csv` | head | **20** | 184 KB | the head's Stan program, verbatim — the named program block between blocks 3 and 4 |
 
 **7.5 MB in total** (`du`), *below* the 8.7 MB the eight-artifact contract cost: the quantile
 half adds 724 KB and the `residual_fitted` panel it replaced was 1.5 MB. Twenty
@@ -728,6 +732,35 @@ is the measurement that would settle it.
 
 ---
 
+## `model_card_stan.csv` — the program, verbatim
+
+Added 2026-08-23 by the third dashboard revision round, when the model pages gained a named
+**Stan program block** between blocks 3 and 4 (`model_page.stan_block`). One row per carded
+head: `head`, `stan_file`, `n_lines`, and `source` — the whole program as one quoted cell.
+184 KB.
+
+Three decisions inside it:
+
+- **The mapping is read from the fitting modules' own `MODEL` constants**
+  (`model_cards.stan_program`), never retyped: `stan_availability.MODEL` is the string
+  `compile_model` is actually handed, so a head that moves to a different program moves in
+  the artifact without an edit. A head the function does not know raises by name, and
+  `stan_rows` refuses a program `src/stan/` no longer carries.
+- **The source rides in the artifact rather than being read live from `src/stan/`.** The
+  dashboard reads artifacts and never `src/`; beyond the rule, an artifact is a snapshot
+  taken beside the cards it ships with, where a live file could drift ahead of the fit the
+  page describes.
+- **The text repeats across the heads that share a program** — ten heads carry
+  `betabinomial_glm.stan` — which is the same deliberate repetition
+  `model_card_features.csv` makes: a page filters to one head and has everything, and the
+  page's caption derives the sharing (`model_cards.stan_siblings`) instead of a table
+  restating it.
+
+The eleven declared-but-uncarded rookie heads are out of scope for the same reason they
+have no page: ten of the eleven are no-fit plug-ins with no Stan program to show.
+
+---
+
 ## Where this sits in the pipeline
 
 ```
@@ -757,9 +790,11 @@ is the expensive half:
 
 ## Tests
 
-`tests/test_model_cards.py`, plain `assert` with synthetic builders, **99 tests** (34 from
+`tests/test_model_cards.py`, plain `assert` with synthetic builders, **107 tests** (34 from
 session 3a, 31 from 3b, 9 from session 4's density, 6 from the chain role, 15 from the
-quantile residual). The heads are real `PosteriorArtifact`s with their draws **injected**
+quantile residual, 4 from the Stan program — the head→program mapping against `src/stan/`,
+the raise for an unknown head, the per-head source rows, and the shipped artifact covering
+exactly the index's heads with intact text). The heads are real `PosteriorArtifact`s with their draws **injected**
 rather than sampled — the same stance `tests/test_posteriors.py` takes, and for the same
 reason: the emitter refits nothing either. The one exception is the rehydration test, which
 builds a real `StanCount` around injected draws and asserts that `draw_predictive` returns

@@ -1187,3 +1187,119 @@ now carries all three height readings (1,144 → 702 → 1,036), and
 `dashboard-overview-page-exemption` states the amended bound 1 and links the amendment. The
 mechanism each of them established — that the height is a browser measurement, and that the
 exemption is bounded rather than waived — is exactly what the amendment relies on.
+
+---
+
+# The third round — draw-path-only model pages, and the Stan program on the page
+
+**Requested and shipped 2026-08-23**, in one session; the round inherits everything
+[the second round inherits](#what-every-step-inherits). Three items, one user request:
+
+1. The availability / minutes / box-score model pages discuss **only heads in the
+   simulator's draw path**.
+2. The marginal minutes head's one draw-time role — calibrating
+   `sim.minutes.player_season_sigma` — gets a brief mention on **Inputs beyond the heads**,
+   where that constant is inventoried.
+3. A new entry on those pages **between blocks 3 and 4**: the head's own Stan program,
+   verbatim.
+
+The request came out of a real misreading, which is the argument for item 1: the shared
+`not_at_draw_time` chain-role note on the minutes page reads as if it might describe the
+whole page, composition included, because the marginal head's card sat beside the
+composition's as a co-equal subject. A page that only carries drawn heads cannot be misread
+that way.
+
+## Item 1 — the selector reads `in_draw_path`, and the class tuples do not move
+
+`model_cards.heads_of` now intersects the class's declared heads with the index rows whose
+`in_draw_path` is true. **The cut is read from the artifact rather than typed**, so it
+inherits step 2's anchor for free: `in_draw_path` is pinned against the artifact keys
+`src/sim/` actually subscripts by `test_the_declared_draw_path_is_what_the_simulator_
+actually_reads`, so a refactor of the simulator moves the pages through `make model-cards`
+instead of going stale against them. An index built before the column existed degrades to
+the old behaviour, the same way `chain_role_phrase` loses a caption rather than printing
+`nan`.
+
+The `CLASSES` head tuples stay complete — they are class *membership*, which
+`test_every_carded_head_belongs_to_exactly_one_model_page` holds over all twenty carded
+heads — and the page renders the subset. So the availability selector is `availability` +
+`gp_duration`, the minutes selector is the composition alone, and the box-score and
+game-length pages are unchanged (every head there is drawn). The tenure decomposition and
+the marginal minutes head **stay carded**: their artifacts still ship, nothing renders
+them, and what they supply — Gate A's games-played pmf and minutes-spread bars — was
+already stated in their chain-role notes.
+
+**The minutes page keeps its three named blocks, reframed.** The two-unit verdict, the
+injected-σ sweep and the teammate-coupling block are the composition's own material, and
+the marginal head appears in them as the **season-level baseline** — the same role the
+no-fit floor plays on the box-score page, and reference material rather than a page
+subject. The intros, docstrings and captions that presented "two heads over minutes" as
+co-equal page subjects were rewritten; the availability intro went from "Five heads, and
+the shipped chain takes two of them" to describing the two drawn heads only, and a test
+now asserts it names **no** head the simulator never reads.
+
+## Item 2 — the sigma's provenance, said where the sigma is
+
+Two edits, both on the inputs page and both prose-only: the `player_season_sigma` row of
+`inputs.CALIBRATED` now says the constant is calibrated **against the marginal minutes
+head** — fitted and carded, never drawn from, its season-total spread the target — and the
+calibrated block's visible caption says the same thing in a sentence: that head reaches
+the simulator as this one number rather than as draws. No figures were typed; the sigma
+block on the minutes page cross-points here.
+
+## Item 3 — the Stan program, as a tenth artifact and a shared named block
+
+"Between items 3 and 4" is exactly what the `extra` mechanism renders: a callable keyed on
+block 3 runs after block 3's body and before block 4's header. So the program is a **named
+block** (`model_page.stan_block`), shared across pages, and the numbered contract does not
+move — no renumbering of blocks 4–7 across four pages and every doc that cites them. The
+request named three pages; the game-length page adopted the block the same day on a
+follow-up ask, with the one-line `extra={3: ...}` edit that sharing was designed for, so
+**all four model pages carry it**.
+
+The source comes from a **tenth artifact**, `model_card_stan.csv`, because the dashboard
+may not read `src/stan/` — see `docs/model-cards-plan.md`, "`model_card_stan.csv` — the
+program, verbatim", for the artifact's own three decisions (the mapping read from the
+fitting modules' `MODEL` constants, the snapshot-not-live-file rule, and the deliberate
+repetition across heads sharing a program). On the page: a caption naming the file and the
+other carded heads compiled from it (`stan_siblings`), and the program in an expander via
+`st.code` — 195 lines for the beta-binomial, 385 for the composition, which is too much
+figure to put between a reader and block 4 unexpanded. `load_cards` requires the tenth
+file, consistent with the other nine coming from one build.
+
+## Verification, as run
+
+**`AppTest`**, both appearance modes × the four touched pages (availability, minutes,
+box-score components, inputs): **0 exceptions in 8 runs**. The availability selector
+carries exactly `availability` and `absence-spell duration`; the minutes selector exactly
+the composition; the box-score selector all eleven; each model page renders 1 code block;
+switching the availability page to `gp_duration` renders the beta-geometric source and the
+siblings sentence. The inputs page renders its 18 tiles and the marginal-minutes sentence
+lands in the calibrated block's caption. When the game-length page adopted the block, the
+same layer ran there too — both heads × both modes, 0 exceptions, the section present with
+the right `.stan` file and a `model {` in the rendered code on every run.
+
+**The live pages in Chrome** through Playwright, 1440×900: 16 of 17 checks passed — the
+tenure heads absent from the availability intro, the Stan section present on all three
+pages with the right `.stan` file named per head, the source rendering on expand, the
+baseline framing on the minutes page, the sigma mention on the inputs page, no literal
+`undefined`. The one failure was the probe, not the page: a closed selectbox renders only
+its selected option in the DOM, so the option count was re-verified under `AppTest`, which
+reads the widget rather than the DOM.
+
+**No PNG layer**: the round adds no figure — `st.code` is not a chart, and every existing
+figure is untouched.
+
+**Tests**: 460 pass across `tests/test_model_cards.py` (107) and `tests/test_dashboard.py`
+(353) — 4 new on the emitter side, 3 new and 1 rewritten on the dashboard side (the intro
+test now asserts the availability intro names only drawn heads). **`make dashboard-audit`:
+0 orphans** — `model_card_stan.csv` is named by `dashboard/model_cards.py` the day it
+ships. **`make docs-audit` green**: 0 disagreements, 0 stale claims.
+
+## Registry
+
+`model-pages-carry-only-draw-path-heads` (the charter change and the reframing) and
+`the-stan-program-ships-as-an-artifact` (the tenth artifact and the named block), both
+`built`, topic `problem`, beside `a-head-declares-its-role-in-the-shipped-chain` — which
+this round is the second consequence of: the column that let a page *say* which heads ship
+is now the column that decides which heads a page carries.

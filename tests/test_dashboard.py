@@ -2733,20 +2733,79 @@ def test_every_shipped_head_renders_a_chain_role_sentence_on_its_page():
             "In the shipped chain"] == label, row["head"]
 
 
-def test_the_availability_intro_names_every_head_and_the_two_the_chain_takes():
-    """The intro read *"Two ways of predicting the same quantity"*, which says two
-    alternates where one ships — and the shipped chain takes **one head from each**
-    approach. The anchor is the artifact's own `in_draw_path`: if a refactor of
-    `src/sim/season.py` changes which of these five heads a season draw reads, the count
-    below moves and this intro has to be rewritten rather than quietly going stale."""
-    index = _card(model_cards.INDEX_FILE).set_index("head")
+def test_the_availability_page_carries_and_names_only_the_heads_the_chain_reads():
+    """The pages' charter since 2026-08-23: a model page discusses the draw path only.
+
+    The anchor is the artifact's own `in_draw_path`: if a refactor of
+    `src/sim/season.py` changes which of the class's five heads a season draw reads,
+    `heads_of` moves through `make model-cards` and this intro has to be rewritten rather
+    than quietly going stale. The tenure decomposition stays carded — its rows are still
+    in the index — and off the page, which is the second assertion."""
+    index = _card(model_cards.INDEX_FILE)
     spec = model_cards.CLASSES["availability"]
-    heads = model_cards.heads_of(_card(model_cards.INDEX_FILE), "availability")
-    drawn = [h for h in heads if bool(index.loc[h, "in_draw_path"])]
-    assert drawn == ["availability", "gp_duration"]
+    heads = model_cards.heads_of(index, "availability")
+    assert heads == ["availability", "gp_duration"]
     for head in heads:
         assert f"`{head}`" in spec.intro, head
+    # Not discussed on the page: the intro names no head the simulator never reads.
+    for head in ("gp_entry", "gp_onset", "gp_exit"):
+        assert head in set(index["head"]), "the tenure decomposition must stay carded"
+        assert f"`{head}`" not in spec.intro, head
     assert "Two ways of predicting the same quantity" not in spec.intro
+
+
+def test_a_model_page_selector_is_cut_to_the_draw_path_by_the_artifact_not_a_list():
+    """`heads_of` reads `in_draw_path` off the index rather than restating the simulator,
+    and an index built before the column existed degrades to the old behaviour — the same
+    stance `chain_role_phrase` takes on its own missing columns."""
+    index = pd.DataFrame({
+        "head": ["availability", "gp_entry", "gp_onset", "gp_duration", "gp_exit",
+                 "minutes", "composition"],
+        "in_draw_path": [True, False, False, True, False, False, True]})
+    assert model_cards.heads_of(index, "availability") == ["availability", "gp_duration"]
+    assert model_cards.heads_of(index, "minutes") == ["composition"]
+    stale = index.drop(columns="in_draw_path")
+    assert model_cards.heads_of(stale, "minutes") == ["minutes", "composition"]
+
+
+def _stan_frame() -> pd.DataFrame:
+    source = "data {\n  int N;\n}\nmodel {\n}\n"
+    return pd.DataFrame({
+        "head": ["availability", "gp_duration", "composition"],
+        "stan_file": ["betabinomial_glm.stan", "betageometric_duration.stan",
+                      "composition_glm.stan"],
+        "n_lines": [5, 5, 5],
+        "source": [source, source, source]})
+
+
+def test_the_stan_block_reads_the_program_from_the_artifact_or_loses_the_block():
+    """The page shows the code `make model-cards` snapshotted, never a file from `src/`,
+    and an older artifact that lacks the head loses the block rather than raising."""
+    stan = _stan_frame()
+    row = model_cards.stan_row(stan, "availability")
+    assert row is not None
+    assert row["stan_file"] == "betabinomial_glm.stan"
+    assert "model {" in row["source"]
+    assert model_cards.stan_row(stan, "never_carded") is None
+
+
+def test_stan_siblings_are_the_other_heads_on_the_same_program_by_their_labels():
+    """Four programs serve twenty heads, so sharing is the norm and the page says who
+    else is on the file — by page label where the index carries one, so the caption reads
+    the way the selector does."""
+    stan = pd.concat([_stan_frame(),
+                      pd.DataFrame({"head": ["minutes"],
+                                    "stan_file": ["betabinomial_glm.stan"],
+                                    "n_lines": [5], "source": ["model {\n}\n"]})],
+                     ignore_index=True)
+    index = pd.DataFrame({"head": ["availability", "minutes", "composition",
+                                   "gp_duration"],
+                          "label": ["Availability", "Minutes | available",
+                                    "Composition", "Spell duration"]})
+    assert model_cards.stan_siblings(stan, index, "availability") == \
+        ["Minutes | available"]
+    assert model_cards.stan_siblings(stan, index, "composition") == []
+    assert model_cards.stan_siblings(stan, index, "never_carded") == []
 
 
 def test_every_carded_head_belongs_to_exactly_one_model_page():

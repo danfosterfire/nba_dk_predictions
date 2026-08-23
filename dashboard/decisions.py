@@ -11835,4 +11835,56 @@ REGISTRY: tuple[Decision, ...] = (
         date="2026-08-22",
         tags=("models", "simulations", "methodology"),
     ),
+    Decision(
+        id="model-pages-carry-only-draw-path-heads",
+        topic="problem",
+        claim="**A model page carries only heads in the simulator's draw path** "
+              "(2026-08-23): `dashboard/model_cards.heads_of` intersects each class's "
+              "declared heads with the index rows whose `in_draw_path` is true, so the "
+              "availability selector is `availability` + `gp_duration`, the minutes "
+              "selector is the composition alone, and the tenure decomposition and the "
+              "marginal minutes head stay **carded and off the pages**. The marginal "
+              "head's one draw-time role — calibrating `sim.minutes.player_season_sigma` "
+              "— is stated on the Inputs-beyond-the-heads page beside the constant, and "
+              "on the minutes page it appears only as the season-level baseline the "
+              "composition's named blocks are measured against.",
+        because="The mixed pages were misread in practice: the shared `not_at_draw_time` "
+                "chain-role note beside the composition's card read as if the whole "
+                "minutes page were diagnostic-only. The cut is read from the artifact "
+                "rather than typed — `in_draw_path` is already pinned against the keys "
+                "`src/sim/` actually subscripts — so a simulator refactor moves the "
+                "pages through `make model-cards` instead of leaving them stale. The "
+                "class tuples stay complete because they are class membership, which "
+                "`test_every_carded_head_belongs_to_exactly_one_model_page` holds.",
+        status="built",
+        reproduce="make model-cards → outputs/predictions/model_card_index.csv",
+        source="docs/dashboard-revision-plan.md",
+        reviewed="2026-08-23",
+        date="2026-08-23",
+        tags=("dashboard",),
+    ),
+    Decision(
+        id="the-stan-program-ships-as-an-artifact",
+        topic="problem",
+        claim="**Each model page shows its head's Stan program verbatim**, as a named "
+              "block between blocks 3 and 4 (`model_page.stan_block`, keyed on block 3 "
+              "so the numbered contract does not move), read from a tenth model-card "
+              "artifact — `model_card_stan.csv`, one row per carded head with the "
+              "program text riding along. The head→program mapping is read from the "
+              "fitting modules' own `MODEL` constants, never retyped.",
+        because="The dashboard may not read `src/stan/` — it reads artifacts only — and "
+                "an artifact is a snapshot taken beside the cards it ships with, where a "
+                "live file could drift ahead of the fit the page describes. Code is the "
+                "one page content that is neither a figure nor a result: it is the "
+                "specification itself, which block 1's typed prose is allowed to "
+                "describe and this block simply shows. The text repeats across heads "
+                "sharing a program, the same deliberate repetition the features file "
+                "makes, so a page filters to one head and has everything.",
+        status="built",
+        reproduce="make model-cards → outputs/predictions/model_card_stan.csv",
+        source="docs/model-cards-plan.md",
+        reviewed="2026-08-23",
+        date="2026-08-23",
+        tags=("dashboard",),
+    ),
 )

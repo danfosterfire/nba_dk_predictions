@@ -299,7 +299,11 @@ def calibrated_block(frames: dict, window: str, th: dict) -> None:
         "its own role-graded rho and only one of the two can govern a draw, and the block "
         "inflation was never imposed at all: the serial structure the draw has is *produced* "
         "by the season-constant frailties. The injected sigma is the one that was missing "
-        "from this page while being read on every minutes draw the simulator makes.")
+        "from this page while being read on every minutes draw the simulator makes — and it "
+        "is where the **marginal minutes head** enters the shipped chain: that head is "
+        "fitted and carded and never drawn from, and its season-total spread is the target "
+        "`make minutes-unification` calibrated this constant against, so its information "
+        "reaches the simulator as this one number rather than as draws.")
 
     st.plotly_chart(
         fig_metric_facets(inputs.window_facets(panel), th, inputs.WINDOW_SLOTS,

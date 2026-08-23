@@ -298,6 +298,41 @@ def test_the_marginal_minutes_head_is_not_in_the_draw_path_and_the_composition_i
     assert "minutes" not in _sim_artifact_keys()
 
 
+# ── The Stan program ──────────────────────────────────────────────────────────
+
+def test_every_carded_head_names_a_stan_program_that_exists_on_disk():
+    """The mapping is read from the fitting modules' own MODEL constants, so the one way
+    it can be wrong is a head this function does not know — which raises by name — or a
+    program the repo no longer carries, which `stan_rows` refuses at build time. Carded
+    heads only: ten of the eleven declared-but-uncarded rookie twins are no-fit plug-ins
+    with no Stan program to show, which is part of why they have no page."""
+    from src.models.stan_utils import STAN_DIR
+    for head in M.SPECS:
+        if M.uncarded(head):
+            continue
+        program = M.stan_program(head)
+        assert (Path(STAN_DIR) / f"{program}.stan").exists(), (head, program)
+
+
+def test_an_undeclared_head_has_no_stan_program_rather_than_a_default():
+    with pytest.raises(KeyError, match="stan_program"):
+        M.stan_program("a_head_that_was_never_carded")
+
+
+def test_stan_rows_carry_the_verbatim_source_once_per_head():
+    """One row per head with the program text riding along — the same deliberate
+    repetition the features file makes, so a page filters to one head and has everything.
+    The line count is emitted so a page can size the block without parsing the text."""
+    rows = M.stan_rows(["availability", "composition", "ast"])
+    assert [r["head"] for r in rows] == ["ast", "availability", "composition"]
+    by_head = {r["head"]: r for r in rows}
+    assert by_head["composition"]["stan_file"] == "composition_glm.stan"
+    assert by_head["ast"]["stan_file"] == "negbinomial_glm.stan"
+    for row in rows:
+        assert "model {" in row["source"], row["head"]
+        assert row["n_lines"] == len(row["source"].splitlines()), row["head"]
+
+
 # ── Terms ─────────────────────────────────────────────────────────────────────
 
 def test_a_spline_basis_groups_under_the_column_it_expands():
@@ -1312,6 +1347,24 @@ def test_every_shipped_head_is_verified_and_declares_a_unit():
     assert (index["recipe_design_error"] <= 1e-9).all()
     assert index["unit"].notna().all() and (index["unit"].str.len() > 0).all()
     assert set(index["model_class"]) <= set(M.CLASS_LABELS)
+
+
+def test_every_shipped_head_ships_its_stan_program_verbatim():
+    """One source row per carded head, and the text is the program — not a path to one.
+
+    The dashboard may not open `src/stan/`, so the code a page shows is whatever this
+    artifact carries; an empty or truncated cell would render as a good-looking block of
+    nothing, which is why the assertion is on the text itself.
+    """
+    index = _shipped("model_card_index.csv")
+    stan = _shipped("model_card_stan.csv")
+    assert set(stan["head"]) == set(index["head"])
+    assert stan["head"].is_unique
+    for _, row in stan.iterrows():
+        source = str(row["source"])
+        assert str(row["stan_file"]).endswith(".stan"), row["head"]
+        assert "model {" in source and "data {" in source, row["head"]
+        assert int(row["n_lines"]) == len(source.splitlines()), row["head"]
 
 
 def test_the_shipped_index_carries_each_head_s_role_in_the_shipped_chain():

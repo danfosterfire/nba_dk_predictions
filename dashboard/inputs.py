@@ -538,7 +538,11 @@ CALIBRATED: tuple[Calibrated, ...] = (
         key="player_season_sigma", label="Injected per-(player, season) sigma",
         artifact=MIN_UNIF_FILE, target=MAKE_MIN_UNIF, unit="logit-scale sd, per unit",
         what="The season-level spread the composition cannot manufacture from draws that "
-             "are iid across games. Graded by role since 2026-08-16 — a constant "
+             "are iid across games. Calibrated against the **marginal minutes head** — "
+             "the season-level `min | available` head, fitted and carded but never drawn "
+             "from at simulation time: its season-total spread is the target this "
+             "constant was chosen to reach, so that head reaches the simulator only "
+             "through this number. Graded by role since 2026-08-16 — a constant "
              "logit-scale sigma left fringe player-seasons 1.73x under-dispersed while "
              "stars were over-dispersed at 0.86x.",
         fmt="{:.3f}", role=CONSUMED, windowed=False,

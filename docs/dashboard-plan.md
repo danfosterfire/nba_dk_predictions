@@ -417,6 +417,17 @@ position: a link into `/tournament` written before the insertion still resolves 
 
 ### Pages 3–6 — the model detail views, and the head selector
 
+> **Amended 2026-08-23 — the third revision round.** Two changes to what this section
+> specifies, recorded in `docs/dashboard-revision-plan.md` ("The third round"): the model
+> pages carry **only heads in the simulator's draw path** (`heads_of` filters on the
+> index's own `in_draw_path`, so the availability selector is `availability` +
+> `gp_duration` and the minutes selector is the composition alone — the tenure
+> decomposition and the marginal minutes head stay carded and off the pages, the marginal
+> head's calibration role noted on page 7), and a shared named block, **the Stan program**,
+> renders between blocks 3 and 4 on all four model pages from a tenth artifact,
+> `model_card_stan.csv`. The class descriptions below stand as the record
+> of the expansion as designed.
+
 The user's item 2 asks for one tab per **model class** with a dropdown for the specific head
 within a class. The four classes fall out of the likelihood and the unit, not out of the
 `.stan` file — `betabinomial_glm.stan` serves availability, minutes, four conversion heads
