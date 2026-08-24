@@ -911,6 +911,47 @@ def sequential_columns(frame: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def season_weights(shares: pd.DataFrame, seasons: list[str], features_dir: Path,
+                   share_hook=None, drafts: pd.DataFrame | None = None
+                   ) -> tuple[pd.DataFrame, list[str]]:
+    """The per-(player, season) `w_share` block, and the columns it carries out.
+
+    Extracted from `composition_frame` (2026-08-21) so the forward path
+    (`features/forward_design.py`) builds the same columns through the same steps —
+    duplicating the order of the steps is how a design drifts silently. Every key here is
+    S-1 information, which is what makes the extraction legal: nothing in it needs the
+    target season to have been played.
+
+    `drafts` defaults to `draft_numbers(features_dir)`, which reads the season matrix and
+    therefore has no row for a season nobody has played. The forward path passes the same
+    frame extended with its own preseason-legal rows; every retrospective caller passes
+    nothing and gets today's behaviour exactly.
+    """
+    lagged = share_lags(shares, seasons)
+    if drafts is None:
+        drafts = draft_numbers(features_dir)
+    lagged = lagged.merge(drafts, on=["player_id", "season"], how="left")
+    lagged["draft_bucket"] = lagged["draft_bucket"].fillna(UNDRAFTED_BUCKET)
+
+    priors = rookie_share_priors(lagged, seasons)
+    lagged = lagged.merge(priors[["season", "draft_bucket", "rookie_share_prior"]],
+                          on=["season", "draft_bucket"], how="left")
+    lagged["w_share"] = (lagged["prior_share"]
+                         .fillna(lagged["rookie_share_prior"])
+                         .fillna(FALLBACK_ROOKIE_SHARE)
+                         .clip(*SHARE_CLIP))
+    carried = ["player_id", "season", "w_share", "no_prior", "share_stale", "draft_number"]
+    if share_hook is not None:
+        lagged = share_hook(lagged)
+        if lagged["w_share"].isna().any():
+            raise ValueError("`share_hook` returned a NaN `w_share`")
+        lagged["w_share"] = lagged["w_share"].clip(*SHARE_CLIP)
+        if "order_share" in lagged:
+            lagged["order_share"] = lagged["order_share"].clip(*SHARE_CLIP)
+            carried.append("order_share")
+    return lagged, carried
+
+
 def composition_frame(cfg: dict, share_hook=None) -> pd.DataFrame:
     """One ordered row per played player-game, over every season.
 
@@ -934,27 +975,7 @@ def composition_frame(cfg: dict, share_hook=None) -> pd.DataFrame:
     played = played_frame(panel, lengths)
 
     shares = season_shares(played)
-    lagged = share_lags(shares, seasons)
-    drafts = draft_numbers(features_dir)
-    lagged = lagged.merge(drafts, on=["player_id", "season"], how="left")
-    lagged["draft_bucket"] = lagged["draft_bucket"].fillna(UNDRAFTED_BUCKET)
-
-    priors = rookie_share_priors(lagged, seasons)
-    lagged = lagged.merge(priors[["season", "draft_bucket", "rookie_share_prior"]],
-                          on=["season", "draft_bucket"], how="left")
-    lagged["w_share"] = (lagged["prior_share"]
-                         .fillna(lagged["rookie_share_prior"])
-                         .fillna(FALLBACK_ROOKIE_SHARE)
-                         .clip(*SHARE_CLIP))
-    carried = ["player_id", "season", "w_share", "no_prior", "share_stale", "draft_number"]
-    if share_hook is not None:
-        lagged = share_hook(lagged)
-        if lagged["w_share"].isna().any():
-            raise ValueError("`share_hook` returned a NaN `w_share`")
-        lagged["w_share"] = lagged["w_share"].clip(*SHARE_CLIP)
-        if "order_share" in lagged:
-            lagged["order_share"] = lagged["order_share"].clip(*SHARE_CLIP)
-            carried.append("order_share")
+    lagged, carried = season_weights(shares, seasons, features_dir, share_hook)
 
     frame = played.merge(lagged[carried], on=["player_id", "season"], how="left")
     if frame["w_share"].isna().any():
@@ -1079,9 +1100,23 @@ def head_frame(cfg: dict, preseason: bool | None = None) -> pd.DataFrame:
     measured — so what ships is the arm that was scored rather than a second implementation
     of it.
     """
+    return composition_frame(cfg, share_hook=shipped_share_hook(cfg, preseason))
+
+
+def shipped_share_hook(cfg: dict, preseason: bool | None = None):
+    """The `share_hook` the shipped head is fitted with, or `None` when the blend is off.
+
+    Extracted from `head_frame` (2026-08-21) for the same reason as `season_weights`: the
+    forward per-player frame (`features/forward_design.py`) must blend `w_share` through
+    the code that was measured, not a second implementation of it. A forward season with
+    no preseason rows yet — a 2026-27 frame built in August — comes back on the incumbent
+    share for every player, because `blend_hook` joins `how="left"` and an unseen player
+    carries weight 0; the same call in October picks the preseason up through the join
+    with nothing changing here.
+    """
     blend = preseason_blend(cfg, preseason)
     if blend is None:
-        return composition_frame(cfg)
+        return None
     k, route = blend
 
     from src.models.composition_preseason import blend_hook, preseason_share
@@ -1094,7 +1129,7 @@ def head_frame(cfg: dict, preseason: bool | None = None) -> pd.DataFrame:
             f"`stan.composition.preseason.adopt: false` to fit the pre-2026-08-14 head "
             f"exactly.")
     pre = preseason_share(pd.read_parquet(panel_path))
-    return composition_frame(cfg, share_hook=blend_hook(pre, k, route))
+    return blend_hook(pre, k, route)
 
 
 # ── Feature variants ──────────────────────────────────────────────────────────

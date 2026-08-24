@@ -13,7 +13,7 @@ PIP    := .venv/bin/pip
 # nothing and a list is one more thing to forget to add a target to.
 export PYTHONUNBUFFERED = 1
 
-.PHONY: venv install fetch preprocess features train evaluate predict test clean \
+.PHONY: venv install fetch preprocess rosters features train evaluate predict test clean \
         season-matrix pca archetypes eda team-context component-targets context-value \
         opponent persistence aging target-profile feature-diagnostics dashboard \
         dashboard-audit dashboard-config docs-audit \
@@ -39,7 +39,8 @@ export PYTHONUNBUFFERED = 1
         composition-preseason-fit composition-quadrature-check \
         scoring-periods draft-pool simulate-season weekly-scores bracket draft-sim \
         draft-sim-need draft-room draft-room-prep strategy-sweep strategy-sweep-need \
-        pick-log-stake mixture-value preseason-contest final-evaluation
+        pick-log-stake mixture-value preseason-contest final-evaluation \
+        posteriors-production production-check forward-rehearsal forward-board
 
 venv:
 	/opt/homebrew/bin/python3.14 -m venv .venv
@@ -53,6 +54,20 @@ fetch:
 
 preprocess:
 	$(PYTHON) -m src.data.preprocess
+
+# The upcoming season's rosters, ALWAYS re-fetched. Every other roster file describes a
+# season that is over and cannot change, so `make fetch` rightly skips what it already
+# has — but the production season's roster changes with every signing and trade up to the
+# opener, and it is this project's forward membership rule
+# (src/features/forward_design.py). A board drafted in October off a roster cached in
+# August is drafting last summer's league. Teams come from the published schedule when
+# there is no game log yet. ~30 API calls, under a minute.
+#
+#   make rosters SEASON=2026-27
+ROSTER_SEASON ?= 2026-27
+
+rosters:
+	$(PYTHON) -m src.data.fetch --rosters $(ROSTER_SEASON)
 
 # ── Daily capture ─────────────────────────────────────────────────────────────
 # Both sources are current-status only and CANNOT be backfilled: the NBA report PDFs
@@ -930,8 +945,58 @@ dashboard-audit:
 #
 # Do not run it to check whether a validation result "held up". If a number from here
 # changes a modelling decision, the split is spent and the estimate is no longer unbiased.
+#
+# Four registered readings: the `availability`, `games_played` and `season_total` heads,
+# which are minutes of work, and `chain` — the deliverable, which builds a board from the
+# `train_val` posterior, drafts the SHIPPED strategy against an ADP field and scores it on
+# the box scores that happened. The chain needs `make posteriors WINDOW=train_val` first
+# and simulates two seasons on the way, so budget hours and run it on its own:
+#
+#   $(PYTHON) -m src.final_evaluation chain
+#
+# The artifact merges by head, so that does not retract the three head rows.
 final-evaluation:
 	$(PYTHON) -m src.final_evaluation
+
+# ── The production fit ────────────────────────────────────────────────────────
+# The OTHER legitimate reason to read the held-out seasons, and it is a different act from
+# the one above: nothing is scored and no decision is taken, the shipped specification is
+# simply refitted on every season there is so the upcoming season's board is not throwing
+# two years of data away. `docs/preseason-plan.md`'s October runbook is what consumes it.
+#
+# Guarded twice (src/models/posteriors.py::assert_production): `--production` has to be
+# typed, and `make final-evaluation` has to have already been taken — because after this
+# fit exists, every model that could be compared against the held-out seasons has seen
+# them, and the workflow can no longer be priced on data it did not train on.
+#
+# BUDGET MOST OF A DAY, like `make posteriors` — it is the same eighteen fits on more rows.
+posteriors-production:
+	$(PYTHON) -m src.models.posteriors --window full --production
+
+# Is the chain ready to price a season it has never seen? Reads disk only — nothing is
+# fitted and nothing is fetched, so it costs a second and can be run in the week it
+# matters. Two halves: the MODEL half is finishable today and is either done or not; the
+# SEASON half cannot be finished early, and a missing row there before October is the NBA
+# schedule rather than a defect. See docs/preseason-plan.md's production runbook.
+production-check:
+	$(PYTHON) -m src.production_check
+
+# The October crunch, rehearsed on a season that HAS been played — the runbook's own
+# advice, because the real window is too short to debug a join in. Builds the design
+# WITHOUT the target season's game log, from the roster snapshot plus the schedule, and
+# compares it against the design as it is built today. Part A is the mechanics and has an
+# exact right answer; part B is the population and is a BOUND, because a retrospective
+# snapshot is contaminated in a direction the file does not record. numpy, ~1 min.
+forward-rehearsal:
+	$(PYTHON) -m src.features.forward_design
+
+# §6h's acceptance test: the forward inputs pushed all the way through the simulator to
+# a board ranking on a PLAYED season, against the retrospective board from the same
+# posteriors — with a second retro run at seed+1 supplying the noise floor the gap is
+# judged against. Needs the `train` posteriors; numpy only, no sampler. SEASON and SIMS
+# override the 2023-24 / 500 defaults.
+forward-board:
+	$(PYTHON) -m src.sim.forward_board $(if $(SEASON),--season $(SEASON),) $(if $(SIMS),--sims $(SIMS),)
 
 # Every quoted figure in the plan docs, checked against the artifact behind it. Unlike
 # dashboard-audit this one is a GATE — it exits non-zero on a disagreement, because a doc

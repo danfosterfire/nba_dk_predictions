@@ -130,6 +130,14 @@ NOTES = "docs/model-development-notes.md"  # findings from model selection and f
 QUIRKS = "docs/data-quirks.md"             # raw-data and library behaviour
 SPEC = "docs/project-spec.md"              # the spec every workflow reads
 SPLIT = "docs/train-validate-test-split.md"
+FINAL = "docs/final-evaluation-plan.md"   # the one reading of the held-out seasons
+
+FINAL_EVAL = "outputs/predictions/final_evaluation.csv"
+FINAL_ST = "outputs/predictions/final_evaluation_season_total.csv"
+FINAL_BOARD = "outputs/predictions/final_evaluation_availability_board.csv"
+FINAL_ADP = "outputs/predictions/final_evaluation_adp_coverage.csv"
+FORWARD = "outputs/predictions/forward_design_rehearsal.csv"
+FORWARD_BOARD = "outputs/predictions/forward_board_rehearsal.csv"
 SIMS = "docs/simulations-plan.md"           # the simulation and drafting layer
 PRESEASON = "docs/preseason-plan.md"        # current-season preseason games as covariates
 
@@ -8940,7 +8948,218 @@ def _build() -> tuple[Claim, ...]:
                  + _preseason_no_prior() + _composition_preseason()
                  + _composition_preseason_fit()
                  + _composition_preseason_fit_covered()
-                 + _preseason_contest())
+                 + _preseason_contest()
+                 + _final_evaluation())
+
+
+def _final_evaluation() -> list[Claim]:
+    """`docs/final-evaluation-plan.md` — the one reading of the held-out seasons.
+
+    🔴 **These claims cannot be repaired by re-running anything.** Every other figure this
+    module audits is re-derivable: a doc drifts, the target re-runs, the doc is corrected.
+    The held-out figures are taken once by design, so a drift here is a drift in a number
+    that has no second measurement behind it — which makes this the family where the audit
+    is worth the most and the family where "just re-run it" is not a remedy.
+
+    What is claimed is split by what each figure protects.
+
+    **The two replications** — the availability head's worth at the season total, and the
+    oracle gap — because they are the two sentences `README.md` leads with, and the whole
+    point of the round was whether they survive on seasons nothing has seen. Both arms of
+    each are claimed, not the difference: a gap quoted alone survives both sides drifting
+    together.
+
+    **The mixture's margin and the port spread**, since those are the two selection
+    decisions the held-out rows re-test rather than merely re-report.
+
+    **The ADP coverage**, which is the round's binding limitation — 0 legal rows against
+    258 — and a doc that kept the contest reading while losing the count would be
+    overclaiming.
+
+    The prose-only comparisons (`0.4709 → 0.3873`, `0.0344 → 0.0367`) are left to the
+    validation-side builders that already own those artifacts.
+    """
+    C: list[Claim] = []
+
+    def add(quoted: str, actual, label: str, artifact: str = FINAL_EVAL,
+            doc: str = FINAL, **kw) -> None:
+        C.append(_c(quoted, artifact, actual, label, doc=doc, **kw))
+
+    def fe(head: str, arm: str, column: str) -> float:
+        return cell(FINAL_EVAL, column, head=head, arm=arm)
+
+    def st(arm: str, column: str) -> float:
+        return cell(FINAL_EVAL, column, head="season_total", arm=arm)
+
+    def val_st(arm: str, name: str) -> float:
+        return _one(table(SEASON_TOTAL), "value", treatment=arm, metric=name, group="all")
+
+    def val_av(arm: str, name: str) -> float:
+        return _one(table(STAN_AV_M), "value", model=arm, metric=name,
+                    group="all")
+
+    # ── the replication the round exists for ──────────────────────────────────
+    add("210.2978", lambda: val_st("full_season", "mae_dk_total")
+        - val_st("beta_binomial", "mae_dk_total"),
+        "availability head's worth at the season total, validation",
+        artifact=SEASON_TOTAL)
+    add("211.1288", lambda: st("full_season", "mae") - st("beta_binomial", "mae"),
+        "availability head's worth at the season total, held out")
+    add("47.5351", lambda: val_st("oracle_rate", "mae_dk_total")
+        - val_st("oracle_gp", "mae_dk_total"),
+        "oracle gap, rate minus games played, validation", artifact=SEASON_TOTAL)
+    add("81.3619", lambda: st("oracle_rate", "mae") - st("oracle_gp", "mae"),
+        "oracle gap, rate minus games played, held out")
+
+    # `docs/train-validate-test-split.md` quotes the same pair in its "the split was
+    # spent" section. Claimed there too rather than left to the router: a figure copied
+    # into a second doc is a second thing that can drift, which is the whole premise here.
+    add("210.2978", lambda: val_st("full_season", "mae_dk_total")
+        - val_st("beta_binomial", "mae_dk_total"),
+        "availability head's worth, validation (split doc)", artifact=SEASON_TOTAL,
+        doc=SPLIT)
+    add("211.1288", lambda: st("full_season", "mae") - st("beta_binomial", "mae"),
+        "availability head's worth, held out (split doc)", doc=SPLIT)
+
+    # `README.md` leads with the same four, so they are claimed there as well — the
+    # README is the doc most likely to be edited by somebody not reading this one.
+    add("211.1288", lambda: st("full_season", "mae") - st("beta_binomial", "mae"),
+        "availability head's worth, held out (README)", doc=README)
+    add("81.3619", lambda: st("oracle_rate", "mae") - st("oracle_gp", "mae"),
+        "oracle gap, held out (README)", doc=README)
+    add("9.8771", lambda: fe("availability", "stan_posterior", "crps"),
+        "the availability head's held-out CRPS (README)", doc=README)
+    add("0.8483", lambda: fe("availability", "beta_binomial", "crps")
+        - fe("availability", "stan_posterior", "crps"),
+        "mixture margin, held out (README)", doc=README)
+
+    # ── the two selection decisions the held-out rows re-test ─────────────────
+    add("0.7154", lambda: val_av("beta_binomial", "crps_games")
+        - val_av("stan_posterior", "crps_games"),
+        "mixture margin over the plain beta-binomial, validation",
+        artifact=STAN_AV_M)
+    add("0.8483", lambda: fe("availability", "beta_binomial", "crps")
+        - fe("availability", "stan_posterior", "crps"),
+        "mixture margin over the plain beta-binomial, held out")
+    add("0.01003", lambda: max(val_av(a, "crps_games") for a in _PORTS)
+        - min(val_av(a, "crps_games") for a in _PORTS),
+        "spread across the three ports, validation", artifact=STAN_AV_M)
+    add("0.00332", lambda: max(fe("availability", a, "crps") for a in _PORTS)
+        - min(fe("availability", a, "crps") for a in _PORTS),
+        "spread across the three ports, held out")
+
+    # ── the head tables ───────────────────────────────────────────────────────
+    for arm, quoted in (("beta_binomial", "10.7254"),
+                        ("beta_binomial_role_rho", "10.7083"),
+                        ("mixture_mle", "9.8759"),
+                        ("stan_plug_in", "9.8792"),
+                        ("stan_posterior", "9.8771")):
+        add(quoted, lambda a=arm: fe("availability", a, "crps"),
+            f"held-out CRPS, availability/{arm}")
+    add("10.7952", lambda: fe("games_played", "incumbent", "crps"),
+        "held-out CRPS, the incumbent the games-played head defers to")
+    for arm, quoted in (("full_season", "646.2640"), ("prior_gp", "475.0156"),
+                        ("league_age", "476.0361"), ("beta_binomial", "435.1352"),
+                        ("oracle_rate", "302.6747"), ("oracle_gp", "221.3128")):
+        add(quoted, lambda a=arm: st(a, "mae"), f"held-out season-total MAE, {arm}")
+    add("541.9020", lambda: st("full_season", "bias"),
+        "held-out season-total bias, assuming a full season")
+    add("6.1199", lambda: st("beta_binomial", "bias"),
+        "held-out season-total bias, the shipped treatment")
+    add("316.9385", lambda: st("beta_binomial", "crps"),
+        "held-out season-total CRPS, the shipped treatment")
+    add("0.5952", lambda: st("beta_binomial", "r2"),
+        "held-out season-total R2, the shipped treatment")
+
+    # ── the forward path (§6) ─────────────────────────────────────────────────
+    # 🔴 Claimed because this family already drifted once: the doc quoted the PRE-fill row
+    # count beside the POST-fill games-per-team, an internally inconsistent pair that no
+    # reader would catch and no artifact contradicted, because the figures were typed from
+    # a terminal rather than derived. `forward_design.run` now records them.
+    def fwd(measure: str) -> float:
+        return cell(FORWARD, "value", part="C", measure=measure)
+
+    add("47,314", lambda: fwd("n_rows"),
+        "synthetic 2026-27 player-game rows", artifact=FORWARD)
+    add("577", lambda: fwd("n_players"), "players on the 2026-27 roster snapshot",
+        artifact=FORWARD)
+    add("30", lambda: fwd("n_filler_games"),
+        "filler games closing the schedule's two-per-team shortfall", artifact=FORWARD)
+    add("1,206", lambda: fwd("n_regular_games"),
+        "regular-season games the 2026-27 schedule publishes", artifact=FORWARD)
+
+    # Part D — the composition's per-player frame against the shipped `head_frame` path.
+    # The "0 unexplained" claim is the one with teeth: its presence-check is trivial but
+    # its value-check re-derives the whole-frame agreement, so a rerun that breaks parity
+    # fails the build rather than quietly aging the doc.
+    def fwd_d(value_col: str, design_col: str) -> float:
+        frame = table(FORWARD)
+        rows_ = frame[(frame["part"] == "D") & (frame["column"] == design_col)]
+        return float(rows_[value_col].iloc[0]) if len(rows_) else float("nan")
+
+    add("572", lambda: fwd_d("n", "w_share"),
+        "players in the composition frame rehearsal", artifact=FORWARD)
+    add("25", lambda: float((table(FORWARD)["part"] == "D").sum()),
+        "columns compared in the composition frame rehearsal", artifact=FORWARD)
+    add("0", lambda: float(table(FORWARD).loc[table(FORWARD)["part"] == "D",
+                                              "n_unexplained"].sum()),
+        "unexplained composition-frame disagreements", artifact=FORWARD)
+    add("33", lambda: fwd_d("n_expected", "w_share"),
+        "text-sourced draft numbers moving a rookie weight", artifact=FORWARD)
+    add("19", lambda: fwd_d("n_expected", "draft_number")
+        - fwd_d("n_expected", "w_share"),
+        "snapshot-absentee draft numbers (Part B's contamination)", artifact=FORWARD)
+    add("0.0950", lambda: fwd_d("max_abs_diff", "w_share"),
+        "largest classified w_share move in the rehearsal", artifact=FORWARD)
+
+    # §6h — the board acceptance test, three arms. The fixed-population Spearman against
+    # the seed-noise floor is the acceptance itself, so both are value-checked.
+    def brd(value_col: str, arm: str) -> float:
+        frame = table(FORWARD_BOARD)
+        rows_ = frame[frame["arm"] == arm]
+        return float(rows_[value_col].iloc[0]) if len(rows_) else float("nan")
+
+    _NOISE, _FIXED, _FWD = ("retro_vs_retro_seed_noise",
+                            "forward_fixed_population_vs_retro", "forward_vs_retro")
+    add("0.9990", lambda: brd("spearman", _NOISE),
+        "board Spearman, seed-noise floor", artifact=FORWARD_BOARD)
+    add("0.9988", lambda: brd("spearman", _FIXED),
+        "board Spearman, forward with population held fixed", artifact=FORWARD_BOARD)
+    add("0.9831", lambda: brd("spearman", _FWD),
+        "board Spearman, forward from the snapshot", artifact=FORWARD_BOARD)
+    add("21.03", lambda: brd("mean_abs_total_diff", _NOISE),
+        "mean season-total gap, seed noise", artifact=FORWARD_BOARD)
+    add("22.82", lambda: brd("mean_abs_total_diff", _FIXED),
+        "mean season-total gap, fixed population", artifact=FORWARD_BOARD)
+    add("104.90", lambda: brd("mean_abs_total_diff", _FWD),
+        "mean season-total gap, snapshot population", artifact=FORWARD_BOARD)
+    add("89", lambda: brd("overlap_100", _FWD),
+        "top-100 overlap, forward from the snapshot", artifact=FORWARD_BOARD)
+    add("99", lambda: brd("overlap_100", _FIXED),
+        "top-100 overlap, fixed population", artifact=FORWARD_BOARD)
+    add("33", lambda: brd("n_ref_only", _FWD),
+        "retro-board players the snapshot arm is missing", artifact=FORWARD_BOARD)
+    add("6", lambda: brd("missing_top100", _FWD),
+        "missing players inside the retro top 100", artifact=FORWARD_BOARD)
+    add("18", lambda: brd("n_ref_only", _FIXED),
+        "fringe units the fixed-population arm cannot qualify", artifact=FORWARD_BOARD)
+    add("133", lambda: brd("best_missing_rank", _FIXED),
+        "best retro rank among the unqualifiable fringe", artifact=FORWARD_BOARD)
+
+    # ── the board correlation, and the round's binding limitation ─────────────
+    add("1.0046", lambda: cell(FINAL_BOARD, "inflation", n_players=12),
+        "held-out board inflation, a 12-man board", artifact=FINAL_BOARD)
+    add("1.1256", lambda: cell(FINAL_BOARD, "inflation", n_players=911),
+        "held-out board inflation, all scored player-seasons", artifact=FINAL_BOARD)
+    add("258", lambda: cell(FINAL_ADP, "n_priced", season="2025-26"),
+        "2025-26 draftable players carrying a legal ADP", artifact=FINAL_ADP)
+
+    return C
+
+
+#: The three ways the availability head's shipped likelihood is expressed — the point MLE
+#: and the two Stan readings. Their spread is the port check, not a model comparison.
+_PORTS = ("mixture_mle", "stan_plug_in", "stan_posterior")
 
 
 CLAIMS: tuple[Claim, ...] = _build()

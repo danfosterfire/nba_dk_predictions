@@ -236,7 +236,8 @@ def shrinkage_constants(cfg: dict) -> dict[str, float]:
     return {str(k): float(v) for k, v in chosen.items()}
 
 
-def head_design(cfg: dict, preseason: bool | None = None) -> pd.DataFrame:
+def head_design(cfg: dict, preseason: bool | None = None,
+                design: pd.DataFrame | None = None) -> pd.DataFrame:
     """`build_design` plus every head's preseason block — **this family's path, no other's**.
 
     Separate from `component_rates.build_design` for the reason `stan_minutes.head_design` is
@@ -249,8 +250,11 @@ def head_design(cfg: dict, preseason: bool | None = None) -> pd.DataFrame:
     that were measured, not on a second implementation of them.
     """
     features_dir = Path(cfg["data"]["features_dir"])
-    targets = pd.read_parquet(features_dir / "component_targets.parquet")
-    design = build_design(targets, cfg["data"]["seasons"], cfg["data"]["raw_dir"])
+    if design is None:
+        targets = pd.read_parquet(features_dir / "component_targets.parquet")
+        design = build_design(targets, cfg["data"]["seasons"], cfg["data"]["raw_dir"])
+    # `design` lets the forward path (`features/forward_design.py`) bring its own rows
+    # through the SAME preseason attachment; `None` is today's behaviour exactly.
     if not (PRESEASON if preseason is None else bool(preseason)):
         return design
 

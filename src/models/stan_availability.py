@@ -346,7 +346,8 @@ def head_features(preseason: bool | None = None) -> list[str]:
     return list(FEATURE_COLS) + (list(PRESEASON_COLS) if on else [])
 
 
-def head_design(cfg: dict, preseason: bool | None = None) -> pd.DataFrame:
+def head_design(cfg: dict, preseason: bool | None = None,
+                design: pd.DataFrame | None = None) -> pd.DataFrame:
     """`availability_design` plus the preseason block — **this head's path and no other's**.
 
     Separate from `availability_design` deliberately and permanently. That builder is how
@@ -364,7 +365,9 @@ def head_design(cfg: dict, preseason: bool | None = None) -> pd.DataFrame:
     (`make preseason`), and a NaN means a row reached the head with an undefined block,
     which under a beta-binomial likelihood is a silent non-fit rather than an error.
     """
-    design = availability_design(cfg)
+    # `design` lets the forward path (`features/forward_design.py`) bring its own rows
+    # through the SAME preseason attachment; `None` is today's behaviour exactly.
+    design = availability_design(cfg) if design is None else design
     if not (PRESEASON if preseason is None else bool(preseason)):
         return design
 

@@ -1137,6 +1137,302 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("failure-mode", "capture"),
     ),
     Decision(
+        id="espn-injury-feed-returns-403",
+        topic="data",
+        claim="The ESPN injury endpoint now returns **403 Forbidden**, and 48 days have "
+              "been permanently lost since 2026-06-28.",
+        because="Diagnosed 2026-08-21 by `make daily-capture`, which failed on "
+                "`403 Client Error: Forbidden` from "
+                "`site.api.espn.com/.../nba/injuries`. This is a different failure from "
+                "`espn-tcc-outage`, which was a local permissions lapse that a grant "
+                "fixed: the scheduler side is fine and the endpoint is refusing. The "
+                "feed is current-status only with no history, so the missed days do not "
+                "come back whatever happens next. Nothing measured depends on it — no "
+                "shipped head reads the ESPN feed — but it is the capture program with "
+                "the least slack, which is why `make production-check` now surfaces the "
+                "last capture date for all four programs rather than gating on any of "
+                "them. The other three are healthy: `injury_reports` is current to "
+                "2026-08-21 with 0 missed days, and the DK board captured 2026-08-20.",
+        # `incident`, per docs/provenance-plan.md: a dated diagnosis of a third party,
+        # not a measurement, so re-deriving it would mean re-probing to no purpose.
+        status="incident",
+        source="docs/final-evaluation-plan.md",
+        reviewed="2026-08-21",
+        date="2026-08-21",
+        tags=("failure-mode", "capture", "sources"),
+    ),
+    Decision(
+        id="the-published-schedule-is-two-games-per-team-short",
+        topic="simulations",
+        claim="The published schedule for an **unplayed** season lists **80** "
+              "regular-season games per team, not 82, and nothing in it says so. Taken as "
+              "the availability head's binomial denominator it would run every player's "
+              "rate against 2 too few opportunities.",
+        because="Measured 2026-08-21 against both a played and an unplayed season: "
+                "2025-26 returns 1,230 regular games, 30 franchises, 82 each, no "
+                "placeholder; 2026-27 returns 1,206, 30 franchises, **80** each, plus six "
+                "`002` games with the TBD team id `0` on **both** sides — which is why no "
+                "franchise's own count betrays the shortfall. The Emirates NBA Cup "
+                "knockout has no opponents until group play ends, so the league publishes "
+                "80 fixed games and backfills the rest once they resolve. A 2.4% "
+                "shortfall in games played goes straight into every season total and the "
+                "draft board, and nothing would have raised. Same class of defect as the "
+                "traded-player denominator `sim/season.py::roster_grid` records at 92.6 "
+                "against 82.0 — that one was found in the numbers, this one was found by "
+                "rehearsing in August. `forward_design.schedule_team_games` returns the "
+                "corrected denominator plus a record of what the raw schedule said, so a "
+                "caller sees the correction rather than inheriting it.",
+        status="settled",
+        reproduce="make forward-rehearsal → "
+                  "outputs/predictions/forward_design_rehearsal.csv",
+        source="docs/final-evaluation-plan.md",
+        reviewed="2026-08-21",
+        date="2026-08-21",
+        tags=("production", "failure-mode"),
+    ),
+    Decision(
+        id="the-forward-availability-design-reproduces-the-retrospective-one",
+        topic="availability",
+        claim="Built from a roster snapshot and the schedule instead of from the game "
+              "log, the availability design reproduces the retrospective one on **23 "
+              "columns × 450 players with 0 unexplained differences**, and its population "
+              "is a strict subset — **0** spurious rows.",
+        because="`make forward-rehearsal` on 2023-24, a validation season. The single "
+                "difference is `team_games` on one player, and it is the one place a "
+                "target-season quantity reaches this head's input side: `build_design` "
+                "ends on `max(team_games, gp)` so a traded player whose two teams' "
+                "schedules overlap does not make `betabinom.logpmf` non-finite. A forward "
+                "design cannot reproduce that and should not — in September nobody knows "
+                "who will be traded. On population, the snapshot's 532 names collapse to "
+                "401 design rows against the retrospective 450, with zero spurious: the "
+                "design's own prior-minutes and age qualification absorbs every extra "
+                "name, so the forward rule does not invent players. The 49 misses are "
+                "entirely a rehearsal artifact, decomposed — 29 absent from the roster "
+                "file (traded away before the snapshot, invisible) and 20 removed by the "
+                "`HOW_ACQUIRED` cut, all 20 of whom appear inside some team's first ten "
+                "games and so were on an October roster elsewhere. Neither contamination "
+                "exists for a snapshot taken before an opener.",
+        status="measured",
+        reproduce="make forward-rehearsal → "
+                  "outputs/predictions/forward_design_rehearsal.csv",
+        source="docs/final-evaluation-plan.md",
+        reviewed="2026-08-21",
+        date="2026-08-21",
+        tags=("production",),
+    ),
+    Decision(
+        id="the-forward-composition-frame-reproduces-the-shipped-heads",
+        topic="minutes",
+        claim="The composition's per-player frame — `w_share`, the allocation order's "
+              "keys, the design columns behind `composition_eta` — builds forward from "
+              "the roster snapshot and reproduces the shipped `head_frame` path on **25 "
+              "columns × 572 players with 0 unexplained disagreements** (rehearsed on "
+              "2023-24, population held fixed).",
+        because="Everything the simulator reads off the composition's fitting frame is "
+                "constant within a player-season, and `composition_frame`'s own "
+                "docstring says the ordering is computable preseason — so the forward "
+                "builder is an extraction, not an invention: `season_weights` and "
+                "`shipped_share_hook` were pulled out of `stan_composition` and both "
+                "paths now run the same code, including the preseason blend join, which "
+                "no forward-built row had been through before. The classified "
+                "difference is the draft number, whose retrospective source "
+                "(`bio_draft_number`) is a season-statistics file that does not exist "
+                "before the opener; the forward rule reads the player's own earlier "
+                "matrix rows first and the roster's '#N Pick' text for rookies. The "
+                "rehearsal's mismatches decompose exactly — 33 with no pre-2023-24 "
+                "matrix row (the production case, text-sourced) and 19 no longer on the "
+                "snapshot at all, which is Part B's contamination one column over and "
+                "impossible in production, where membership IS the snapshot. `w_share` "
+                "moves only inside the first set, by at most 0.0950, because a no-prior "
+                "rookie's weight is his bucket's expanding prior. The scoring-period "
+                "calendar was wired the same day: `scoring_periods.run` takes a "
+                "default-empty `forward_seasons` and appends the synthetic log's "
+                "triples, so the period grid carries the same game ids the roster grid "
+                "will — filler games included, which periods keyed to the raw schedule "
+                "would leave slotless.",
+        status="measured",
+        reproduce="make forward-rehearsal → "
+                  "outputs/predictions/forward_design_rehearsal.csv",
+        source="docs/final-evaluation-plan.md",
+        reviewed="2026-08-21",
+        date="2026-08-21",
+        tags=("production",),
+    ),
+    Decision(
+        id="a-synthetic-game-log-is-the-whole-forward-path",
+        topic="simulations",
+        claim="One **synthetic game log** — the published schedule crossed with the roster "
+              "snapshot — makes the existing builders produce forward rows unchanged. "
+              "Measured on real 2026-27 data: **489** availability design rows, "
+              "`gp_share_lag1` and `age` 100% populated.",
+        because="The eight-item forward-capability plan this replaces was "
+                "over-engineered. Every season-keyed frame in the project aggregates "
+                "`game_logs_<season>.csv`: `build_season_panel` reads it for membership "
+                "and calls `team_schedule`, which reads it again for each team's game "
+                "sequence, and then builds the panel as roster x schedule — already the "
+                "shape a forward season needs. Synthesizing that one file beats teaching "
+                "five modules a second way to build themselves. Both inputs exist today "
+                "(1,271 scheduled games with team ids; `CommonTeamRoster` returns 577 "
+                "players over 30 teams for 2026-27), and the cross gives 46,160 "
+                "player-games. ⚠️ The first reading of this said `played` had to be "
+                "faked to 1, fabricating every target column and needing a "
+                "`held_out.py`-style guard. That was WRONG and was withdrawn the same "
+                "day: `played` is used in exactly two places for exactly one purpose — "
+                "attributing a TRADED player to his last team — and `roster_grid` then "
+                "drops the column. Given roster membership there is nothing to "
+                "disambiguate, and the design built with `played` faked and with `played` "
+                "never set gives 489 rows each, identical on all 19 feature columns, max "
+                "difference 0.00e+00. Two real items remain: the denominator is 80 rather "
+                "than 82 (the Cup finding), and `age` must come from the roster rather "
+                "than `player_bio_stats`, a season-stats endpoint that does not exist "
+                "until games are played. ✅ Both were built the same day: "
+                "`synthetic_game_log` fills every team to 82 with paired games dated in "
+                "the knockout window, and `roster_ages` recomputes age from `BIRTH_DATE` "
+                "at the season reference date — NOT the roster's `AGE` column, which is a "
+                "fetch-time attribute sitting 0.617 years low on the August-pulled "
+                "2026-27 roster. The component design remains open. The only genuinely "
+                "October-gated input is the preseason data.",
+        status="measured",
+        reproduce="make forward-rehearsal → "
+                  "outputs/predictions/forward_design_rehearsal.csv",
+        source="docs/final-evaluation-plan.md",
+        reviewed="2026-08-21",
+        date="2026-08-21",
+        tags=("production",),
+    ),
+    Decision(
+        id="team-attribution-failed-silently-on-a-forward-season",
+        topic="simulations",
+        claim="The team-attribution rule — now shared as "
+              "`features/availability.primary_team` — failed **silently** on a season with "
+              "no appearances, in both of its callers, and then failed a second way after "
+              "the first fix.",
+        because="Found 2026-08-21 while checking whether `played` is needed forward. A "
+                "player is attributed to the team of his last APPEARANCE, which is right "
+                "for a traded player with rows under two teams and has nothing to work "
+                "with in a season nobody has played. Both callers then failed quietly: "
+                "`roster_grid`'s emptiness check runs BEFORE the `played == 1` filter it "
+                "depends on, so it returned an empty grid rather than raising, and "
+                "`season_availability` returned all-NaN `team_games` — the binomial "
+                "denominator. A season that simulates nothing and reports nothing is the "
+                "worst failure available. ⚠️ The first fix then failed a second way: it "
+                "keyed the fallback on `player_id` alone, so a veteran with appearances in "
+                "EARLIER seasons was found in the attribution table and skipped, leaving "
+                "exactly the rows that carry lagged features — 496 of 577 players on "
+                "2026-27, again presenting as a NaN denominator rather than an error. It "
+                "is now keyed on the (season, player_id) pair, falls back to a player's "
+                "only team, and raises when he is genuinely on two rosters with nothing "
+                "played. Played seasons are untouched and that is checked rather than "
+                "asserted: `season_availability` recomputed over the real panel is "
+                "BIT-IDENTICAL to the stored artifact across 14,569 rows and 30 columns.",
+        status="built",
+        reproduce="make simulate-season → data/features/sim_tensor_2022-23.npz",
+        source="docs/final-evaluation-plan.md",
+        reviewed="2026-08-21",
+        date="2026-08-21",
+        tags=("failure-mode", "production"),
+    ),
+    Decision(
+        id="the-production-roster-must-be-refetched-not-cached",
+        topic="data",
+        claim="`make rosters SEASON=2026-27` always re-fetches. `fetch_team_rosters` "
+              "skipped any file it already had, and read its team list from the season's "
+              "game log — so it would have skipped 2026-27 entirely.",
+        because="Every other roster file describes a season that is over and cannot "
+                "change, so the default skip is right. The upcoming season's roster "
+                "changes with every signing and trade up to the opener, and it is this "
+                "project's forward membership rule — a board drafted in October off a "
+                "roster cached in August is drafting last summer's league. The team list "
+                "now falls back to the published schedule, which names both teams in "
+                "every game months ahead and carries the Cup's placeholder id `0` that "
+                "the filter drops.",
+        status="built",
+        reproduce="make rosters → data/raw/nbastats/team_rosters_2026_27.csv",
+        source="docs/final-evaluation-plan.md",
+        reviewed="2026-08-21",
+        date="2026-08-21",
+        tags=("production", "capture"),
+    ),
+    Decision(
+        id="production-readiness-is-a-check-not-a-memory",
+        topic="simulations",
+        claim="`make production-check` reports readiness for the upcoming season's board "
+              "in two halves — the MODEL half, finishable today, and the SEASON half, "
+              "which cannot be finished early.",
+        because="The October runbook's defining property is that every sampler-hour "
+                "lands before the preseason and the crunch is numpy over the pickles. "
+                "That makes readiness a question with a wrong answer available: a missing "
+                "head, a `full` window carrying last month's specification, or a capture "
+                "program that stopped firing all look fine until the two days when there "
+                "is no time to fix them. So the check reads disk, fits nothing and "
+                "fetches nothing — a check that costs an afternoon is a check nobody runs "
+                "in the week it matters. The two halves are reported apart because a red "
+                "row means different things in each: in the model half it is a problem, "
+                "and in the season half before October it is the NBA schedule. Capture is "
+                "reported and never gated, since no freshness threshold is right in both "
+                "August and October.",
+        status="built",
+        reproduce="make production-check → outputs/predictions/production_readiness.csv",
+        source="docs/final-evaluation-plan.md",
+        reviewed="2026-08-21",
+        date="2026-08-21",
+        tags=("production",),
+    ),
+    Decision(
+        id="forward-scoring-is-not-wired",
+        topic="simulations",
+        claim="Having the production posteriors is **not** the same as being able to "
+              "score a season that has not happened — but the gap is now closed and "
+              "measured at the board. ⚙️ All four design inputs build forward "
+              "(availability and components on real 2026-27 inputs, the composition's "
+              "per-player frame, the calendar), and `make forward-board` pushes them "
+              "through the simulator on 2023-24: **Spearman 0.9988 against a 0.9990 "
+              "seed-noise floor with the population held fixed** — the forward board is "
+              "indistinguishable from re-rolling the seed. The 0.9831 headline gap is "
+              "entirely the rehearsal snapshot's population bound, absent in "
+              "production.",
+        because="Measured 2026-08-21 by building the forward condition rather than "
+                "reading it off the source. Every feature is prediction-time legal, and "
+                "the exposure is already a draw — `sim/season.py::draw_components` "
+                "computes `mu = rate * minutes` from the shared minutes draw, and "
+                "`total_minutes` appears once in the whole simulator, lagged. So feeding "
+                "simulated minutes back in to satisfy a filter would be circular. Two "
+                "real mechanisms, and they differ. (1) `component_rates.build_design` "
+                "starts from `season_totals`, which aggregates the GAME LOG, so a season "
+                "with no game log yields **0** rows — before the filter is reached. "
+                "(2) `season_availability` yields **582** forward rows of the right "
+                "shape, but ten columns come back all-NaN including `team_games`, the "
+                "binomial denominator, because line 604 defines a player's team by his "
+                "final APPEARANCE: 'games he could have played' is undefined by a rule "
+                "requiring him to have played. `age` is a third and mundane dependency on "
+                "the target season's roster file. `team_context.season_start_roster` "
+                "looks like the substitution and is not — it is derived from game logs "
+                "too. The source that works is the one `draft_pool.py` already reaches "
+                "for: a `commonteamroster` snapshot, which that doc rejects as a "
+                "membership rule for a PLAYED season and which inverts for an unplayed "
+                "one, where a pre-opener snapshot is the point-in-time-correct roster. "
+                "⚠️ One clause of the original framing has since inverted: the "
+                "`total_minutes > 0` filter was called a red herring, which was right "
+                "when nothing reached it and is wrong now. Once the synthetic log supplies "
+                "the rows, that filter is exactly what drops every component design row — "
+                "`MIN` is blank so `total_minutes` sums to 0.0. Solving row existence "
+                "promoted the filter to the actual blocker. ⚠️ And it was not alone: "
+                "`features/targets.build_component_targets` drops blank-minute rows "
+                "first, so `component_targets.parquet` never received a forward row at "
+                "all. ✅ Both were cleared the same day with a `forward_seasons` argument "
+                "that DEFAULTS TO EMPTY — so a fitting path cannot reach rows with no "
+                "targets without naming the season twice, and a test AST-walks the four "
+                "modules to assert none of them ever does. Clearing one filter and not "
+                "the other yields an empty frame rather than a wrong one. Played "
+                "artifacts are bit-identical at 731,906 rows.",
+        status="measured",
+        reproduce="make forward-board → outputs/predictions/forward_board_rehearsal.csv",
+        source="docs/final-evaluation-plan.md",
+        reviewed="2026-08-21",
+        date="2026-08-21",
+        tags=("production",),
+    ),
+    Decision(
         id="bbref-cannot-supply-injuries",
         topic="data",
         claim="Basketball-Reference cannot supply historical injury data — checked, "
@@ -3080,11 +3376,151 @@ REGISTRY: tuple[Decision, ...] = (
                 "head dropped from it silently loses its final measurement. The heads "
                 "that are not registered yet (minutes, components, composition, season "
                 "terms) have simply not had their refit wired.",
-        status="open",
+        status="withdrawn",
+        replaced_by="`make final-evaluation` was run on 2026-08-21 with the workflow "
+                    "finished, and a fourth registration was added — `chain`, the "
+                    "deliverable rather than a head. See "
+                    "`final-evaluation-taken-and-the-headline-replicated`.",
+        caught_by="the round that took it (docs/final-evaluation-plan.md)",
+        # The artifact whose existence is what falsifies the claim.
+        reproduce="make final-evaluation → outputs/predictions/final_evaluation.csv",
         unblocks="the simulator, ranking and drafting layers being finished",
         source="docs/train-validate-test-split.md",
-        reviewed="2026-08-08",
+        reviewed="2026-08-21",
         date="2026-08-05",
+        tags=("discipline",),
+    ),
+    Decision(
+        id="final-evaluation-taken-and-the-headline-replicated",
+        topic="problem",
+        claim="The held-out seasons were read once, on 2026-08-21, and **the project's "
+              "headline replicated**: the availability head is worth **210.2978** dk_pts "
+              "of season-total MAE against assuming a full season on validation and "
+              "**211.1288** on 2024-25 / 2025-26.",
+        because="The measurement was held until the workflow was finished, which is what "
+                "made it worth taking. Three of the four registered readings reproduce "
+                "their validation finding and one widens it: the two-component "
+                "availability mixture beats the plain beta-binomial by 0.7154 CRPS on "
+                "validation and **0.8483** on test, so the §7 selection — taken on a "
+                "boundary error rather than on CRPS — holds on seasons nothing in it has "
+                "seen; the three Stan ports of that head spread **0.00332** CRPS against "
+                "0.01003 on validation, the fourth check of that reproduction and the "
+                "first on held-out rows; and an oracle on games played beats an oracle on "
+                "the scoring rate by 47.5351 dk_pts of MAE on validation and **81.3619** "
+                "on test, so 'the availability distribution is where the effort belongs' "
+                "is not an artifact of the validation pair. What falls is sharpness "
+                "rather than calibration — the head's R² goes 0.4709 to 0.3873 while its "
+                "PIT KS barely moves, 0.0344 to 0.0367.",
+        status="measured",
+        reproduce="make final-evaluation → outputs/predictions/final_evaluation.csv, "
+                  "outputs/predictions/final_evaluation_season_total.csv, "
+                  "outputs/predictions/final_evaluation_availability_board.csv",
+        source="docs/final-evaluation-plan.md",
+        reviewed="2026-08-21",
+        date="2026-08-21",
+        tags=("discipline",),
+    ),
+    Decision(
+        id="production-fit-must-follow-the-measurement",
+        topic="problem",
+        claim="The production fit (`make posteriors-production`, the `full` window) is a "
+              "**second** unlock of the held-out split, and it refuses to run until "
+              "`final_evaluation.csv` exists.",
+        because="`docs/preseason-plan.md`'s October runbook has always specified a refit "
+                "on every season there is — the board a drafter takes into 2026-27 should "
+                "not throw two years of data away — and until 2026-08-21 the command it "
+                "named could not run, because nothing unlocked what it reached. A second "
+                "unlocker is safe here for one reason: the production fit produces "
+                "coefficients and takes no measurement, so nothing it writes is a number "
+                "a decision could read, and `tests/test_held_out.py` pins that by "
+                "asserting `posteriors.py` names no scoring function. The ordering gate is "
+                "the load-bearing half: deploy before measuring and there is no honest "
+                "measurement left to take, because from that moment every candidate model "
+                "has seen the test seasons. It fires once and never again.",
+        status="built",
+        reproduce="make posteriors-production → data/features/posteriors/full/manifest.csv",
+        source="docs/final-evaluation-plan.md",
+        reviewed="2026-08-21",
+        date="2026-08-21",
+        tags=("discipline",),
+    ),
+    Decision(
+        id="a-wider-fit-window-must-be-the-same-specification",
+        topic="problem",
+        claim="`posteriors.assert_same_specification` refuses a wider-window fit that is "
+              "not the model the selection window shipped — compared on eight "
+              "specification columns, not on the artifact.",
+        because="`require_window` stops a consumer reading coefficients that saw too much "
+                "and says nothing about *which model* those coefficients belong to. On "
+                "2026-08-21 that gap was live: the `train_val` artifacts had been on disk "
+                "since 2026-08-08, carrying the right window and a different "
+                "specification — they predated the preseason block on ten of eleven rate "
+                "heads and the composition's adopted offset. A held-out reading taken off "
+                "them would have described a model nobody ships, and every column that "
+                "would have said so was already in the manifest. Row counts, season "
+                "spans, R-hat and the draws themselves differ legitimately across windows "
+                "and are deliberately not compared; a head *missing* from the wider "
+                "window is refused too, because a partial `--groups` run is the normal "
+                "way to produce one.",
+        status="built",
+        reproduce="make posteriors WINDOW=train_val → "
+                  "data/features/posteriors/train_val/manifest.csv",
+        source="docs/final-evaluation-plan.md",
+        reviewed="2026-08-21",
+        date="2026-08-21",
+        tags=("discipline",),
+    ),
+    Decision(
+        id="held-out-contest-has-one-season-not-two",
+        topic="drafting",
+        claim="The held-out contest replay runs on **2025-26 only**. 2024-25 carries "
+              "**0** point-in-time-legal ADP rows against 2025-26's **258**, so there is "
+              "no market to draft against.",
+        because="A board is admissible only if it was *observed* on or before the "
+                "season's first game, and every archived snapshot of the 2024-25 board "
+                "postdates the opener — `src/features/draft_pool.py` recorded that under "
+                "`adp.training_rows` before this round needed it. Two seasons was already "
+                "the ceiling on the honest edge estimate; one is what the capture "
+                "actually left. It is checked before a field is drafted, because a field "
+                "drafted from an all-`nan` board does not fail — it drafts something, and "
+                "every number downstream would be a statement about that something. The "
+                "gap is not recoverable: the DK board is login-gated with no archive. It "
+                "is the strongest existing argument for the `make daily-capture` cron.",
+        status="measured",
+        reproduce="python -m src.final_evaluation chain → "
+                  "outputs/predictions/final_evaluation_adp_coverage.csv",
+        source="docs/final-evaluation-plan.md",
+        reviewed="2026-08-21",
+        date="2026-08-21",
+        tags=("adp", "discipline"),
+    ),
+    Decision(
+        id="held-out-gate-e-was-a-model-against-itself",
+        topic="availability",
+        claim="The first held-out run reported a `spell_process` season-total row (MAE "
+              "435.1674) that was the **incumbent's own pmf** under another name. It is "
+              "withdrawn and the treatment is now skipped loudly.",
+        because="`spell_process.csv`'s `arm` column is set to the best *fitted* arm even "
+                "when neither candidate clears Gate D — the module prints 'the head does "
+                "not ship; the incumbent stands' beside it — so the final evaluation read "
+                "`duration_covariates` as selected, declined to score it, and wrote the "
+                "incumbent's games-played pmf for the season total to compose through. "
+                "The season total's `spell_process` treatment means 'the games-played "
+                "module's pmf', so that reported one model twice and made the held-out "
+                "Gate E a comparison of a model against itself — the giveaway being "
+                "435.1674 against `beta_binomial`'s 435.1352. The verdict is now read "
+                "from the artifact's `gate_d/passes` row, and with nothing shipping there "
+                "is no pmf to write.",
+        status="withdrawn",
+        replaced_by="no held-out `spell_process` row exists; the games-played head's "
+                    "held-out reading is the incumbent row, CRPS 10.7952",
+        caught_by="the artifact read, checked against what stan_games_played prints",
+        # The corrected table — it carries six treatments now, `spell_process` gone.
+        reproduce="make final-evaluation → "
+                  "outputs/predictions/final_evaluation_season_total.csv",
+        source="docs/final-evaluation-plan.md",
+        reviewed="2026-08-21",
+        date="2026-08-21",
         tags=("discipline",),
     ),
     Decision(

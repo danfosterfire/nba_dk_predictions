@@ -24,6 +24,8 @@ scoring rule — `dk_from_components` is asserted against it in the tests.
 
 from pathlib import Path
 
+from collections.abc import Sequence
+
 import numpy as np
 import pandas as pd
 import yaml
@@ -384,16 +386,39 @@ def expected_dk_pts(minutes: np.ndarray, rates_per36: pd.DataFrame,
 
 # ── Target construction ───────────────────────────────────────────────────────
 
-def build_component_targets(game_logs: pd.DataFrame) -> pd.DataFrame:
+def build_component_targets(game_logs: pd.DataFrame,
+                            forward_seasons: Sequence[str] = ()) -> pd.DataFrame:
     """Per-game component targets, plus minutes, a played flag and per-36 rates.
 
     Expects lowercased game-log columns (see src/data/preprocess.py::RENAME).
     Rates are left NaN for zero-minute rows rather than filled — a player who did not
     play has no rate, and the rate heads must be masked there, not trained on a zero.
+
+    ## `forward_seasons`, and why it defaults to nothing
+
+    A season that has not been played has a schedule and a roster and **no box score**, so
+    every one of its rows has a blank `min` and is dropped by the `dropna` below. That is
+    right for every use this project has ever had and wrong for exactly one: building the
+    design a production board is scored from, where the rows are wanted precisely *because*
+    nothing has happened yet (`src/features/forward_design.py`).
+
+    Naming a season here keeps its rows with their targets left NaN and `is_forward` set.
+    **The default is empty, and that is the guard**: a fitting path cannot receive forward
+    rows without asking for them by name, the same way `held_out.selection_split` makes the
+    dangerous frame the one you have to request. Nothing else in the project passes this.
     """
     df = game_logs.copy()
     df["min"] = pd.to_numeric(df["min"], errors="coerce")
-    df = df.dropna(subset=["min"] + COMPONENTS)
+    complete = df[["min"] + COMPONENTS].notna().all(axis=1)
+    if forward_seasons:
+        # The marker is added ONLY when a forward season is named. `component_targets` is
+        # 731,906 rows of played basketball and a column that is zero on every one of them
+        # is a schema change bought for nothing.
+        forward = df["season"].isin(set(forward_seasons))
+        df["is_forward"] = forward.astype(int)
+        df = df[complete | forward]
+    else:
+        df = df[complete]
 
     df["played"] = (df["min"] > 0).astype(int)
     df["dk_pts"] = compute_dk_pts(df)

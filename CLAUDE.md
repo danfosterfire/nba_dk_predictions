@@ -67,6 +67,14 @@ The docs are:
   schedule they require. Read before entering any contest or fitting for one.
   - facts-archive.md: Known facts, do not re-derive. Refer to this if we 
   re-open model design questions, but it is safe to ignore otherwise.
+  - final-evaluation-plan.md: The one reading of the held-out seasons, the production fit 
+  that may only follow it, and how a season nobody has played gets scored — the two 
+  unlocks and how they differ, the specification check across fit windows, each registered 
+  head's held-out figures, the chain replay and the ADP gap that halves it, and the 
+  forward design path (synthetic game log, roster membership, the schedule's missing 
+  games, and the board acceptance test). **Read this before running `make final-evaluation`, 
+  `make posteriors-production`, `make forward-rehearsal` or `make forward-board`, before 
+  quoting a held-out figure, or before building anything that scores an unplayed season.**
   - games-played-plan.md: Plan and notes for the games played model. Work 
   completed and mostly archival at this point.
   - injuries_paper.md: Copy of a study on workload contributing to achilles 
