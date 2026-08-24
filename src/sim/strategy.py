@@ -89,6 +89,8 @@ from src.models.stan_utils import crps_from_samples
 from src.sim import draft, draft_room
 from src.sim.bracket import (POSITIONS, ROSTER_SIZE, score_rosters, split_frame,
                              symmetric_null)
+from src.sim.draft_room import (ALPHA_ROUND_EDGES, OBJECTIVES, RANKINGS, RoomArm,
+                                blend_key, model_value, rank_of)
 from src.sim.season import assert_season_allowed, scoring_slots, validation_seasons
 
 SEED = 0
@@ -141,18 +143,14 @@ INJECT_MAX_RATIO = 4.0             # the largest rate perturbation the injection
 # board at all, so it is measured on every run rather than remembered.
 PRICEABLE_PROBE_DRAFTS = 30
 
-# How the per-round `alpha` schedule is cut, in draft rounds. `docs/adp-plan.md` measures
-# model-market disagreement at 5.1 picks in rounds 1-2 against 30.8 in rounds 9+, and rounds
-# 9-16 fill 8 of the 16 roster spots — so a single `alpha` tuned on the whole draft is tuned
-# mostly on the half where the two sources agree anyway.
-ALPHA_ROUND_EDGES = (2, 8)
+# `ALPHA_ROUND_EDGES` is how the per-round `alpha` schedule is cut, in draft rounds:
+# `docs/adp-plan.md` measures model-market disagreement at 5.1 picks in rounds 1-2 against
+# 30.8 in rounds 9+, and rounds 9-16 fill 8 of the 16 roster spots — so a single `alpha`
+# tuned on the whole draft is tuned mostly on the half where the two sources agree anyway.
+# It, `RANKINGS` and `OBJECTIVES` are imported from `draft_room` above and re-exported here.
 
 
 # ── 1. The strategy, as a config object ───────────────────────────────────────
-
-RANKINGS = ("model_mean", "model_quantile", "adp", "blend")
-OBJECTIVES = ("ranking", "lineup_value", "bracket_ev", "p_advance")
-
 
 @dataclass(frozen=True)
 class Strategy:
@@ -209,17 +207,28 @@ class Strategy:
                                  f"{', '.join(infeasible)} — a submitted ranking is one "
                                  f"static order")
 
+    def room_arm(self) -> RoomArm:
+        """The half of this strategy a **live seat** can execute, as a `RoomArm`.
+
+        Everything dropped here is dropped because one person drafting one entry cannot do
+        it: `exposure_cap` and `n_entries` are properties of a portfolio, `autodraft` is a
+        different executor, and `position_caps`/`stacking` are policies the room
+        deliberately does not impose (DK's caps bind autodraft and not a person). So this
+        is a *lossy* projection, and `room_expressible` is the predicate that says whether
+        the loss is empty — never call this on an arm without checking that first.
+        """
+        return RoomArm(name=self.name, ranking=self.ranking, alpha=self.alpha,
+                       alpha_rounds=self.alpha_rounds, quantile=self.quantile,
+                       objective=self.objective)
+
+    def room_expressible(self) -> bool:
+        """Can a live seat execute this row *exactly*, or only an approximation of it?"""
+        return not (self.autodraft or self.exposure_cap < 1.0 or self.stacking != 0.0
+                    or tuple(self.position_caps) != (ROSTER_SIZE,) * len(POSITIONS))
+
     def alpha_at(self, round_index: int) -> float:
         """The market weight in force at draft round `round_index` (0-based)."""
-        if self.ranking == "adp":
-            return 1.0
-        if self.ranking != "blend":
-            return 0.0
-        if self.alpha_rounds is None:
-            return float(self.alpha)
-        lo, hi = ALPHA_ROUND_EDGES
-        tier = 0 if round_index < lo else (1 if round_index < hi else 2)
-        return float(self.alpha_rounds[tier])
+        return self.room_arm().alpha_at(round_index)
 
     def as_row(self) -> dict:
         return {"strategy": self.name, "axis": self.axis, "ranking": self.ranking,
@@ -233,28 +242,10 @@ class Strategy:
                 "objective": self.objective, "autodraft": self.autodraft}
 
 
-def model_value(dk_pts: np.ndarray, ranking: str, quantile: float) -> np.ndarray:
-    """The board's own opinion of a player's season, in dk_pts. Higher is better.
-
-    `model_mean` is the posterior mean season total. `model_quantile` is an upper quantile
-    of it, which is the cheapest possible expression of "chase the tail": under a
-    zero-consolation knockout the entry that finishes third is worth the same as the entry
-    that finishes twelfth, so a player's *ceiling* is worth more than his mean in a way a
-    mean ranking cannot express. It reads the tensor's own sim axis, so the ceiling it names
-    is the model's rather than a multiple of a standard deviation.
-    """
-    totals = dk_pts.sum(axis=1)                                # [player, sim]
-    if ranking == "model_quantile":
-        return np.quantile(totals, quantile, axis=1)
-    return totals.mean(axis=1)
-
-
-def rank_of(value: np.ndarray, better_is_high: bool = True) -> np.ndarray:
-    """Dense 0-based ordering of `value`, as a float so it can be blended with a rank."""
-    order = np.argsort(-value if better_is_high else value, kind="stable")
-    out = np.empty(len(value), dtype=np.float64)
-    out[order] = np.arange(len(value), dtype=np.float64)
-    return out
+# `model_value` and `rank_of` are re-exported from `src/sim/draft_room.py`, which is where
+# they live now: the live room needs both to execute a blended arm, and it cannot import
+# this module — `strategy.py` imports `draft_room`, not the other way round. Imported into
+# this namespace so `strategy.model_value` keeps working for every caller and test.
 
 
 # ── 2. Gate C — what the model's miss actually looks like, and injecting it ───
@@ -804,14 +795,10 @@ def strategy_keys(strategy: Strategy, value_rank: np.ndarray, adp_rank: np.ndarr
                   round_index: int) -> np.ndarray:
     """The board key in force at one round — **lower is taken earlier**.
 
-    A blend is a convex combination of two *ranks*, which keeps `alpha` in the units the
-    disagreement was measured in (picks) and makes `alpha = 1` the market's board exactly
-    and `alpha = 0` the model's. Blending values instead would be at the mercy of the
-    recalibration's 55-wide plateaus, which is the same reason `src/sim/draft.py` puts its
-    noise on the rank.
+    The arithmetic is `draft_room.blend_key`, which the live room uses too, so a strategy
+    and the room executing it can never drift apart on what `alpha` means.
     """
-    a = strategy.alpha_at(round_index)
-    return a * adp_rank + (1.0 - a) * value_rank
+    return blend_key(strategy.alpha_at(round_index), value_rank, adp_rank)
 
 
 def stacking_bonus(strategy: Strategy, teams: np.ndarray, held: np.ndarray) -> np.ndarray:
@@ -919,9 +906,14 @@ def _objective_rank(room: draft_room.Room, state: draft.DraftState, seat: int,
     matroid exchange, the survivor reweighting — and this reads its table rather than
     recomputing any of it. Candidates the room does not rank (already gone, or unpriceable)
     are pushed behind every candidate it does, so the key stays total.
+
+    **The objective goes in unblended, deliberately.** `evaluate` can blend the market in
+    itself now, and `draft_portfolio` blends the result again through `strategy_keys` — so
+    passing the strategy's own arm here would apply `alpha` twice and quietly measure a
+    different strategy under the same name. The bare objective name is `alpha = 0`.
     """
     table, _ = draft_room.evaluate(room, state, seat, tournament,
-                                   objective=strategy.objective,
+                                   arm=strategy.objective,
                                    top=int(live.sum()))
     out = np.full(room.board.n_players, float(room.board.n_players), dtype=np.float64)
     out[table["board_rank"].to_numpy().astype(int)] = np.arange(len(table),
@@ -1178,6 +1170,86 @@ def select(table: pd.DataFrame, tournament: str) -> str:
            .agg(lift=("lift_vs_null", "mean"), p_any=("p_any_advance", "mean")))
     agg = agg.sort_values(["lift", "p_any", "alpha"], ascending=[False, False, True])
     return str(agg["strategy"].iloc[0])
+
+
+#: The fields a `RoomArm` is made of, and therefore the identity of an arm *as the live
+#: room sees it*. Two sweep rows agreeing on all five draft the same board from a single
+#: seat, whatever else they differ in.
+ROOM_ARM_KEYS = ("ranking", "alpha", "alpha_rounds", "quantile", "objective")
+
+
+def select_top_n(table: pd.DataFrame, tournament: str, strategies: list[Strategy],
+                 n: int = 3) -> list[str]:
+    """The best `n` **distinct, live-executable** strategies for one tier, best first.
+
+    `select` generalized, and the two extra rules are not cosmetic — a naive top-`n` by
+    lift returns something unusable at the single-entry tier.
+
+    **Rows a live seat cannot execute are dropped** (`Strategy.room_expressible`):
+    `autodraft_*` is a different executor, and an exposure cap is a statement about a
+    portfolio that one hand-drafted entry does not have.
+
+    **Rows that collapse onto the same `RoomArm` are deduplicated**, keeping the best. At
+    `88k_alley_oop` — one entry — the exposure-cap, position-cap and stacking arms all
+    degenerate to `blend_a30` and tie at *exactly* the same lift, so without this the room
+    would offer three menu entries that draft an identical board.
+
+    Ties break as `select`'s do — toward the higher `p_any`, then the lower `alpha`, so an
+    arm has to earn the market weight it carries.
+    """
+    by_name = {s.name: s for s in strategies}
+    sub = table[table["tournament"] == tournament]
+    sub = sub[sub["strategy"].map(
+        lambda s: s in by_name and by_name[s].room_expressible())]
+    agg = (sub.groupby(["strategy", *ROOM_ARM_KEYS], as_index=False, dropna=False)
+           .agg(lift=("lift_vs_null", "mean"), p_any=("p_any_advance", "mean")))
+    agg = agg.sort_values(["lift", "p_any", "alpha"], ascending=[False, False, True])
+    return list(agg.drop_duplicates(subset=list(ROOM_ARM_KEYS))["strategy"].head(n))
+
+
+#: How many arms the live room offers. Three because that is what fits a sidebar on a
+#: thirty-second clock, and because the fourth is already well below the noise the sweep
+#: can resolve — see `docs/simulations-plan.md`, "What the live room offers".
+N_ROOM_ARMS = 3
+
+
+def room_arms(table: pd.DataFrame, cfg: dict, strategies: list[Strategy],
+              n: int = N_ROOM_ARMS) -> pd.DataFrame:
+    """Which arms `dashboard/draft_room.py` offers per tier — the artifact, not a default.
+
+    A sibling of `strategy_shipped.csv` rather than more columns on it, because that file
+    is one row per tournament and both `src/final_evaluation.py` and `src/docs_audit.py`
+    read it that way; widening it to `n` rows would break the readers that make the shipped
+    strategy un-re-decidable, which is the property it exists for.
+
+    `rank` is the sweep's own ordering and `selected` marks rank 0 — the arm `select`
+    ships. The room defaults to it and offers the rest as **recorded alternatives**, which
+    is the honest framing: on every multi-entry tier ranks 1 and 2 are *resolved losses*
+    against rank 0 in `strategy_paired.csv`, and the reason to keep them on the menu is
+    that `bracket_ev` buys ROI where it gives up lift (`select-on-p-advance-report-roi`)
+    and that `alpha` has a sign but not a location
+    (`alpha-has-a-sign-but-not-a-location`). Every column a `RoomArm` needs is here, so
+    the page rebuilds the policy rather than re-deriving it.
+    """
+    by_name = {s.name: s for s in strategies}
+    rows = []
+    for tournament in cfg.get("sim", {}).get("tournaments", {}):
+        picked = select_top_n(table, tournament, strategies, n)
+        for rank, name in enumerate(picked):
+            arm = by_name[name].room_arm()
+            sub = table[(table["tournament"] == tournament)
+                        & (table["strategy"] == name)]
+            rows.append({"tournament": tournament, "rank": rank, "arm": name,
+                         "selected": rank == 0,
+                         "ranking": arm.ranking, "alpha": arm.alpha,
+                         "alpha_rounds": ("" if arm.alpha_rounds is None else
+                                          "/".join(f"{a:g}" for a in arm.alpha_rounds)),
+                         "quantile": arm.quantile, "objective": arm.objective,
+                         "axis": by_name[name].axis,
+                         "sim_lift": float(sub["lift_vs_null"].mean()),
+                         "sim_p_advance": float(sub["p_advance"].mean()),
+                         "sim_roi": float(sub["roi"].mean())})
+    return pd.DataFrame(rows)
 
 
 def gate_d(portfolios: dict, shipped: dict, seasons: list[str],
@@ -1739,11 +1811,13 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
         ignore_index=True)
     gate_d_table = gate_d(portfolios, shipped, seasons, strategies)
     ship_table = ship(table, realized, cfg, strategies)
+    arms_table = room_arms(table, cfg, strategies)
 
     _report_sweep(table, shipped, entered)
     _report_paired(paired, shipped, entered, strategies)
     _report_gate_d(gate_d_table)
     _report_realized(realized, shipped)
+    _report_room_arms(arms_table)
 
     floor = (rookie_floor_table(out_dir, realized, cut_lines, tensor_label) if asymmetric
              else None)
@@ -1758,7 +1832,8 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
                         ("strategy_paired", paired),
                         ("strategy_gate_d", gate_d_table),
                         ("strategy_realized", realized),
-                        ("strategy_shipped", ship_table)):
+                        ("strategy_shipped", ship_table),
+                        ("strategy_room_arms", arms_table)):
         dest = out_dir / f"{name}{suffix}.csv"
         frame.to_csv(dest, index=False)
         print(f"Saved {len(frame):,} {name.replace('_', ' ')} rows → {dest}")
@@ -1952,6 +2027,25 @@ def _report_gate_d(table: pd.DataFrame) -> None:
         print(f"    materially different: {row.materially_different}")
 
 
+def _report_room_arms(table: pd.DataFrame) -> None:
+    print("\nWhat the live draft room offers — the top arms a single seat can execute")
+    if table.empty:
+        print("  no executable arm in any tier")
+        return
+    for tournament, group in table.groupby("tournament", sort=False):
+        print(f"  {tournament}")
+        for row in group.itertuples():
+            mark = "ships" if row.selected else " alt "
+            weight = ("no market blend" if row.alpha == 0
+                      else f"alpha {row.alpha:g}" + (f" by round {row.alpha_rounds}"
+                                                     if row.alpha_rounds else ""))
+            print(f"    [{mark}] {row.arm:<22} {row.objective:<13} {weight:<22} "
+                  f"lift {row.sim_lift:+.4f}  ROI {row.sim_roi:+7.2f}")
+    print("  Rank 0 is `select`'s own choice and the room's default; the rest are on the "
+          "menu as\n  RECORDED ALTERNATIVES, not as peers — see `strategy_paired.csv` for "
+          "what each gives up.")
+
+
 def _report_realized(realized: pd.DataFrame, shipped: dict) -> None:
     print("\nThe realized readout — 2 seasons, wide intervals, and NOT a selector")
     for tournament, name in shipped.items():
@@ -2003,10 +2097,25 @@ if __name__ == "__main__":
                         help="price the pick-log stake instead of running the sweep: "
                              "20 cheap 15k_and_one entries, DK autodraft against the "
                              "live optimizer, paired on the world")
+    parser.add_argument("--room-arms-only", action="store_true",
+                        help="re-derive strategy_room_arms.csv from the sweep table "
+                             "already on disk and write nothing else. The arms are a "
+                             "pure function of that table, so this re-reads a decision "
+                             "rather than re-taking one — and the sweep costs ~35 min")
     args = parser.parse_args()
 
     cfg = yaml.safe_load(open("configs/default.yaml"))
-    if args.pick_log_stake:
+    if args.room_arms_only:
+        out_dir = Path(cfg["evaluation"]["predictions_dir"])
+        suffix = f"_{args.tensor_label}" if args.tensor_label else ""
+        arms = room_arms(pd.read_csv(out_dir / f"strategy_sweep{suffix}.csv"), cfg,
+                         strategy_table())
+        _report_room_arms(arms)
+        dest = out_dir / f"strategy_room_arms{suffix}.csv"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        arms.to_csv(dest, index=False)
+        print(f"Saved {len(arms):,} room arm rows → {dest}")
+    elif args.pick_log_stake:
         pick_log_stake(cfg, seasons=args.season, seed=args.seed, n_sims=args.n_sims,
                        n_field_drafts=args.field_drafts)
     else:

@@ -982,10 +982,16 @@ sim:
     # -7.7% for 43 s and does NOT make the ranking more stable. See
     # `draft_room_stability.csv`.
     field_drafts: 100
-    # Which of the three registered objectives the table is ordered by. `bracket_ev` is
-    # the decision-5 objective and the default; `p_advance` is P(top 2 of 12), the one
+    # Which objective `python -m src.sim.draft_room` (Gate E, the stability check) orders
+    # by. `bracket_ev` is the decision-5 objective; `p_advance` is P(top 2 of 12), the one
     # figure here that reproduces its analytic value exactly and the statistic
     # docs/simulations-plan.md says the strategy sweep selects on.
+    #
+    # ⚠️ **The PAGE no longer reads this.** Since 2026-08-24 `dashboard/draft_room.py`
+    # offers the arms `make strategy-sweep` selected for the tier on screen, read from
+    # `strategy_room_arms.csv` and defaulting to the one that ships — a knob here would be
+    # a fourth place a drafting policy is decided. This key still drives the offline
+    # entrypoint, which sweeps objectives rather than executing an arm.
     objective: bracket_ev
     # Our seat in the twelve-entry pod, zero-indexed. DK randomizes it once the lobby
     # fills, so this is set in the page rather than trusted from here.

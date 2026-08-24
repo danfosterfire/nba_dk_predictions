@@ -1674,6 +1674,16 @@ for the narrower case where a page's own control says what that page's own survi
 means. `top` (candidates shown) is left to reset, because it is cosmetic, and that is the
 line. Registered as `a-page-control-that-names-the-state-must-outlive-the-page`.
 
+⚠️ **The fourth remembered key was renamed `objective` → `arm` on 2026-08-24**, when the
+control stopped offering the three per-pick objectives and started offering the tier's own
+swept arms — an arm is an objective *and* a market weight, so the old name no longer said
+what the control chose (`docs/simulations-plan.md`, "What the live room offers"). The table
+above is the 2026-08-10 measurement and is left as it was taken; the argument it makes is
+about the key surviving a navigation, which the rename does not touch. One consequence
+worth knowing at the tab: a reader carrying a remembered `objective` from before the rename
+falls back to the tier's default arm rather than raising, which is `choice`'s own behaviour
+for an option no longer on offer.
+
 ### The `src/` exemption came out narrower than it went in
 
 The room needed a row-owning module under `views/`, and naming it `views/draft_room.py`

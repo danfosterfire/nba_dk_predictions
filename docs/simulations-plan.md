@@ -2888,6 +2888,78 @@ benchmark entry already reads `p_advance = 1.0` in all five tournaments. Every E
 prints inherits that. It is exactly what Gate C's error injection exists to price, and until
 item 8 runs, **the room's EV is a ranking device and not money.** The page says so on screen.
 
+#### What the live room offers — the menu is an artifact ✅ 2026-08-24
+
+**The room could not execute the strategy this plan ships, and the reason was build
+order.** Item 7 specified it as "ranked by marginal bracket EV" and item 8 then selected
+`lineup_value_blend30`; nothing went back. A sweep strategy is two axes — `ranking`
+(where the value ordering comes from, with `alpha` the market weight in rank space) and
+`objective` (how a pick is chosen given it) — and the page's "Rank by" control was the
+objective axis alone. Choosing `lineup_value` there gave `alpha = 0`, which is the arm the
+sweep calls plain `lineup_value`, ~0.02 of lift short of the one it selected; the default,
+`bracket_ev`, was ~0.08 short.
+
+Both halves are now fixed, and the second is the one worth stating carefully.
+
+**`evaluate` blends the market itself, on exactly the sweep's own construction.** The value
+rank is a candidate's *position in this table* — dense, 0-based, ties already broken by
+`rank_cushion` — blended against the global board rank, which is precisely what
+`_objective_rank` + `strategy_keys` compute one layer up. Reproducing it rather than
+inventing a second blend is the whole point: the arm the room runs has to be the arm the
+sweep priced. **`alpha = 0` reproduces the pre-blend table bit-for-bit**, including its tie
+order, which is what lets the sweep keep blending *outside* `evaluate` without the two
+compounding — `_objective_rank` passes the bare objective name deliberately, and a test
+pins it. `cost_vs_best` stays in the **objective's** unit rather than the blended key's,
+because a rank has no unit a drafter can act on and dk_pts and dollars do; under a blend it
+can therefore read positive, which is the market weight's price made visible rather than an
+error.
+
+**The menu is read from `strategy_room_arms.csv`, not hand-set.** `select_top_n` generalizes
+`select` — same criterion, same tiebreak — and `make strategy-sweep` writes the top
+`N_ROOM_ARMS = 3` per tier with every field a `RoomArm` needs. `make strategy-room-arms`
+re-derives it from the sweep table already on disk, since the arms are a pure function of it
+and the sweep costs ~35 minutes. Two rules in `select_top_n` are load-bearing:
+
+- **Rows a live seat cannot execute are dropped.** `autodraft_*` is a different executor and
+  an exposure cap is a statement about a portfolio one hand-drafted entry does not have.
+  `Strategy.room_arm()` is the projection onto what a seat can do and `room_expressible()`
+  is the predicate that says whether the projection lost anything.
+- **Rows collapsing onto the same `RoomArm` are deduplicated.** At `88k_alley_oop` — one
+  entry — the exposure-cap, position-cap and stacking arms all degenerate to `blend_a30` and
+  tie at *exactly* 0.410380, so a naive top-three offers three menu entries that draft an
+  identical board.
+
+**What it changed is small, and that is the result.** The top three are the same three arms
+in the same order on all four multi-entry tiers:
+
+| tier | rank 0 (default) | rank 1 | rank 2 |
+|---|---|---|---|
+| `600k_shootaround` | `lineup_value_blend30` | `bracket_ev_blend30` | `lineup_value` |
+| `20k_spin_move` | `lineup_value_blend30` | `bracket_ev_blend30` | `lineup_value` |
+| `50k_four_pt_play` | `lineup_value_blend30` | `bracket_ev_blend30` | `lineup_value` |
+| `15k_and_one` | `lineup_value_blend30` | `bracket_ev_blend30` | `lineup_value` |
+| `88k_alley_oop` | `lineup_value` | `blend_a30` | `lineup_value_blend30` |
+
+So conditioning the menu on tournament moves exactly one tier of five — the single-$450-entry
+one — and moves it on a gap that does not resolve: `lineup_value` over `lineup_value_blend30`
+by **−0.0159 [−0.0368, +0.0060]**, `resolved = False`, p = 0.92. Rank 0 always equals
+`select`'s own answer, and a test pins that against the shipped sweep.
+
+**Ranks 1 and 2 are resolved losses, and the page says so.** In `strategy_paired.csv` with
+the shipped arm as baseline, `bracket_ev_blend30` runs −0.0168 to −0.0240 and `lineup_value`
+−0.0256 to −0.0453 across the four multi-entry tiers, every interval excluding zero. They are
+labelled *recorded alternatives* rather than peers, and they stay on the menu for the two
+reasons already registered: `bracket_ev` buys ROI exactly where it gives up lift
+(`select-on-p-advance-report-roi` — 66.9 against the shipped arm's 15.9 at 600k, 17.2 against
+8.0 at 15k, on an ROI column quoted for sign and not magnitude), and `alpha` has a sign but
+not a location (`alpha-has-a-sign-but-not-a-location`), which keeps the unblended arm live.
+
+**One capability left the menu and not the code.** `p_advance` was never swept as an
+objective arm — `strategy_table` builds objective rows for `lineup_value` and `bracket_ev`
+only — so it has no row in the artifact and no evidence behind it as a drafting policy. It
+stays in `RANK_OBJECTIVES` and is still swept by `gate_e` and `stability` and reproduced
+exactly by `null_check`; it is simply no longer offered as a way to draft.
+
 ---
 
 ## Data the layer needs, and where it comes from

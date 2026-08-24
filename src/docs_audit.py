@@ -324,6 +324,8 @@ STRATEGY_SWEEP = "outputs/predictions/strategy_sweep.csv"
 # unrestricted ADP field drafts one of those rows. Same probe in both board modes.
 STRATEGY_INJECTION = "outputs/predictions/strategy_injection.csv"
 STRATEGY_SHIPPED = "outputs/predictions/strategy_shipped.csv"
+#: Which arms the live draft room may offer, per tier — `strategy.room_arms`, best first.
+STRATEGY_ROOM_ARMS = "outputs/predictions/strategy_room_arms.csv"
 STRATEGY_GATE_D = "outputs/predictions/strategy_gate_d.csv"
 STRATEGY_PAIRED = "outputs/predictions/strategy_paired.csv"
 # The field-robustness pair, 2026-08-11: the joint (noise, need) calibration and the
@@ -5699,13 +5701,15 @@ def _weekly() -> list[Claim]:
     # The execution axis, re-read 2026-08-16 after the graded-σ chain re-run; the
     # current pair moved here from `README.md` on 2026-08-20. Claimed for the same reason
     # the weekly table is: nothing else re-derives the current readings.
-    def sweep_mean_lift(arm: str) -> float:
+    def sweep_mean_lift_at(tournament: str, arm: str) -> float:
         frame = table(STRATEGY_SWEEP)
         if frame is None:
             return float("nan")
-        hit = frame[(frame["tournament"] == "600k_shootaround")
-                    & (frame["strategy"] == arm)]
+        hit = frame[(frame["tournament"] == tournament) & (frame["strategy"] == arm)]
         return float(hit["lift_vs_null"].mean()) if len(hit) else float("nan")
+
+    def sweep_mean_lift(arm: str) -> float:
+        return sweep_mean_lift_at("600k_shootaround", arm)
 
     C += [
         _c("+0.00128856", STRATEGY_PAIRED,
@@ -5730,6 +5734,34 @@ def _weekly() -> list[Claim]:
                     - sweep_mean_lift("autodraft_blend_a30")),
            "lift given up by autodrafting instead of the shipped objective, 600k",
            doc=SIMS),
+    ]
+
+    # ── The live room's menu — `strategy_room_arms.csv`, 2026-08-24 ───────────
+    #
+    # **Which arm sits at which rank is prose, not a figure**, and is pinned by
+    # `tests/test_strategy.py` against the sweep table rather than claimed here — the same
+    # split `_rookie_rates` makes for the shipped arm, and forced by the audit checking
+    # numbers. What IS claimed is the pair of figures the doc's argument rests on: the
+    # single per-tier difference does not resolve, and the arms the dedupe collapses tie
+    # exactly. Each fails silently without the other — a resolved 88k gap would make
+    # conditioning the menu on tournament worth something, and a tie that stopped being
+    # exact would mean the dedupe is discarding a real distinction.
+    C += [
+        # Signed as the doc quotes it: the tier's own winner as baseline against the arm
+        # that ships everywhere else.
+        _c("−0.0159", STRATEGY_PAIRED,
+           lambda: cell(STRATEGY_PAIRED, "gap", tournament="88k_alley_oop",
+                        metric="p_advance", baseline="lineup_value",
+                        strategy="lineup_value_blend30"),
+           "88k gap between the room's top two arms", doc=SIMS),
+        _c("+0.0060", STRATEGY_PAIRED,
+           lambda: cell(STRATEGY_PAIRED, "gap_hi", tournament="88k_alley_oop",
+                        metric="p_advance", baseline="lineup_value",
+                        strategy="lineup_value_blend30"),
+           "upper end of that 88k gap — above zero, so it does not resolve", doc=SIMS),
+        _c("0.410380", STRATEGY_SWEEP,
+           lambda: sweep_mean_lift_at("88k_alley_oop", "blend_a30"),
+           "the 88k lift the exposure/caps/stacking arms all degenerate to", doc=SIMS),
     ]
     return C
 

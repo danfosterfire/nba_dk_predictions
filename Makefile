@@ -40,7 +40,8 @@ export PYTHONUNBUFFERED = 1
         composition-preseason-fit composition-quadrature-check \
         scoring-periods draft-pool simulate-season simulate-production weekly-scores \
         bracket draft-sim \
-        draft-sim-need draft-room draft-room-prep strategy-sweep strategy-sweep-need \
+        draft-sim-need draft-room draft-room-prep strategy-sweep strategy-room-arms \
+        strategy-sweep-need \
         pick-log-stake mixture-value preseason-contest final-evaluation \
         posteriors-production production-check forward-rehearsal forward-board \
         rookie-floor lag-recovery lag-ladder rookie-rates stan-rookie \
@@ -869,6 +870,15 @@ draft-room:
 # tier-blind by construction and only the bracket-EV arms read the payout table.
 strategy-sweep:
 	$(PYTHON) -m src.sim.strategy
+
+# WHICH ARMS THE LIVE DRAFT ROOM MAY OFFER, re-derived from the sweep table already on
+# disk. `make strategy-sweep` writes `strategy_room_arms.csv` itself; this target exists
+# because the arms are a PURE FUNCTION of that table — the top three distinct policies one
+# seat can actually execute, per tier — so re-reading the decision must not cost the ~35
+# minutes re-taking it does. Run it after editing `select_top_n` or `N_ROOM_ARMS`, never
+# to refresh a number: if the sweep moved, the sweep is what has to be re-run.
+strategy-room-arms:
+	$(PYTHON) -m src.sim.strategy --room-arms-only
 
 # The same sweep against the `adp_need` field — disciplined consensus with lineup
 # reasoning. The calibration SELECTS need_weight = 0 (the observed ADP curve carries no

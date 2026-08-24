@@ -6814,6 +6814,57 @@ REGISTRY: tuple[Decision, ...] = (
         tags=("economics", "strategy"),
     ),
     Decision(
+        id="the-live-room-executes-the-arms-the-sweep-selected",
+        topic="drafting",
+        claim="**The draft room's menu is an artifact, not a constant.** It offers the "
+              "top three distinct policies a single seat can execute for the tier on "
+              "screen, read from `strategy_room_arms.csv`, defaulting to the arm "
+              "`select` ships — and it can execute a **market blend** at all, which it "
+              "could not before.",
+        because="The room shipped as build item 7 ranking by `bracket_ev`; the sweep that "
+                "selected `lineup_value` blended 30% into ADP was item 8, after it, and "
+                "nothing went back. So the live tool could not express the shipped "
+                "strategy: its \"Rank by\" control was the OBJECTIVE axis alone, and "
+                "`lineup_value_blend30` is an objective **and** an `alpha`. The fix is "
+                "two-sided. `draft_room.evaluate` gained the blend on exactly the sweep's "
+                "own construction — this table's dense position under the objective, ties "
+                "already broken by `rank_cushion`, blended against the global board rank "
+                "— so the arm the room runs IS the arm the sweep priced; `alpha = 0` "
+                "reproduces the pre-blend table bit-for-bit, which is what lets "
+                "`_objective_rank` keep blending outside without the two compounding. And "
+                "the menu is derived rather than hand-set, the same rule "
+                "`src/final_evaluation.py` follows: the thing that scores a strategy may "
+                "not also choose it. **Two rules in `select_top_n` are load-bearing.** "
+                "Rows a live seat cannot execute are dropped (autodraft is a different "
+                "executor; an exposure cap is a property of a portfolio), and rows that "
+                "collapse onto the same `RoomArm` are deduplicated — at `88k_alley_oop`, "
+                "one entry, the exposure-cap, position-cap and stacking arms degenerate "
+                "to `blend_a30` and tie at exactly 0.410380, so a naive top-three would "
+                "offer three menu entries drafting an identical board. **What it actually "
+                "changed is small and that is the finding**: the top three are the same "
+                "three arms in the same order on all four multi-entry tiers "
+                "(`lineup_value_blend30`, `bracket_ev_blend30`, `lineup_value`), so "
+                "conditioning on tournament moves exactly one tier — `88k_alley_oop`, "
+                "where `lineup_value` ships and its gap to `lineup_value_blend30` is "
+                "**not resolved** (−0.0159 [−0.0368, +0.0060], p = 0.92). Ranks 1 and 2 "
+                "are resolved LOSSES against rank 0 on every multi-entry tier, so the "
+                "page labels them recorded alternatives rather than peers; they stay on "
+                "the menu because `bracket_ev` buys ROI where it gives up lift "
+                "([[select-on-p-advance-report-roi]] — 66.9 against 15.9 at 600k) and "
+                "because [[alpha-has-a-sign-but-not-a-location]] leaves `alpha = 0` a "
+                "live option. **One capability left the menu**: `p_advance` was never "
+                "swept as an objective arm, so it has no evidence behind it and no row; "
+                "it remains in `RANK_OBJECTIVES` and in `gate_e`, `stability` and "
+                "`null_check`.",
+        status="built",
+        reproduce="make strategy-sweep → outputs/predictions/strategy_room_arms.csv, "
+                  "outputs/predictions/strategy_paired.csv",
+        source="docs/simulations-plan.md",
+        reviewed="2026-08-24",
+        date="2026-08-24",
+        tags=("drafting", "market", "strategy"),
+    ),
+    Decision(
         id="alpha-has-a-sign-but-not-a-location",
         topic="drafting",
         claim="**Blending the market in pays and is resolved; which `alpha` is not.** The "
