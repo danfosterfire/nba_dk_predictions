@@ -1311,6 +1311,22 @@ make strategy-sweep ✅ src/sim/strategy.py         the sweep: Gate C's error in
                                                    --field adp_need --need-weight 8 is the
                                                    robustness probe (make
                                                    strategy-sweep-need), suffixed artifacts
+                                                   --field-board unrestricted is the rookie
+                                                   floor (make rookie-floor), and
+                                                   --tensor-label reads a VARIANT tensor and
+                                                   suffixes every artifact with the same
+                                                   label — docs/rookie-rates-plan.md §5a,
+                                                   §5h (its make strategy-sweep-rookie
+                                                   retired 2026-08-23 once the shipped
+                                                   tensor carried the union;
+                                                   docs/rookie-inclusive-tensors-plan.md
+                                                   §7e)
+
+make rookie-recovery ✅ src/sim/rookie_recovery.py what the two population changes give
+                                                   back of that floor, at the unit that
+                                                   resolves: the field's realized Round-1
+                                                   bar on a NESTED ladder of board masks
+                                                   -> outputs/predictions/rookie_recovery.csv
 
 make draft-room-prep ✅ src/sim/draft_room.py      the engine: the cached reference field,
                                                    the null check and Gate E
@@ -1573,13 +1589,28 @@ Both would have produced a completely plausible board.
 `data/features/sim_tensor_<season>.npz`: `dk_pts` (float32), `games_played` (uint8),
 `player_id`, `season_minutes`, `prior_minutes`, the round map for the twenty slots, and the
 provenance a consumer needs to refuse the wrong one — fit window, sim count, posterior draw
-count, seed, the composition variant, and the player-season sigma with its source.
+count, seed, the composition variant, and the player-season sigma with its source. Since
+`docs/rookie-rates-plan.md` §5h it also carries **`unit_family` and `lag_rung` per unit**,
+so a board can be audited by which rate family scored it without rebuilding two designs to
+classify it; a tensor written before that reads back as one family rather than raising.
 
-- **The tensor scores 386 of 539 rostered players.** The missing 153 have no component-head
-  design row (`>= 200 prior minutes`), and they are *kept in the minutes allocation* —
-  dropping them would hand their minutes to their teammates — but cannot be scored. Pricing
-  them is item 4's open question and belongs with the 2026 draft class the board build
-  already flagged.
+**`--tensor-label` writes a variant beside the shipped tensor rather than over it**, and it
+labels the cached field, Gate A and every sweep artifact with it. A labelled tensor labels
+Gate A **by default**: Gate A is one pooled table whose extremes `make docs-audit`
+re-derives and `merge_gate` merges by season, so a variant population writing into it would
+move audited figures by replacing rows with nothing looking wrong.
+
+- **The tensor scores the union of the two rate families — 471 of 539 rostered players in
+  2022-23 and 467 in 2023-24, with 444 and 487 on the two training seasons** — since the
+  2026-08-22 re-draw shipped the wider population
+  (`docs/rookie-inclusive-tensors-plan.md` §7c). It scored 386 of 539 rostered players
+  (387 in 2023-24) until then — the rung-0 veteran design of `docs/rookie-rates-plan.md`
+  §5f, whose labelled `_rookieinclusive` pair was where the wider population was first
+  drawn and which the shipped re-draw reproduces bit-for-bit. The rows still outside the
+  union have no design row in either family (`>= 200 prior minutes`, and neither a
+  true-rookie nor an admitted-rung returnee row), and they are *kept in the minutes
+  allocation* — dropping them would hand their minutes to their teammates — but cannot be
+  scored. Pricing them was item 4's open question and is what the rookie program closed.
 - **The season total is scored over DK's window, not the schedule.** Round 4 closes before
   the NBA season does, so the tensor carries 20 of ~24 weeks and both sides of the Gate A
   comparison are restricted to it. Games played is scored over the whole schedule, because
@@ -1588,7 +1619,7 @@ count, seed, the composition variant, and the player-season sigma with its sourc
   draw.** The fitted head reads it off the realized allocation; a forward season has none, so
   it is evaluated at the deterministic proportional allocation. It marks ~1% of rows and
   carries a correction coefficient.
-- **A feasibility repair fires on 0.12–0.18% of simulated team-games.** A team-game allocates
+- **A feasibility repair fires on 0.16–0.28% of simulated team-games** (0.12–0.18% on the rookie-less population). A team-game allocates
   `5 x game_length` minutes under a per-player cap of `game_length`, so it needs five
   available players; below that the highest-ranked absentees are promoted and the count is
   reported.
@@ -1603,7 +1634,7 @@ season-total minutes spread. **None of them is `dk_pts` at the scoring period**,
 the unit DK seats the best 7 of 16 in — so every weekly max, round total and elimination cut
 this layer computes is a function of a distribution nothing had scored. `src/sim/weekly.py`
 reduces the existing tensors along their own second axis, so it needs no re-simulation and
-runs in **1.3 s** over **30,780** player-periods.
+runs in **1.5 s** over **37,380** player-periods (30,780 before the population round).
 
 Two structural facts before the numbers. Three of the twenty periods are **double weeks**
 (Rounds 2–4), so the readout is faceted by period length rather than pooled — a two-week
@@ -1614,10 +1645,32 @@ whole four-round structure: 2020-21 has **no Round 4 at all** (0 games in slot 1
 
 | facet | split | n | observed | predicted | MAE | bias | R² | CRPS |
 |---|---|---|---|---|---|---|---|---|
-| one week | train | 13,022 | 52.74 | 50.02 | 29.93 | **−2.72** | 0.3985 | 20.34 |
-| one week | validation | 13,141 | 53.40 | 51.8035 | 27.5537 | **−1.59578** | 0.497532 | 18.578 |
-| double week | train | 2,298 | 93.24 | 88.43 | 50.85 | −4.81 | 0.4542 | 34.41 |
-| double week | validation | 2,319 | 98.51 | 96.5407 | 52.0073 | −1.97226 | 0.430454 | 35.429 |
+| one week | train | 15,827 | 47.37 | 45.60 | 26.60 | **−1.77** | 0.4720 | 17.96 |
+| one week | validation | 15,946 | 47.87 | 46.34 | 25.99 | **−1.53** | 0.5209 | 17.35 |
+| double week | train | 2,793 | 85.91 | 80.98 | 47.81 | −4.93 | 0.4780 | 32.58 |
+| double week | validation | 2,814 | 89.98 | 87.15 | 49.98 | **−2.83** | 0.4527 | 33.71 |
+
+> **Re-measured 2026-08-22 against the rookie-inclusive tensors**
+> (`docs/rookie-inclusive-tensors-plan.md` §7c — all four tensors now score the union of
+> the two rate families, and the two *training* tensors also moved off a shared injected
+> σ 0.450 that was two config generations stale onto the role-graded vector, so the pooled
+> panel finally stops mixing two minutes injections). **Two changes land at once and the
+> facets say which is which.** Every observed column falls — one-week train n 13,022 →
+> **15,827** with observed 52.74 → **47.37** — because the ~6,600 added player-periods
+> belong to rookies and recovered returnees who score little; that is a population change
+> under the mean, the same caution `docs/rookie-rates-plan.md` §7i attaches to its own
+> Gate A reading, and it must not be read as the simulator improving. The train-side
+> *fit* jump is the injection fix: one-week train predicted 50.02 → 45.60, MAE 29.93 →
+> **26.60**, bias −2.72 → **−1.77**, R² 0.3985 → **0.4720**, CRPS 20.34 → 17.96, and
+> double-week train predicted 88.43 → 80.98, MAE 50.85 → 47.81, bias −4.81 → −4.93,
+> R² 0.4542 → 0.4780, CRPS 34.41 → 32.58 (observed 93.24 → 85.91 on n 2,298 → 2,793) —
+> movements far past what the validation side
+> shows, on the two tensors whose injection changed. The validation rows move mostly with
+> the population: one-week n 13,141 → 15,946, observed 53.40 → 47.87, predicted 51.8035 →
+> 46.34, MAE 27.5537 → 25.99, bias −1.59578 → −1.53, R² 0.497532 → 0.5209, CRPS
+> 18.578 → 17.35; double-week n 2,319 → 2,814, observed 98.51 → 89.98, predicted 96.5407 →
+> 87.15, MAE 52.0073 → 49.98, bias −1.97226 → **−2.83**, R² 0.430454 → 0.4527, CRPS
+> 35.429 → 33.71.
 
 > **Re-measured 2026-08-15 against the preseason-armed component heads**
 > (`docs/preseason-plan.md` session 6b — ten of the eleven rate heads adopted the block, which
@@ -1667,10 +1720,13 @@ whole four-round structure: 2020-21 has **no Round 4 at all** (0 games in slot 1
 > visible in the mean.
 
 **The season-total bias is a weekly bias, and it used to be front-loaded.** Gate A reads
-**−9.95234** to **−73.4** dk_pts on a season and this says where it comes from: about −1.5 a
+**−16.5383** to **−53.9049** dk_pts on a season and this says where it comes from: about −1.5 a
 week, now spread evenly across them. Pooled over the two validation seasons the per-period bias
-runs **−1.54649** in week 1, **−2.51388** in week 2, **−1.77884** in week 3, **−1.01348** by
-week 13 and **−0.755881** by week 17. (Before the *component* heads took their preseason block
+runs **−1.18228** in week 1, **−1.79963** in week 2, **−1.01792** in week 3, **−1.37425** by
+week 13 and **−1.26961** by week 17. (On the rookie-less panel Gate A read −9.95234 to −73.4
+and the same five weeks read −1.54649, −2.51388, −1.77884, −1.01348 and −0.755881 —
+the wider span at the season total is the two training tensors' stale injection being fixed
+in the same re-draw, not a new fault. Before the *component* heads took their preseason block
 the same five read −1.87224, −2.94136, −2.23589, −1.35151 and −1.05349 against a season-total
 bias of −15.4388; before the composition took its block and σ moved to 0.375, −2.31, −3.38,
 −2.55, −1.78 and −1.31; before the no-design level was graded, −1.88, −3.03, −2.28, −1.60 and
@@ -1691,36 +1747,42 @@ improved with them each time — see `docs/preseason-plan.md` P5 and session 6b.
 
 **The spread is the good news, and it is the statistic that matters most here.** A best-ball
 week is a max over sixteen players, so the weekly *spread* decides more of a lineup's score
-than the weekly mean does. Pooled over every row and draw the simulated sd is **0.927–0.986257×**
-the observed on all four facets (0.923–0.971× before the no-design level was graded, and
-0.920–0.954× before the layout change). Three
+than the weekly mean does. Pooled over every row and draw the simulated sd is **0.938–0.970×**
+the observed on all four facets (0.927–0.986257× on the rookie-less panel, 0.923–0.971×
+before the no-design level was graded, and 0.920–0.954× before the layout change). Three
 spreads are emitted and only one of them is comparable: the spread of the per-row posterior
-*means* (**29.40** against an observed 49.05 on one-week train) is narrower **by construction**,
+*means* (**31.52** against an observed 48.13 on one-week train; 29.40 against 49.05 on the
+rookie-less panel) is narrower **by construction**,
 because a mean over draws has averaged its own noise away, and reporting that one would claim
 a defect that was never measured.
 
-**About a fifth of player-weeks score nothing at all** — 20.7% / 19.9% observed on the
-one-week facets against **17.95% / 19.7979%** simulated — and a season total averages that away
+**About a quarter of player-weeks score nothing at all** — 24.6% / 24.5% observed on the
+one-week facets against **22.43% / 23.45%** simulated, up from 20.7% / 19.9% against
+17.95% / 19.7979% on the rookie-less panel because a rookie's season is made of exactly the
+zero-heavy weeks the union added — and a season total averages that away
 completely. It is the clearest argument for scoring this unit: a zero week is survivable
 under a best-7-of-16 rule and a *cluster* of them is not, which is exactly what the spell
 process exists to produce. It is also the row the `tenure_merge` layout was aimed at, and the
 one it moved: those two figures read 16.9% and 18.2% under the previous layout.
 
 Calibration is read as a distance and never as a verdict, the rule the model pages already
-carry. KS distances span **0.0127339–0.0582** (0.0178266–0.0582 before the component heads took
+carry. KS distances span **0.0143–0.0491** (0.0127339–0.0582 on the rookie-less panel,
+0.0178266–0.0582 before the component heads took
 their preseason block, 0.0171–0.0600 before the no-design level was graded, 0.0265–0.0639
 before the layout change); the QQ
-curve is S-shaped away from the diagonal and the binned quartile lines sit **0.1–0.1607**
-off their own levels (0.099968–0.1607 before the preseason block, 0.1066–0.1417 before the
+curve is S-shaped away from the diagonal and the binned quartile lines sit **0.101–0.1241**
+off their own levels (0.1–0.1607 on the rookie-less panel, 0.099968–0.1607 before the
+preseason block, 0.1066–0.1417 before the
 no-design level was graded), both of which say the predictive is slightly *too narrow* — the same
-finding the 0.92× spread ratio gives from the other direction. The rank-transformed panel adds what a single KS cannot see: all three
+finding the 0.94× spread ratio gives from the other direction. The rank-transformed panel adds what a single KS cannot see: all three
 quartile lines slide **upward** across the predicted range, i.e. the simulator over-predicts
 the player-weeks it ranks lowest and under-predicts the ones it ranks highest.
 
 The only bars in the target are on the **budget** rather than on the model: the 95% ribbon
 and the KS distance are each re-read on two interleaved halves of the 500 simulated seasons
-behind a panel, at `ECDF_BAND_TOL` / `KS_MC_TOL` = 0.02. Worst shipped readings are **0.00656533**
-and **0.00398448** (0.00670548 and 0.00394135 before the preseason block; 0.0074 and 0.0056
+behind a panel, at `ECDF_BAND_TOL` / `KS_MC_TOL` = 0.02. Worst shipped readings are **0.0041**
+and **0.0046** (0.00656533 and 0.00398448 on the rookie-less panel; 0.00670548 and
+0.00394135 before the preseason block; 0.0074 and 0.0056
 before the no-design level was graded — still an order of magnitude
 inside the bar). That budget was measured rather than assumed — at 250 / 500 / 1,000 / 2,000
 simulated seasons the ribbon statistic falls as 1/√D (0.0057 → 0.0044 → 0.0020 → 0.0014 on
@@ -2181,6 +2243,13 @@ on the board at pick *k* changes, so the field's picks are slightly better than 
 and it is smaller and more honest than scoring a real player at zero. The right fix is upstream:
 pricing those 153 players is the open question item 4 left.
 
+*(The upstream fix landed 2026-08-22: the rookie rate family and the lag-recovery ladder
+widened the tensor's population (`docs/rookie-rates-plan.md` §7g), the tensors were re-drawn
+and the sweep re-run (`docs/rookie-inclusive-tensors-plan.md` §7c-§7d). The priceable board
+is now **411 of 448** and **417 of 464**, the ADP-priced hole is **0** and **3** rows, and
+the ADP field takes 0.00 / 0.01 unpriceable players per entry — the restriction machinery
+stays, and the population it removes is now the market-silent fringe.)*
+
 **The guard that says the correction worked is the symmetric-field null**, run on the injected
 field before any strategy is scored: an entry drawn from the field reaches Round 1 at
 **0.166667** against an exact 0.166667, error **5e-11**. Every lift below is measured against
@@ -2362,6 +2431,14 @@ the bracket pays value. The symmetric-field null stays exact against the need fi
 pure-ADP field is the harder opponent, and it stays shipped** — recorded as
 `field-lineup-reasoning-is-a-measured-null` in the decision registry.
 
+*(Re-read 2026-08-22/23 on the rookie-inclusive tensors,
+`docs/rookie-inclusive-tensors-plan.md` §7d: the direction holds a third time — every one
+of the 24 arms reads higher lift against the stipulated 8-pick lean pooled over the four
+multi-entry structures, the shipped arm 0.2645 → 0.3089 on the 600k and 0.2862 → 0.2934 on
+the 20k, the adp arm roughly doubling everywhere. The one flip is the single-entry 88k,
+0.4041 → 0.3649 — one $450 entry, the table's noisiest cell. The fitted pure-ADP field
+stays the conservative opponent on the wider board.)*
+
 Plumbing that landed with it, all behind defaults that reproduce the old behavior
 exactly: `field_composition` / `assign_seats` now actually thread through `load_room`,
 `build_field`, `draft_portfolio` and both realized/injected field builds (`Room.seats`);
@@ -2409,6 +2486,14 @@ overview was condensed; both are simulated-side figures, so the per-arm `rho` ca
 same ranking by **+0.00128856** (600k, resolved) and gives up **0.0602481** of simulated
 lift against the shipped per-pick objective. The conclusion is unchanged — the
 ranking-submission fallback is safe, and the objective is the half worth defending.
+
+**Re-read 2026-08-22 after the rookie-inclusive tensor re-run**
+(`docs/rookie-inclusive-tensors-plan.md` §7d; the 2026-08-16 pair above is held as the
+rookie-less record, and the same P5 caveat applies — the two runs score different worlds):
+the autodraft twin beats the uncapped click by **+0.0125086** (600k) and gives up
+**0.0855400** of simulated lift against the shipped per-pick objective. Same shape, third
+population in a row — the caps help, and the per-pick objective is the half automation
+cannot carry.
 
 #### All five captured structures are swept — 2026-08-11
 
@@ -2803,6 +2888,78 @@ benchmark entry already reads `p_advance = 1.0` in all five tournaments. Every E
 prints inherits that. It is exactly what Gate C's error injection exists to price, and until
 item 8 runs, **the room's EV is a ranking device and not money.** The page says so on screen.
 
+#### What the live room offers — the menu is an artifact ✅ 2026-08-24
+
+**The room could not execute the strategy this plan ships, and the reason was build
+order.** Item 7 specified it as "ranked by marginal bracket EV" and item 8 then selected
+`lineup_value_blend30`; nothing went back. A sweep strategy is two axes — `ranking`
+(where the value ordering comes from, with `alpha` the market weight in rank space) and
+`objective` (how a pick is chosen given it) — and the page's "Rank by" control was the
+objective axis alone. Choosing `lineup_value` there gave `alpha = 0`, which is the arm the
+sweep calls plain `lineup_value`, ~0.02 of lift short of the one it selected; the default,
+`bracket_ev`, was ~0.08 short.
+
+Both halves are now fixed, and the second is the one worth stating carefully.
+
+**`evaluate` blends the market itself, on exactly the sweep's own construction.** The value
+rank is a candidate's *position in this table* — dense, 0-based, ties already broken by
+`rank_cushion` — blended against the global board rank, which is precisely what
+`_objective_rank` + `strategy_keys` compute one layer up. Reproducing it rather than
+inventing a second blend is the whole point: the arm the room runs has to be the arm the
+sweep priced. **`alpha = 0` reproduces the pre-blend table bit-for-bit**, including its tie
+order, which is what lets the sweep keep blending *outside* `evaluate` without the two
+compounding — `_objective_rank` passes the bare objective name deliberately, and a test
+pins it. `cost_vs_best` stays in the **objective's** unit rather than the blended key's,
+because a rank has no unit a drafter can act on and dk_pts and dollars do; under a blend it
+can therefore read positive, which is the market weight's price made visible rather than an
+error.
+
+**The menu is read from `strategy_room_arms.csv`, not hand-set.** `select_top_n` generalizes
+`select` — same criterion, same tiebreak — and `make strategy-sweep` writes the top
+`N_ROOM_ARMS = 3` per tier with every field a `RoomArm` needs. `make strategy-room-arms`
+re-derives it from the sweep table already on disk, since the arms are a pure function of it
+and the sweep costs ~35 minutes. Two rules in `select_top_n` are load-bearing:
+
+- **Rows a live seat cannot execute are dropped.** `autodraft_*` is a different executor and
+  an exposure cap is a statement about a portfolio one hand-drafted entry does not have.
+  `Strategy.room_arm()` is the projection onto what a seat can do and `room_expressible()`
+  is the predicate that says whether the projection lost anything.
+- **Rows collapsing onto the same `RoomArm` are deduplicated.** At `88k_alley_oop` — one
+  entry — the exposure-cap, position-cap and stacking arms all degenerate to `blend_a30` and
+  tie at *exactly* 0.410380, so a naive top-three offers three menu entries that draft an
+  identical board.
+
+**What it changed is small, and that is the result.** The top three are the same three arms
+in the same order on all four multi-entry tiers:
+
+| tier | rank 0 (default) | rank 1 | rank 2 |
+|---|---|---|---|
+| `600k_shootaround` | `lineup_value_blend30` | `bracket_ev_blend30` | `lineup_value` |
+| `20k_spin_move` | `lineup_value_blend30` | `bracket_ev_blend30` | `lineup_value` |
+| `50k_four_pt_play` | `lineup_value_blend30` | `bracket_ev_blend30` | `lineup_value` |
+| `15k_and_one` | `lineup_value_blend30` | `bracket_ev_blend30` | `lineup_value` |
+| `88k_alley_oop` | `lineup_value` | `blend_a30` | `lineup_value_blend30` |
+
+So conditioning the menu on tournament moves exactly one tier of five — the single-$450-entry
+one — and moves it on a gap that does not resolve: `lineup_value` over `lineup_value_blend30`
+by **−0.0159 [−0.0368, +0.0060]**, `resolved = False`, p = 0.92. Rank 0 always equals
+`select`'s own answer, and a test pins that against the shipped sweep.
+
+**Ranks 1 and 2 are resolved losses, and the page says so.** In `strategy_paired.csv` with
+the shipped arm as baseline, `bracket_ev_blend30` runs −0.0168 to −0.0240 and `lineup_value`
+−0.0256 to −0.0453 across the four multi-entry tiers, every interval excluding zero. They are
+labelled *recorded alternatives* rather than peers, and they stay on the menu for the two
+reasons already registered: `bracket_ev` buys ROI exactly where it gives up lift
+(`select-on-p-advance-report-roi` — 66.9 against the shipped arm's 15.9 at 600k, 17.2 against
+8.0 at 15k, on an ROI column quoted for sign and not magnitude), and `alpha` has a sign but
+not a location (`alpha-has-a-sign-but-not-a-location`), which keeps the unblended arm live.
+
+**One capability left the menu and not the code.** `p_advance` was never swept as an
+objective arm — `strategy_table` builds objective rows for `lineup_value` and `bracket_ev`
+only — so it has no row in the artifact and no evidence behind it as a drafting policy. It
+stays in `RANK_OBJECTIVES` and is still swept by `gate_e` and `stability` and reproduced
+exactly by `null_check`; it is simply no longer offered as a way to draft.
+
 ---
 
 ## Data the layer needs, and where it comes from
@@ -3144,7 +3301,7 @@ Plain `assert` with synthetic builders, no fixtures or classes, mirroring
 - **The 2.43x ten-game block inflation is not consumed**, and cannot be until the row above
   is settled: the simulator reads 1.40 / 1.52, and adding the ~3-line block term would put
   more variance into a minutes draw that is already too wide at the game level.
-- 🔴 **153 of 539 rostered players are in the minutes allocation but not in the tensor**, for
+- ~~🔴~~ ✅ **153 of 539 rostered players are in the minutes allocation but not in the tensor**, for
   want of a component-head design row. They cannot be dropped (the allocation is zero-sum)
   and cannot be scored. Pricing them is the same open question as the 2026 draft class —
   and since 2026-08-09 it has a price tag: `make strategy-sweep` measures on every run that
@@ -3155,6 +3312,11 @@ Plain `assert` with synthetic builders, no fixtures or classes, mirroring
   `P(top 2 of 12) = 0.285` against an exact 0.1667). The sweep restricts the board to
   priceable players on **both** sides as a stopgap, at the cost of changing who is on the
   board at pick *k*; a floor projection for those players would remove the stopgap.
+  **Resolved 2026-08-22**: the rookie rate family plus the lag-recovery ladder are that
+  floor projection (`docs/rookie-rates-plan.md`), the shipped tensors carry the union, and
+  the live sweep reads **37** and **47** unpriceable rows (0 and 3 with ADP), 0.00 / 0.01
+  field picks per entry. The restriction stays as machinery; the population it removes is
+  no longer one the market prices.
 - 🔴 **The error injection perturbs the season-level rate and cannot perturb the model's
   knowledge of the distribution's shape.** Gate C's three named targets are all level
   statistics, so nothing in the injection touches what the model knows about the weekly

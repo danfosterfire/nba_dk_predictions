@@ -53,6 +53,7 @@ wrapper cannot inherit the exemption by sharing a basename.
   confident than the model.
 """
 
+import re
 import sys
 import time
 from datetime import datetime
@@ -68,13 +69,20 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from dashboard import economics, shell
+from dashboard import artifacts, economics, shell
 from dashboard.artifacts import load_cfg
 from src.sim import draft, draft_room
 
 BOARD_ROWS = 24                # best-available rows offered for a one-click "gone"
 SEARCH_ROWS = 12
 ROW_WIDTHS = [3.2, 1, 1, 1.1, 1]   # player · EV · P(top 2) · cost vs best · cushion
+
+#: `make strategy-sweep`'s answer to "which arms may this room offer, per tier" — written
+#: by `strategy.room_arms`, one row per (tournament, rank), best first. The page **reads**
+#: it: nothing here re-decides which strategy is good, the same rule
+#: `src/final_evaluation.py` follows one layer up. Absent, the room falls back to the bare
+#: objectives with no market blend, which is what it offered before 2026-08-24.
+ROOM_ARMS_FILE = "strategy_room_arms.csv"
 
 # Streamlit's default button is a text-sized target. A draft room is used with thirty
 # seconds on the clock, so the pick buttons are given a real hit area and the primary one
@@ -112,8 +120,13 @@ CELL_STYLE = "font-size:0.92rem"
 # ── Loading ───────────────────────────────────────────────────────────────────
 
 def seasons_with_a_tensor(features: Path) -> list[str]:
-    return sorted(p.name[len("sim_tensor_"):-len(".npz")]
-                  for p in features.glob("sim_tensor_*.npz"))
+    """Season labels only, `NNNN-NN`. A labelled variant tensor
+    (`sim_tensor_2022-23_rookieinclusive.npz`) is a measurement written beside the
+    shipped one, not a board — globbed naively its label parses as a "season" the room
+    then fails to open (`docs/rookie-inclusive-tensors-plan.md` §5b)."""
+    names = (p.name[len("sim_tensor_"):-len(".npz")]
+             for p in features.glob("sim_tensor_*.npz"))
+    return sorted(name for name in names if re.fullmatch(r"\d{4}-\d{2}", name))
 
 
 @st.cache_data(show_spinner=False, ttl=300)
@@ -192,6 +205,61 @@ def format_gap(value: float, objective: str) -> str:
     if objective == "p_advance":
         return f"{value * 100:+.2f} pp"
     return f"{value:+,.0f} dk"
+
+
+# ── Which arms this tier may be drafted with ──────────────────────────────────
+
+#: What each objective prices, in the words a drafter thinks in rather than the column
+#: name. `ranking` is the arm with no per-pick objective at all — the board's own opinion.
+OBJECTIVE_LABELS = {"lineup_value": "lineup value", "bracket_ev": "payout EV",
+                    "p_advance": "survival", "ranking": "board value"}
+
+#: What the room offers when `strategy_room_arms.csv` is missing: the bare per-pick
+#: objectives, unblended — exactly the menu the page carried before it read the sweep.
+FALLBACK_ARMS = tuple(draft_room.RoomArm(name=o, objective=o)
+                      for o in draft_room.RANK_OBJECTIVES)
+
+
+def room_arms(tournament: str) -> list[draft_room.RoomArm]:
+    """The arms `make strategy-sweep` selected for this tier, best first.
+
+    **The page reads which strategies are good; it never decides.** That is
+    `src/final_evaluation.py`'s rule one layer up — the thing that scores a strategy may
+    not also choose it — and it is why the sidebar is built from an artifact instead of a
+    constant. A tier the sweep did not draft into falls back to the bare objectives.
+    """
+    path = ROOT / load_cfg()["evaluation"]["predictions_dir"] / ROOM_ARMS_FILE
+    if not path.exists():
+        return list(FALLBACK_ARMS)
+    rows = artifacts.read_table(str(path))
+    rows = rows[rows["tournament"] == tournament].sort_values("rank")
+    if rows.empty:
+        return list(FALLBACK_ARMS)
+    return [draft_room.RoomArm(
+        name=str(row["arm"]), ranking=str(row["ranking"]), alpha=float(row["alpha"]),
+        alpha_rounds=_schedule(row["alpha_rounds"]), quantile=float(row["quantile"]),
+        objective=str(row["objective"])) for _, row in rows.iterrows()]
+
+
+def _schedule(value) -> tuple[float, float, float] | None:
+    """`"0.15/0.35/0.65"` back to three floats. Blank, or absent from the CSV, is flat."""
+    if pd.isna(value) or not str(value).strip():
+        return None
+    return tuple(float(part) for part in str(value).split("/"))
+
+
+def arm_label(arm: draft_room.RoomArm, selected: str) -> str:
+    """One sidebar line: what it prices, how much market it carries, and whether it ships.
+
+    The market weight is spelled out rather than left in the arm's name, because `alpha`
+    is the axis `alpha-has-a-sign-but-not-a-location` says is real in *sign* and unresolved
+    in *location* — a drafter choosing between these should see the number they are picking.
+    """
+    weight = ("model only" if arm.alpha == 0 else
+              (f"{arm.alpha:.0%} market" if arm.alpha_rounds is None
+               else f"{arm.alpha:.0%} market by round"))
+    return (f"{'★ ' if arm.name == selected else ''}"
+            f"{OBJECTIVE_LABELS.get(arm.objective, arm.objective)} · {weight}")
 
 
 # ── Interaction — every click goes through here ───────────────────────────────
@@ -282,9 +350,19 @@ def render() -> None:
             "Your seat", 1, int(sim.get("pod_size", 12)),
             shell.recall("seat", int(room_cfg.get("seat", 0)) + 1)) - 1
         shell.remember("seat", seat + 1)
-        objective = choice("Rank by", list(draft_room.RANK_OBJECTIVES), "objective",
-                           list(draft_room.RANK_OBJECTIVES).index(
-                               room_cfg.get("objective", "bracket_ev")))
+        # The menu is this tier's swept arms, best first, defaulting to the one that
+        # ships. It changes with the tournament — `88k_alley_oop` is one $450 entry and
+        # selects a different arm from the four multi-entry tiers.
+        arms = room_arms(tournament)
+        by_name = {a.name: a for a in arms}
+        selected = arms[0].name
+        arm = by_name[choice("Rank by", list(by_name), "arm", 0,
+                             format_func=lambda n: arm_label(by_name[n], selected))]
+        objective = arm.objective
+        if arm.name != selected:
+            st.caption(f"`{selected}` is the arm `make strategy-sweep` selected here. "
+                       "This one is a recorded alternative, not a peer — see the "
+                       "tournament & strategy page for what it gives up.")
         top = st.slider("Candidates shown", 5, 20, 10)
         st.divider()
         st.button("↩︎ Undo last pick", on_click=undo, width="stretch")
@@ -318,7 +396,7 @@ def render() -> None:
     # Autosaved on every rerun rather than on a button, because a live draft is exactly
     # where a closed tab costs something no `make` target can rebuild.
     log = draft_room.pick_log(room, st.session_state.picks, seat, tournament, objective,
-                              st.session_state.annotations)
+                              st.session_state.annotations, arm=arm.name)
     saved = draft_room.log_path(ROOT / "outputs" / "draft_logs", season,
                                 st.session_state.session_id)
     if len(log):
@@ -341,12 +419,33 @@ def render() -> None:
                    f"{coverage['unmatched']} listed players are not draftable here"
                    + (f"; **{coverage['ambiguous']} ambiguous names left unattached**"
                       if coverage["ambiguous"] else ""))
+        coverage = room.preseason_coverage
+        stamped = coverage is not None and np.isfinite(coverage)
         st.caption(
             f"`{room.season}` board · {room.board.n_players:,} players, "
             f"{int(room.scorable.sum()):,} priceable · {room.n_sims:,} sims at the "
             f"`{room.fit_window}` window · field {room.field_round.shape[0]:,} entries "
             f"at `{room.field_cfg.noise_model}` noise "
-            f"{room.field_cfg.rank_noise_sd:.2f}")
+            f"{room.field_cfg.rank_noise_sd:.2f}"
+            + (f" · preseason coverage {coverage:.0%}" if stamped else ""))
+
+    # C6's banner (`docs/rookie-inclusive-tensors-plan.md` §5b): a production tensor
+    # knows whether the season's preseason existed when it was drawn, and the person who
+    # needs that fact is looking at a board on a thirty-second clock — so it is a banner,
+    # never a provenance line. The staleness guard already refused a tensor the October
+    # log has overtaken; what reaches this page is either current or an honest rehearsal.
+    if room.fit_window == "full":
+        if not room.preseason_log_rows:
+            st.warning(
+                f"🚧 **REHEARSAL board** — `{room.season}` was simulated **without its "
+                f"preseason** (coverage "
+                + (f"{coverage:.0%}" if stamped else "unstamped")
+                + f"): every player is priced on his missing-preseason arm — the August "
+                f"board. Practice on it; do not draft off it. Rebuild after the October "
+                f"preseason fetch: `make preseason && make simulate-production`.")
+        else:
+            st.info(f"`{room.season}` production board at the `full` window"
+                    + (f" — preseason coverage {coverage:.0%}." if stamped else "."))
 
     # ── The clock ────────────────────────────────────────────────────────────
     clock = st.columns([1, 1, 2, 1, 1, 1])
@@ -406,7 +505,7 @@ def render() -> None:
             start = time.perf_counter()
             try:
                 table, context = draft_room.evaluate(room, state, seat, tournament,
-                                                     objective=objective, top=top)
+                                                     arm=arm, top=top)
             except Exception as error:               # noqa: BLE001
                 st.error(f"{type(error).__name__}: {error}")
                 return
@@ -451,15 +550,22 @@ def render() -> None:
             injury_panel(flagged[flagged["board_index"].isin(shown)],
                          "Injury notes on the players above")
 
+            blended = context["alpha"] > 0
             st.caption(
-                f"Ranked by **{objective}** for `{tournament}` "
-                f"({money(context['entry_fee'], 0)} entry"
+                f"Ranked by **`{arm.name}`** — {OBJECTIVE_LABELS.get(objective, objective)}"
+                + (f", blended **{context['alpha']:.0%}** into the DK-recalibrated ADP "
+                   f"rank at this round" if blended else ", with no market blend") +
+                f" — for `{tournament}` ({money(context['entry_fee'], 0)} entry"
                 f"{', entered this year' if tournament in entered else ''}). "
                 f"{context['n_candidates']:,} legal, priceable players considered. "
                 f"**EV** is the expected payout of your *whole completed sixteen* with "
                 f"that player in it — a level, so only the differences down the column "
                 f"mean anything. **Cost** is what taking that row instead of the top one "
-                f"gives up. **Cushion** is his board rank minus the number of players "
+                f"gives up, in the objective's own unit" +
+                (" — so under a blend it can read **positive**: the market pushed that row "
+                 "above the objective's own favourite, and the gap is what the market "
+                 "weight is costing you." if blended else ".") +
+                f" **Cushion** is his board rank minus the number of players "
                 f"expected off the board by your next pick — negative means the field "
                 f"takes him first, positive means you can wait.")
             st.caption(

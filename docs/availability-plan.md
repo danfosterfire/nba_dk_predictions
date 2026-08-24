@@ -1461,7 +1461,7 @@ progress lines, plain-`assert` tests with synthetic builders.
 | **F** | dashboard tab | `dashboard` | Not started. A tenth tab over the availability artifacts, matching the existing read-only pattern. |
 
 `make daily-capture` runs both stage-A captures and **must stay scheduled**. It is installed
-as a launchd agent (`~/Library/LaunchAgents/com.nba-deep-learning.daily-capture.plist`)
+as a launchd agent (`~/Library/LaunchAgents/com.nba-dk-predictions-stan.daily-capture.plist`)
 rather than a crontab line, because macOS cron silently skips any run whose time passed while
 the machine was asleep or off, while launchd re-runs a missed `StartCalendarInterval` job on
 wake. `make capture-status` reports which days are archived, which had no report to archive,
@@ -1558,7 +1558,7 @@ The launchd agent could not read the repo, because it lives under `~/Documents`,
 protects: the job could enter the directory but not read files in it, and exited 2 with
 `Operation not permitted`. Full Disk Access for `/bin/zsh` fixed it.
 
-**Verified, not assumed.** `launchctl kickstart -p gui/$(id -u)/com.nba-deep-learning.daily-capture`
+**Verified, not assumed.** `launchctl kickstart -p gui/$(id -u)/com.nba-dk-predictions-stan.daily-capture`
 now runs to completion and `launchctl list` reports last exit status **0**; the
 `getcwd: Operation not permitted` lines at the top of `data/raw/daily_capture.log` are the
 stale pre-fix run. Check it the same way after any OS update — TCC grants are revocable, and
@@ -1569,6 +1569,47 @@ this failure is silent from the archive's point of view.
 the exact failure mode this plan warns about and it is worth recording that it happened
 rather than quietly re-basing the archive. The NBA PDF side lost nothing: 175 reports
 archived, **0 missed**, the whole retention window.
+
+### The rename outage — ✅ resolved 2026-08-23
+
+**Two independent faults inside four days, costing 19 more ESPN snapshot days**
+(2026-08-04 → 2026-08-22). They are worth separating, because only one of them is the kind
+this plan already warned about:
+
+1. **ESPN began 403-ing the spoofed User-Agent, 2026-08-04.** The feed had been requested
+   with a Chrome string; ESPN's Akamai edge started refusing exactly that and kept serving
+   honest tool agents. Sending no override — requests' own `python-requests/x.y` — returns
+   200 with all 28 team blocks, and `curl/8.7.1` works too, so this is bot-management
+   policy rather than rate-limiting or a block on the project. **`_HEADERS` in
+   `src/data/injuries.py` is now deliberately empty, and `src/data/espn_fantasy.py`
+   matches**; pasting a browser string back in is what caused this, not a fix for it.
+   (`espn_fantasy`'s HTML surface, `ESPN_FANTASY_URL`, stays 403 either way — the JSON
+   APIs are what recover. It has no make target and is not scheduled.)
+2. **The repo was renamed off `nba_deep_learning` between the 08-07 and 08-08 runs**, and
+   both launchd agents hard-code the path. This is the one that hid: launchd *creates the
+   parent directories of `StandardOutPath`*, so it made an empty
+   `~/Documents/nba_deep_learning/data/raw/`, the `cd` succeeded into that stub, and
+   `make` failed with ``No rule to make target `daily-capture'`` into a log inside the
+   stub — while the real repo's log sat untouched at its last pre-rename entry. Fifteen
+   runs failed that way, and `make capture-status` in the live repo could not see it.
+
+**What is fixed.** Both agents are relabelled to `com.nba-dk-predictions-stan.*` at the new
+path, the stale plists and the stub directory are gone, and each `ProgramArguments` now
+carries a `test -f Makefile` guard that exits 78 with an explicit
+"repo moved or renamed" line instead of make's misleading missing-target error. The guard
+does **not** make the jobs self-locating: **a future rename still requires re-pointing the
+plist**, and that is now stated in the plist comment, in the `Makefile`'s daily-capture
+header, and here.
+
+**Verified, not assumed**, the same way as the TCC fix:
+`launchctl kickstart -p gui/$(id -u)/com.nba-dk-predictions-stan.daily-capture` runs to
+completion, `launchctl list` reports last exit status **0**, and the recovery run captured a
+76-record snapshot, taking the archive to **8 snapshot days** (2026-06-28 → 2026-08-23).
+**The NBA PDF side again lost nothing** — the rename stopped it too, but its window is ~7
+months and every day it missed was recoverable: 175 reports archived, **0 missed**, and the
+un-attempted August days turned out to be `no report published` (offseason). The asymmetry
+is the whole argument for the two-state vocabulary: the same 15-day outage is a permanent
+19-day hole in one feed and a no-op in the other.
 
 ### Not blocked, just not started
 

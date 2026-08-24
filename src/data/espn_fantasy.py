@@ -28,12 +28,10 @@ ESPN_NEWS_API = (
 ESPN_FANTASY_URL = "https://www.espn.com/fantasy/mens-basketball/"
 ESPN_BASE = "https://www.espn.com"
 
+# No User-Agent override, for the reason given in injuries.py: ESPN's edge 403s
+# browser-impersonating agents and serves `python-requests/x.y`. That restores the JSON
+# APIs; ESPN_FANTASY_URL is an HTML page and stays 403 either way.
 _HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
 }

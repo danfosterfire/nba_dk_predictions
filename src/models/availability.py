@@ -70,6 +70,8 @@ Usage:
     python -m src.models.availability
 """
 
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -166,6 +168,220 @@ ABSENCE_MIX_SOURCE_COLS = ([f"missed_{k}" for k in MISSED_MIX_KINDS]
 # the constant is a guard against a half-finished backfill, not a tuned knob.
 MIN_MIX_COVERAGE = 0.9
 
+# ── The lag-recovery ladder — `docs/availability-window-plan.md` §16 ──────────
+#
+# `build_design` drops a player-season on `gp_share_lag1` **alone**, so a player who missed
+# all of S-1 has no row here no matter how complete S-2 is, and falls to
+# `sim/season.no_design_availability`'s plug-in — which hands *every* returning player one
+# scalar per season. §16b measured what that costs and what is available instead: the
+# carried lag-2 correlates +0.691 with realized share against the shipped design's own
+# lag-1 correlation of +0.573, and its LEVEL runs 0.746x high pooled. **The ordering is on
+# the row already and only the level needs an estimate.**
+#
+# The rung vocabulary is `component_rates.LADDER_RUNGS` and the imputation reuses
+# `lag_recovery`'s helpers, so a board reconciles the two designs' `lag_rung` columns
+# without a mapping table. Imported at function level, because `component_rates` imports
+# THIS module and a module-level import would be a cycle.
+
+#: Extra columns lagged **only when the ladder is on**, so a ladder-off frame is
+#: byte-for-byte the frame the seven importers have always received. `gp` and `team_games`
+#: are the numerator and denominator of `gp_share`, and a proportion's reliability lives in
+#: its trials — `lag_recovery.recent_conversion` needs both to shrink one.
+LADDER_LAG_COLS = ["gp", "team_games"]
+
+#: The staleness block §16e's arm 2 adds to the FIT. Three columns and no more: an
+#: indicator that the lag-1 block is imputed at all, how many seasons back its source sits,
+#: and how many INTERIOR seasons are missing between the rows the design does carry.
+#:
+#: The first two together saturate the three-level gap {0, 1, 2} the ladder can produce, so
+#: the head learns a level shift and a slope rather than being handed one. The third is
+#: §16d's other half and it is not new work: the design already carries **130** `(1,0,1)`
+#: rows whose missing S-2 is erased by the `lag2 := lag1` backfill below, so a round that
+#: adds a gap column should say so for both populations at once.
+STALENESS_COLS = ["lag_recovered", "lag_gap_seasons", "lag_interior_gaps"]
+
+
+@dataclass(frozen=True)
+class AvailabilityLagLadder:
+    """The admitted rungs plus the two constants the carried share is shrunk with.
+
+    Nothing is estimated at build time, for `component_rates.LagLadder`'s reason: this
+    builder is called by seven modules on frames that are sometimes a single forward
+    season, and a constant fitted from whatever rows happen to be in front of it would
+    differ between callers. `availability_lag.ladder_constants` reads them from the
+    artifact that fitted them on the fitting half.
+    """
+
+    rungs: tuple[str, ...]
+    k_games: float          # pseudo-games shrinking a carried `gp_share` toward the league
+    league_share: float     # the fitting half's own pooled `gp / team_games`
+    max_lag: int = 3
+
+
+def lag_ladder(cfg: dict, rungs: "Sequence[str] | None" = None
+               ) -> "AvailabilityLagLadder | None":
+    """The configured ladder, or `None` for the shipped pre-ladder design.
+
+    `stan.availability.lag_ladder` is a **list of admitted rungs** on
+    `component_rates.LADDER_RUNGS`' vocabulary, so an empty list is today's design exactly
+    and the key is what §16f's verdict is written into. `rungs` overrides it for the gate
+    itself, which has to build the widest design in order to score the rungs it is deciding
+    about.
+
+    **The default is empty and that is a decision, not caution.** §16c: this builder is
+    imported by `stan_minutes`, `stan_composition`, `stan_games_played`, `model_cards`,
+    `sim/season`, `season_terms` and `final_evaluation`, and because the minutes allocation
+    is zero-sum a recovered player takes minutes from his teammates rather than appearing
+    beside them. The component ladder's recovered rows entered a *scoring* population only;
+    these enter seven consumers. Turning the key on is a separate decision from measuring
+    it.
+    """
+    from src.models.component_rates import LADDER_RUNGS
+
+    configured = (cfg.get("stan", {}).get("availability", {}).get("lag_ladder")
+                  if rungs is None else rungs)
+    admitted = tuple(configured or ())
+    if not admitted:
+        return None
+    unknown = [r for r in admitted if r not in LADDER_RUNGS]
+    if unknown:
+        raise ValueError(f"`stan.availability.lag_ladder` names unknown rung(s) {unknown}; "
+                         f"the vocabulary is {list(LADDER_RUNGS)}")
+    path = Path(cfg["evaluation"]["predictions_dir"]) / "availability_lag.csv"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{path} is missing and the ladder's shrinkage is fitted there — run "
+            f"`make availability-lag`, or set `stan.availability.lag_ladder: []` to build "
+            f"the pre-ladder design exactly.")
+    from src.models.availability_lag import ladder_constants
+    return AvailabilityLagLadder(rungs=admitted, **ladder_constants(path))
+
+
+def apply_lag_ladder(d: pd.DataFrame,
+                     ladder: AvailabilityLagLadder) -> pd.DataFrame:
+    """Fill a missing lag-1 block from the nearest usable season, in place of it.
+
+    Called on the **pre-`dropna`** frame, which is the only place the rows exist: the whole
+    defect is that they are deleted one line later.
+
+    Two kinds of quantity, carried differently and for different reasons:
+
+    - **`gp_share_lag1` is shrunk** — empirical-Bayes on its own trials, which for a
+      proportion is where the reliability lives, at
+      `(gp + k*league) / (team_games + k)`. `lag_recovery.recent_conversion` verbatim,
+      pointed at games over team games instead of makes over attempts. §16b's 0.746x level
+      gap is why the raw carry is not enough on its own: a season a player *missed* is
+      erased by carrying the one before it, and the carried number is biased high by
+      exactly the fact it erased.
+    - **everything else is carried raw** — `minutes_per_game`, `total_minutes`,
+      `trailing_missed`, `end_play_rate`, `n_spells`, `longest_spell`, the playoff block,
+      `career_minutes`, and the `gp`/`team_games` pair. They are not estimates of a rate;
+      they are what the player's most recent real season actually was, and `lag_source`
+      records how stale that is.
+
+    ## What the imputation is telling the head, stated plainly
+
+    §16e is explicit that this arm ships knowing it says something false: writing a healthy
+    S-2 into `gp_share_lag1` tells the head "he played 80 games last year", which is the
+    single most misleading fact available about a player returning from a lost season. The
+    absence block goes with it — `trailing_missed_lag1`, `n_spells_lag1`,
+    `longest_spell_lag1` and `ABSENCE_MIX_COLS` all describe S-1. `STALENESS_COLS` is what
+    lets a REFITTED head discount it; this function's job is only to make the row exist.
+
+    ## `n_prior_seasons` counts real prior seasons, which is the same number it always was
+
+    §16d: the column counts depth and not gaps, so a recovered `(0,1,1)` row would land on
+    `3` and be indistinguishable from the 7,276 healthy veterans who played all three. It
+    is written here as the count of lag slots that hold a real season, which on a qualified
+    row is `1 + notna(lag2) + notna(lag3)` **exactly** — bit-identical — and on a recovered
+    one is the honest 2 or 1 instead of 3 or 2.
+    """
+    from src.models.lag_recovery import classify, recent_conversion, recent_lag
+
+    # Computed BEFORE anything is written, on the column the shipped design drops on. That
+    # is what makes rung 0 bit-identical: the test is the shipped one.
+    qualified = d["gp_share_lag1"].notna().to_numpy()
+    lag = recent_lag(d, ladder.max_lag)
+    recovered = ~qualified & (lag >= 1)
+
+    # `classify`'s six-way label with the design's own boundary winning rung 0. On this
+    # head `thin_prior` is structurally empty — a thin lag-1 still HAS a `gp_share_lag1`,
+    # so the availability design has always carried it — and the rungs that recover rows
+    # are `returnee_lag2`, `returnee_thin` and `no_usable_lag`.
+    rung = np.where(qualified, "veteran", classify(d).to_numpy())
+
+    # Every carried column is read off the untouched frame first: `recent_lag` reads
+    # `total_minutes_lag1`, so writing the block before reading it would make every lag-2
+    # row look like a lag-1 row.
+    shrunk = recent_conversion(d, "gp", "team_games", ladder.k_games, ladder.league_share)
+    carry = [c for c in LAG_COLS if c != "gp_share"] + LADDER_LAG_COLS
+    carried = {c: d[f"{c}_lag1"].to_numpy(dtype=float).copy() for c in carry}
+    source_minutes = np.full(len(d), np.nan)
+    for L in range(1, ladder.max_lag + 1):
+        hit = lag == L
+        if not hit.any():
+            continue
+        source_minutes[hit] = d[f"total_minutes_lag{L}"].to_numpy(dtype=float)[hit]
+        for c in carry:
+            carried[c][hit] = d[f"{c}_lag{L}"].to_numpy(dtype=float)[hit]
+
+    present = np.column_stack([d[f"gp_share_lag{L}"].notna().to_numpy()
+                               for L in range(1, ladder.max_lag + 1)])
+
+    out = d.copy()
+    for c in carry:
+        out[f"{c}_lag1"] = np.where(recovered, carried[c],
+                                    d[f"{c}_lag1"].to_numpy(dtype=float))
+    out["gp_share_lag1"] = np.where(recovered, shrunk,
+                                    d["gp_share_lag1"].to_numpy(dtype=float))
+    out["n_prior_seasons"] = present.sum(axis=1)
+
+    # Provenance on EVERY row, not only the recovered ones — `component_rates.LADDER_COLS`,
+    # for its reason: "the column is absent" is not the same statement as "the row came
+    # from lag 1", and a scored unit whose provenance is unrecorded cannot be audited.
+    out["lag_source"] = np.where(lag >= 1, np.char.add("lag", lag.astype(str)), "none")
+    out["lag_rung"] = rung
+    out["lag_minutes"] = source_minutes
+    out["lag_recovered"] = recovered.astype(float)
+    out["lag_gap_seasons"] = np.where(recovered, np.maximum(lag - 1, 0), 0).astype(float)
+    out["lag_interior_gaps"] = _interior_gaps(present)
+    return out
+
+
+def _interior_gaps(present: np.ndarray) -> np.ndarray:
+    """Missing lag slots strictly between the shallowest and deepest present ones.
+
+    §16d's 130-row population, as a number: a `(1,0,1)` player played S-1 and S-3 and
+    missed S-2, and the `lag2 := lag1` backfill under the `dropna` turns him into a
+    two-consecutive-season veteran. This is the only column that can say otherwise, and it
+    is zero on every row of the healthy population.
+    """
+    idx = np.arange(1, present.shape[1] + 1)[None, :]
+    any_present = present.any(axis=1)
+    lo = np.where(any_present, np.where(present, idx, 1_000).min(axis=1), 0)
+    hi = np.where(any_present, np.where(present, idx, -1).max(axis=1), 0)
+    inside = (idx > lo[:, None]) & (idx < hi[:, None])
+    return (inside & ~present).sum(axis=1).astype(float)
+
+
+def ladder_recovered(design: pd.DataFrame) -> np.ndarray:
+    """Which rows the ladder admitted that the shipped design would have dropped."""
+    if "lag_rung" not in design.columns:
+        return np.zeros(len(design), dtype=bool)
+    return design["lag_rung"].to_numpy() != "veteran"
+
+
+def rung_zero(design: pd.DataFrame) -> pd.DataFrame:
+    """Rung 0 alone — the population the shipped coefficients were fitted on.
+
+    §16f's non-regression requirement is stated on this frame: whatever an arm does with
+    the recovered rows, the rows the shipped head was fitted on must not move. Arm 1 never
+    refits at all; arm 2 does, and there the requirement is on the design rather than on
+    the artifact.
+    """
+    return design[~ladder_recovered(design)]
+
+
 class _HeldOut(pd.DataFrame):
     """A DataFrame that refuses to be read while the held-out split is locked.
 
@@ -226,7 +442,8 @@ def season_start_dates(panel: pd.DataFrame) -> pd.Series:
 
 
 def build_design(frame: pd.DataFrame, seasons: list[str], raw_dir: str | Path,
-                 starts: pd.Series) -> pd.DataFrame:
+                 starts: pd.Series,
+                 ladder: "AvailabilityLagLadder | None" = None) -> pd.DataFrame:
     """One row per (player, target season), features from S-1 and earlier only.
 
     `as_of_date` is the day before the target season's first game: the latest date at
@@ -239,12 +456,29 @@ def build_design(frame: pd.DataFrame, seasons: list[str], raw_dir: str | Path,
     only — playoff games are a feature of S-1, never a row to fit (`CLAUDE.md`, "Scope") —
     and every consumer of this design matrix needs it, so doing it once here is what stops
     the next caller from failing on a missing column.
+
+    ## `ladder`, and why the default is `None`
+
+    `None` builds the pre-ladder design **exactly** — no `gp`/`team_games` lags, no
+    provenance columns, the same `gp_share_lag1` drop — because this builder is how seven
+    other modules reach their rows and none of them asked for a wider population.
+    `lag_ladder(cfg)` turns `stan.availability.lag_ladder` into the object; a caller that
+    wants the ladder passes it by name, and `apply_lag_ladder` states what it does to the
+    block. Rung 0 is bit-identical under both settings and `tests/test_availability_lag.py`
+    pins it, which is the only claim under which the recovered rows can be scored by
+    coefficients fitted before the ladder existed (`docs/availability-window-plan.md` §16f).
+
+    **Recovering a lag is strictly a widening.** The drop test has always been
+    `gp_share_lag1` alone — never two seasons, let alone three — so a player with exactly
+    one prior season is already kept and his `lag2`/`lag3` filled from `lag1` below. There
+    is no rung at which the unserved pool can grow (§16d).
     """
     missing = [c for c in WORKLOAD_SOURCE_COLS if c not in frame.columns]
     if missing:
         frame = attach_workload(frame, playoff_workload(seasons, raw_dir), seasons)
 
-    lagged = with_lags(frame, seasons, LAG_COLS, max_lag=3)
+    lag_cols = LAG_COLS if ladder is None else LAG_COLS + LADDER_LAG_COLS
+    lagged = with_lags(frame, seasons, lag_cols, max_lag=3)
 
     ages = load_ages(seasons, raw_dir)
     lagged = (lagged.merge(ages, on=["season", "player_id"], how="left") if not ages.empty
@@ -253,8 +487,24 @@ def build_design(frame: pd.DataFrame, seasons: list[str], raw_dir: str | Path,
     lagged["career_year"] = (lagged.sort_values("season_index")
                              .groupby("player_id").cumcount())
 
+    if ladder is not None:
+        # `classify` tests a first PLAYED season before it tests absent lags, for the
+        # reason it gives: a player whose history falls outside the configured window has
+        # no lag columns either, and calling him a rookie would hand the rookie heads a row
+        # they cannot serve. Taken from the whole season frame, not the design's slice.
+        first = frame.groupby("player_id")["season"].min().rename("first_season")
+        lagged = apply_lag_ladder(lagged.merge(first, on="player_id", how="left"), ladder)
+
+    # A recovered row has had its `gp_share_lag1` written by now, so it survives this for
+    # the same reason a veteran does — which is the entire mechanism of the widening.
     d = lagged.dropna(subset=["gp_share_lag1", "age", "gp"]).copy()
-    d["n_prior_seasons"] = 1 + d["gp_share_lag2"].notna() + d["gp_share_lag3"].notna()
+    if ladder is None:
+        d["n_prior_seasons"] = 1 + d["gp_share_lag2"].notna() + d["gp_share_lag3"].notna()
+    else:
+        # The single presence test becomes the rung admission §16f decided. `veteran` IS
+        # that test, computed pre-imputation, so this is a widening and never a
+        # substitution — no row today's design carries can fail it.
+        d = d[d["lag_rung"].isin(("veteran",) + tuple(ladder.rungs))]
     for col in LAG_COLS:
         for lag in (2, 3):
             d[f"{col}_lag{lag}"] = d[f"{col}_lag{lag}"].fillna(d[f"{col}_lag1"])

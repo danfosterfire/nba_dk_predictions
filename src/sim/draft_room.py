@@ -56,11 +56,20 @@ dual-eligible rosters both, because a wrong threshold is a plausible-looking num
 
 ## What the ranking is, and what it is not
 
-The objective is **payout-weighted EV over the full bracket**, in dollars per entry, for
-the tournament the room is set to. Two companions ship beside it because they resolve at
-different rates: `p_advance` — `P(top 2 of 12)`, which is what `docs/simulations-plan.md`
-says the strategy sweep selects on and which is *exact* under this model — and
-`lineup_value`, the dk_pts lift, which is the objective item 6 shipped.
+Three per-pick objectives are computed on every recompute and any of them may order the
+table: **payout-weighted EV over the full bracket** (`bracket_ev`), in dollars per entry
+for the tournament the room is set to; `p_advance` — `P(top 2 of 12)`, which is what
+`docs/simulations-plan.md` says the strategy sweep selects on and which is *exact* under
+this model; and `lineup_value`, the dk_pts lift, which is the objective item 6 shipped.
+
+**An objective is only half of a drafting policy, and since 2026-08-24 this module knows
+it.** A `RoomArm` is an objective *and* a market weight — `alpha`, the share of the
+DK-recalibrated ADP rank blended into the ordering — because that is what the strategy
+sweep selects over, and `lineup_value_blend30`, the arm it ships, is unreachable without
+both. `evaluate` takes one, and `dashboard/draft_room.py` reads which arms a tier may be
+drafted with from `strategy_room_arms.csv` rather than deciding for itself. `alpha = 0`
+reproduces the pre-blend table exactly, which is what lets `src/sim/strategy.py` go on
+blending outside this function without the two compounding.
 
 **`600k_shootaround`'s EV is a level with a known bias, and the room says so.** Two thirds
 of its EV sits in a 49-seat final table reached by 0.139% of entries and topped by a
@@ -77,10 +86,12 @@ Usage:
 """
 
 import argparse
+import hashlib
 import time
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 import pandas as pd
@@ -122,6 +133,115 @@ Q_FLOOR = 1e-6
 RANK_OBJECTIVES = {"bracket_ev": "ev",
                    "p_advance": "p_advance",
                    "lineup_value": "lineup_value"}
+
+# The fourth ordering `evaluate` can execute, and it is deliberately NOT in
+# `RANK_OBJECTIVES`: it is not a per-pick objective at all but the board's own opinion,
+# re-priced against nothing. `gate_e` and `stability` both sweep `RANK_OBJECTIVES` to read
+# the objectives against each other, so a fourth key there would silently grow two audited
+# artifacts by an arm that is not one.
+BOARD_VALUE = "model_value"
+ROOM_MODES = {**RANK_OBJECTIVES, "ranking": BOARD_VALUE}
+
+# The value orderings and the per-pick objectives a drafting policy may combine. They live
+# here rather than in `src/sim/strategy.py` for the same reason `RoomArm` does — see its
+# docstring — and `strategy.py` imports them back, so there is one registry of each.
+RANKINGS = ("model_mean", "model_quantile", "adp", "blend")
+OBJECTIVES = tuple(ROOM_MODES)
+
+# The round tiers a per-round `alpha` schedule is quoted over — rounds 1-2, 3-8 and 9-16.
+# `docs/adp-plan.md` measured the market disagreement at that resolution, and a sixteen-
+# vector would be sixteen chances to fit noise.
+ALPHA_ROUND_EDGES = (2, 8)
+
+
+# ── 0. The policy the room executes ──────────────────────────────────────────
+
+def model_value(dk_pts: np.ndarray, ranking: str, quantile: float) -> np.ndarray:
+    """The board's own opinion of a player's season, in dk_pts. Higher is better.
+
+    `model_mean` is the posterior mean season total. `model_quantile` is an upper quantile
+    of it, which is the cheapest possible expression of "chase the tail": under a
+    zero-consolation knockout the entry that finishes third is worth the same as the entry
+    that finishes twelfth, so a player's *ceiling* is worth more than his mean in a way a
+    mean ranking cannot express. It reads the tensor's own sim axis, so the ceiling it names
+    is the model's rather than a multiple of a standard deviation.
+    """
+    totals = dk_pts.sum(axis=1)                                # [player, sim]
+    if ranking == "model_quantile":
+        return np.quantile(totals, quantile, axis=1)
+    return totals.mean(axis=1)
+
+
+def rank_of(value: np.ndarray, better_is_high: bool = True) -> np.ndarray:
+    """Dense 0-based ordering of `value`, as a float so it can be blended with a rank."""
+    order = np.argsort(-value if better_is_high else value, kind="stable")
+    out = np.empty(len(value), dtype=np.float64)
+    out[order] = np.arange(len(value), dtype=np.float64)
+    return out
+
+
+def blend_key(alpha: float, value_rank: np.ndarray,
+              adp_rank: np.ndarray) -> np.ndarray:
+    """The board key at one round — **lower is taken earlier**.
+
+    A blend is a convex combination of two *ranks*, which keeps `alpha` in the units the
+    disagreement was measured in (picks) and makes `alpha = 1` the market's board exactly
+    and `alpha = 0` the model's. Blending values instead would be at the mercy of the
+    recalibration's 55-wide plateaus, which is the same reason `src/sim/draft.py` puts its
+    noise on the rank.
+    """
+    return alpha * adp_rank + (1.0 - alpha) * value_rank
+
+
+@dataclass(frozen=True)
+class RoomArm:
+    """A drafting policy in the five fields a **live, per-pick** seat can act on.
+
+    `src/sim/strategy.py`'s `Strategy` is the full sweep row: it also carries exposure
+    caps, stacking, position caps and the autodraft executor, none of which one seat
+    drafting one entry by hand can express. This is the projection of a `Strategy` onto
+    what `evaluate` can actually do, and it lives *here* rather than beside `Strategy`
+    because `strategy.py` imports this module and the dependency cannot run both ways.
+    `Strategy.room_arm()` is the projection; `Strategy.alpha_at` delegates to this class,
+    so the sweep and the room can never disagree about what a schedule means.
+
+    Two of the five are a value ordering (`ranking`, `quantile`), two are the market
+    weight (`alpha`, `alpha_rounds`), and `objective` is how a pick is chosen given the
+    ordering — `"ranking"` meaning "not re-priced per pick at all".
+    """
+
+    name: str = "bracket_ev"
+    ranking: str = "model_mean"
+    alpha: float = 0.0
+    alpha_rounds: tuple[float, float, float] | None = None
+    quantile: float = 0.5
+    objective: str = "bracket_ev"
+
+    def __post_init__(self):
+        if self.ranking not in RANKINGS:
+            raise KeyError(f"unknown ranking {self.ranking!r}; registered: {RANKINGS}")
+        if self.objective not in ROOM_MODES:
+            raise KeyError(f"unknown objective {self.objective!r}; "
+                           f"registered: {sorted(ROOM_MODES)}")
+        if not 0.0 <= self.alpha <= 1.0:
+            raise ValueError(f"alpha must be a weight in [0, 1]; got {self.alpha}")
+
+    def alpha_at(self, round_index: int) -> float:
+        """The market weight in force at draft round `round_index` (0-based)."""
+        if self.ranking == "adp":
+            return 1.0
+        if self.ranking != "blend":
+            return 0.0
+        if self.alpha_rounds is None:
+            return float(self.alpha)
+        lo, hi = ALPHA_ROUND_EDGES
+        tier = 0 if round_index < lo else (1 if round_index < hi else 2)
+        return float(self.alpha_rounds[tier])
+
+
+def as_arm(arm: "RoomArm | str") -> RoomArm:
+    """Coerce `evaluate`'s argument. A bare objective name is that objective, unblended."""
+    return arm if isinstance(arm, RoomArm) else RoomArm(name=arm, objective=arm)
 
 
 # ── 1. The exchange threshold — best-7-by-slot as one comparison ─────────────
@@ -192,8 +312,31 @@ def sum_periods(values: np.ndarray, round_of_period: np.ndarray,
 
 # ── 2. The field, and the survivor population it becomes ─────────────────────
 
-def field_artifact(features_dir: Path, season: str) -> Path:
-    return Path(features_dir) / f"draft_room_field_{season}.npz"
+def field_artifact(features_dir: Path, season: str, label: str = "") -> Path:
+    """The cached field. `label` travels from the tensor, and it has to.
+
+    A field is a set of rosters drafted off a board, so a field cached against the shipped
+    tensor is not a field for a tensor drawn over a wider population — reusing it would
+    silently price the rookie-inclusive board against a rookie-less field.
+    """
+    return Path(features_dir) / f"draft_room_field_{season}{label}.npz"
+
+
+def tensor_fingerprint(path: Path) -> str:
+    """A content hash of the tensor file a field's round totals were scored on.
+
+    The label above guards the *filename* and only fires when somebody passes one; a
+    rebuild at the same filename was invisible to the cache key, and the live recommender
+    is the one consumer that reads the cache as written — draft night priced our entry
+    against a field drafted off a board that no longer existed
+    (`docs/rookie-inclusive-tensors-plan.md` §5b). Content rather than mtime, so copying
+    or touching the tensor cannot invalidate a field that still describes it.
+    """
+    digest = hashlib.blake2b(digest_size=16)
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def build_field(frame: pd.DataFrame, board: draft.Board, dk_pts: np.ndarray,
@@ -230,25 +373,35 @@ def _composition_key(seat_strategies: list[str] | None) -> str:
 
 def save_field(dest: Path, field_round: np.ndarray, season: str, fit_window: str,
                field_cfg: draft.FieldConfig, n_drafts: int,
-               seat_strategies: list[str] | None = None) -> Path:
+               seat_strategies: list[str] | None = None,
+               tensor_fingerprint: str = "") -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(dest, round_total=field_round, season=season,
                         fit_window=fit_window, n_drafts=n_drafts,
                         noise_model=field_cfg.noise_model,
                         rank_noise_sd=field_cfg.rank_noise_sd,
                         need_weight=field_cfg.need_weight,
-                        composition=_composition_key(seat_strategies))
+                        composition=_composition_key(seat_strategies),
+                        tensor_fingerprint=tensor_fingerprint)
     return dest
 
 
 def load_field(path: Path, field_cfg: draft.FieldConfig, n_sims: int,
-               seat_strategies: list[str] | None = None) -> np.ndarray | None:
+               seat_strategies: list[str] | None = None,
+               tensor_fingerprint: str = "") -> np.ndarray | None:
     """The cached field, or `None` when it does not describe the field being asked for.
 
     A field cached under a different noise model is not this field, and reusing it would
     price our entry against a population nothing calibrated. Cheaper to redraft than to
-    explain. Caches written before the field carried a composition lack the last two keys
+    explain. Caches written before the field carried a composition lack those two keys
     and are read as the legacy pure-ADP field, which is exactly what they hold.
+
+    **The tensor fingerprint is the one key that is NOT forgiven when missing.** A cache
+    without a composition still describes a knowable field; a cache without a fingerprint
+    describes a field drafted off an unknowable board, and a caller who names the tensor
+    (`load_room` always does) must never be served one. The empty-string default keeps
+    the callers that key the field by construction — the sweep's arms build their own —
+    out of the comparison entirely.
     """
     if not path.exists():
         return None
@@ -256,10 +409,13 @@ def load_field(path: Path, field_cfg: draft.FieldConfig, n_sims: int,
         held_need = float(z["need_weight"]) if "need_weight" in z else 0.0
         held_mix = (str(z["composition"]) if "composition" in z
                     else _composition_key(None))
+        held_print = (str(z["tensor_fingerprint"]) if "tensor_fingerprint" in z
+                      else "")
         if (str(z["noise_model"]) != field_cfg.noise_model
                 or float(z["rank_noise_sd"]) != field_cfg.rank_noise_sd
                 or held_need != field_cfg.need_weight
                 or held_mix != _composition_key(seat_strategies)
+                or held_print != tensor_fingerprint
                 or z["round_total"].shape[2] < n_sims):
             return None
         return np.ascontiguousarray(z["round_total"][:, :, :n_sims])
@@ -484,6 +640,11 @@ class Room:
     refs: dict[str, FieldReference]
     fit_window: str
     seats: list[str] | None = None     # opponent per seat; None = all `adp`
+    # C6's stamp, surfaced rather than buried: the person who needs to know a production
+    # board was drawn without its preseason is looking at it on a thirty-second clock.
+    # `None` on tensors from before the stamp existed.
+    preseason_coverage: float | None = None
+    preseason_log_rows: int | None = None
 
     @property
     def n_sims(self) -> int:
@@ -493,9 +654,26 @@ class Room:
         return draft.new_state(self.board, self.pod_size, 1)
 
 
+def season_admissible(tensor: dict, split: Callable[[], pd.DataFrame]) -> None:
+    """A production tensor admits its own season on the evidence the tensor carries.
+
+    `fit_window == "full"` is a window only `season.assert_production_season` lets a
+    tensor be written at, and the season it names is unplayed — it has no rows in the
+    split frame at all, so `assert_season_allowed` would refuse it with a message about
+    the test split, which is the wrong diagnosis for a season with no data to leak
+    (`docs/rookie-inclusive-tensors-plan.md` §5b). Every other tensor still goes through
+    the split guard, on the frame `split` builds — a callable, so admitting a production
+    board does not pay for the component design it will not read.
+    """
+    if tensor["fit_window"] == "full":
+        return
+    assert_season_allowed(tensor["season"], split())
+
+
 def load_room(cfg: dict, season: str, n_sims: int | None = None,
               tournaments: list[str] | None = None, n_field_drafts: int | None = None,
-              seed: int = SEED, rebuild_field: bool = False) -> Room:
+              seed: int = SEED, rebuild_field: bool = False,
+              tensor_label: str = "") -> Room:
     """Open the artifacts, draft the reference field once, and cache it.
 
     Nothing here fits anything: the tensor is `make simulate-season`'s, the board is
@@ -518,9 +696,11 @@ def load_room(cfg: dict, season: str, n_sims: int | None = None,
     # contest should not have to edit config to price it.
     tournaments = tournaments or bracket_tournaments()
 
-    assert_season_allowed(season, split_frame(cfg))
-
-    tensor = load_tensor(features_dir, season)
+    # `raw_dir` arms the staleness guard: the room is the one consumer that must never
+    # serve the August board under October's name (`season.assert_tensor_current`).
+    tensor = load_tensor(features_dir, season, tensor_label,
+                         raw_dir=cfg["data"]["raw_dir"])
+    season_admissible(tensor, lambda: split_frame(cfg))
     pool = pd.read_parquet(features_dir / "draft_pool.parquet")
     frame = draft.build_board(pool, season)
     board = draft.to_arrays(frame, season)
@@ -529,14 +709,17 @@ def load_room(cfg: dict, season: str, n_sims: int | None = None,
     field_cfg = draft.selected_field(cfg)
     seats = draft.assign_seats(draft.field_composition(cfg), pod_size)
 
-    path = field_artifact(features_dir, season)
-    field_round = None if rebuild_field else load_field(path, field_cfg, n_sims, seats)
+    path = field_artifact(features_dir, season, tensor_label)
+    fingerprint = tensor_fingerprint(
+        features_dir / f"sim_tensor_{season}{tensor_label}.npz")
+    field_round = (None if rebuild_field
+                   else load_field(path, field_cfg, n_sims, seats, fingerprint))
     if field_round is None:
         field_round = build_field(frame, board, dk_pts, masks,
                                   tensor["tournament_round"], field_cfg,
                                   n_field_drafts, seed, pod_size, seats)
         save_field(path, field_round, season, tensor["fit_window"], field_cfg,
-                   n_field_drafts, seats)
+                   n_field_drafts, seats, fingerprint)
     field_round = field_round[:, :, :n_sims]
 
     return Room(season=season, frame=frame, board=board, dk_pts=dk_pts,
@@ -545,7 +728,9 @@ def load_room(cfg: dict, season: str, n_sims: int | None = None,
                 projection=dk_pts.sum(axis=1).mean(axis=1),
                 pod_size=pod_size, field_cfg=field_cfg, field_round=field_round,
                 refs={t: field_reference(field_round, t) for t in tournaments},
-                fit_window=tensor["fit_window"], seats=seats)
+                fit_window=tensor["fit_window"], seats=seats,
+                preseason_coverage=tensor["preseason_coverage"],
+                preseason_log_rows=tensor["preseason_log_rows"])
 
 
 # ── 4. Completing the roster, because a payout needs a finished one ──────────
@@ -649,7 +834,7 @@ def candidate_round_totals(room: Room, threshold: np.ndarray, base_round: np.nda
 # ── 5. The recommendation ─────────────────────────────────────────────────────
 
 def evaluate(room: Room, state: draft.DraftState, seat: int, tournament: str,
-             objective: str = "bracket_ev", top: int = 12,
+             arm: "RoomArm | str" = "bracket_ev", top: int = 12,
              draft_index: int = 0) -> tuple[pd.DataFrame, dict]:
     """Rank every legal, priceable player by what taking him is worth right now.
 
@@ -661,11 +846,15 @@ def evaluate(room: Room, state: draft.DraftState, seat: int, tournament: str,
     `draft.recommend` excludes him: 153 of 539 rostered players have no component-head
     design row, they stay draftable by the field, and a zero is a number this ranking would
     act on.
+
+    `arm` is a `RoomArm` — a value ordering, a market weight and a per-pick objective — or
+    a bare objective name, which is that objective with no market blend and is what every
+    caller before 2026-08-24 meant. **`alpha = 0` reproduces the pre-blend table exactly**,
+    including its tie order, which is what lets `src/sim/strategy.py` keep blending outside
+    this function without the two ever compounding.
     """
-    if objective not in RANK_OBJECTIVES:
-        raise KeyError(f"unknown objective {objective!r}; "
-                       f"registered: {sorted(RANK_OBJECTIVES)}")
-    column = RANK_OBJECTIVES[objective]
+    arm = as_arm(arm)
+    column = ROOM_MODES[arm.objective]
     ref = room.refs.get(tournament)
     if ref is None:
         raise KeyError(f"no field reference for {tournament!r}; "
@@ -728,17 +917,44 @@ def evaluate(room: Room, state: draft.DraftState, seat: int, tournament: str,
     out["d_p_advance"] = p_advance - float(base_advance[0])
     out["rank_cushion"] = draft.rank_cushion(state, candidates, seat)
     out["in_completion"] = inside
+    # The board's own opinion, which `objective = "ranking"` orders by directly. `model_mean`
+    # is `room.projection` by construction (`dk_pts.sum(1).mean(1)`, set in `load_room`), so
+    # the common case costs a slice rather than a pass over the tensor — Gate E's budget is
+    # 1.0 s and this runs on every recompute.
+    out[BOARD_VALUE] = (model_value(room.dk_pts[candidates], arm.ranking, arm.quantile)
+                        if arm.ranking == "model_quantile"
+                        else room.projection[candidates])
 
     out = out.sort_values([column, "rank_cushion"], ascending=[False, True]
                           ).reset_index(drop=True)
-    # What each alternative costs against the top of the table, in the ranked unit and in
-    # dollars — the number a drafter needs when the clock is at eight seconds.
+    # **The market blend, on exactly the construction the sweep priced.** `strategy.py`
+    # ranks a candidate by its *position in this table* — a dense 0-based rank whose ties
+    # are already broken by `rank_cushion` — and blends that against the global board rank.
+    # Reproducing it here rather than inventing a second blend is the whole point: the arm
+    # the room executes has to be the arm the sweep measured. At `alpha = 0` the key is the
+    # sort order this table already has, so the re-sort is a no-op and the pre-blend
+    # behaviour is bit-identical.
+    alpha = arm.alpha_at(state.round_index)
+    out["rank_key"] = blend_key(alpha, np.arange(len(out), dtype=np.float64),
+                                out["board_rank"].to_numpy(np.float64))
+    if alpha > 0.0:
+        out = out.sort_values(["rank_key", "rank_cushion"], ascending=[True, True]
+                              ).reset_index(drop=True)
+    # What each alternative costs against the top of the table, in the **objective's** unit
+    # and in dollars — the number a drafter needs when the clock is at eight seconds. Quoted
+    # in the objective rather than in the blended key on purpose: a rank has no unit anyone
+    # can act on, and dk_pts and dollars do. So under a blend this column **can go positive**
+    # — a row the market pushed above the objective's own favourite is worth more by the
+    # objective, and that gap is exactly what the market weight is costing. That is
+    # information a drafter wants on the clock, not an error.
     out["cost_vs_best"] = out[column] - out[column].iloc[0]
     out["ev_vs_best"] = out["ev"] - out["ev"].iloc[0]
 
     context = {
         "tournament": tournament,
-        "objective": objective,
+        "arm": arm.name,
+        "objective": arm.objective,
+        "alpha": alpha,
         # The **whole** ranking, not the slice the caller asked for. `pick_log` needs the
         # value of the player actually taken, and a drafter who overrides the
         # recommendation is precisely the case a top-N slice would drop — which is the
@@ -823,7 +1039,8 @@ def replay(room: Room, picks: list[int]) -> draft.DraftState:
 
 # ── 6. The pick log — the one thing in a live draft that cannot be rebuilt ────
 
-LOG_COLUMNS = ("season", "tournament", "objective", "our_seat", "pick", "round", "seat",
+LOG_COLUMNS = ("season", "tournament", "objective", "arm", "our_seat", "pick", "round",
+               "seat",
                "ours", "board_index", "player_id", "player_name", "team", "position",
                "board_rank", "adp", "adp_dk_scale", "projection", "recommended",
                "recommended_value", "taken_value", "cost_vs_best", "followed",
@@ -831,7 +1048,8 @@ LOG_COLUMNS = ("season", "tournament", "objective", "our_seat", "pick", "round",
 
 
 def pick_log(room: Room, picks: list[int], seat: int, tournament: str = "",
-             objective: str = "", annotations: list[dict] | None = None) -> pd.DataFrame:
+             objective: str = "", annotations: list[dict] | None = None,
+             arm: str = "") -> pd.DataFrame:
     """The whole snake, one row per pick, with what the room advised beside what was taken.
 
     **A draft is the one artifact in this project that cannot be regenerated.** Every other
@@ -869,7 +1087,11 @@ def pick_log(room: Room, picks: list[int], seat: int, tournament: str = "",
         taken_value, best_value = note.get("taken_value"), note.get("recommended_value")
         ours = bool(order[i] == seat)
         rows.append({
+            # `objective` and `arm` are both recorded, and the second is not redundant:
+            # two arms can share an objective and differ in market weight, so the objective
+            # alone no longer identifies the ranking a pick was made against.
             "season": room.season, "tournament": tournament, "objective": objective,
+            "arm": arm or objective,
             "our_seat": int(seat) + 1,
             "pick": i + 1, "round": i // room.pod_size + 1,
             "seat": int(order[i]) + 1, "ours": ours,
@@ -1181,7 +1403,7 @@ def gate_e(room: Room, tournament: str, seat: int = 0, seed: int = SEED,
         # The whole board rather than a top slice: `head` is the only thing `top` changes,
         # and the objective comparison below has to see every candidate or it measures
         # agreement inside the EV ranking's own shortlist.
-        table, context = evaluate(room, state, our, tournament, objective=objective,
+        table, context = evaluate(room, state, our, tournament, arm=objective,
                                   top=room.board.n_players)
         times.append(time.perf_counter() - start)
         choice = int(np.nonzero(ids == table["player_id"].iloc[0])[0][0])
@@ -1263,10 +1485,10 @@ def stability(room: Room, alt_field: np.ndarray, tournament: str, n_states: int 
     for step in range(n_states):
         for objective in RANK_OBJECTIVES:
             column = RANK_OBJECTIVES[objective]
-            a, _ = evaluate(room, state, 0, tournament, objective=objective, top=30)
+            a, _ = evaluate(room, state, 0, tournament, arm=objective, top=30)
             held = replace_reference(room, alt)
             try:
-                b, _ = evaluate(room, state, 0, tournament, objective=objective, top=30)
+                b, _ = evaluate(room, state, 0, tournament, arm=objective, top=30)
             finally:
                 room.refs[tournament] = held
             merged = a[["player_id", column]].merge(b[["player_id", column]],

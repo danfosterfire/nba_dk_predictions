@@ -193,9 +193,12 @@ def _sim_artifact_keys() -> set[str]:
     - `artifacts["gp_duration"]` — a literal, taken as itself;
     - `artifacts[artifact_name(head)]` — the component loop, whose head list is
       `component_rates`' own, so it is expanded from that list through the simulator's own
-      `artifact_name` rather than from a copy of the names kept here.
+      `artifact_name` rather than from a copy of the names kept here;
+    - `artifacts[artifact_key]` — `season.family_artifact`, which since
+      `docs/rookie-rates-plan.md` §5f picks one of the two rate families' twin of a
+      component head. It expands to BOTH families, because both are read at draw time.
 
-    Anything else raises, so a third addressing form fails this test instead of quietly
+    Anything else raises, so a fourth addressing form fails this test instead of quietly
     widening the declared draw path.
     """
     keys: set[str] = set()
@@ -210,15 +213,23 @@ def _sim_artifact_keys() -> set[str]:
                 keys.add(key.value)
             elif (isinstance(key, ast.Call) and isinstance(key.func, ast.Name)
                   and key.func.id == "artifact_name"):
-                keys |= {S.artifact_name(head) for head in COUNT_HEADS}
-                keys |= {S.artifact_name(f"{made}|{attempted}")
-                         for made, attempted in CONVERSION_HEADS}
+                keys |= _component_keys()
+            elif isinstance(key, ast.Name) and key.id == "artifact_key":
+                keys |= _component_keys()
+                keys |= {f"{S.ROOKIE_PREFIX}{name}" for name in _component_keys()}
             else:
                 raise AssertionError(
                     f"{path}:{node.lineno} addresses the posterior bundle as "
                     f"`{ast.unparse(node)}`, which this scanner cannot resolve. Teach it "
                     f"the form or the declared draw path stops being checkable.")
     return keys
+
+
+def _component_keys() -> set[str]:
+    """The eleven rate heads' artifact names, through the simulator's own `artifact_name`."""
+    return ({S.artifact_name(head) for head in COUNT_HEADS}
+            | {S.artifact_name(f"{made}|{attempted}")
+               for made, attempted in CONVERSION_HEADS})
 
 
 def test_every_head_declares_a_chain_role_from_the_closed_vocabulary():
@@ -243,8 +254,18 @@ def test_the_declared_draw_path_is_what_the_simulator_actually_reads():
     that the simulator never loads is a page overstating what ships; a head the simulator
     loads that is declared out of it is a page understating it, which is how the
     Availability class intro came to describe five heads as two alternates.
+
+    Since §5f of `docs/rookie-rates-plan.md` the simulator also reads a second rate family,
+    and §5h declared all eleven — so the equality is now over the WHOLE set rather than
+    over the set minus a deferral, which is the stronger claim. Whether a declared head
+    earns a card *page* is a separate question with its own assertion below: the uncarded
+    keys must be EXACTLY the component heads' rookie twins, so a rookie head the simulator
+    stops reading, or a twelfth one it starts reading, fails here.
     """
-    assert M.draw_path_heads() == _sim_artifact_keys()
+    keys = _sim_artifact_keys()
+    assert keys == M.draw_path_heads()
+    assert ({key for key in keys if M.uncarded(key)}
+            == {f"{S.ROOKIE_PREFIX}{name}" for name in _component_keys()})
 
 
 def test_the_availability_chain_is_a_count_head_and_a_layout_head():
@@ -275,6 +296,41 @@ def test_the_marginal_minutes_head_is_not_in_the_draw_path_and_the_composition_i
     assert not M.chain_role("minutes").in_draw_path
     assert M.chain_role("composition").in_draw_path
     assert "minutes" not in _sim_artifact_keys()
+
+
+# ── The Stan program ──────────────────────────────────────────────────────────
+
+def test_every_carded_head_names_a_stan_program_that_exists_on_disk():
+    """The mapping is read from the fitting modules' own MODEL constants, so the one way
+    it can be wrong is a head this function does not know — which raises by name — or a
+    program the repo no longer carries, which `stan_rows` refuses at build time. Carded
+    heads only: ten of the eleven declared-but-uncarded rookie twins are no-fit plug-ins
+    with no Stan program to show, which is part of why they have no page."""
+    from src.models.stan_utils import STAN_DIR
+    for head in M.SPECS:
+        if M.uncarded(head):
+            continue
+        program = M.stan_program(head)
+        assert (Path(STAN_DIR) / f"{program}.stan").exists(), (head, program)
+
+
+def test_an_undeclared_head_has_no_stan_program_rather_than_a_default():
+    with pytest.raises(KeyError, match="stan_program"):
+        M.stan_program("a_head_that_was_never_carded")
+
+
+def test_stan_rows_carry_the_verbatim_source_once_per_head():
+    """One row per head with the program text riding along — the same deliberate
+    repetition the features file makes, so a page filters to one head and has everything.
+    The line count is emitted so a page can size the block without parsing the text."""
+    rows = M.stan_rows(["availability", "composition", "ast"])
+    assert [r["head"] for r in rows] == ["ast", "availability", "composition"]
+    by_head = {r["head"]: r for r in rows}
+    assert by_head["composition"]["stan_file"] == "composition_glm.stan"
+    assert by_head["ast"]["stan_file"] == "negbinomial_glm.stan"
+    for row in rows:
+        assert "model {" in row["source"], row["head"]
+        assert row["n_lines"] == len(row["source"].splitlines()), row["head"]
 
 
 # ── Terms ─────────────────────────────────────────────────────────────────────
@@ -658,8 +714,15 @@ def test_the_four_component_conversion_heads_declare_their_own_row_filter():
 # ── The predictive: which rows it is drawn over ───────────────────────────────
 
 def test_every_head_that_declares_a_unit_also_declares_what_its_predictive_is_of():
-    """A page cannot label an axis it has to guess at."""
-    assert set(M.RESPONSES) == set(M.SPECS)
+    """A page cannot label an axis it has to guess at.
+
+    Over the CARDED heads: a `ResponseSpec` is the label a card's own ECDF and scatter are
+    drawn on, and §5h's uncarded rookie family never reaches `predictive_tables`. Requiring
+    one there would be a declaration nothing reads, which is the kind of config the
+    conventions call out — and it would make the family's real declaration, its chain role,
+    look like a page that exists.
+    """
+    assert set(M.RESPONSES) == {h for h in M.SPECS if not M.uncarded(h)}
     assert all(r.label and r.observed for r in M.RESPONSES.values())
     assert all(r.check in ("mean", "p_one", "none") for r in M.RESPONSES.values())
 
@@ -1286,6 +1349,24 @@ def test_every_shipped_head_is_verified_and_declares_a_unit():
     assert set(index["model_class"]) <= set(M.CLASS_LABELS)
 
 
+def test_every_shipped_head_ships_its_stan_program_verbatim():
+    """One source row per carded head, and the text is the program — not a path to one.
+
+    The dashboard may not open `src/stan/`, so the code a page shows is whatever this
+    artifact carries; an empty or truncated cell would render as a good-looking block of
+    nothing, which is why the assertion is on the text itself.
+    """
+    index = _shipped("model_card_index.csv")
+    stan = _shipped("model_card_stan.csv")
+    assert set(stan["head"]) == set(index["head"])
+    assert stan["head"].is_unique
+    for _, row in stan.iterrows():
+        source = str(row["source"])
+        assert str(row["stan_file"]).endswith(".stan"), row["head"]
+        assert "model {" in source and "data {" in source, row["head"]
+        assert int(row["n_lines"]) == len(source.splitlines()), row["head"]
+
+
 def test_the_shipped_index_carries_each_head_s_role_in_the_shipped_chain():
     """The column the dashboard reads instead of typing a claim about the simulator.
 
@@ -1298,7 +1379,11 @@ def test_the_shipped_index_carries_each_head_s_role_in_the_shipped_chain():
         assert column in index.columns, column
         assert index[column].notna().all(), column
     assert set(index["chain_role"]) <= set(M.CHAIN_ROLES)
-    assert set(index[index["in_draw_path"]].index) == M.draw_path_heads()
+    # The declared draw path minus the heads §5h declared and deliberately did not card:
+    # the index is the CARD index, so a head with no page cannot appear in it, and asserting
+    # over the whole declared path here would fail for a reason that is not about the index.
+    assert (set(index[index["in_draw_path"]].index)
+            == {h for h in M.draw_path_heads() if not M.uncarded(h)})
     # Label and note both carry text, since either one empty renders as a dash on the page.
     assert (index["chain_role_label"].str.len() > 0).all()
     assert (index["chain_role_note"].str.len() > 0).all()

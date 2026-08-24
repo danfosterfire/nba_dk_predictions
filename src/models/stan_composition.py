@@ -96,7 +96,7 @@ from scipy.stats import betabinom
 from src.eda.availability import with_lags
 from src.features.team_context import DRAFT_BUCKETS, UNDRAFTED_BUCKET
 from src.models.availability import (EPS, FEATURE_COLS, RHO_MIN,
-                                     fit_dispersion)
+                                     fit_dispersion, rung_zero)
 from src.models.held_out import selection_split
 from src.models.component_rates import impute
 from src.models.stan_availability import availability_design
@@ -983,7 +983,17 @@ def composition_frame(cfg: dict, share_hook=None) -> pd.DataFrame:
                          "longer covers the panel")
     frame[OWN] = np.log(frame["w_share"] / (1 - frame["w_share"]))
 
-    design = availability_design(cfg)
+    # **Rung 0 only, so this head is untouched by §16's ladder — fit AND score.**
+    # `variants` fits coefficients on `FEATURE_COLS` and derives `design_missing` from
+    # `gp_share_lag1.isna()`, so a ladder-widened block would flip 5,710 player-game rows
+    # from missing to present, move `impute`'s train means and change what this head IS.
+    # §16i measured the ladder on the availability head's own games-played CRPS and on
+    # nothing else; widening this block is a separate, unmeasured change and it would cost
+    # the one refit in the project that is measured in hours. Cutting here rather than at
+    # `run`'s split covers scoring too: `sim/season` rehydrates the persisted composition
+    # and evaluates it on `composition_players(head_frame(cfg), ...)`, so a widened block
+    # would reach coefficients fitted without it. `docs/availability-window-plan.md` §16j.
+    design = rung_zero(availability_design(cfg))
     frame = frame.merge(design[["player_id", "season"] + FEATURE_COLS],
                         on=["player_id", "season"], how="left")
 

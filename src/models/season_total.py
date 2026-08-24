@@ -75,6 +75,7 @@ from src.models.availability import (
     season_start_dates,
 )
 from src.models.held_out import selection_split
+from src.models.stan_utils import crps_from_samples
 
 # Prior-season inputs to the fixed rate model. Rate persists at 0.869 per CLAUDE.md, so
 # this is the easy half; minutes and availability are here because rotation status moves
@@ -92,6 +93,23 @@ RATE_RIDGE_ALPHA = 10.0
 # the one where a season-total forecast is worth the most money.
 ROTATION_MIN_MPG = 20.0
 ROTATION_MIN_GP_SHARE = 0.70
+
+#: Extra populations `evaluate` reports when the frame names them — the rookie program's
+#: season-total readout (`docs/rookie-rates-plan.md` §5e), which is §16's settling gate.
+#:
+#: **Two rather than one, and they must never be pooled.** `rookie` is the true-rookie
+#: population Session 3's head serves and `lag_recovered` is the rows §5b's ladder admitted;
+#: they are different populations served by different heads, and an average of the two would
+#: be an average of two regimes — the mistake §3 constraint 2' of that plan exists to undo.
+#: `veteran` rides beside them as the bar, which is `lag_ladder`'s own arrangement for rung 0:
+#: a season-total MAE in dk_pts is unreadable without the shipped population's own number
+#: next to it.
+#:
+#: The frame this module's own `build_frame` returns carries no `population` column, so on
+#: the availability ladder every one of these masks is empty and `evaluate` skips it —
+#: `season_total_metrics.csv` is unchanged by their existence.
+POPULATION_COLUMN = "population"
+POPULATION_GROUPS = ("veteran", "lag_recovered", "rookie")
 
 
 # ── The season-total frame ────────────────────────────────────────────────────
@@ -274,24 +292,85 @@ def _row(treatment: str, group: str, metric: str, value: float, n: int) -> dict:
             "n": n, "value": value}
 
 
-def evaluate(frame: pd.DataFrame, rate: np.ndarray, treatments: dict[str, dict],
+def rotation_mask(frame: pd.DataFrame) -> np.ndarray:
+    """Established rotation players, or all-False on a frame that cannot say.
+
+    The rookie-admitting frame is three designs concatenated and only one of them is a
+    lag design, so the two prior-season columns this mask reads do not exist on it. That
+    is a population without an answer rather than a population of size zero, and an
+    all-False mask is what `evaluate` already skips.
+    """
+    cols = ("minutes_per_game_lag1", "gp_share_lag1")
+    if not set(cols) <= set(frame.columns):
+        return np.zeros(len(frame), dtype=bool)
+    return ((frame["minutes_per_game_lag1"] >= ROTATION_MIN_MPG)
+            & (frame["gp_share_lag1"] >= ROTATION_MIN_GP_SHARE)).to_numpy()
+
+
+def metric_groups(frame: pd.DataFrame) -> list[tuple[str, np.ndarray]]:
+    """`(name, mask)` for every population a table reports.
+
+    `all` and `rotation` always; `POPULATION_GROUPS` when the frame names them. Read off a
+    column rather than re-derived here, because the label that separates a true rookie from
+    a ladder-recovered returnee is `lag_recovery.classify`'s and a second implementation of
+    it is a place where a board and this table could silently disagree.
+    """
+    groups = [("all", np.ones(len(frame), dtype=bool)),
+              ("rotation", rotation_mask(frame))]
+    if POPULATION_COLUMN in frame.columns:
+        labels = frame[POPULATION_COLUMN].to_numpy()
+        groups += [(g, labels == g) for g in POPULATION_GROUPS]
+    return groups
+
+
+def predictive_crps(spec: dict, rate: np.ndarray, y: np.ndarray,
+                    max_games: int) -> np.ndarray | None:
+    """Per-row CRPS of a treatment's predictive over the season total, or `None`.
+
+    Two shapes, because the two ladders put their distribution on different halves of
+    `gp x rate`. The availability ladder varies **games** and carries a pmf over them, so
+    the total's predictive is that pmf pushed through `k -> k * rate`. The rookie readout
+    (`docs/rookie-rates-plan.md` §5e) varies the **rate** and carries draws of the total
+    itself, because eleven component heads composed through the chain do not collapse to a
+    pmf on a 0-83 grid. A treatment carrying neither is a point forecast and scores no CRPS
+    — which is the honest shape for the two oracles and for a plugged-in level.
+    """
+    if spec.get("samples") is not None:
+        return crps_from_samples(np.asarray(spec["samples"], dtype=float), y)
+    if spec.get("pmf") is None:
+        return None
+    atoms = np.arange(max_games + 1)[None, :] * rate[:, None]
+    return crps_from_atoms(atoms, spec["pmf"], y)
+
+
+def evaluate(frame: pd.DataFrame, rate: np.ndarray | None, treatments: dict[str, dict],
              max_games: int) -> tuple[list[dict], pd.DataFrame]:
-    """Season-total metrics per treatment, plus a tidy prediction frame."""
+    """Season-total metrics per treatment, plus a tidy prediction frame.
+
+    `rate` is the shared rate model — the availability ladder's whole design is that it is
+    held identical across every row. `None` says there isn't one, which is the rookie
+    readout's case: there the rate family is what varies and every treatment carries its
+    own, so a treatment that forgot to is an error rather than a silent zero.
+    """
     test = frame
     y = test["dk_total"].to_numpy(dtype=float)
-    rotation = ((test["minutes_per_game_lag1"] >= ROTATION_MIN_MPG)
-                & (test["gp_share_lag1"] >= ROTATION_MIN_GP_SHARE)).to_numpy()
+    groups = metric_groups(test)
     ss_tot = float(np.sum((y - y.mean()) ** 2))
 
     rows, frames = [], []
     for name, spec in treatments.items():
-        # `oracle_rate` swaps the rate rather than the games, so it is built here where
-        # both halves are in scope.
-        r = test["dk_per_game"].to_numpy(dtype=float) if name == "oracle_rate" else rate
+        # A treatment may swap the RATE rather than the games — `oracle_rate` does, and so
+        # does every arm of the rookie readout, where the rate family is the thing under
+        # test and the games treatment is what is held fixed.
+        supplied = spec.get("rate")
+        if supplied is None and rate is None:
+            raise ValueError(f"treatment {name!r} supplies no rate and `evaluate` was "
+                             f"handed no shared one")
+        r = rate if supplied is None else np.asarray(supplied, dtype=float)
         pred = spec["gp"] * r
         err = np.abs(pred - y)
 
-        for group, mask in (("all", np.ones(len(y), bool)), ("rotation", rotation)):
+        for group, mask in groups:
             if not mask.any():
                 continue
             rows.append(_row(name, group, "mae_dk_total", float(err[mask].mean()),
@@ -303,19 +382,19 @@ def evaluate(frame: pd.DataFrame, rate: np.ndarray, treatments: dict[str, dict],
                          float(1 - np.sum((pred - y) ** 2) / ss_tot), len(y)))
         rows.append(_row(name, "all", "bias_dk_total", float((pred - y).mean()), len(y)))
 
-        if spec["pmf"] is not None:
-            atoms = np.arange(max_games + 1)[None, :] * r[:, None]
-            score = crps_from_atoms(atoms, spec["pmf"], y)
-            rows.append(_row(name, "all", "crps_dk_total", float(score.mean()), len(y)))
-            if rotation.any():
-                rows.append(_row(name, "rotation", "crps_dk_total",
-                                 float(score[rotation].mean()), int(rotation.sum())))
+        score = predictive_crps(spec, r, y, max_games)
+        if score is not None:
+            for group, mask in groups:
+                if not mask.any():
+                    continue
+                rows.append(_row(name, group, "crps_dk_total",
+                                 float(score[mask].mean()), int(mask.sum())))
 
         frames.append(pd.DataFrame({
             "season": test["season"].values, "player_id": test["player_id"].values,
             "treatment": name, "predicted_gp": spec["gp"], "predicted_rate": r,
             "predicted_dk_total": pred, "dk_total": y, "abs_error": err,
-            "rotation": rotation}))
+            "rotation": groups[1][1]}))
     return rows, pd.concat(frames, ignore_index=True)
 
 
@@ -374,7 +453,8 @@ def compare(train: pd.DataFrame, frame: pd.DataFrame, max_games: int,
                                    - frame["dk_per_game"].mean()) ** 2)))
 
     treatments = gp_treatments(train, frame, max_games, out_dir, pmf_file)
-    treatments["oracle_rate"] = {"gp": treatments["beta_binomial"]["gp"], "pmf": None}
+    treatments["oracle_rate"] = {"gp": treatments["beta_binomial"]["gp"], "pmf": None,
+                                 "rate": frame["dk_per_game"].to_numpy(dtype=float)}
     rows, predictions = evaluate(frame, rate, treatments, max_games)
     return pd.DataFrame(rows), predictions, rate_r2
 

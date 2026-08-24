@@ -146,7 +146,7 @@ from src.features.availability import build_panel, season_availability
 from src.models.availability import (EPS, FEATURE_COLS, RHO_MAX, RHO_MIN,
                                      AvailabilityModel, BetaBinomialGLM,
                                      _sigmoid, build_design, evaluate,
-                                     pit_table, season_start_dates)
+                                     pit_table, rung_zero, season_start_dates)
 from src.models.held_out import selection_split
 from src.models.stan_utils import (GAMMA_SCALE, MU_LOW_MAX, YearTerm, chain_summary,
                                    compile_model, diagnostics_frame, pi_block,
@@ -310,12 +310,28 @@ def availability_design(cfg: dict) -> pd.DataFrame:
 
     Shared with `stan_minutes.py`, which needs the identical feature block — the minutes
     head is `min | available`, the next link in the same chain.
+
+    ## The §16 lag-recovery ladder enters HERE, and that is the whole of its blast radius
+
+    `stan.availability.lag_ladder` is read at this one point, because this function is the
+    choke point `stan_minutes`, `stan_composition`, `stan_games_played`, `model_cards`,
+    `season_terms`, `availability_no_prior` and the simulator all reach their rows through.
+    An empty list — the default — builds the pre-ladder design exactly and nothing below
+    can tell the difference.
+
+    ⚠️ **A non-empty list moves all seven of them at once**, which is deliberate and is why
+    the key defaults off: a recovered player is a real roster spot, and because the minutes
+    allocation is zero-sum he takes minutes from his teammates rather than appearing beside
+    them. `docs/availability-window-plan.md` §16c states the list; turning the key on is a
+    separate decision from measuring the ladder.
     """
     from src.features.availability import load_artifacts
+    from src.models.availability import lag_ladder
 
     raw_dir = Path(cfg["data"]["raw_dir"])
     features_dir = Path(cfg["data"]["features_dir"])
     seasons = cfg["data"]["seasons"]
+    ladder = lag_ladder(cfg)
 
     panel_path = features_dir / "availability_panel.parquet"
     try:
@@ -329,7 +345,11 @@ def availability_design(cfg: dict) -> pd.DataFrame:
         panel = build_panel(seasons, raw_dir)
         frame = season_availability(panel, "full")
 
-    design = build_design(frame, seasons, raw_dir, season_start_dates(panel))
+    if ladder is not None:
+        print(f"  §16 lag-recovery ladder ON at rung(s) {list(ladder.rungs)} — this "
+              f"widens the design for EVERY consumer of it")
+    design = build_design(frame, seasons, raw_dir, season_start_dates(panel),
+                          ladder=ladder)
     return assert_binomial_support(design)
 
 
@@ -512,8 +532,23 @@ class StanAvailability(AvailabilityModel):
         return role_bins(df, self.role_rho)
 
     def fitting_rows(self, train: pd.DataFrame) -> pd.DataFrame:
-        """The rows this head fits on — the window, applied here and nowhere upstream."""
-        return restrict_window(train, self.first_season)
+        """The rows this head fits on — rung 0, then the window, and nowhere upstream.
+
+        **`rung_zero` first, and it is the whole of §16's imputation-only claim as code.**
+        `stan.availability.lag_ladder` widens `availability_design` for every consumer of
+        it, and §16i's shipped arm scores those rows with a posterior fitted **before** the
+        ladder existed — the arm that admitted them to the fit (`staleness`) was built,
+        priced and rejected at +0.7310 [−1.4152, +2.8585]. So the recovered rows must never
+        reach a fit, and this method is the one place every path that fits this head goes
+        through: `run`, `fit_and_score`'s two point-MLE references,
+        `posteriors.availability_artifact`, `model_cards` and `src/final_evaluation.py`
+        alike. `availability_lag.fit_arms` states the same restriction for its own `impute`
+        arm, which is what this reproduces in the shipped head.
+
+        A no-op while `stan.availability.lag_ladder` is `[]`: `ladder_recovered` returns
+        all-False on a frame with no `lag_rung` column.
+        """
+        return restrict_window(rung_zero(train), self.first_season)
 
     # ── Fitting ───────────────────────────────────────────────────────────────
 

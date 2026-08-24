@@ -641,7 +641,7 @@ def test_a_current_status_feed_never_reaches_the_ranking_or_the_pick_log():
 def test_an_unregistered_objective_raises_rather_than_silently_ranking_by_ev():
     room = _room()
     with pytest.raises(KeyError, match="unknown objective"):
-        R.evaluate(room, room.new_state(), 0, "synthetic", objective="vibes")
+        R.evaluate(room, room.new_state(), 0, "synthetic", arm="vibes")
 
 
 def test_a_candidate_the_completion_already_claims_ties_and_breaks_on_cushion():
@@ -660,7 +660,7 @@ def test_a_candidate_the_completion_already_claims_ties_and_breaks_on_cushion():
         np.zeros((50, 2, room.n_sims), dtype=np.float32), "synthetic",
         rounds=_rounds((12, 2, [0.0] * 12), (12, 0, [50.0] + [0.0] * 11)), entry_fee=5.0)
     table, context = R.evaluate(room, room.new_state(), 0, "synthetic",
-                                objective="lineup_value", top=400)
+                                arm="lineup_value", top=400)
     inside = table[table["in_completion"]]
     assert len(inside) == len(context["completion"])
     assert (inside["lineup_value"] > 0).all()
@@ -681,3 +681,182 @@ def test_the_field_cache_is_keyed_by_composition_and_need_weight(tmp_path):
     assert R.load_field(path, cfg, 3, None) is not None
     assert R.load_field(path, cfg, 3, ["adp_need"] * 12) is None
     assert R.load_field(path, replace(cfg, need_weight=8.0), 3, ["adp"] * 12) is None
+
+
+# ── The tensor fingerprint on the field cache, and the production admission ──
+
+def test_the_field_cache_is_keyed_by_the_tensor_it_was_scored_on(tmp_path):
+    """A rebuild at the same filename was invisible to the key — the two validation
+    caches on disk were older than the tensors they were read against, and draft night
+    priced our entry against a field drafted off a board that no longer existed."""
+    path = tmp_path / "field.npz"
+    field = np.zeros((4, 2, 3), dtype=np.float32)
+    cfg = D.FieldConfig(noise_model="tiered", rank_noise_sd=2.0)
+    R.save_field(path, field, "2022-23", "train", cfg, 1, ["adp"] * 12,
+                 tensor_fingerprint="aaaa")
+    assert R.load_field(path, cfg, 3, ["adp"] * 12,
+                        tensor_fingerprint="aaaa") is not None
+    assert R.load_field(path, cfg, 3, ["adp"] * 12,
+                        tensor_fingerprint="bbbb") is None
+
+    # A legacy cache carries no fingerprint, and a caller who names the tensor —
+    # `load_room` always does — must never be served one.
+    R.save_field(path, field, "2022-23", "train", cfg, 1, ["adp"] * 12)
+    assert R.load_field(path, cfg, 3, ["adp"] * 12,
+                        tensor_fingerprint="aaaa") is None
+    assert R.load_field(path, cfg, 3, ["adp"] * 12) is not None
+
+
+def test_the_tensor_fingerprint_tracks_content_not_name_or_mtime(tmp_path):
+    a = tmp_path / "sim_tensor_x.npz"
+    a.write_bytes(b"board one")
+    b = tmp_path / "sim_tensor_y.npz"
+    b.write_bytes(b"board one")
+    assert R.tensor_fingerprint(a) == R.tensor_fingerprint(b)
+    b.write_bytes(b"board two")
+    assert R.tensor_fingerprint(a) != R.tensor_fingerprint(b)
+
+
+def test_a_production_tensor_admits_its_own_season_on_its_window(monkeypatch):
+    """`fit_window == "full"` is evidence only the production unlock can have written,
+    and the split frame is not even built to check it — the season it names has no rows
+    there. Every other tensor still faces the split guard, with the wrong seasons
+    refused."""
+    from src.models import held_out
+    from src.models.held_out import HeldOutLocked
+
+    def _boom():
+        raise AssertionError("the split frame must not be built for a production tensor")
+
+    R.season_admissible({"fit_window": "full", "season": "2026-27"}, _boom)
+
+    monkeypatch.setattr(held_out, "_unlocked", False, raising=False)
+    seasons = [f"20{y:02d}-{y + 1:02d}" for y in range(15, 25)]
+    design = pd.DataFrame({"season": np.repeat(seasons, 2),
+                           "player_id": np.tile([1, 2], len(seasons))})
+    with pytest.raises(HeldOutLocked):
+        R.season_admissible({"fit_window": "train_val", "season": seasons[-1]},
+                            lambda: design)
+    R.season_admissible({"fit_window": "train", "season": seasons[-3]}, lambda: design)
+
+
+def test_the_room_lists_season_boards_only_never_labelled_variants(tmp_path):
+    """`sim_tensor_2022-23_rookieinclusive.npz` is a measurement, not a board — globbed
+    naively its label parses as a 'season' the room then fails to open."""
+    from dashboard.draft_room import seasons_with_a_tensor
+
+    for name in ("sim_tensor_2022-23.npz", "sim_tensor_2022-23_rookieinclusive.npz",
+                 "sim_tensor_2026-27.npz", "sim_tensor_notes.txt"):
+        (tmp_path / name).write_bytes(b"")
+    assert seasons_with_a_tensor(tmp_path) == ["2022-23", "2026-27"]
+
+
+# ── The market blend inside the room ──────────────────────────────────────────
+
+def _blend_room():
+    """A room with one tournament reference, ready to rank."""
+    room = _room()
+    room.refs["synthetic"] = R.field_reference(
+        np.zeros((50, 2, room.n_sims), dtype=np.float32), "synthetic",
+        rounds=_rounds((12, 2, [0.0] * 12), (12, 0, [50.0] + [0.0] * 11)), entry_fee=5.0)
+    return room
+
+
+def test_alpha_zero_reproduces_the_unblended_table_exactly():
+    """The guarantee the whole change rests on.
+
+    `src/sim/strategy.py` asks the room for an *unblended* objective ordering and blends
+    it itself, so if a zero weight moved the table by even one row the sweep would be
+    measuring something other than the arm it names. It has to be exact, not close.
+    """
+    room = _blend_room()
+    state = room.new_state()
+    bare, _ = R.evaluate(room, state, 0, "synthetic", arm="lineup_value", top=400)
+    zero, _ = R.evaluate(room, state, 0, "synthetic", top=400,
+                         arm=R.RoomArm("z", ranking="blend", alpha=0.0,
+                                       objective="lineup_value"))
+    assert list(bare["player_id"]) == list(zero["player_id"])
+    assert list(bare["cost_vs_best"]) == list(zero["cost_vs_best"])
+
+
+def test_alpha_one_is_the_market_board_and_a_blend_is_between_them():
+    room = _blend_room()
+    state = room.new_state()
+    model, _ = R.evaluate(room, state, 0, "synthetic", arm="lineup_value", top=400)
+    market, _ = R.evaluate(room, state, 0, "synthetic", top=400,
+                           arm=R.RoomArm("m", ranking="adp", objective="lineup_value"))
+    blend, context = R.evaluate(room, state, 0, "synthetic", top=400,
+                                arm=R.RoomArm("b", ranking="blend", alpha=0.3,
+                                              objective="lineup_value"))
+    assert list(market["board_rank"]) == sorted(market["board_rank"])
+    assert list(blend["player_id"]) not in (list(model["player_id"]),
+                                            list(market["player_id"]))
+    assert context["alpha"] == 0.3
+    # The key is the sweep's own construction: this table's dense position under the
+    # objective, blended against the global board rank. Reproducing it is the point.
+    position = {p: i for i, p in enumerate(model["player_id"])}
+    key = (0.3 * blend["board_rank"].to_numpy(float)
+           + 0.7 * np.array([position[p] for p in blend["player_id"]]))
+    assert (np.diff(key) >= -1e-9).all()
+
+
+def test_a_per_round_schedule_moves_the_weight_as_the_draft_goes_on():
+    """`alpha_rounds` is read at the round the state is actually on, not at round 1."""
+    arm = R.RoomArm("late", ranking="blend", alpha=0.35,
+                    alpha_rounds=(0.15, 0.35, 0.65), objective="lineup_value")
+    assert arm.alpha_at(0) == 0.15
+    assert arm.alpha_at(4) == 0.35
+    assert arm.alpha_at(12) == 0.65
+    room = _blend_room()
+    state = room.new_state()
+    _, early = R.evaluate(room, state, 0, "synthetic", arm=arm, top=5)
+    advance_to = room.pod_size * 10
+    R.advance_by_adp(room, state, advance_to)
+    _, late = R.evaluate(room, state, 0, "synthetic", arm=arm, top=5)
+    assert early["alpha"] == 0.15 and late["alpha"] == 0.65
+
+
+def test_the_ranking_mode_orders_by_the_boards_own_opinion():
+    """`objective = "ranking"` is not a per-pick objective at all, and is kept out of
+    `RANK_OBJECTIVES` so `gate_e` and `stability` do not silently gain a fourth arm."""
+    room = _blend_room()
+    table, _ = R.evaluate(room, room.new_state(), 0, "synthetic", top=400,
+                          arm=R.RoomArm("r", objective="ranking"))
+    assert list(table[R.BOARD_VALUE]) == sorted(table[R.BOARD_VALUE], reverse=True)
+    assert "ranking" not in R.RANK_OBJECTIVES
+    assert "ranking" in R.ROOM_MODES
+
+
+def test_a_bare_objective_name_is_that_objective_unblended():
+    assert R.as_arm("bracket_ev") == R.RoomArm(name="bracket_ev", objective="bracket_ev")
+    assert R.as_arm("bracket_ev").alpha_at(0) == 0.0
+    arm = R.RoomArm("keep", ranking="blend", alpha=0.3)
+    assert R.as_arm(arm) is arm
+
+
+def test_an_arm_outside_the_registries_raises():
+    with pytest.raises(KeyError, match="unknown ranking"):
+        R.RoomArm("x", ranking="vibes")
+    with pytest.raises(ValueError, match="alpha must be a weight"):
+        R.RoomArm("x", ranking="blend", alpha=1.4)
+
+
+def test_the_pick_log_records_the_arm_beside_the_objective():
+    """Both, because the objective alone no longer identifies the ranking.
+
+    Two arms can share an objective and differ only in market weight, so a log that named
+    the objective would say `lineup_value` for two policies that drafted different boards.
+    `LOG_COLUMNS` is the thing that has to know: `pick_log` builds its frame with an
+    explicit column list, so a key added to the row dicts and not to that tuple is dropped
+    in silence — which is how this column was written the first time.
+    """
+    room = _room()
+    log = R.pick_log(room, [0, 1], 0, "t", "lineup_value", None,
+                     arm="lineup_value_blend30")
+    assert "arm" in R.LOG_COLUMNS
+    assert tuple(log.columns) == R.LOG_COLUMNS
+    assert set(log["arm"]) == {"lineup_value_blend30"}
+    assert set(log["objective"]) == {"lineup_value"}
+    # An unnamed arm falls back to the objective rather than to a blank the analysis of a
+    # real draft would have to guess at.
+    assert R.pick_log(room, [0], 0, "t", "bracket_ev")["arm"].iloc[0] == "bracket_ev"

@@ -276,6 +276,65 @@ stan:
     # than hopeful, and the point MLE fitted mu_low = 0.0999, well clear of it.
     mu_low_max: 0.5
 
+    # ── The lag-recovery ladder, docs/availability-window-plan.md §16 ──
+    # Which rungs of the ladder `availability.build_design` admits. A LIST on
+    # `component_rates.LADDER_RUNGS`' vocabulary, so the design's `lag_rung` column
+    # reconciles with the component design's without a mapping table; `[]` builds the
+    # pre-ladder design EXACTLY (no gp/team_games lags, no provenance columns, the same
+    # `gp_share_lag1` drop test).
+    #
+    # The defect: the design drops a player-season on `gp_share_lag1` ALONE, so a player
+    # who missed all of S-1 has no row however complete S-2 is, and falls to
+    # `sim/season.no_design_availability` — whose `tenure_draft` key is the bare string
+    # "returning" for every non-rookie, one scalar per season for the whole population.
+    #
+    # `thin_prior` is structurally empty here and that is the asymmetry with
+    # `stan.components.lag_ladder`: a thin lag-1 still HAS a `gp_share_lag1`, so the
+    # availability design has always carried it. The rungs that recover rows are
+    #   returnee_lag2  lag-1 missing, a FULL season at lag 2 (189 rows)
+    #   returnee_thin  lag-1 missing, a thin season at lag 2 (97 rows)
+    #   no_usable_lag  away two seasons — lag 3 (96 rows)
+    #
+    # ⚠️ WIDER BLAST RADIUS THAN THE COMPONENT LADDER'S. `availability.build_design` is
+    # imported by `stan_minutes`, `stan_composition`, `stan_games_played`, `model_cards`,
+    # `sim/season`, `season_terms` and `final_evaluation`, and because the minutes
+    # allocation is zero-sum a recovered player takes minutes from his teammates rather
+    # than appearing beside them. The component ladder's rows entered a SCORING population
+    # only. So this defaults off and turning it on is a separate decision from measuring it.
+    #
+    # ⚠️ IMPUTATION ONLY, and here that is a MEASURED verdict rather than a cost decision.
+    # §16e named the refit-with-a-staleness-column arm as the favourite and it was run: the
+    # staleness block learns the discount from the POOLED 134 recovered fitting rows, which
+    # are mostly fringe roster churn, and over-applies it to the draftable ones by 8.7
+    # games. Against the imputation arm it reads +0.7310 [-1.4152, +2.8585] draftable, so
+    # §16g's second falsifier fires and the cheap form ships. The recovered rows are scored
+    # by a posterior fitted before the ladder existed; no head is refitted.
+    #
+    # ── THE GATE'S VERDICT, `make availability-lag` 2026-08-22 (§16i) ──
+    # ONE RUNG OF THREE CLEARED, on the draftable rows against the plug-in, in CRPS games:
+    #   returnee_lag2   17.6175 -> 8.3662, -9.2514 [-15.4431, -3.1316], 5 of 7 rolling
+    #                   origins. The plug-in gives him 24.7376 games; he plays 46.8571.
+    #   returnee_thin   +2.7839 [+1.4553, +3.6516] — the head is WORSE than one flat
+    #                   scalar there, and the carried share correlates -0.3490 with
+    #                   realized, so there is no ordering for the block to supply.
+    #   no_usable_lag   -3.3232 [-13.3029, +2.9720] — straddles zero, 3 draftable rows.
+    #   shipped verdict:  lag_ladder: [returnee_lag2]
+    #
+    # ── TURNED ON 2026-08-22 (§16j), and the second edit is what made it safe ──
+    # Every path that FITS from this design now cuts to `availability.rung_zero` first, so
+    # the ladder widens the SCORING population and no head's fitting population moves:
+    #   StanAvailability.fitting_rows   the head itself — one choke point for `run`,
+    #                                   `fit_and_score`'s two point MLEs, `posteriors`,
+    #                                   `model_cards` and `final_evaluation`
+    #   stan_minutes.build_design       the marginal minutes head
+    #   stan_composition.head_frame     the composition — cut at the MERGE, not the split,
+    #                                   so its scoring block is unmoved too
+    #   stan_games_played.games_played_design
+    #   season_terms.run, availability_exchangeability.run, availability_no_prior.run
+    #   model_cards.availability_frames
+    # Emptying this key restores the pre-ladder design exactly.
+    lag_ladder: [returnee_lag2]
+
   minutes:
     # ── The preseason block, adopted 2026-08-13 (docs/preseason-plan.md P3) ──
     # Five columns appended to every variant: the SEASON-CENTRED preseason minutes delta
@@ -328,6 +387,48 @@ stan:
     # 1997-98 fitting window, which the block cuts to 2004-05 (the panel's first covered
     # season) so the missing indicator cannot read as an era dummy.
     preseason: true
+
+    # ── The lag-recovery ladder, docs/rookie-rates-plan.md §5b ──
+    # Which rungs of the ladder `component_rates.build_design` admits. A LIST, not a
+    # boolean, because §4's gate is per rung and came back per rung; `[]` builds the
+    # pre-ladder design EXACTLY (max_lag=1, no provenance columns, the same 200-minute
+    # test), so the shipped design is recoverable by emptying this key.
+    #
+    # The vocabulary is `component_rates.LADDER_RUNGS`, named as `lag_recovery.classify`
+    # names the population groups so the design's `lag_rung` column reconciles with §7b's
+    # board census directly:
+    #   thin_prior     lag-1 exists and is under 200 minutes — the rate is noisy, not absent
+    #   returnee_lag2  lag-1 missing, a FULL season at lag 2 (the Jamal Murray shape)
+    #   returnee_thin  lag-1 missing, a thin season at lag 2
+    #   no_usable_lag  away two or more seasons — lag 3
+    #
+    # ⚠️ IMPUTATION ONLY. The recovered rows are written into the same `_lag1` columns the
+    # eleven shipped heads already fit coefficients on, so those coefficients score them
+    # unchanged and NO HEAD IS REFITTED (§3 constraint 4). A fitting path must route its
+    # training frame through `component_rates.fitting_rows`, which is rung 0 alone — the
+    # ladder widens the SCORING population and never the fitting one. Admitting these rows
+    # to the fit, with a staleness feature the head could learn a slope for, is the
+    # escalation that constraint holds in reserve and it costs eleven refits at two windows.
+    #
+    # ⚠️ Reaches the heads through `stan_components.head_design` and never through a bare
+    # `build_design` call, which twelve modules make.
+    #
+    # ── THE GATE'S VERDICT, `make lag-ladder` 2026-08-22 (§7c) ──
+    # ONE RUNG OF FOUR CLEARED. Gate 1 is cleared by rungs A and B (11 of 11 heads with
+    # the interval below zero) and by the two tails at 10 of 11; gate 2 is what separates
+    # them — count-head mean carry-forward R2 of 0.8791 (returnee_lag2, in band) against
+    # 0.7873 (thin_prior), 0.5866 (returnee_thin) and 0.5977 (no_usable_lag, with `blk`
+    # an anti-model at -0.632). Rung 0's own reading is 0.8919.
+    #   shipped verdict:  lag_ladder: [returnee_lag2]
+    #
+    # ── TURNED ON 2026-08-22 by Session 6 (§5f), which is the other half of the edit ──
+    # The ladder reaches the heads through `stan_components.head_design`, and the three
+    # paths that FIT rather than score take their training frame through
+    # `component_rates.fitting_rows` first: `stan_components.run`,
+    # `posteriors.component_artifacts` and `model_cards.component_frames`. `season_terms`
+    # and `components_preseason` call the plain `build_design`, so they are pre-ladder by
+    # construction and need no call. Emptying this key restores the shipped design exactly.
+    lag_ladder: [returnee_lag2]
 
     # Every head gets a spline variant and the winner is picked on a VALIDATION split,
     # rather than hard-coding "splines on fg3a and blk only". `make component-rates`
@@ -881,10 +982,16 @@ sim:
     # -7.7% for 43 s and does NOT make the ranking more stable. See
     # `draft_room_stability.csv`.
     field_drafts: 100
-    # Which of the three registered objectives the table is ordered by. `bracket_ev` is
-    # the decision-5 objective and the default; `p_advance` is P(top 2 of 12), the one
+    # Which objective `python -m src.sim.draft_room` (Gate E, the stability check) orders
+    # by. `bracket_ev` is the decision-5 objective; `p_advance` is P(top 2 of 12), the one
     # figure here that reproduces its analytic value exactly and the statistic
     # docs/simulations-plan.md says the strategy sweep selects on.
+    #
+    # ⚠️ **The PAGE no longer reads this.** Since 2026-08-24 `dashboard/draft_room.py`
+    # offers the arms `make strategy-sweep` selected for the tier on screen, read from
+    # `strategy_room_arms.csv` and defaulting to the one that ships — a knob here would be
+    # a fourth place a drafting policy is decided. This key still drives the offline
+    # entrypoint, which sweeps objectives rather than executing an arm.
     objective: bracket_ev
     # Our seat in the twelve-entry pod, zero-indexed. DK randomizes it once the lobby
     # fills, so this is set in the page rather than trusted from here.

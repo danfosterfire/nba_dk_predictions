@@ -11,7 +11,7 @@ arbitrary frame. A dashboard holding that is a dashboard that can silently disag
 fit it is describing.
 
 So this module stands between them. It reads the pickles and each head's **own variant
-ladder**, and writes long-format tables the dashboard reads and nothing else. All nine the
+ladder**, and writes long-format tables the dashboard reads and nothing else. All ten the
 contract names land here:
 
 | artifact | grain | what it is for |
@@ -25,6 +25,7 @@ contract names land here:
 | `model_card_calibration.csv` | head × split × 2-D bin | fitted-against-observed, as density |
 | `model_card_quantile.csv` | head × split × panel × row | the scaled quantile residual — a QQ-uniform and the residual against rank-transformed predicted |
 | `model_card_sample.parquet` | head × split × row | a bounded subsample, for texture over both densities |
+| `model_card_stan.csv` | head | the head's own Stan program, verbatim, so a page shows the model rather than describing it |
 
 ## Three rules this module inherits, and the mechanism for each
 
@@ -93,7 +94,8 @@ import pandas as pd
 import yaml
 
 from src.models.held_out import selection_split
-from src.models.posteriors import (DESIGN_TOL, fit_first_season, team_game_probe, load_all,
+from src.models.posteriors import (DESIGN_TOL, ROOKIE_PREFIX, fit_first_season,
+                                   team_game_probe, load_all,
                                    posteriors_dir, require_window)
 from src.models.stan_utils import ks_uniform, pit_from_samples, thin
 
@@ -283,7 +285,7 @@ ARTIFACTS = ("model_card_index.csv", "model_card_coefficients.csv",
              "model_card_features.csv", "model_card_feature_corr.csv",
              "model_card_feature_density.parquet", "model_card_ecdf.csv",
              "model_card_calibration.csv", "model_card_quantile.csv",
-             "model_card_sample.parquet")
+             "model_card_sample.parquet", "model_card_stan.csv")
 
 
 # ── What each head is, declared rather than derived ───────────────────────────
@@ -462,6 +464,59 @@ for _head, _what in _CONVERSION_DESCRIPTIONS.items():
                             "box_score_component")
 
 
+# The eleven `rookie-components` heads — `docs/rookie-rates-plan.md` §5f — declared here so
+# the chain column can say what the simulator does with them. `src/sim/season.py` reads all
+# eleven for every true-rookie unit on a board, which is 74 rows of a 2023-24 retrospective
+# board and 116 of the 2026-27 production one, so leaving them undeclared meant the one
+# column that exists to answer "does this ship?" had no answer for the family whose whole
+# reason for existing is that it ships.
+#
+# They are `box_score_component` and in the draw path for the same reason their veteran
+# twins are: one rate or conversion probability per player, drawn per game against the
+# minutes the allocation gave him, in the same `DRAW_ORDER`. What differs is the population
+# and, for ten of the eleven, that the artifact is a deterministic plug-in rather than a
+# posterior — and neither of those is a chain role.
+for _rookie_head, _rookie_spec in list(SPECS.items()):
+    if _rookie_spec.model_class != "components":
+        continue
+    SPECS[f"{ROOKIE_PREFIX}{_rookie_head}"] = HeadSpec(
+        "components", "player-season", _rookie_spec.likelihood,
+        _rookie_spec.description.rstrip(".")
+        + ", for a player with no prior NBA season at any lag.",
+        "box_score_component")
+
+
+#: Heads that are declared and in the draw path but deliberately have **no card page**.
+#: `load_all` globs the window directory, so a new posterior group arrives here the moment
+#: it is fitted, and the raise in `chain_role` is the guard that says "declare it" — the
+#: right default, and a different question from whether a head earns a page.
+#:
+#: **§5h decided the rookie family gets no pages, and the reason is what a page would hold.**
+#: Ten of the eleven ship §7d's no-fit floor as a deterministic plug-in: `beta = 1`,
+#: `alpha = 0`, one synthetic feature carrying the floor's own prediction on the head's own
+#: link, identical on every draw. That prediction is `rookie_priors`' volume-shrunk blend —
+#: `w * preseason_per36 + (1 - w) * draft_bucket_prior` at `w = min_pre / (min_pre + k)` —
+#: so the column is a fitted estimator's output, not a raw feature. A coefficient panel for
+#: one of those renders a 1.0 on a column that is the answer rather than a predictor, and
+#: eleven near-identical pages would say it eleven times. What a reader actually wants — the floors, and the gate that admitted one
+#: fitted arm of eleven — is `rookie_rate_floors.csv` and `rookie_rate_metrics.csv`, both
+#: already reachable from the decision log, which is this project's own convention for a
+#: family with no tab (`docs/docs-audit.md`, the orphan check).
+#:
+#: `rookie_reb` is the one head a page would fully describe, and it does not get one either,
+#: because a lone card in a family of eleven reads as *the* rookie head rather than as the
+#: one arm that beat its floor. Revisit if a second arm is ever admitted.
+#:
+#: Nothing else may go uncarded — an undeclared head outside this rule still raises, and a
+#: declared-but-uncarded head outside this prefix has no rule at all.
+UNCARDED_PREFIXES = (ROOKIE_PREFIX,)
+
+
+def uncarded(head: str) -> bool:
+    """Is this head declared in the chain but deliberately given no card page?"""
+    return head.startswith(UNCARDED_PREFIXES)
+
+
 def chain_role(head: str) -> ChainRole:
     """The head's declared role in the shipped chain, or a raise naming the vocabulary."""
     spec = SPECS.get(head)
@@ -482,6 +537,69 @@ def draw_path_heads() -> set[str]:
     actually subscripts, rather than against this file a second time.
     """
     return {head for head in SPECS if chain_role(head).in_draw_path}
+
+
+def stan_program(head: str) -> str:
+    """The `src/stan/` program the head's likelihood is compiled from, without `.stan`.
+
+    Read from the fitting modules' **own** model constants rather than retyped here —
+    `stan_availability.MODEL` is what `compile_model` is actually handed, so a head that
+    moves to a different program moves here without an edit. Four programs serve every
+    carded head: availability / minutes / the conversions / overtime onset are one
+    beta-binomial likelihood with different data, the counts are the negative binomial,
+    the composition stands apart, and the two spell-length heads share the beta-geometric.
+    """
+    from src.models.component_rates import CONVERSION_HEADS, COUNT_HEADS
+    from src.models.stan_availability import MODEL as AVAILABILITY_MODEL
+    from src.models.stan_components import CONVERSION_MODEL, COUNT_MODEL
+    from src.models.stan_composition import MODEL as COMPOSITION_MODEL
+    from src.models.stan_games_played import BINOMIAL_MODEL, DURATION_MODEL
+    from src.models.stan_minutes import MODEL as MINUTES_MODEL
+
+    programs = {
+        "availability": AVAILABILITY_MODEL,
+        # `stan_game_length` builds its heads out of `stan_games_played`'s classes, so its
+        # two programs are read off that module rather than declared a second time.
+        "gp_entry": BINOMIAL_MODEL, "gp_exit": BINOMIAL_MODEL, "gp_onset": BINOMIAL_MODEL,
+        "game_length_ot": BINOMIAL_MODEL,
+        "gp_duration": DURATION_MODEL, "game_length_depth": DURATION_MODEL,
+        "minutes": MINUTES_MODEL,
+        "composition": COMPOSITION_MODEL,
+        **{count: COUNT_MODEL for count in COUNT_HEADS},
+        **{f"{made}_given_{att}": CONVERSION_MODEL for made, att in CONVERSION_HEADS},
+    }
+    if head not in programs:
+        raise KeyError(
+            f"no Stan program declared for {head!r}. Every carded head names the program "
+            f"its likelihood compiles from, so the page can show the code rather than "
+            f"describe it — add the head to `stan_program`.")
+    return programs[head]
+
+
+def stan_rows(heads) -> list[dict]:
+    """`model_card_stan.csv` — one row per carded head, carrying its program's source.
+
+    The source text rides in the artifact rather than being read from `src/stan/` by the
+    dashboard, for the same reason every other number on the model pages does: the
+    dashboard reads artifacts and never `src/`, and an artifact is a snapshot taken beside
+    the cards it ships with rather than a live file that can drift ahead of them. The text
+    repeats across the heads that share a program — the same deliberate repetition
+    `model_card_features.csv` makes, so a page filters to one head and has everything.
+    """
+    from src.models.stan_utils import STAN_DIR
+
+    rows = []
+    for head in sorted(heads):
+        program = stan_program(head)
+        path = Path(STAN_DIR) / f"{program}.stan"
+        if not path.exists():
+            raise FileNotFoundError(
+                f"{head!r} declares Stan program {program!r} but {path} does not exist — "
+                f"`stan_program` and `src/stan/` disagree.")
+        source = path.read_text()
+        rows.append({"head": head, "stan_file": path.name,
+                     "n_lines": len(source.splitlines()), "source": source})
+    return rows
 
 
 # Import-time, so a head added with a typo'd or missing role fails on import rather than
@@ -632,11 +750,18 @@ def availability_frames(cfg: dict, artifacts: dict) -> dict[str, HeadFrames]:
     # the preseason block this head ships (docs/preseason-plan.md P2). Rebuilding from
     # `availability_design` would fail `verify` on five missing columns rather than on
     # anything being wrong.
+    from src.models.availability import rung_zero
     from src.models.stan_availability import head_design, restrict_window
 
     test_seasons = _test_seasons(cfg)
     train, val = _split_pair(head_design(cfg), test_seasons)
-    train = restrict_window(train, str(art.extras.get("fit_first_season") or "") or None)
+    # `rung_zero` then the window — `StanAvailability.fitting_rows`' own order, and the
+    # only place in this module that has to restate it because this head's frames are the
+    # design itself rather than a variant ladder's output. Without it the §16 ladder's
+    # recovered rows would enter the rebuilt fitting frame and the population anchor would
+    # raise against the row count `posteriors.py` recorded from the head's own cut.
+    train = restrict_window(rung_zero(train),
+                            str(art.extras.get("fit_first_season") or "") or None)
     return {"availability": _frames("availability", train, val, train, val,
                                     art.recipe.features)}
 
@@ -722,7 +847,7 @@ def component_frames(cfg: dict, artifacts: dict) -> dict[str, HeadFrames]:
     of 6b's wiring gap, and the reason that check compares row counts rather than trusting
     that two modules agree about what a head's frame is.
     """
-    from src.models.component_rates import CONVERSION_HEADS, COUNT_HEADS
+    from src.models.component_rates import CONVERSION_HEADS, COUNT_HEADS, fitting_rows
     from src.models.stan_components import (PRESEASON, SPLINE_KNOTS, conversion_variants,
                                             count_variants, covered_fitting_rows,
                                             head_design, head_features, head_fitting_rows)
@@ -736,6 +861,13 @@ def component_frames(cfg: dict, artifacts: dict) -> dict[str, HeadFrames]:
     preseason = bool(cfg.get("stan", {}).get("components", {})
                      .get("preseason", PRESEASON))
     train_full, val = _split_pair(head_design(cfg, preseason), test_seasons)
+    # Rung 0 alone on the FIT half, exactly as `posteriors.component_artifacts` cuts it.
+    # This module refits nothing, but it re-derives each head's FITTED STATE — the
+    # imputation means and the spline knots its variant ladder left implicit — and checks
+    # the persisted recipe against it at 1e-9. A ladder-widened training frame moves those
+    # knots, so the check would fail against artifacts that are correct. A no-op while
+    # `stan.components.lag_ladder` is `[]`.
+    train_full = fitting_rows(train_full)
     # The cut lands on the FITTING rows only, exactly as `posteriors.component_artifacts`
     # applies it — validation is scored on every covered row either way.
     train_covered = covered_fitting_rows(train_full, cfg, preseason)
@@ -2256,7 +2388,7 @@ def index_row(head: str, art, frames: HeadFrames, check: dict,
 
 def run(cfg: dict, heads: tuple[str, ...] | None = None,
         write: bool = True) -> dict[str, Path]:
-    """Card every head on disk, verify each one, and write the nine artifacts.
+    """Card every head on disk, verify each one, and write the ten artifacts.
 
     `heads` is a **verification** subset, not a rebuild subset, which is why `write`
     defaults off with it at the CLI. Unlike `make posteriors` — a day of sampler time,
@@ -2273,6 +2405,8 @@ def run(cfg: dict, heads: tuple[str, ...] | None = None,
           f"  reading persisted posteriors from {source}; nothing is refitted and no "
           f"sampler runs.")
     artifacts = load_all(source, heads=list(heads) if heads else None)
+    skipped = sorted(h for h in artifacts if uncarded(h))
+    artifacts = {h: a for h, a in artifacts.items() if not uncarded(h)}
     if not artifacts:
         raise FileNotFoundError(
             f"no posterior artifacts under {source}. Run `make posteriors` first — it is "
@@ -2283,6 +2417,11 @@ def run(cfg: dict, heads: tuple[str, ...] | None = None,
     require_window(artifacts, WINDOW)
     print(f"  {len(artifacts)} heads at the `{WINDOW}` window. The test split is LOCKED; "
           f"every row carries `split` in {list(SPLITS)}.")
+    if skipped:
+        print(f"  {len(skipped)} head(s) on disk are declared in the chain and NOT "
+              f"carded, which is a decision\n  rather than an oversight: "
+              f"{', '.join(skipped)}\n  — see `UNCARDED_PREFIXES` and "
+              f"docs/model-cards-plan.md.")
 
     print("\n── rebuilding each head's own design frames ──")
     frames = build_frames(cfg, artifacts)
@@ -2356,6 +2495,7 @@ def run(cfg: dict, heads: tuple[str, ...] | None = None,
         "model_card_calibration.csv": pd.DataFrame(calibration),
         "model_card_quantile.csv": pd.DataFrame(quantile),
         "model_card_sample.parquet": pd.concat(samples, ignore_index=True),
+        "model_card_stan.csv": pd.DataFrame(stan_rows(artifacts)),
     }
     leading = {"model_card_coefficients.csv": ["head", "term", "term_family", "term_role"],
                "model_card_features.csv": ["head", "feature", "split", "bin_index"],
@@ -2366,7 +2506,8 @@ def run(cfg: dict, heads: tuple[str, ...] | None = None,
                "model_card_calibration.csv": ["head", "split", "panel", "x_index",
                                               "y_index"],
                "model_card_quantile.csv": ["head", "split", "panel", "x_index",
-                                           "y_index", "x", "y"]}
+                                           "y_index", "x", "y"],
+               "model_card_stan.csv": ["head", "stan_file", "n_lines"]}
 
     paths = {}
     print()

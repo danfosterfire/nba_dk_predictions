@@ -51,13 +51,11 @@ ESPN_API_URL = (
 # duplicate rows. 20 h rather than 24 so a cron drifting later never skips a day.
 MIN_HOURS_BETWEEN_SNAPSHOTS = 20
 
-_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
-}
+# Deliberately empty, so requests sends its own `python-requests/x.y`. ESPN's Akamai edge
+# began 403-ing browser-impersonating User-Agents on 2026-08-04 while continuing to serve
+# honest tool agents, and it cost 19 days of a feed that cannot be backfilled. A Chrome
+# string here is not a fix for a future block — it is what caused this one.
+_HEADERS: dict[str, str] = {}
 
 _FIELDNAMES = [
     "snapshot_date",

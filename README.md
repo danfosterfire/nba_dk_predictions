@@ -165,9 +165,12 @@ disagreement.
   readout is [docs/minutes-window-plan.md](docs/minutes-window-plan.md) §6).
 - **The drafting edge is large in simulation and unconfirmed in the realized replay — which
   is the result, not a caveat** (`make strategy-sweep`): the shipped strategy lifts Round-1
-  advance probability by ~0.24 in the 600k tournament's simulated worlds and by ~0.20
+  advance probability by ~0.26 in the 600k tournament's simulated worlds and by ~0.31
   replayed against the two validation seasons' realized box scores, but with only two
-  realized seasons the intervals select nothing.
+  realized seasons the intervals select nothing. The held-out chain (one admissible
+  season, one world) does not confirm it either: **−0.0725** on the 600k structure, and
+  the model's Gate A marginals bracket their validation bars while the contest edge does
+  not appear ([docs/final-evaluation-plan.md](docs/final-evaluation-plan.md) §4d).
 
 ## 4. Repository map
 

@@ -178,9 +178,11 @@ make season-terms      # does any head need a season term, and which kind? A tre
                        #   season × role arm the availability era effect calls for.
                        #   An ABLATION over the shipped heads, so also not in `stan`;
                        #   it reads their selected specs from their artifacts.
-make posteriors        # PERSIST the fits: 20 heads refitted once at the variant their
-                       #   own sweep selected, each writing thinned draws + the design
-                       #   recipe + provenance to
+make posteriors        # PERSIST the fits: 31 heads refitted once at the variant their
+                       #   own sweep selected — the 20 chain heads plus the eleven
+                       #   `rookie-components` rate heads, ten of which are §7d's no-fit
+                       #   floors persisted as deterministic plug-ins — each writing
+                       #   thinned draws + the design recipe + provenance to
                        #   data/features/posteriors/<window>/<head>.pkl.
                        #   `make stan` throws its coefficient draws away, so without
                        #   this the simulation layer has to refit to draw anything.
@@ -206,11 +208,22 @@ make final-evaluation  # the ONE reading. Refits the shipped spec on train+valid
                        #   The three heads were taken 2026-08-21; the chain is a separate
                        #   run — docs/final-evaluation-plan.md.
 make posteriors-production
-                       # the production fit: the same 20 heads at the `full` window, for
+                       # the production fit: the same 31 heads at the `full` window, for
                        #   the upcoming season's board. Guarded twice — `--production` has
                        #   to be typed AND final_evaluation.csv has to already exist,
                        #   because deploying before measuring leaves no honest measurement
                        #   to take. Budget most of a day.
+make ladder-board      # what the AVAILABILITY lag-recovery ladder does to the board —
+                       #   `docs/availability-window-plan.md` §16j. §16i priced it on games
+                       #   played and on a season total that never re-allocates minutes;
+                       #   the allocation is zero-sum, so this is the reading that can see
+                       #   the transfer off the recovered player's teammates. Both arms,
+                       #   both validation seasons, plus the same frames re-drawn at seed+1
+                       #   as the noise floor — scored on every GROUP, because the gate is
+                       #   "the untouched units must not degrade" and a delta there is
+                       #   unreadable without its noise twin. numpy only, ~25 min.
+                       #   → outputs/predictions/availability_ladder_board.csv
+
 make production-check  # is the chain ready to price a season it has never seen? Reads
                        #   disk only, costs a second. Two halves: the MODEL half (20 heads
                        #   at `full`, matching the `train` specification) is finishable
@@ -240,7 +253,17 @@ make forward-board     # §6h's acceptance test: the forward inputs pushed throu
                        #   retrospective board from the same `train` posteriors — with a
                        #   retro-vs-retro run at seed+1 as the noise floor the gap is
                        #   judged against. SEASON= and SIMS= override 2023-24 / 500.
+                       #   Also prints the §4 population census (veteran / lag-recovered /
+                       #   true-rookie units, how many the market prices, best rank) and
+                       #   a `__rung0` copy of every comparison on the veterans neither
+                       #   family added. FRAMES_ONLY=1 builds and censuses the frames
+                       #   WITHOUT simulating — the only form a TEST season admits, and
+                       #   how the 2026-27 production board is read.
 ```
+
+`make forward-board SEASON=2026-27 FRAMES_ONLY=1` is the production board's acceptance
+reading. Simulating a test season is locked outside `make posteriors-production`
+(`docs/final-evaluation-plan.md`), so the census is taken off the designs instead.
 
 `src/features/forward_design.py` also holds `synthetic_game_log`, which is the production
 path rather than a target: the published schedule crossed with the roster snapshot, which
@@ -593,6 +616,248 @@ make preseason-contest # what the PRESEASON BLOCK is worth in the contest, as a 
                        #   it — all four CONFIG KEYS do show 0→1. Read `resolution` before
                        #   `contest`, then `board`: this block arrives as the allocation
                        #   MEAN rather than as shape, so a ranking is what it can move.
+
+make rookie-floor      # what it cost that no board this project produced carried a
+                       #   ROOKIE — `docs/rookie-rates-plan.md` §5a/§7a. The
+                       #   RETROSPECTIVE half of that hole closed on 2026-08-22 (§7g), and
+                       #   `make rookie-recovery` re-read this floor against the
+                       #   rookie-inclusive board the same day (§7i).
+                       #   → outputs/predictions/strategy_rookie_floor.csv plus the whole
+                       #   strategy_*_rookiefloor.csv set. The sweep run ASYMMETRICALLY:
+                       #   the opponent field drafts every rostered player, our seat stays
+                       #   masked to the rows the tensor prices (which is what the live
+                       #   draft room does anyway). ~50 min, the same cost as
+                       #   `make strategy-sweep` — it is that target with one flag,
+                       #   `--field-board unrestricted`, and it never touches the audited
+                       #   strategy_*.csv set.
+                       #   Read it on the REALIZED replay. The simulated arm scores the
+                       #   field's unscorable picks at literal ZERO, which hands the field
+                       #   a handicap of the tensor's making and reads uniformly positive
+                       #   for that reason alone.
+                       #   The symmetric side is read from the shipped strategy_realized
+                       #   .csv rather than re-run, and the licence for that is a
+                       #   measurement: Gate C runs on the same scorable population in
+                       #   both modes, so strategy_gate_c_rookiefloor.csv reproducing
+                       #   strategy_gate_c.csv (it does, to 0.000e+00) says the shipped
+                       #   file was written by today's code on today's tensors.
+
+make rookie-recovery   # HOW MUCH OF THAT FLOOR THE TWO POPULATION CHANGES GIVE BACK —
+                       #   `docs/rookie-rates-plan.md` §5h/§7i →
+                       #   outputs/predictions/rookie_recovery.csv. The half of the floor
+                       #   that RESOLVES — the Round-1 bar the opponent field sets,
+                       #   averaged over 1,200 realized entries — re-measured against a
+                       #   LADDER of board masks rather than one: rung-0 veterans, plus
+                       #   the ladder's recovered returnees, plus the true rookies,
+                       #   against the whole rostered board. Nested by construction, so
+                       #   each change's share is attributable rather than inferred, and
+                       #   the rung-0 row reproduces `make rookie-floor`'s own +173.1 /
+                       #   +111.9 from a different module.
+                       #   Reads the tensor for ONE thing, the `scorable` mask; every
+                       #   figure is scored on the season that happened. Reads the SHIPPED
+                       #   tensor since 2026-08-23 — the `_rookieinclusive` label §7i first
+                       #   ran it under retired when the shipped tensors became the union
+                       #   (`docs/rookie-inclusive-tensors-plan.md` §7e; the re-derivation
+                       #   moved nothing). Minutes, numpy only. NOT a re-run of the 24-arm
+                       #   sweep — three more sweeps would cost ~3 hours to re-read the
+                       #   half that does not resolve. §7i's contest half was
+                       #   `make strategy-sweep-rookie` (the shipped sweep on the labelled
+                       #   tensor); it retired in the same session because
+                       #   `make strategy-sweep` reproduces it bit-for-bit — its
+                       #   strategy_*_rookieinclusive.csv record stays on disk.
+
+make lag-recovery      # WHERE THE VETERAN DESIGN'S BOUNDARY BELONGS — `docs/rookie-rates
+                       #   -plan.md` §7b → outputs/predictions/lag_recovery.csv.
+                       #   `component_rates.build_design` asks for one thing, a lag-1
+                       #   season of at least 200 minutes, and everything failing it is
+                       #   dropped. That single test bundles three populations with very
+                       #   different information: a RETURNEE whose lag-1 is missing only
+                       #   because he sat out (his lag-2 is a full season, and `with_lags`
+                       #   pairs on season INDEX so the row is never built), a THIN-PRIOR
+                       #   player whose lag-1 is noisy rather than absent, and a TRUE
+                       #   ROOKIE for whom no own-rate feature exists at any lag.
+                       #   FITS NO HEAD — every arm is `carry_forward`'s functional form
+                       #   with a different prior rate, scored as R2 against the realized
+                       #   count so the numbers sit on the no-fit floor's own 0.81-0.95
+                       #   scale. numpy/pandas only, a few seconds.
+                       #   It reversed a decision: the rookie rate heads now serve TRUE
+                       #   ROOKIES ONLY and the veteran design widens to everyone with any
+                       #   prior season. The board census reconciles with the drafting
+                       #   layer from the opposite direction — 347/359 rows served and
+                       #   16/21 ADP-priced rows unserved are `strategy_injection.csv`'s
+                       #   own figures, reached without sharing any code with it.
+                       #   It also fits and persists the constants the ladder consumes —
+                       #   per-head shrinkage k, the population mean it shrinks toward,
+                       #   and the conversion block's (pseudo-attempts, league) pair — so
+                       #   `build_design` fits nothing at build time.
+
+make lag-ladder        # THE LADDER'S GATE — `docs/rookie-rates-plan.md` §5b/§7c →
+                       #   outputs/predictions/lag_ladder.csv.
+                       #   `build_design(..., ladder=...)` raises `with_lags` to max_lag=3
+                       #   and fills an unusable lag-1 block from the nearest usable
+                       #   season, into the SAME `_lag1` columns the eleven shipped heads
+                       #   already fit coefficients on, behind
+                       #   `stan.components.lag_ladder` — a LIST of admitted rungs, `[]`
+                       #   rebuilding the pre-ladder design exactly. This target decides
+                       #   which rungs are allowed in.
+                       #   FITS NOTHING: the eleven heads are read off
+                       #   data/features/posteriors/train/ and score the recovered rows
+                       #   with the coefficients they already have, which is the claim
+                       #   under test — the ladder widens the SCORING population and never
+                       #   the fitting one, so no head is refitted.
+                       #   Two gates, stated before the result. (1) validation paired-
+                       #   bootstrap CRPS below zero against the unserved status quo, a
+                       #   point mass at ZERO because a row missing from the design is
+                       #   missing from the tensor — a low bar on purpose. (2) the rung's
+                       #   mean carry-forward R2 over the count heads inside the shipped
+                       #   floor's 0.81-0.95 band. Gate 2 is the MEAN and not per head
+                       #   because the per-head form rejects the shipped design itself
+                       #   (5 of 7 count heads inside the band on rung 0's own rows).
+                       #   One rung of four cleared: the full-lag-2 returnee.
+                       #   numpy/pandas over persisted draws, under a minute.
+
+make rookie-rates      # THE TRUE-ROOKIE DESIGN AND ITS ELEVEN NO-FIT FLOORS —
+                       #   `docs/rookie-rates-plan.md` §5c/§7d →
+                       #   outputs/predictions/rookie_rate_floors.csv.
+                       #   The population the ladder cannot reach: a player whose target
+                       #   season is his FIRST PLAYED season has no own-rate feature at any
+                       #   lag, so the veteran coefficients have nothing to score him with.
+                       #   Builds his design — the volume-shrunk preseason level on each
+                       #   head's own link, CENTRED against the fitting population (a
+                       #   rookie has no prior season to difference against, so the delta
+                       #   convention becomes a level); the four age-split missing
+                       #   indicators; draft bucket, years-since-draft and their
+                       #   interaction, with UNDRAFTED as the reference cell; age.
+                       #   Every block is ZERO-RECOVERING — exactly 0 where its information
+                       #   is absent, which is where the Stan L2 prior's mode already is.
+                       #   FITS NO HEAD. Four constant blocks are estimated on the fitting
+                       #   half and written to the artifact so Sessions 4-7 read them
+                       #   rather than a constant pinned in a module: the conversion
+                       #   block's (pseudo-attempts, league), the volume shrink k, the
+                       #   centring means, and the floors' dispersions.
+                       #   The floors ARE `make rookie-priors`' selected estimator — the
+                       #   expanding draft-bucket mean blended with the preseason per-36
+                       #   by volume — wrapped in each head's own likelihood so a CRPS
+                       #   from arithmetic is comparable to one from a sampler.
+                       #   Asserts on every run that the rookie design shares no
+                       #   (player, season) with the veteran design at EVERY ladder rung,
+                       #   which is what Session 6's `units` union needs. Requires
+                       #   `make lag-recovery` for the ladder's constants.
+                       #   numpy/pandas only, ~10 seconds.
+
+make stan-rookie       # THE ELEVEN ROOKIE ARMS, FITTED, AND §4's PER-HEAD SHIP GATE —
+                       #   `docs/rookie-rates-plan.md` §5d/§7e →
+                       #   outputs/predictions/rookie_rate_metrics.csv.
+                       #   `make rookie-rates` built the design and its floors and fitted
+                       #   nothing; this puts a sampler on it and decides, PER HEAD,
+                       #   whether the head ships FITTED or ships that floor as a plug-in.
+                       #   It never decides whether a head ships at all — every unit must
+                       #   carry all eleven quantities to enter the tensor, so the gate
+                       #   chooses the arm and nothing else.
+                       #   Three variants per head: linear -> + slot x years-since-draft
+                       #   -> + a spline on the shrunk level. The scale rung the veteran
+                       #   ladder carries does not exist here, because a rookie head's own
+                       #   feature is already on its link scale.
+                       #   THE GATE IS §4's CONJUNCTION: the selected variant's validation
+                       #   paired-bootstrap CRPS interval against the floor entirely below
+                       #   zero on the DRAFTABLE season-start-roster population (108 rows),
+                       #   AND a rolling-origin harness on the fitting half agreeing —
+                       #   same sign, interval below zero, a majority of origins won.
+                       #   Validation alone ships nothing; two earlier rounds won a
+                       #   validation reading and shrank 4-6x rolling. Unlike
+                       #   `make components-preseason`, the rolling half is Stan rather
+                       #   than a point-MLE stand-in, because at this population size it
+                       #   costs minutes.
+                       #   `metric=dense_e` on every fit, which is a 30x speedup and not a
+                       #   preference: the slot block's four products are collinear with
+                       #   their own indicators and a diagonal mass matrix saturates
+                       #   treedepth. ~400 small fits, ~30 minutes.
+                       #   Requires `make rookie-rates` for the design's constants.
+
+make availability-lag
+                       # §16 — THE RETURNEE GAP, `docs/availability-window-plan.md`
+                       #   §16i → outputs/predictions/availability_lag.csv.
+                       #   `availability.build_design` drops a player-season on
+                       #   `gp_share_lag1` ALONE, so a man who missed all of S-1 has no row
+                       #   however complete S-2 is, and falls to `no_design_availability` —
+                       #   one scalar per season for EVERY returning player. This gives the
+                       #   head the same lag-recovery ladder the component design got,
+                       #   behind `stan.availability.lag_ladder`, on
+                       #   `component_rates.LADDER_RUNGS`' vocabulary and reusing
+                       #   `lag_recovery`'s helpers. 11,272 design rows -> 11,654, and rung
+                       #   0 comes back bit-identical.
+                       #   Four arms on the 382 rows it adds: `plugin` (the bar — the
+                       #   graded level at the fringe role dispersion), `shipped` (the
+                       #   persisted train posterior on the imputed row, NOTHING refitted),
+                       #   `impute` (the same arm as a point MLE, the control that prices
+                       #   the staleness column and the twin the rolling harness carries),
+                       #   `impute_raw` (a `k = 0` carry, which prices the shrink) and
+                       #   `staleness` (the recovered rows in the FIT with three columns
+                       #   saying the block is stale).
+                       #   ONE RUNG OF THREE cleared: `returnee_lag2`, 17.6175 -> 8.3662
+                       #   CRPS games on the draftable rows, confirmed at 5 of 7 rolling
+                       #   origins. `returnee_thin` fails on the WRONG side and
+                       #   `no_usable_lag` straddles zero. THE CHEAP ARM WON — the refit
+                       #   learns its discount from the pooled recovered population and
+                       #   over-applies it to the draftable one by 8.7 games, which is the
+                       #   plug-in's own defect one level up.
+                       #   Does NOT turn the ladder on: the key stays `[]`, because
+                       #   `build_design` reaches seven consumers and the minutes
+                       #   allocation is zero-sum. ~11 minutes.
+                       #   Requires `make posteriors WINDOW=train`.
+
+make season-total-rookie
+                       # THE SEASON-TOTAL READOUT, AND §16's OWN SETTLING GATE —
+                       #   `docs/rookie-rates-plan.md` §5e/§7f →
+                       #   outputs/predictions/season_total_rookie.csv plus a
+                       #   *_predictions.csv companion.
+                       #   Sessions 3-4 measured the family in rebounds and made threes;
+                       #   this composes all eleven heads into the number a board is
+                       #   drafted on and asks whether the family beats its floor there.
+                       #   `season_total.build_frame` drops this population TWICE on lag
+                       #   columns, so this is its rookie-admitting twin. It shares ONE
+                       #   thing with it — the scorer, `season_total.evaluate`, whose group
+                       #   tuple now carries `veteran`, `lag_recovered` and `rookie` and
+                       #   never pools the last two. A treatment may now supply its own
+                       #   RATE and its own predictive SAMPLES, which is what lets one
+                       #   scorer serve a ladder that varies games and a readout that
+                       #   varies the rate family; `season_total_metrics.csv` comes back
+                       #   bit-identical.
+                       #   Three rate arms per group: `unserved` (a row missing from the
+                       #   design is missing from the tensor and scores zero in every
+                       #   draw — today's answer), the family's no-fit floor, and what
+                       #   ships. Games played is the availability head where it has a row
+                       #   and `no_design_availability`'s graded level where it does not,
+                       #   which is the design's split rather than a choice: 773 of 773
+                       #   veteran rows against 0 of 165 rookie and returnee ones. Every
+                       #   arm is read at that level AND at `oracle_gp`, so the table says
+                       #   whether an error is the rate family or the availability plug-in.
+                       #   The chain is `season_terms.compose_season_dk`'s (makes drawn on
+                       #   DRAWN attempts); the bonus is each arm's own `expected_bonus` at
+                       #   the constant calibrated for this unit, 0.66% of the realized
+                       #   total here.
+                       #   Fits exactly ONE head — `reb`, §7e's single fitted arm, because
+                       #   no rookie posterior exists until Session 6 persists one.
+                       #   Everything else is read off disk. ~2 minutes.
+                       #   Requires `make stan-rookie`, `make lag-ladder` and
+                       #   `make posteriors WINDOW=train`.
+
+make season-total-rookie-lagladder
+                       # THE SAME READOUT UNDER §16's AVAILABILITY LADDER —
+                       #   `docs/availability-window-plan.md` §16i →
+                       #   outputs/predictions/season_total_rookie_lagladder.csv.
+                       #   §7f left one open item: the `lag_recovered` group's RATE side is
+                       #   already right (predicted dk_pts per game within a point of
+                       #   realized) and its season totals were 8.4x off because the
+                       #   plug-in gave those players 24.7376 games against a realized
+                       #   46.8571. This admits the rung `make availability-lag` gated,
+                       #   FOR THIS RUN ONLY, so the same rows are scored by the
+                       #   availability head instead: draftable season-total MAE
+                       #   543.3167 -> 305.7897, 49.60% of the gap to the oracle.
+                       #   Writes `_lagladder` artifacts on `make rookie-floor`'s
+                       #   `_rookiefloor` precedent — the shipped `season_total_rookie.csv`
+                       #   re-runs bit-identical, and every `oracle_gp`, `veteran` and
+                       #   `rookie` cell is unchanged, which is the check that the ladder
+                       #   moved only the population it was built for. ~2 minutes.
 ```
 
 **After `make posteriors`, nothing else in the simulation layer needs CmdStan.** That is the

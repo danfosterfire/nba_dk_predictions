@@ -36,6 +36,7 @@ Usage:
 import argparse
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import yaml
 
@@ -159,6 +160,58 @@ def season_rows(cfg: dict, season: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def tensor_row(cfg: dict, season: str) -> pd.DataFrame:
+    """The production tensor itself — the artifact the draft actually consumes.
+
+    Until `docs/rookie-inclusive-tensors-plan.md` §5b the readiness list ended one step
+    short of it. Three states rather than two, because for this artifact "exists" is not
+    "current": a tensor built before the season's preseason log landed is the August
+    board wearing October's name, which is exactly what `season.assert_tensor_current`
+    refuses at load time. The row reads the SAME guard, so the checklist and the refusal
+    cannot disagree.
+    """
+    path = Path(cfg["data"]["features_dir"]) / f"sim_tensor_{season}.npz"
+    if not path.exists():
+        return pd.DataFrame([{
+            "half": "season", "item": str(path), "state": "missing",
+            "target": "make simulate-production",
+            "detail": "the tensor the draft room opens — buildable the moment the "
+                      "`full` posteriors and the season's frames exist (a REHEARSAL "
+                      "until the preseason lands)"}])
+
+    # Function-level: `src/sim/season.py` is the numpy layer over the posteriors and
+    # imports no sampler, but a check that costs a second should not pay for it on the
+    # rows that never read a tensor.
+    from src.sim.season import assert_tensor_current
+
+    with np.load(path, allow_pickle=False) as z:
+        meta = {"season": str(z["season"]), "fit_window": str(z["fit_window"]),
+                "n_sims": int(z["n_sims"]),
+                "preseason_log_rows": (int(z["preseason_log_rows"])
+                                       if "preseason_log_rows" in z else None),
+                "preseason_coverage": (float(z["preseason_coverage"])
+                                       if "preseason_coverage" in z else None)}
+    try:
+        assert_tensor_current(cfg["data"]["raw_dir"], meta)
+    except RuntimeError:
+        return pd.DataFrame([{
+            "half": "season", "item": str(path), "state": "stale",
+            "target": "make preseason && make simulate-production",
+            "detail": f"built with NO {season} preseason while the preseason log now "
+                      f"exists on disk — the August board under October's name"}])
+
+    coverage = meta["preseason_coverage"]
+    stamped = coverage is not None and np.isfinite(coverage)
+    rehearsal = meta["preseason_log_rows"] == 0
+    return pd.DataFrame([{
+        "half": "season", "item": str(path), "state": "ready",
+        "target": "make simulate-production",
+        "detail": f"{meta['n_sims']:,} sims at `{meta['fit_window']}`"
+                  + (f", preseason coverage {coverage:.0%}" if stamped else "")
+                  + (" — REHEARSAL: built before the preseason existed; rebuild after "
+                     "the October fetch" if rehearsal else "")}])
+
+
 def capture_rows() -> pd.DataFrame:
     """The most recent capture per non-backfillable program. Reported, never gated.
 
@@ -197,11 +250,12 @@ def run(cfg: dict, season: str | None = None) -> Path:
             print(f"    MISSING  {row.item:<20} {row.detail}")
     print(f"  {note}")
 
-    season_frame = season_rows(cfg, season)
+    season_frame = pd.concat([season_rows(cfg, season), tensor_row(cfg, season)],
+                             ignore_index=True)
     print(f"\n[season — cannot be finished early; a missing row before October is the "
           f"schedule]")
     for row in season_frame.itertuples():
-        mark = "ready  " if row.state == "ready" else "MISSING"
+        mark = {"ready": "ready  ", "stale": "STALE  "}.get(row.state, "MISSING")
         print(f"    {mark}  {row.item:<42} {row.detail}")
         if row.state != "ready":
             print(f"{'':<15}{row.target}")

@@ -2142,6 +2142,17 @@ has no clause for the failure that keeps happening instead.
 
 ### The chain, run end to end — and the components share is separable
 
+> **Provenance, 2026-08-23** (`docs/rookie-inclusive-tensors-plan.md` §7e): both arms of
+> this counterfactual — here and in P5's three-key pass above — are frozen captures.
+> `make preseason-contest` reads `outputs/predictions/preseason_arms/` and never the live
+> artifacts, so every figure in this block reproduces to the digit and none of them moved
+> or will move under any tensor re-run. What changed is what the capture describes: the
+> chain it snapshots was superseded when the shipped tensors were re-drawn over the
+> rookie-inclusive population (that round's §5c/§5d), so this is the preseason block priced
+> on the rookie-less chain as it stood on 2026-08-15. Re-capturing either arm under the
+> shipped chain would need both arms' heads refitted (~3.5 h of CmdStan each), which that
+> round's C2 forbids and nothing here needs.
+
 `make preseason-contest` re-ran with a **fourth** config key, `stan.components.preseason`,
 joining the three P5 flipped. Because this pass reuses P5's **byte-identical base capture** —
 the `base` column reproduces to every decimal — the components' contribution is the difference

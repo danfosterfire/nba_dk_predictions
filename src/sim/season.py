@@ -132,6 +132,7 @@ frame-level guard can see that.
 Usage:
     python -m src.sim.season
     python -m src.sim.season --season 2022-23 --n-sims 500
+    python -m src.sim.season --production          # the unplayed season's board, `full`
 """
 
 import argparse
@@ -141,6 +142,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from src.data.fetch import _slug, nbastats_dir
 from src.data.preprocess import compute_dk_pts
 from src.eda.residual_correlation import MINUTES_CONDITIONED
 from src.eda.residual_correlation import to_matrix as residual_matrix
@@ -154,7 +156,8 @@ from src.models.games_played import (EdgeResampler, allocate_spells, edge_blocks
                                      layout_tenure)
 from src.models.held_out import TEST_SEASONS, assert_unlocked, selection_split
 from src.models.minutes_unification import rehydrate_composition, shipped_injection
-from src.models.posteriors import load_all, posteriors_dir, require_window
+from src.models.posteriors import (ROOKIE_PREFIX, load_all, posteriors_dir,
+                                   require_window)
 from src.models.stan_availability import (FIRST_SEASON, head_design,
                                           restrict_window, role_bins)
 from src.models.stan_components import head_design as component_head_design
@@ -197,6 +200,17 @@ SERIAL_BLOCK = 10
 # The scoring columns `compute_dk_pts` reads. `min` and the attempt counts matter solely
 # through the exposure and trials they supply to these.
 SCORING_COLUMNS = ("pts", "fg3m", "reb", "ast", "stl", "blk", "tov")
+
+# The two rate families a scorable unit can belong to (`docs/rookie-rates-plan.md` §5f).
+# They are disjoint populations of ONE chain — every unit carries all eleven quantities and
+# the tensor cannot tell them apart — so the label decides which artifact scores a row and
+# nothing else downstream branches on it.
+VETERAN_FAMILY = "veteran"
+ROOKIE_FAMILY = "rookie"
+FAMILY_COL = "unit_family"
+# `component_rates`' own name for the lag design's rung 0, reused rather than restated so
+# the tensor's `lag_rung` column reconciles with the ladder's census without a mapping.
+RUNG_ZERO = "veteran"
 
 
 # ── The chain ─────────────────────────────────────────────────────────────────
@@ -256,6 +270,171 @@ def assert_season_allowed(season: str, design: pd.DataFrame) -> None:
     """Refuse a test season unless something has explicitly unlocked the split."""
     if season not in allowed_seasons(design):
         assert_unlocked(f"simulating {season}")
+
+
+def unplayed_season(cfg: dict, season: str) -> bool:
+    """True when the season has no rows in the played-game record.
+
+    Read from `component_targets.parquet` rather than from any design frame, on purpose:
+    the forward path (`forward_board.forward_frames`) CONCATS design rows for its target
+    season, so a design-frame test would call the production season "played" the moment
+    the machinery that simulates it had built its frames — the guard would believe the
+    frame it exists to check. `bracket.split_frame` records the same failure shape for
+    the draft pool.
+    """
+    targets = pd.read_parquet(
+        Path(cfg["data"]["features_dir"]) / "component_targets.parquet",
+        columns=["season"])
+    return season not in set(targets["season"].astype(str))
+
+
+def assert_production_season(cfg: dict, season: str, window: str,
+                             production: bool) -> None:
+    """The deployment unlock — `posteriors.assert_production`'s precedent, one layer down.
+
+    Simulating a season nobody has played is a deployment act, not a measurement, and the
+    guard it needs is the deployment one. It is **never** `held_out.unlocked`: the target
+    season has no data to leak, so the test-split key opens the wrong door — what HAS read
+    the held-out seasons is the `full` fit window, and `assert_production` guarded that
+    when the posteriors were built. Three refusals, each with its own reason:
+
+    1. A played season may not take this door at all. The held-out tensors are frozen
+       rookie-less **by decision** (`docs/final-evaluation-plan.md` §7, C1 of
+       `docs/rookie-inclusive-tensors-plan.md`), and a production flag that also redrew
+       played seasons would be the second unlock the split does not have. The train and
+       validation seasons already have their own path.
+    2. `--production` has to be TYPED, for the reason `held_out.unlocked` takes a
+       mandatory reason: an unlock is an act somebody performs, and a window is a value
+       that gets passed around.
+    3. The window has to be `full`. The production posteriors are the one set fitted for
+       deployment; a `train`-window tensor for an unplayed season would look identical on
+       disk while throwing four seasons of data away.
+    """
+    if not unplayed_season(cfg, season):
+        raise RuntimeError(
+            f"--production may not simulate {season}: the season has been played, so it "
+            f"already has a path — `make simulate-season` for the train and validation "
+            f"seasons, and the two held-out tensors are frozen by decision "
+            f"(docs/final-evaluation-plan.md §7). The production unlock exists for the "
+            f"one season that has no game log, and only that season.")
+    if not production:
+        raise RuntimeError(
+            f"simulating {season} is a deployment act, not a measurement: the season has "
+            f"no game log, so there is nothing to score and no split being read — the "
+            f"guard it needs is the deployment one.\n"
+            f"If this really is the upcoming season's board, run "
+            f"`make simulate-production` — or pass `--production` (typed, never inferred "
+            f"from `--window full`, the same rule `make posteriors-production` follows).")
+    if window != "full":
+        raise RuntimeError(
+            f"a production tensor draws from the `full` posteriors, and the window is "
+            f"{window!r}. `make posteriors-production` fits the shipped specification on "
+            f"every season there is; a production board at a narrower window would look "
+            f"identical on disk while throwing seasons away. Drop the override or pass "
+            f"`--window full`.")
+
+
+def preseason_log_rows(raw_dir: str, season: str) -> int:
+    """Data rows in the season's raw preseason game log; 0 when absent or header-only.
+
+    `production_check.season_rows`' own convention, kept exactly: a header-only file
+    counts as absent, so an empty fetch that reached disk self-heals rather than reading
+    as done forever.
+    """
+    path = nbastats_dir(raw_dir) / f"game_logs_pre_season_{_slug(season)}.csv"
+    if not path.exists():
+        return 0
+    with path.open() as handle:
+        return max(sum(1 for _ in handle) - 1, 0)
+
+
+def extend_rookie_priors(artifacts: dict, rookie: pd.DataFrame, season: str) -> int:
+    """The rookie floors' FORWARD TIER — the unplayed season's expanding prior row,
+    appended IN MEMORY to each persisted floor step's table at score time.
+
+    The expanding draft-bucket prior travels inside the artifact and covers the seasons
+    the fitted design carried, so a production target one past its end has no row and
+    `rookie_rates.floor_level` refuses — correctly: the artifact must never be rebuilt
+    with the target season's own rookies inside it. But the row a FORWARD season needs is
+    computable with no refit and no leakage, because the window is expanding over seasons
+    STRICTLY BEFORE the target: the 2026-27 row pools exactly the played rookie rows the
+    design already carries, knowable in September like every other row of the table. The
+    forward rows themselves cannot enter the pool twice over — `bucket_priors` reads only
+    seasons before the target, and a forward row's realized targets are NaN besides.
+
+    In memory and never persisted, mirroring the artifact rule everywhere else: the
+    pickle on disk stays exactly what `make posteriors-production` wrote. Returns the
+    number of head artifacts extended, for the progress line. Found by the §5b rehearsal,
+    which is the reason the rehearsal exists (`docs/rookie-inclusive-tensors-plan.md` C6).
+    """
+    from src.models.rookie_rates import bucket_prior_table
+
+    history = rookie[rookie["season"] < season]
+    covered = sorted(set(history["season"]))
+    extended = 0
+    for key, art in artifacts.items():
+        if not key.startswith(ROOKIE_PREFIX):
+            continue
+        for step in art.recipe.steps:
+            if step.get("kind") != "rookie_floor" or season in set(
+                    step["priors"]["season"]):
+                continue
+            target = (f"{step['component']}_p36" if step["attempted"] is None
+                      else f"{step['component']}_pct")
+            fresh = bucket_prior_table(history, target, covered + [season])
+            fresh = fresh[fresh["season"] == season]
+            if fresh.empty:
+                raise ValueError(
+                    f"no played rookie season carries `{target}`, so the {key} floor "
+                    f"has no expanding prior to extend to {season}")
+            step["priors"] = pd.concat([step["priors"], fresh], ignore_index=True)
+            extended += 1
+    return extended
+
+
+def unit_preseason_coverage(units: pd.DataFrame) -> float:
+    """Share of scorable units whose design row carries the season's own preseason minutes.
+
+    `min_pre > 0` is `rookie_rates`' own definition of `has_preseason`, and it is the one
+    reading both families' designs can answer — the component design fills `min_pre` to
+    0.0 where the panel has nothing, and a rookie design row carries it directly. A frame
+    with no preseason block at all reads NaN rather than 0.0, because "the heads fit
+    without preseason columns" and "the preseason had not been played" are different
+    facts, and only the second is C6's.
+    """
+    if "min_pre" not in units.columns:
+        return float("nan")
+    return float((units["min_pre"].to_numpy(dtype=float) > 0).mean())
+
+
+def assert_tensor_current(raw_dir: str, meta: dict) -> None:
+    """The self-arming staleness guard — C6's October refusal
+    (`docs/rookie-inclusive-tensors-plan.md` §5b).
+
+    Written against the INPUT's existence rather than against the coverage figure,
+    deliberately: a coverage-is-zero warning would nag all August, when no preseason
+    exists anywhere and the tensor is honest, and go quiet exactly when it matters. This
+    fires only when it can be acted on — the season's preseason log has landed on disk
+    beside a tensor built without it, which is the moment the August board stops being
+    the best available board and starts impersonating the October one.
+
+    Silent for a tensor with no stamp (`preseason_log_rows` is None): those predate the
+    stamp and were drawn for played seasons through the retrospective builders, where the
+    design and the log cannot desynchronize this way.
+    """
+    stamped = meta.get("preseason_log_rows")
+    if stamped is None:
+        return
+    on_disk = preseason_log_rows(raw_dir, str(meta["season"]))
+    if on_disk > 0 and int(stamped) == 0:
+        raise RuntimeError(
+            f"sim_tensor_{meta['season']}.npz is STALE: it was built with no "
+            f"{meta['season']} preseason box scores, and {on_disk:,} preseason rows now "
+            f"exist on disk. Every unit in it is priced on its missing-preseason arm — "
+            f"the August board — and docs/preseason-plan.md measures that block as worth "
+            f"more than fitting itself on several heads.\n"
+            f"Rebuild it on the data that now exists: `make preseason && "
+            f"make simulate-production`.")
 
 
 def scoring_slots(features_dir: Path, season: str) -> pd.DataFrame:
@@ -496,6 +675,145 @@ def composition_players(frame: pd.DataFrame, season: str) -> pd.DataFrame:
 
 # ── Per-player posterior blocks ───────────────────────────────────────────────
 
+def rookie_design(cfg: dict) -> pd.DataFrame:
+    """The true-rookie rate design — `rookie_rates.head_design`, and nothing else.
+
+    Its own function so `build_context` reads one name per family, and so the import stays
+    local: `src.models.rookie_rates` pulls the preseason EDA module in, and a caller that
+    injects its own rookie frame (the forward path, §5g) should not pay for it.
+    """
+    from src.models.rookie_rates import head_design as rookie_head_design
+
+    return rookie_head_design(cfg)
+
+
+def component_units(design: pd.DataFrame, rookie: pd.DataFrame, season: str,
+                    players: set) -> pd.DataFrame:
+    """The season's scorable units — both rate families, unioned and labelled.
+
+    A scorable unit needs a rate-head design row **and** a place in the minutes allocation,
+    which is why both families are intersected with the composition's players here rather
+    than in three places downstream. What §5f changed is which designs count: the veteran
+    lag design, now widened by the admitted lag-recovery rung, plus the true-rookie design,
+    whose whole reason for existing is that those rows have no lag block at all.
+
+    **Disjointness is asserted rather than trusted.** `rookie_rates.run` asserts it on the
+    whole design every time it is built, but the failure here is worse than a wrong number:
+    a player in both families would take two rows in `units`, two entries in the tensor and
+    two slots on a board, and every marginal would still look plausible.
+
+    The rookie rows carry the ladder's own provenance vocabulary — `lag_rung` is
+    `true_rookie`, the label `lag_recovery.classify` gives them, and `lag_source` is
+    `none` because there is no prior season to have carried anything from. Those two
+    columns exist only when the ladder is on, matching `component_rates.LADDER_COLS`,
+    which is why every fill below is guarded on the veteran frame carrying the column
+    rather than on the family.
+    """
+    from src.models.rookie_rates import ROOKIE_GROUP
+
+    vet = design[(design["season"] == season) & design["player_id"].isin(players)]
+    rk = rookie[(rookie["season"] == season) & rookie["player_id"].isin(players)]
+    both = sorted(set(vet["player_id"]) & set(rk["player_id"]))
+    if both:
+        raise AssertionError(
+            f"{len(both)} player(s) are in BOTH rate designs for {season} "
+            f"({both[:5]}...). The two populations are disjoint by construction — a true "
+            f"rookie has no prior season and every other design row has one — so this is "
+            f"a builder that has drifted, and the union would score them twice.")
+    out = pd.concat([vet.assign(**{FAMILY_COL: VETERAN_FAMILY}),
+                     rk.assign(**{FAMILY_COL: ROOKIE_FAMILY})], ignore_index=True)
+    for column, value in (("lag_rung", ROOKIE_GROUP), ("lag_source", "none"),
+                          # Zero, not NaN, and it is literally true rather than a fill: a
+                          # true rookie played no NBA minutes last season. `save_tensor`
+                          # writes this column as the tensor's `prior_minutes`, which
+                          # `mixture_value` and `preseason_contest` bucket players by — and
+                          # zero puts him in the lowest bucket, which is where
+                          # `role_bins` already sends a player with no prior minutes.
+                          ("total_minutes_lag1", 0.0)):
+        if column in vet.columns:
+            out[column] = out[column].fillna(value)
+    return out
+
+
+def unit_families(frame: pd.DataFrame) -> list[tuple[str, np.ndarray, pd.DataFrame]]:
+    """`[(family, row positions, that family's rows)]`, in `FAMILY_COL` order of appearance.
+
+    A frame with no `unit_family` column is **all veteran**, which is every caller that
+    predates `docs/rookie-rates-plan.md` §5f and is the shape `component_rates` had before
+    the union. Positions rather than a boolean mask because the scatter below has to put
+    each family's block back where it came from.
+    """
+    if FAMILY_COL not in frame.columns:
+        return [(VETERAN_FAMILY, np.arange(len(frame)), frame)]
+    family = frame[FAMILY_COL].to_numpy()
+    out = []
+    for name in pd.unique(family):
+        pos = np.flatnonzero(family == name)
+        out.append((str(name), pos, frame.iloc[pos]))
+    return out
+
+
+def family_artifact(artifacts: dict, family: str, head: str):
+    """The artifact that scores `head` for one family — the rookie one carries a prefix.
+
+    `artifact_key` is a **named local addressed by subscript** rather than an inline
+    `artifacts.get(...)`, and that is for the scanner in `tests/test_model_cards.py`:
+    it reads `src/sim/` with `ast` to find every posterior key the simulator subscripts,
+    and a computed key it cannot resolve has to raise there rather than disappear from the
+    declared draw path. The two resolvable forms it knows are a literal and this one.
+    """
+    artifact_key = artifact_name(head)
+    if family != VETERAN_FAMILY:
+        artifact_key = f"{ROOKIE_PREFIX}{artifact_key}"
+    if artifact_key not in artifacts:
+        raise KeyError(
+            f"no `{artifact_key}` posterior, so the {family} family cannot score "
+            f"`{head}`. The rookie rate heads are the `rookie-components` group — run "
+            f"`make posteriors --groups rookie-components` at this window, or build the "
+            f"units without a rookie design.")
+    return artifacts[artifact_key]
+
+
+def _family_block(artifacts: dict, parts: list, head: str, dispersion: str,
+                  n_rows: int) -> tuple[np.ndarray, np.ndarray]:
+    """One head's `(draws x rows)` rate and its dispersion, assembled across families.
+
+    **A single-family frame takes the same path it always did**, values and shapes alike:
+    the rate is that artifact's own `mu_draws` and the dispersion stays `(draws,)`. That is
+    what makes the union a no-op for every unit the veteran design already carried — the
+    check §5f asks for — and it is why the branch is on the family COUNT rather than on
+    whether a rookie design was passed.
+
+    A mixed frame promotes the dispersion to `(draws x rows)`, because the two families fit
+    it separately and a plug-in floor's `phi` is not the fitted head's. `_sim_one` reads it
+    through `np.broadcast_to`, so the scalar and the per-unit forms are one expression
+    there — the same shape contract `avail_rho` and `player_ps_sigma` already use.
+    """
+    if len(parts) == 1:
+        family, _, sub = parts[0]
+        art = family_artifact(artifacts, family, head)
+        return art.mu_draws(sub), np.asarray(art.draws[dispersion], dtype=float)
+
+    blocks = [(pos, family_artifact(artifacts, family, head), sub)
+              for family, pos, sub in parts]
+    n_draws = {a.n_draws for _, a, _ in blocks}
+    if len(n_draws) != 1:
+        raise ValueError(
+            f"the families scoring `{head}` carry {sorted(n_draws)} posterior draws. One "
+            f"simulated season uses draw `s % n_draws` for every head at once, so two "
+            f"families thinned differently would pair one player's draw 7 with another's "
+            f"draw 7 out of a different posterior — re-run `make posteriors` for both "
+            f"groups at the same `--draws`.")
+    draws = n_draws.pop()
+    mu = np.empty((draws, n_rows))
+    phi = np.empty((draws, n_rows))
+    for pos, art, sub in blocks:
+        mu[:, pos] = art.mu_draws(sub)
+        value = np.asarray(art.draws[dispersion], dtype=float)
+        phi[:, pos] = value[:, None] if value.ndim == 1 else value
+    return mu, phi
+
+
 def component_rates(artifacts: dict, frame: pd.DataFrame) -> dict:
     """`(draws x players)` per-minute rates, conversion probabilities and dispersions.
 
@@ -503,19 +821,25 @@ def component_rates(artifacts: dict, frame: pd.DataFrame) -> dict:
     is **constant within a player-season** — which is what makes a per-game simulation
     affordable at all: the design is evaluated once per player and a game's mean is that
     rate times the minutes drawn for the game.
+
+    Since §5f the frame may carry two families' units — the veteran design and the
+    true-rookie one, disjoint by construction — so each head is evaluated **per family, on
+    that family's own rows**, and the blocks are scattered back into one array. Scoring the
+    whole frame through one recipe instead would not raise: `DesignRecipe._block` fills a
+    missing value with zero and then standardizes it, so a rookie would be predicted from
+    the veteran design's mean lag-1 season rather than from anything about him.
     """
     out: dict = {"count": {}, "conversion": {}, "phi": {}, "rho": {}}
+    parts = unit_families(frame)
     for component in COUNT_HEADS:
-        art = artifacts[artifact_name(component)]
         # `mu_draws` on a negative-binomial head is `exp(eta)` before exposure — a rate per
         # minute, which is what a per-game draw multiplies by that game's minutes.
-        out["count"][component] = art.mu_draws(frame)
-        out["phi"][component] = np.asarray(art.draws["phi_draws"], dtype=float)
+        out["count"][component], out["phi"][component] = _family_block(
+            artifacts, parts, component, "phi_draws", len(frame))
     for made, attempted in CONVERSION_HEADS:
         head = f"{made}|{attempted}"
-        art = artifacts[artifact_name(head)]
-        out["conversion"][head] = art.mu_draws(frame)
-        out["rho"][head] = np.asarray(art.draws["rho_draws"], dtype=float)
+        out["conversion"][head], out["rho"][head] = _family_block(
+            artifacts, parts, head, "rho_draws", len(frame))
     return out
 
 
@@ -890,13 +1214,17 @@ def _sim_one(s: int, ctx: dict) -> dict:
     unit = ctx["component_row"][player[idx]]
     exposure = minutes[idx]
 
+    # `phi[draw]` is a scalar when every unit is scored by one head and a `(n_units,)`
+    # vector when the frame mixes rate families — the two families fit their dispersions
+    # separately, and a plug-in floor's is not the fitted head's. `size=n_units` covers
+    # both: numpy broadcasts the vector form and the scalar form is what it always was.
     season_gamma = {c: rng.gamma(ctx["phi"][c][draw], 1.0 / ctx["phi"][c][draw],
                                  size=ctx["n_units"])[unit] for c in COUNT_HEADS}
     season_p = {}
     for m, att in CONVERSION_HEADS:
         head = f"{m}|{att}"
         pa, pb = beta_shapes(ctx["rates"]["conversion"][head][draw],
-                            np.full(ctx["n_units"], ctx["rho"][head][draw]))
+                             np.broadcast_to(ctx["rho"][head][draw], (ctx["n_units"],)))
         season_p[head] = rng.beta(pa, pb)[unit]
 
     sigma = ctx["frailty_sigma"]
@@ -946,17 +1274,26 @@ def build_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
                   composition: pd.DataFrame | None = None,
                   design: pd.DataFrame | None = None,
                   availability: pd.DataFrame | None = None,
-                  panel: pd.DataFrame | None = None) -> dict:
+                  panel: pd.DataFrame | None = None,
+                  rookie: pd.DataFrame | None = None,
+                  production: bool = False) -> dict:
     """Everything the per-sim loop reads, built once. No draws happen here.
 
-    The four frame parameters all default to the retrospective builders and exist for the
+    The five frame parameters all default to the retrospective builders and exist for the
     forward path (`sim/forward_board.py`, `docs/final-evaluation-plan.md` §6), whose rows
     the stored artifacts cannot carry: `design` replaces `component_head_design`,
-    `availability` replaces `head_design`, `panel` replaces the stored availability
-    panel under `roster_grid`, and `composition` predates the others. Every injected
-    frame must be the FULL multi-season frame its builder returns, not the target
-    season's rows — `allowed_seasons`, the no-design empirical rate and the tenure edges
-    all read the other seasons.
+    `rookie` replaces `rookie_rates.head_design`, `availability` replaces `head_design`,
+    `panel` replaces the stored availability panel under `roster_grid`, and `composition`
+    predates the others. Every injected frame must be the FULL multi-season frame its
+    builder returns, not the target season's rows — `allowed_seasons`, the no-design
+    empirical rate and the tenure edges all read the other seasons.
+
+    `production` swaps the split guard for the deployment one. The two are different
+    guards for different reasons and neither substitutes for the other:
+    `assert_season_allowed` believes the design frame, which is right for retrospective
+    frames and wrong for forward ones — the forward path concats the target season's rows
+    in, which SHIFTS `selection_split`'s trailing labels — so the production check reads
+    the played-game record instead (`unplayed_season`).
     """
     features_dir = Path(cfg["data"]["features_dir"])
 
@@ -968,18 +1305,26 @@ def build_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
     # them. The plain builder produces a frame the recipe cannot evaluate, which is what
     # `PosteriorRecipe._block` raises on rather than silently predicting from a short design.
     design = component_head_design(cfg) if design is None else design
-    assert_season_allowed(season, design)
+    if production:
+        assert_production_season(cfg, season, window, production=True)
+    else:
+        assert_season_allowed(season, design)
+    rookie = rookie_design(cfg) if rookie is None else rookie
+    if production:
+        n_extended = extend_rookie_priors(artifacts, rookie, season)
+        if n_extended:
+            print(f"  rookie floors: forward prior tier — {season}'s expanding "
+                  f"draft-bucket row appended in memory to {n_extended} head(s)")
 
     slots = scoring_slots(features_dir, season)
     grid = roster_grid(features_dir, season, slots, panel=panel)
     frame = head_frame(cfg) if composition is None else composition
     players = composition_players(frame, season)
 
-    # A scorable unit needs a component-head design row AND a place in the allocation, so
-    # the two frames are intersected once here rather than in three places downstream.
-    units = design[(design["season"] == season)
-                   & design["player_id"].isin(set(players["player_id"]))]
-    units = units.reset_index(drop=True)
+    # A scorable unit needs a rate-head design row AND a place in the allocation, so the
+    # frames are intersected once here rather than in three places downstream. Since §5f
+    # that is the UNION of the two rate families — see `component_units`.
+    units = component_units(design, rookie, season, set(players["player_id"]))
 
     # The grid is cut to players the composition can weight, because the allocation is
     # zero-sum: a player left out of a team-game hands his minutes to his teammates.
@@ -1039,8 +1384,14 @@ def build_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
     # a per-player constant rather than a league-wide one, because the population it covers
     # spans 3.33x in realized level (`make availability-no-prior`, §8b).
     level_arm = no_design_level_arm(cfg)
+    # `data.seasons` lists the seasons with DATA, so a production target is one past its
+    # end — appended so `appearance_gap` can index it. Appending is exact: the list is
+    # ascending and the target of a production board sorts after every played season.
+    season_labels = list(cfg["data"]["seasons"])
+    if season not in season_labels:
+        season_labels.append(season)
     no_design = no_design_availability(features_dir, season, full_avail,
-                                       allowed_seasons(design), list(cfg["data"]["seasons"]),
+                                       allowed_seasons(design), season_labels,
                                        player_ids, level_arm)
     mu = np.tile(no_design.to_numpy(dtype=float), (avail_art.n_draws, 1))
     if present.any():
@@ -1094,9 +1445,16 @@ def build_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
     # PRIOR-season minutes so nothing about the target season enters. Restricted to rows
     # clearing `serial_correlation`'s own `MIN_EXPECTED`, because that filter is what makes
     # the measured correlation a statement about players the component is meaningful for.
-    mpg = units["mpg_lag1"].to_numpy(float)
+    # **Veteran units only, and that is forced rather than chosen.** `mpg_lag1` is a
+    # prior-season quantity and a true rookie has no prior season, so he cannot contribute
+    # to a mean built out of one — and holding the target fixed is also what keeps the
+    # copula, and therefore every existing unit's residual draw, exactly what it was
+    # before the union.
+    vet = (units[FAMILY_COL].to_numpy() == VETERAN_FAMILY)
+    mpg = units.loc[vet, "mpg_lag1"].to_numpy(float)
     mean_counts = np.array([
-        _mean_expected(rates["count"][c].mean(axis=0) * mpg) for c in COUNT_HEADS])
+        _mean_expected(rates["count"][c][:, vet].mean(axis=0) * mpg)
+        for c in COUNT_HEADS])
     long = pd.read_csv(Path(cfg["eda"]["output_dir"]) / "residual_correlation.csv")
     copula = count_copula(long, window, mean_counts)
 
@@ -1155,6 +1513,12 @@ def build_context(cfg: dict, season: str, window: str, n_sims: int, seed: int,
         "no_design_availability": no_design[~present],
         "no_design_level": level_arm,
         "composition_variant": comp_art.recipe.variant,
+        # C6's two-part honesty stamp, computed here because this is where the unit
+        # population and the season meet: the coverage is the share of scorable units
+        # carrying the season's own preseason evidence, and the log-row count is what the
+        # staleness guard compares against the world at load time.
+        "preseason_coverage": unit_preseason_coverage(units),
+        "preseason_log_rows": preseason_log_rows(cfg["data"]["raw_dir"], season),
     }
 
 
@@ -1289,8 +1653,9 @@ def bonus_on_realized_minutes(ctx: dict, rows: pd.DataFrame, draws: int = 12,
         season_p = {}
         for m, att in CONVERSION_HEADS:
             head = f"{m}|{att}"
-            pa, pb = beta_shapes(ctx["rates"]["conversion"][head][d],
-                                 np.full(ctx["n_units"], ctx["rho"][head][d]))
+            pa, pb = beta_shapes(
+                ctx["rates"]["conversion"][head][d],
+                np.broadcast_to(ctx["rho"][head][d], (ctx["n_units"],)))
             season_p[head] = rng.beta(pa, pb)[unit]
         sigma = ctx["frailty_sigma"]
         normals = rng.standard_normal((len(unit), len(COUNT_HEADS))) @ ctx["chol"].T
@@ -1596,16 +1961,41 @@ def save_tensor(sim: dict, ctx: dict, dest: Path) -> Path:
         # And so does the no-design level key, for the same reason one level up: it moves
         # minutes between rostered players without changing any head.
         no_design_level=np.array(ctx["no_design_level"]),
+        # THE PRESEASON STAMP (C6, `docs/rookie-inclusive-tensors-plan.md` §5b), beside
+        # the variant and the layout for the reason those two are here: it changes the
+        # board materially and a consumer holding two tensors has no other way to tell
+        # them apart. A production tensor built before the season's preseason is the
+        # August board — every unit priced on its missing-preseason arm. `coverage` is
+        # the share of scorable units with the season's own preseason minutes (the figure
+        # the draft room surfaces); `log_rows` is the raw preseason log's row count at
+        # build time, which is what `assert_tensor_current` — the self-arming staleness
+        # guard — reads, because the guard is written against the input's existence
+        # rather than against the coverage figure.
+        preseason_coverage=np.array(float(ctx["preseason_coverage"])),
+        preseason_log_rows=np.array(int(ctx["preseason_log_rows"])),
         scoring_periods=np.arange(N_SCORING_PERIODS),
         tournament_round=np.r_[np.ones(ROUND_1_WEEKS, dtype=int), [2, 3, 4]],
         prior_minutes=pool["total_minutes_lag1"].to_numpy(np.float32),
+        # WHICH RATE FAMILY SCORED EACH UNIT, and at which ladder rung — the provenance
+        # `docs/rookie-rates-plan.md` §5b requires travel with every row, carried one level
+        # further so a board can be audited without rebuilding two designs to classify it.
+        # §5h's recovery readout is the first consumer: what the two changes are worth is a
+        # question about which rows they added, and the tensor is where the population is.
+        unit_family=pool[FAMILY_COL].to_numpy(str) if FAMILY_COL in pool
+        else np.full(len(pool), VETERAN_FAMILY),
+        # `veteran` is `component_rates`' own name for rung 0 and the fallback is
+        # literally true rather than a fill: the column exists only when the ladder is on,
+        # and with it off every scored unit IS rung 0.
+        lag_rung=pool["lag_rung"].to_numpy(str) if "lag_rung" in pool
+        else np.full(len(pool), RUNG_ZERO),
     )
     return dest
 
 
 def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
         window: str | None = None, seed: int | None = None,
-        label: str = "") -> dict[str, Path]:
+        label: str = "", tensor_label: str = "",
+        production: bool = False) -> dict[str, Path]:
     """Simulate each season and write its tensor, plus the merged Gate A table.
 
     `label` suffixes the **gate** artifact and nothing else. The tensors are already keyed
@@ -1613,33 +2003,84 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
     single pooled table whose extremes `make docs-audit` re-derives — so a run on the test
     seasons writing into it would move an audited figure by adding rows rather than by
     changing a result. `src/final_evaluation.py` passes a label for exactly that reason.
+
+    `tensor_label` suffixes the **tensor** as well, and it is a different tool for a
+    different job: a run that draws the same seasons over a different unit population is a
+    variant measurement, and every audited downstream artifact — the sweep, the bracket,
+    the draft room's cached field — was built on the unlabelled one.
+    `docs/rookie-rates-plan.md` §5h is the first caller.
+
+    `production` is the deployment path (`docs/rookie-inclusive-tensors-plan.md` §5b):
+    the target season defaults to the one the live DK board is for, the window to `full`,
+    the frames come from `forward_board.forward_frames` because the season has no game
+    log for the retrospective builders, and **Gate A is skipped** — there is no realized
+    season to reproduce, so the audited pooled table gains no rows. The guard chain is
+    `assert_production_season`, never the test-split unlock.
     """
     features_dir = Path(cfg["data"]["features_dir"])
     out_dir = Path(cfg["evaluation"]["predictions_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
+    # A labelled TENSOR labels the gate by default, and this is a guard rather than a
+    # convenience: Gate A is one pooled table whose extremes `make docs-audit` re-derives,
+    # and a variant population writing into it moves audited figures by replacing rows for
+    # the same season. An explicit `label` still wins, because `src/final_evaluation.py`
+    # sets one for its own reason.
+    label = label or tensor_label
     cfg_sim = cfg.get("sim", {})
-    window = window or str(cfg_sim.get("fit_window", FIT_WINDOW))
+    window = window or ("full" if production
+                        else str(cfg_sim.get("fit_window", FIT_WINDOW)))
     n_sims = int(n_sims or cfg_sim.get("n_sims", N_SIMS))
     seed = int(SEED if seed is None else seed)
 
     design = component_head_design(cfg)
-    seasons = seasons or validation_seasons(design)
+    if production:
+        # The season the live DK board is for — `production_check`'s own rule, reused so
+        # the readiness check and the build cannot disagree about which season is next.
+        from src.production_check import next_season
+        seasons = seasons or [next_season(cfg)]
+    else:
+        seasons = seasons or validation_seasons(design)
 
     print(f"Season simulator — the player x scoring-period x sim tensor")
     print(f"  posteriors at the `{window}` window; nothing is refitted, and nothing "
           f"here needs CmdStan.")
-    print(f"  The test split is LOCKED — `allowed_seasons` goes through "
-          f"`held_out.selection_split`.")
+    if production:
+        print(f"  PRODUCTION path — a deployment act, not a measurement "
+              f"(`assert_production_season`, never the\n  test-split unlock): the target "
+              f"season is unplayed, the frames are forward-built, and Gate A\n  is "
+              f"skipped — no realized season exists to hold the simulator against.")
+    else:
+        print(f"  The test split is LOCKED — `allowed_seasons` goes through "
+              f"`held_out.selection_split`.")
     print(f"  {N_SCORING_PERIODS} scoring periods "
           f"({ROUND_1_WEEKS} Round-1 weeks + 3 double weeks), {n_sims:,} sims, "
           f"seed {seed}")
 
-    composition = head_frame(cfg)
+    composition = None if production else head_frame(cfg)
     paths: dict[str, Path] = {}
     gates = []
     for season in seasons:
         print(f"\n── {season} ──")
-        ctx = build_context(cfg, season, window, n_sims, seed, composition=composition)
+        # The deployment guard, and the right DIAGNOSIS for an unplayed season asked for
+        # without the flag — `assert_season_allowed` would refuse 2026-27 with a message
+        # about the test split, which is wrong for a season that has no data to leak.
+        if production or unplayed_season(cfg, season):
+            assert_production_season(cfg, season, window, production)
+        if production:
+            # Function-level: `forward_board` imports this module at the top.
+            from src.sim.forward_board import forward_frames
+            print(f"[forward frames — the season has no game log, so the retrospective "
+                  f"builders have nothing]")
+            frames = forward_frames(cfg, season)
+            ctx = build_context(cfg, season, window, n_sims, seed,
+                                composition=frames["composition"],
+                                design=frames["design"],
+                                availability=frames["availability"],
+                                panel=frames["panel"], rookie=frames["rookie"],
+                                production=True)
+        else:
+            ctx = build_context(cfg, season, window, n_sims, seed,
+                                composition=composition)
         print(f"  {len(ctx['grid']):,} rostered player-games over "
               f"{ctx['n_blocks']:,} team-games and {ctx['n_games']:,} games; "
               f"{ctx['n_players']:,} rostered players, {ctx['n_units']:,} of them "
@@ -1684,7 +2125,7 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
                   f"{ctx['n_blocks'] * n_sims:,} needed a feasibility repair "
                   f"(fewer than {MIN_AVAILABLE} available players)")
 
-        dest = features_dir / f"sim_tensor_{season}.npz"
+        dest = features_dir / f"sim_tensor_{season}{tensor_label}.npz"
         save_tensor(sim, ctx, dest)
         mb = (sim["dk_pts"].nbytes + sim["games_played"].nbytes) / 1e6
         print(f"Saved {sim['dk_pts'].size:,} dk_pts cells "
@@ -1692,16 +2133,36 @@ def run(cfg: dict, seasons: list[str] | None = None, n_sims: int | None = None,
               f"→ {dest}")
         paths[season] = dest
 
-        table = gate_a(cfg, ctx, sim)
-        gates.append(table)
-        _report_gate(table)
+        if production:
+            coverage = ctx["preseason_coverage"]
+            if ctx["preseason_log_rows"] == 0:
+                print(f"   /!\\  REHEARSAL TENSOR (C6): no {season} preseason box scores "
+                      f"exist on disk, so every unit is\n        priced on its "
+                      f"missing-preseason arm — the August board. Coverage "
+                      + (f"{coverage:.1%}" if np.isfinite(coverage) else "n/a")
+                      + f" is stamped into\n        the tensor, and "
+                      f"`assert_tensor_current` refuses this file the moment the October "
+                      f"log lands.\n        Rebuild then: `make preseason && "
+                      f"make simulate-production`.")
+            else:
+                print(f"  preseason stamp: {ctx['preseason_log_rows']:,} log rows on "
+                      f"disk at build time, coverage "
+                      + (f"{coverage:.1%}" if np.isfinite(coverage) else "n/a"))
+            print(f"\nGate A — skipped: {season} has no realized games to reproduce, so "
+                  f"the audited pooled table gains no\nrows. The production checks are "
+                  f"`make production-check` and the tensor's own staleness guard.")
+        else:
+            table = gate_a(cfg, ctx, sim)
+            gates.append(table)
+            _report_gate(table)
 
-    dest = out_dir / f"sim_season_gate_a{label}.csv"
-    gate = merge_gate(pd.concat(gates, ignore_index=True), dest)
-    gate.to_csv(dest, index=False)
-    print(f"\nSaved {len(gate):,} Gate A rows over "
-          f"{gate['season'].nunique()} seasons → {dest}")
-    paths["gate_a"] = dest
+    if gates:
+        dest = out_dir / f"sim_season_gate_a{label}.csv"
+        gate = merge_gate(pd.concat(gates, ignore_index=True), dest)
+        gate.to_csv(dest, index=False)
+        print(f"\nSaved {len(gate):,} Gate A rows over "
+              f"{gate['season'].nunique()} seasons → {dest}")
+        paths["gate_a"] = dest
     return paths
 
 
@@ -1776,8 +2237,18 @@ if __name__ == "__main__":
     parser.add_argument("--label", default="",
                         help="suffix for the Gate A artifact, so a run outside the "
                              "shipped set does not add rows to the audited table")
+    parser.add_argument("--tensor-label", default="",
+                        help="suffix for the TENSOR too — a variant population written "
+                             "beside the shipped tensor rather than over it "
+                             "(docs/rookie-rates-plan.md §5h)")
+    parser.add_argument("--production", action="store_true",
+                        help="the deployment unlock: simulate the UNPLAYED season the "
+                             "live DK board is for, at the `full` window, through the "
+                             "forward frames. Typed, never inferred from --window — "
+                             "docs/rookie-inclusive-tensors-plan.md §5b.")
     args = parser.parse_args()
 
     cfg = yaml.safe_load(open("configs/default.yaml"))
     run(cfg, seasons=args.season, n_sims=args.n_sims, window=args.window,
-        seed=args.seed, label=args.label)
+        seed=args.seed, label=args.label, tensor_label=args.tensor_label,
+        production=args.production)

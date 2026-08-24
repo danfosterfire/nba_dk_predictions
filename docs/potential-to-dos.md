@@ -1313,3 +1313,180 @@ realistically after 2026-27, i.e. after this project's target draft. Or B0 run a
 knowledge showing the *shipped* layout already misses stage cells badly on **both**
 validation seasons *in the same direction* despite their regime difference — stability
 across that break is the one old-regime signal that would deserve any weight.
+
+## 16. ⚙️ Rookies are not on the board at all — SCHEDULED 2026-08-22, moved to its own doc
+
+**This entry became a program**: `docs/rookie-rates-plan.md` carries the design, the gates
+and an eight-session runbook. **Sessions 1-5 ran 2026-08-22** — the floor priced (§7a), the
+veteran design's lag-recovery ladder built and gated to one rung of four (§7c), the
+true-rookie design built with eleven no-fit floors that beat the shipping draft-bucket
+incumbent on CRPS on 11 of 11 heads (§7d), the eleven arms fitted with one of them clearing
+§4's per-head gate (`reb`, §7e), and **this entry's own settling gate answered** (§7f,
+`make season-total-rookie`). Session 1 priced the floor this entry asked for (`make rookie-floor`, plan doc §7a): letting the field draft what we cannot moves
+the Round-1 cut line +173.1 / +111.9 dk_pts, while the contest lift does not resolve on two
+realized seasons — so the entry's "if the floor is within noise, the head is not worth
+building" test is answered by decision 1 below rather than by the measurement.
+
+**The settling gate, in the unit this entry asked for.** At the season-total dk_pts unit on
+validation, the rookie rate family is worth **520.27 dk_pts of draftable MAE** against the
+zero a true rookie scores today (739.15 → 218.88) and the ladder's returnees **519.15**
+(1062.46 → 543.32). The *fitted* family against the *floor* family is **null** (+0.97
+[−3.36, +5.33] CRPS at the shipped games treatment, −2.81 [−6.01, +0.25] under an oracle on
+games) — which is what one fitted head of eleven should be worth where the other ten arms
+are identical between the two families. The same gate is null for the SHIPPED population
+too, so this is not a rookie-specific weakness. Sessions 6-8 remain: persistence and the
+simulator, the forward board, and the closeout.
+
+Three things decided at scheduling supersede parts of the
+entry below, which is kept as written. (1) The floor is priced first but is **context, not
+a kill switch** — the head is built regardless. (2) ~~The population is the whole
+structurally-missing complement of the veteran design~~ — **reversed the same day** by
+`make lag-recovery` (plan doc §7b): a player with any prior NBA season is better served by
+the VETERAN heads with his nearest usable lag imputed and shrunk (a returnee's two-year-old
+rate carries at validation R² 0.8976 against the veteran floor's 0.8989, and beats the
+preseason estimator on 7 of 7 heads), so the rookie head serves **true rookies only** and a
+new Session 2 builds the veteran design's lag-recovery ladder. (3) The closing claim that
+preseason-rate → regular-rate transfer was "never measured for players with no prior
+season" was already stale when written: P4(b) / `make rookie-priors`
+(`docs/preseason-plan.md`) measured exactly that at the estimator level — the volume-shrunk
+preseason per-36 clears on 5 of 8 rate targets; what remains unmeasured is a *fitted* head.
+
+### The original entry, kept for the record
+
+**Every board this project has produced, forward or retrospective, contains zero true
+rookies.** Surfaced 2026-08-21 while profiling the forward board rehearsal's unshared
+units: the 2023-24 retrospective component design carries **0** players whose first
+played season is the target — Wembanyama is not in the 387 scorable units the shipped
+path ranked that season. The mechanism is structural, not a filter to relax:
+`component_rates.MIN_PRIOR_MINUTES` demands 200 prior-season minutes because **every
+rate feature is a lag**, and below it the own-rate features do not exist rather than
+being noisy.
+
+The consequence is asymmetric with availability: rookies DO absorb minutes (the
+composition's expanding draft-bucket priors, `rookie_share_priors`) and DO get an
+availability rate (the graded no-design level), so their teammates' minutes are drained
+correctly — but their own dk_pts are never scored, so the recommender can never draft
+one while the ADP field will. Round-1 rookies routinely carry top-100 ADP.
+
+### What to compare
+
+A rookie rate arm needs a feature set that exists before the opener with no NBA lag:
+draft slot (already bucketed in `features/team_context.py`), and — the genuinely
+promising one — **current-season preseason box scores**, which the preseason capture
+already lands and which rookies play heavily in. The floor to clear is the current
+behaviour priced in contest units: how much Round-1 advance probability does a strategy
+lose by being structurally unable to roster any rookie, measured by giving the simulated
+field (which drafts by ADP) its rookies while our seat cannot. If the floor is within
+noise, the head is not worth building.
+
+### What would settle it
+
+The same gate every component head cleared: a validation-scored arm against the no-fit
+floor, at the season-total unit (`make season-total`'s frame), on the rookie population
+only. Preseason-rate → regular-rate transfer for rookies is the load-bearing unknown;
+`docs/preseason-plan.md`'s P-series measured that transfer for veterans, never for
+players with no prior season.
+
+## 17. Capture the contest's own outcome data — cut lines, standings, field scores
+
+**A capture program, not a model change, and it is the time-critical one: the data only
+exists while contests run.** For every contest entered (2026-27 is the first season with
+real entries), save the standings DK exposes — per-entry scores by scoring period, each
+Round-1 pod's placings and its 2nd-place score, the advancing thresholds for Rounds 2–4,
+field size and payout confirmations — at every round close. The DK lobby is login-gated
+with no archive, which is exactly the shape of the 2024-25 ADP loss that halved the
+held-out contest replay (`docs/final-evaluation-plan.md` §4b); assume standings access
+expires and save early.
+
+### Why this is worth capturing
+
+A realized cut line is an order statistic over thousands of real best-ball rosters — the
+strongest available test of the simulator's **joint** structure at exactly the
+functional the contest pays on (see item 18, which consumes this). Nothing else in the
+project's data reaches the field's realized score distribution.
+
+### What would settle it
+
+Nothing to settle — capture-or-lose. Un-parked the day the first 2026-27 contest locks;
+the weekly cadence belongs beside `make draft-boards-status` in the entry-collection
+routine (`docs/entry-collection-plan.md`).
+
+## 18. A Gate A for joints — score the simulator on contest-shaped joint statistics
+
+**Gate A verifies the tensor margin by margin; the contest pays on joints, and no gate
+reads them.** The held-out round made this concrete: Gate A brackets its bars on both
+test seasons while the one-world contest shows no edge — and the circularity worry
+(strategies tuned in model worlds exploiting model-idiosyncratic joint structure) is
+untestable without a joint instrument.
+
+### What to compare
+
+All computable from existing tensors plus realized box scores, on validation seasons:
+
+- **the best-ball functional itself** — for each captured 12-entrant board
+  (`make draft-boards`), every roster's 17-week sum of weekly max-7 scores, realized
+  against the simulated distribution of the same rosters. The pod's realized 2nd-place
+  score against the simulated 2nd-place distribution is the advance test in miniature;
+- **pairwise player-week co-exceedance** — P(both of a pair clear their own p90 in the
+  same week), realized vs simulated, graded same-team / same-game / neither;
+- **board-level spread** — the 12-man shared-`beta` inflation (1.0046 held out)
+  generalized to full 16-man rosters and to minutes/rate channels, not availability
+  alone;
+- once item 17 lands a season of data: the **realized cut-line distribution** against
+  the simulated one, which folds the field model in.
+
+### What would settle it
+
+This item is the instrument, so it settles by existing: a `sim_season_gate_joint.csv`
+beside Gate A's artifact, reported per season. Items 19 and 20 are gated on what it
+finds — a joint cell the simulator misses by a margin worth contest equity — and if
+every cell lands inside seed noise, both stay parked and that null is the finding.
+
+## 19. Per-minute rates should respond to drawn teammate absences, not just minutes
+
+**When a star sits, the simulator redistributes his minutes (the composition, fitted)
+but not his usage: every teammate's per-minute rate is constant within a player-season,
+so injuries propagate through half the channel.** In reality the backup's shot rate per
+minute rises with the vacated usage. This is the largest known structural gap in the
+joint — it shapes exactly the injury-cascade weeks a best-ball field's variance lives
+on.
+
+### What to compare
+
+Fit a historical elasticity — per-minute count-rate multiplier per share of absent
+teammates' prior-season usage — from the decades of star-absent games already in the
+panel (`availability_panel` knows who sat; `component_targets` knows what everyone did),
+with `nba_api` lineup/on-off splits as the richer source if the game-level fit is too
+noisy. Apply it at **draw time** to *drawn* absences, exactly as the composition already
+does for minutes. Prediction-time legal by construction: the elasticity is a historical
+parameter, and what it multiplies is simulated, never known.
+
+### What would settle it
+
+Item 18's co-exceedance and lineup-score cells, plus the ordinary bars: Gate A marginals
+must not degrade, and `make strategy-sweep` prices the change in contest units against
+the incumbent. Parked for 2027-28: changing the world-generator weeks before the first
+real-entry season would re-tune strategy selection on the layer with the least realized
+evidence.
+
+## 20. The copula has no tails — and the contest pays on joint thresholds
+
+**The residual copula is Gaussian, whose tail dependence is exactly zero, and the
+double-double bonus is a joint threshold event; 4 of 21 count pairs already saturate the
+frailty's reach in the shipped run.** If real box scores carry upper-tail dependence the
+Gaussian cannot express, simulated bonus rates and joint blow-up weeks are structurally
+thin in a way no marginal gate can see.
+
+### What to compare
+
+Measure before building, on validation: realized joint exceedance — P(pts > its p90 ∧
+reb > its p90) per player and pooled by role — against the simulated tensor's. If the
+gap is real: a t-copula (one added df parameter, nesting the shipped Gaussian as
+df → ∞) and a role-graded correlation matrix are the two candid arms, gated the same
+way as item 19. `docs/sim-inputs-plan.md`'s copula measurement items are the natural
+home; this extends them with the tail-specific read.
+
+### What would settle it
+
+The measured exceedance gap first — inside seed noise and this closes as a null. Parked
+for 2027-28 with item 19, same reason, same gates.

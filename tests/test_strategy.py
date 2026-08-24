@@ -306,6 +306,44 @@ def test_the_priceable_board_drops_exactly_the_unscorable_rows(monkeypatch):
     assert np.allclose(out.dk_pts, room.dk_pts[scorable])
 
 
+def test_the_asymmetric_board_hands_the_field_everything_and_our_seat_nothing_new(
+        monkeypatch):
+    """The rookie floor's arm: the field keeps the whole board, our seat keeps its mask.
+
+    The room comes back UNTOUCHED — that is the design, because `draft_portfolio`,
+    `draft_room.evaluate` and `plan_completion` already mask on `room.scorable`, so the
+    asymmetry is what those masks mean once the board around them stops being filtered.
+    A room whose `scorable` came back all-true would silently let our seat draft a player
+    the tensor prices at zero, which is the bias `priceable_room` exists to prevent.
+
+    The probe figures must be IDENTICAL to the restricted call's, since the probe drafts
+    the unrestricted board in both modes — that is what makes the two records comparable
+    field for field.
+    """
+    scorable = np.ones(len(_room().frame), dtype=bool)
+    scorable[::7] = False
+    room = _room(scorable=scorable)
+    monkeypatch.setattr(R, "build_field",
+                        lambda *a, **k: np.zeros((12, 2, room.dk_pts.shape[2]),
+                                                 dtype=np.float32))
+    monkeypatch.setattr(R, "field_reference", lambda *a, **k: None)
+    out, dropped = S.priceable_room({}, room, seed=0, n_field_drafts=1, restrict=False)
+    _, restricted = S.priceable_room({}, room, seed=0, n_field_drafts=1)
+
+    assert out is room
+    assert list(out.scorable) == list(scorable)
+    assert dropped["field_board"] == "unrestricted"
+    assert restricted["field_board"] == "priceable"
+    assert dropped["n_board"] == len(room.frame)
+    assert dropped["n_dropped"] == 0
+    assert dropped["n_seat_masked"] == int((~scorable).sum())
+    assert restricted["n_seat_masked"] == 0
+    # the same probe, so the field's unpriceable rate is the same measurement in both
+    for key in ("field_unpriced_per_entry", "field_entries_with_unpriced",
+                "probe_entries"):
+        assert dropped[key] == restricted[key]
+
+
 # ── 4. The strategy object ────────────────────────────────────────────────────
 
 def test_alpha_is_a_rank_blend_with_the_two_ends_exact():
@@ -541,3 +579,103 @@ def test_a_need_zero_field_nests_the_shipped_adp_field_exactly():
     room.field_cfg = D.FieldConfig(rank_noise_sd=4.0, need_weight=400.0)
     keen, _ = S.draft_portfolio(room, ours, "t", 2, np.random.default_rng(0))
     assert not np.array_equal(keen, base)
+
+
+# ── The arms the live room may offer ──────────────────────────────────────────
+
+def _sweep_rows(**by_strategy) -> pd.DataFrame:
+    """A minimal sweep table: `{name: (lift, p_any)}` for one tournament."""
+    rows = []
+    for name, (lift, p_any) in by_strategy.items():
+        arm = {s.name: s for s in S.strategy_table()}[name]
+        rows.append({"tournament": "t", "strategy": name, "lift_vs_null": lift,
+                     "p_any_advance": p_any, "p_advance": lift, "roi": 0.0,
+                     **{k: arm.as_row()[k] for k in S.ROOM_ARM_KEYS}})
+    return pd.DataFrame(rows)
+
+
+def test_the_room_menu_drops_arms_a_single_seat_cannot_execute():
+    """A submitted board and an exposure cap are not things one hand-drafted entry has.
+
+    `autodraft_blend_a30` is a different executor and `blend_exposure40` is a statement
+    about a portfolio, so offering either in a live room would name a strategy the room
+    does not actually run.
+    """
+    table = _sweep_rows(autodraft_blend_a30=(0.9, 0.9), blend_exposure40=(0.8, 0.8),
+                        blend_stack12=(0.7, 0.7), blend_caps_dk=(0.6, 0.6),
+                        lineup_value=(0.5, 0.5), blend_a30=(0.4, 0.4))
+    assert S.select_top_n(table, "t", S.strategy_table(), 3) == ["lineup_value",
+                                                                "blend_a30"]
+
+
+def test_arms_that_collapse_onto_the_same_room_policy_are_deduplicated():
+    """The `88k_alley_oop` failure mode, in miniature.
+
+    At one entry the exposure-cap and position-cap arms degenerate to `blend_a30` and tie
+    with it *exactly*. Without the dedupe the room would offer three menu entries that
+    draft an identical board, which is worse than offering one.
+    """
+    table = _sweep_rows(blend_a30=(0.41, 0.41), blend_caps_dk=(0.41, 0.41),
+                        blend_exposure40=(0.41, 0.41), lineup_value=(0.42, 0.42),
+                        bracket_ev=(0.30, 0.30))
+    picked = S.select_top_n(table, "t", S.strategy_table(), 3)
+    assert picked == ["lineup_value", "blend_a30", "bracket_ev"]
+
+
+def test_the_rooms_default_arm_is_the_one_select_ships():
+    """The menu may reorder nothing. Rank 0 has to be `select`'s own answer, or the room
+    would quietly draft under a strategy the sweep did not choose."""
+    table = pd.read_csv("outputs/predictions/strategy_sweep.csv")
+    strategies = S.strategy_table()
+    for tournament in table["tournament"].unique():
+        assert (S.select_top_n(table, tournament, strategies, 3)[0]
+                == S.select(table, tournament))
+
+
+def test_a_strategys_room_arm_keeps_the_market_schedule_and_drops_the_portfolio():
+    """`room_arm` is a lossy projection and `room_expressible` is what says so."""
+    full = S.Strategy("x", ranking="blend", alpha=0.35,
+                      alpha_rounds=(0.15, 0.35, 0.65), objective="lineup_value",
+                      exposure_cap=0.4)
+    arm = full.room_arm()
+    assert not full.room_expressible()
+    assert [arm.alpha_at(i) for i in (0, 4, 12)] == [full.alpha_at(i)
+                                                     for i in (0, 4, 12)]
+    plain = S.Strategy("y", ranking="blend", alpha=0.3, objective="lineup_value")
+    assert plain.room_expressible()
+
+
+def test_the_room_arms_artifact_carries_everything_needed_to_rebuild_the_policy():
+    """An artifact that names a strategy but not its parameters has to be re-derived to
+    be used — the same rule `ship` follows."""
+    cfg = {"sim": {"tournaments": {"t": {"entries": 4}}}}
+    table = _sweep_rows(lineup_value_blend30=(0.5, 0.5), bracket_ev_blend30=(0.4, 0.4),
+                        lineup_value=(0.3, 0.3), model_mean=(0.2, 0.2))
+    arms = S.room_arms(table, cfg, S.strategy_table())
+    assert list(arms["rank"]) == [0, 1, 2]
+    assert list(arms["selected"]) == [True, False, False]
+    assert set(S.ROOM_ARM_KEYS) <= set(arms.columns)
+    top = arms.iloc[0]
+    assert R.RoomArm(name=top["arm"], ranking=top["ranking"], alpha=float(top["alpha"]),
+                     quantile=float(top["quantile"]),
+                     objective=top["objective"]).alpha_at(0) == 0.3
+
+
+def test_the_multi_entry_tiers_all_offer_the_same_three_arms_in_the_same_order():
+    """The doc's central claim about the menu, which `make docs-audit` cannot check.
+
+    The audit checks numbers; which arm sits at which rank is prose. It is pinned here
+    instead, against the sweep table rather than against a remembered list — so if the
+    sweep moves, this fails and `docs/simulations-plan.md` gets re-read rather than
+    quietly describing a menu that no longer exists.
+    """
+    table = pd.read_csv("outputs/predictions/strategy_sweep.csv")
+    strategies = S.strategy_table()
+    multi = table.loc[table["n_entries"] > 1, "tournament"].unique()
+    assert len(multi) == 4
+    for tournament in multi:
+        assert S.select_top_n(table, tournament, strategies, 3) == [
+            "lineup_value_blend30", "bracket_ev_blend30", "lineup_value"]
+    # The single-entry tier is the one that differs, and it differs on an unresolved gap.
+    assert S.select_top_n(table, "88k_alley_oop", strategies, 3) == [
+        "lineup_value", "blend_a30", "lineup_value_blend30"]

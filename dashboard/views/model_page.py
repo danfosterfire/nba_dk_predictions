@@ -5,6 +5,15 @@ components, game length) that differ only in which heads sit behind their select
 module is that page; a view under `views/` is one call into `render()` with a class key,
 and `dashboard/model_cards.py` holds the class table and every frame shape below.
 
+**The selector carries only heads in the simulator's draw path** (since 2026-08-23): a
+model page discusses the heads a simulated season is assembled from, and a head that is
+fitted, converged and carded but never read at draw time — the games-played tenure
+decomposition, the marginal minutes head — stays carded and off the page. `heads_of`
+reads the artifact's own `in_draw_path` for the cut, so the pages follow
+`src/sim/season.py` through `make model-cards` rather than restating it. The marginal
+minutes head's one draw-time role — calibrating the injected per-(player, season) σ — is
+noted on the *Inputs beyond the heads* page, where that constant is inventoried.
+
 The seven blocks, in the order the plan fixes them:
 
 1. **What this head is** — its declared specification, its **unit**, and its **role in the
@@ -64,7 +73,7 @@ FEATURE_GRID_LIMIT = 8
 
 @st.cache_data(show_spinner="Reading the model cards…")
 def load_cards() -> dict[str, pd.DataFrame] | None:
-    """The nine model-card artifacts, or `None` once a missing one has been named."""
+    """The ten model-card artifacts, or `None` once a missing one has been named."""
     directory = predictions_dir()
     frames = {}
     for key, name in (("index", mc.INDEX_FILE),
@@ -75,7 +84,8 @@ def load_cards() -> dict[str, pd.DataFrame] | None:
                       ("ecdf", mc.ECDF_FILE),
                       ("calibration", mc.CALIBRATION_FILE),
                       ("quantile", mc.QUANTILE_FILE),
-                      ("sample", mc.SAMPLE_FILE)):
+                      ("sample", mc.SAMPLE_FILE),
+                      ("stan", mc.STAN_FILE)):
         frame = optional(directory / name, target=mc.MAKE_CARDS)
         if frame is None:
             return None
@@ -271,7 +281,44 @@ def relationships_block(cards: dict, head: str, th: dict) -> None:
         st.dataframe(square.round(3), width="stretch")
 
 
-# ── Block 4 · coefficients ────────────────────────────────────────────────────
+# ── The Stan program — a named block, between blocks 3 and 4 ──────────────────
+
+def stan_block(cards: dict, row: pd.Series, th: dict) -> None:
+    """The head's own Stan program, verbatim, keyed on block 3 so it lands before the
+    coefficients it defines.
+
+    Named rather than numbered, like every page-owned block, and shared by the pages that
+    ask for it rather than built into the sequence — the numbered blocks are the contract
+    every model page keeps. The source is read from `model_card_stan.csv`, the emitter's
+    snapshot of `src/stan/`, so the code shown is the code the cards ship with and the
+    page still reads artifacts only. Code is the one thing on these pages that is neither
+    a figure nor a result: it is the specification itself, which is what block 1's prose
+    is allowed to describe and this block simply shows.
+    """
+    head = str(row["head"])
+    program = mc.stan_row(cards["stan"], head)
+    if program is None:
+        # An older artifact loses the block rather than raising — the same degradation
+        # `chain_role_phrase` chooses when its column is absent.
+        return
+
+    st.markdown("---")
+    st.subheader("The Stan program")
+    siblings = mc.stan_siblings(cards["stan"], cards["index"], head)
+    st.caption(
+        f"**`{program['stan_file']}`, verbatim** — the source this head's likelihood is "
+        f"compiled from, snapshotted into `{mc.STAN_FILE}` by `{mc.MAKE_CARDS}` beside "
+        f"every card above. "
+        + (f"The same program serves {len(siblings)} other carded head"
+           f"{'s' if len(siblings) != 1 else ''} "
+           f"({', '.join(siblings)}) with different data — optional blocks are switched "
+           f"by the data it is handed, so a zero-length block is disabled exactly rather "
+           f"than approximately."
+           if siblings else
+           "No other carded head compiles from this program."))
+    with st.expander(f"`{program['stan_file']}` · {int(program['n_lines']):,} lines",
+                     expanded=False):
+        st.code(str(program["source"]), language=None)
 
 def coefficients_block(cards: dict, head: str, th: dict) -> None:
     coefficients = cards["coefficients"]
@@ -554,9 +601,11 @@ def render(class_key: str, extra: dict | None = None) -> None:
     **The seven blocks are numbered and a page's own block is named**, which is the whole
     distinction: the numbers are the contract every model page keeps, so inserting a page's
     own material into the sequence would mean block 5 was a different block on two pages. A
-    named block also goes where its question is asked rather than at the end — both of the
-    two that exist today are keyed on block 1, because "what did this head buy over doing
-    nothing" is the first thing to know about a head and not the eighth.
+    named block also goes where its question is asked rather than at the end — the
+    floor-and-verdict blocks are keyed on block 1, because "what did this head buy over
+    doing nothing" is the first thing to know about a head and not the eighth, and the
+    shared `stan_block` is keyed on block 3, so the program lands just before the
+    coefficients it defines.
     """
     extra = extra or {}
     spec = mc.model_class(class_key)
@@ -579,7 +628,8 @@ def render(class_key: str, extra: dict | None = None) -> None:
             format_func=lambda h: str(mc.head_row(cards["index"], h)["label"]),
             key=f"head-{class_key}",
             help="Every head on this page shares a likelihood family or a role, and each "
-                 "states its own unit — they are not all fitted at the same one.")
+                 "states its own unit — they are not all fitted at the same one. Only "
+                 "heads a simulated season actually reads at draw time appear here.")
         st.markdown("---")
         st.caption(
             f"Read from `{rel(predictions_dir())}` — reproduce with `{mc.MAKE_CARDS}`, "

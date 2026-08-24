@@ -16,6 +16,11 @@ that wins here earns a Stan port in `stan_availability.py`, it does not ship fro
 > compound counting process (§12), the layout's tenure factor, which is the only one of the
 > three that **ships** (§13), and the block re-crossed against the head that actually
 > ships (§14).
+>
+> **§16 is scheduled and runs next** (opened 2026-08-22 from `docs/rookie-rates-plan.md`
+> §7f): this head drops a player who missed all of S-1 even when S-2 is complete, and the
+> plug-in that catches him hands every returning player in the league the same scalar. It
+> carries its own session prompt (§16h). Nothing in it is measured yet.
 
 ---
 
@@ -1445,6 +1450,17 @@ predated the window round; this is the same question asked properly. Two arms of
 `strategy-sweep`, back to back on one afternoon at **60 min** and **65 min**. Only one of the
 twenty heads is refitted, which is what makes an arm an hour rather than a day.
 
+> **Provenance, 2026-08-23** (`docs/rookie-inclusive-tensors-plan.md` §7e): both arms of
+> this pair are frozen captures — `make mixture-value` reads
+> `outputs/predictions/mixture_arms/` and never the live artifacts — and the chain they
+> snapshot was superseded when the shipped tensors were re-drawn over the rookie-inclusive
+> population (that round's §5c/§5d). Every figure in this section reproduces to the digit
+> from the capture and none of them moved or will move; what changed is what they describe —
+> the rookie-less chain as it stood on 2026-08-12. Re-capturing either arm under the shipped
+> chain would need the counterfactual half refitted, which that round's C2 forbids and no
+> open question needs: §7l's verdict is about the *consumer* (the drafting layer ranks), not
+> about the population on the board.
+
 **The pair is valid, and establishing that was worth the second run on its own.** The mixture
 arm was re-run rather than remembered, and it reproduces the recorded run **exactly**: all
 seven posterior draw arrays at max |diff| **0.000e+00**, both `sim_tensor_*.npz` bit for bit
@@ -1889,6 +1905,15 @@ the entry's zero-sum argument had to be checked at the team. The graded arm give
 that league-level accuracy (its own league share drifts to +0.0087) and buys a sixth of the
 per-team error with it. That is the trade this change is: it does not know more about how many
 minutes rookies get in aggregate, it knows better **which** rookies get them.
+
+> **The realized row stopped being chain-invariant on 2026-08-22, and it is the population
+> that moved, not the season.** §16j's ladder gives `returnee_lag2` players availability
+> design rows, so the tensor re-run of `docs/rookie-inclusive-tensors-plan.md` §5c took 13
+> (2022-23) and 6 (2023-24) of them out of the no-design population, and the *realized*
+> league share fell 0.1057 → **0.0889** and 0.0992 → **0.0928** — the same seasons measured
+> over a smaller no-design set. The table above is the 2026-08-12 readout on the pre-ladder
+> population and stays as recorded; the live artifact rows now read simulated **0.0853** /
+> **0.0939** against those bars, per-team share-error MAE **0.0289** / **0.0401**.
 
 **What was re-run, and what was not.** All four tensors — the two validation seasons and the
 two training seasons `make weekly-scores` reads — because leaving a mix of arms on disk is the
@@ -3607,3 +3632,605 @@ unbuilt.
    a different model and a different question.
 4. **The era drift on the no-design population is real and separable**, and correcting it by
    truncating the pool costs more in grading than it buys in bias.
+
+---
+
+## 16. The returnee gap — the head drops exactly the rows the component ladder recovered. **RUN 2026-08-22, ONE RUNG ADMITTED, THE CHEAP ARM WON, AND THE KEY IS NOW ON (§16j)**
+
+Opened by `docs/rookie-rates-plan.md` §7f, which found it from the other end. That program
+widened the *component* design to score a player whose lag-1 is missing because he sat out —
+`stan.components.lag_ladder`, one rung admitted — and then composed the eleven heads into a
+season total. The rate side of those rows came out excellent and the season totals came out
+badly wrong, and all of the error is games played. **This section is that finding turned into
+a round on the head that owns it.**
+
+§16a-§16h below are the round as it was **scoped**, and every figure in them is a scratch,
+pre-round reading taken 2026-08-22 while scoping it. They are kept unedited, because the
+result reverses the expectation §16e wrote down and a plan doc that quietly rewrote its own
+prior would be worth less than one that did not. §16i is the round as it **ran** and is
+where `make docs-audit` reads.
+
+### 16a. The defect, stated once
+
+`build_design` drops a player-season on **`gp_share_lag1` alone**
+(`src/models/availability.py:256`). A player who missed all of S-1 has no panel row for it,
+so every `_lag1` column is NaN and the row does not exist — no matter how complete S-2 is.
+He then falls to `no_design_availability`'s plug-in, which is where the damage happens:
+`availability_no_prior.level_keys` builds the shipped `tenure_draft` key as
+`f"rookie__{bucket}"` for a first appearance and the bare string **`"returning"`** for
+everything else, so **every returning player in the league shares one cell and one scalar
+rate**. On the rookie-plan §7f frame that is 24.8 games in 2022-23 and 24.6 in 2023-24, handed
+identically to Kawhi Leonard, Jamal Murray, Miles Bridges and Armoni Brooks, whose realized
+counts run from 10 to 70.
+
+**That collapse was measured, not careless** — §8b found the draft bucket is a gradient for a
+rookie and a flat for a returnee, and crossing it in would average the two. What §8b could not
+see is that it chose on the *pooled* uncovered-returnee population, which is dominated by
+fringe roster churn. Read on the population a board actually prices, the same cell is serving
+two regimes.
+
+### 16b. Why the plug-in cannot close it, and what it is actually missing
+
+The two failures are different and only one of them is the one the level ladder was built to
+fix. Scratch readings on the availability frame, validation seasons:
+
+| population | rows | validation | realized `gp_share` | carried `gp_share_lag2` | corr(lag-2, realized) |
+|---|---:|---:|---:|---:|---:|
+| shipped design (rung 0) | 11,272 | — | 0.685 | — | **+0.573** (lag-1) |
+| lag-2 recoverable, all | 286 | 32 | 0.336 | 0.451 | **+0.691** |
+| lag-2 recoverable, draftable | 160 | 17 | 0.474 | 0.554 | **+0.675** |
+
+- **The plug-in's LEVEL is roughly right pooled and badly wrong where it matters.** 0.30 of a
+  schedule against a pooled realized 0.336 — close. Against the **draftable** 0.474 it is
+  0.17 of share low, about fourteen games.
+- **The plug-in's ORDERING is zero by construction.** One scalar per season cannot rank
+  Leonard above Brooks, and nothing in the level ladder can give it one, because the key that
+  would carry the ranking — his own last real season — is the column the design threw away.
+- **The carried lag-2 has the ordering and not the level.** Its correlation with realized
+  share is **+0.691**, *higher* than the shipped design's own lag-1 correlation of +0.573,
+  and its level runs **0.746×** high pooled and **0.855×** high draftable. Coming back from a
+  lost season, a player plays about three-quarters of what his last real season says — and
+  the ratio itself moves with role, so one multiplicative shrink will not serve both ends.
+
+That is the whole design brief: **the ordering is on the row already and the level needs a
+coefficient.**
+
+### 16c. What already exists — do not rebuild
+
+- **The lag columns are already computed.** `build_design` already calls
+  `with_lags(..., max_lag=3)`, so `gp_share_lag2/lag3`, `minutes_per_game_lag2/lag3` and
+  `total_minutes_lag2/lag3` are on the row before the `dropna` deletes it.
+- **The head already fits coefficients on them.** `FEATURE_COLS` carries `gp_share_lag2`,
+  `gp_share_lag3`, `minutes_per_game_lag2` and `minutes_per_game_lag3`, so for a covered
+  veteran this head *already* reads two- and three-year-old availability. There is no new
+  feature family here, only rows.
+- **The design already backfills, in the other direction.** The three lines under the
+  `dropna` fill `lag2`/`lag3` **from** `lag1` when those are missing, and `n_prior_seasons`
+  records that it happened. The mirror fill is simply not written; that asymmetry is the
+  entire gap.
+- **The ladder's shape is settled and should be imported, not restated.**
+  `lag_recovery.classify` / `recent_lag` / `recent_shrunk_rate` and
+  `component_rates.build_design(..., ladder=...)` are the component side's version, with
+  `lag_source` / `lag_rung` / `lag_minutes` provenance columns and a rung-0-bit-identical
+  test. The rung vocabulary should be the same one so a board reconciles across the two
+  designs without a mapping table.
+- **The plug-in stays.** Whatever this round admits, `no_design_availability` still serves
+  true rookies and the players no lag reaches, and §8b's grading of it is untouched.
+
+**The blast radius is wider than the component ladder's and that is the main practical risk.**
+`build_design` here is imported by `stan_minutes`, `stan_composition`, `stan_games_played`,
+`model_cards`, `sim/season`, `season_terms` and `final_evaluation` — the list the
+`ABSENCE_MIX_COLS` comment already keeps for exactly this reason. 382 new rows therefore move
+the minutes head's population, the composition's, the spell process's and the simulator's
+`present` mask, and because the minutes allocation is **zero-sum** a recovered player takes
+minutes from his teammates rather than appearing beside them. The component ladder had no
+such reach: its recovered rows entered a *scoring* population behind
+`stan.components.lag_ladder`. So this key defaults **off**, the rung-0-bit-identical
+requirement extends to every consumer above, and turning it on is a separate decision from
+measuring it.
+
+**Do not go past `max_lag = 3`.** The marginal rung is 96 rows and staler, and the component
+side already gated the equivalent: its `no_usable_lag` rung (away two or more seasons) failed
+both halves, count-head mean carry-forward R² 0.5977 with `blk` an anti-model at −0.632
+(`docs/rookie-rates-plan.md` §7c). Depth past three seasons is where that evidence says the
+signal has gone.
+
+### 16d. Depth is not a gap, and the design cannot currently tell them apart
+
+**The ladder does not narrow the design and cannot** — a worry worth answering directly,
+because the component side's boundary moved twice. `build_design` drops on `gp_share_lag1`
+**alone**; it has never required two seasons, let alone three. A player with exactly one
+prior season is kept, his `lag2`/`lag3` are filled *from* `lag1`, and `n_prior_seasons`
+records the depth. So recovering a lag is strictly a **widening**: the unserved pool shrinks
+by 382 rows and there is no rung at which it can grow.
+
+What it does do is put 286 rows into a design whose columns cannot say what they are. The
+presence pattern of the three lag blocks, over the whole window:
+
+| `(lag1, lag2, lag3)` | rows | `n_prior_seasons` | what the row is |
+|---|---:|---:|---|
+| `(1,0,0)` | 2,136 | 1 | shipped — one prior season |
+| `(1,1,0)` | 1,730 | 2 | shipped — two consecutive |
+| `(1,1,1)` | 7,276 | 3 | shipped — three consecutive |
+| `(1,0,1)` | **130** | 2 | shipped — played S-1 and S-3, **missed S-2** |
+| `(0,1,0)` | 82 | — | dropped — missed S-1, played S-2 |
+| `(0,1,1)` | 204 | — | dropped — missed S-1, played S-2 and S-3 |
+| `(0,0,1)` | 96 | — | dropped — missed S-1 and S-2, played S-3 |
+
+**`n_prior_seasons` counts depth, not gaps**, so after a `lag1 <- lag2` recovery every
+recovered row lands on a value some healthy population already occupies: the 82 `(0,1,0)`
+rows become indistinguishable from the 1,730 `(1,1,0)` veterans who played S-1, and the 204
+`(0,1,1)` rows from the 7,276 `(1,1,1)` veterans. On every column the head reads, a man
+returning from a lost season would look exactly like one who never left — absorbed into a
+population **twenty to thirty-six times** his size, so nothing in the fit would resist it.
+
+**And the head already has this defect on 130 rows it currently carries.** A `(1,0,1)` player
+missed S-2; the existing backfill sets `lag2 := lag1` and `n_prior_seasons = 2`, which is
+precisely a two-consecutive-season veteran. The current fill direction *already* erases a gap.
+That is small and it is not new work invented by this round — it is the same missing column,
+and a round that adds one should fix both populations at once.
+
+The implication for §16e is the whole of the fork: a gap column is not a refinement on top of
+the imputation, it is what makes the imputation *sayable*. Without it the design is not
+handing the head a stale number, it is handing it a false structural fact.
+
+### 16e. The two arms — and here the cheap one is *not* the favourite
+
+`docs/rookie-rates-plan.md` §3 constraint 4 gated the imputation-only form first on the
+component side and named the refit form as the escalation. **The same fork exists here and
+the expectation is reversed**, for a reason specific to this head.
+
+1. **Imputation only (`recover_lag`).** Fill the `_lag1` block from the nearest usable season,
+   shrunk by its own reliability, into the columns the head already has coefficients for.
+   Scored by the shipped posterior; nothing refitted; one design edit.
+   **The reason to doubt it**: for a rate head the nearest real rate is a good estimate of
+   this year's rate — that is §7b's measurement. For an availability head **the missing season
+   is the signal**, and imputing lag-1 from a healthy lag-2 tells the head "he played 80 games
+   last year", which is the single most misleading fact available about Leonard in 2022-23.
+   The absence block goes with it: `trailing_missed_lag1`, `n_spells_lag1`,
+   `longest_spell_lag1` and `ABSENCE_MIX_COLS` all describe S-1 and would be imputed away.
+   The measured 0.746× / 0.855× level gap is that objection with a number on it — a raw carry
+   is biased high by exactly the fact it erased — and §16d is the same objection structurally:
+   without a gap column the recovered row is absorbed into a healthy population many times its
+   size. Arm 1 can still clear §16f's gate, because the bar is one flat scalar per season and
+   a stale real number may beat it comfortably. It would ship knowing it tells the head
+   something false, which is what arm 2 exists to price.
+2. **Refit with a staleness column (`recover_lag_staleness`).** The recovered rows enter the
+   **fit**, with a column that says how old the carried season is and that he was away — so
+   the head can learn the shrink rather than have it asserted. This is what the ratio table
+   above says is needed, and it is the arm the evidence favours.
+   **What it costs**, and why it is affordable here and was not there: the component
+   escalation was eleven heads at two windows. **This is one head.** `assert_same_specification`
+   still requires it at `train_val` *and* `full`, and `src/production_check.py` green after.
+
+Run **1 first anyway** — not because it is expected to win but because it is the control that
+prices the staleness column. A refit that beats a plug-in has beaten nothing in particular;
+a refit that beats the same rows imputed has beaten the imputation.
+
+### 16f. The gate, stated before any result
+
+- **Population.** The lag-2/lag-3-recoverable rows, reported `all` and **`draftable`**
+  separately, with rung 0 carried beside them as the bar — `lag_ladder`'s arrangement.
+- **Primary.** Validation paired-bootstrap CRPS **in games** against the shipped
+  `no_design_availability` plug-in, interval entirely below zero on the draftable rows.
+  Games, not season-total dk_pts: this is the availability head's own unit and the one every
+  figure in this doc is comparable to.
+- **Confirmation.** The rolling-origin harness on the fitting half agreeing — same sign,
+  interval below zero, a majority of origins won. §12e and §14f are why: two blocks on this
+  head won a validation reading and did not survive it.
+- **Non-regression, and it is a hard requirement.** Rung 0 must come back **bit-identical** —
+  design and posterior — because the recovered rows are legitimate only if the rows the
+  shipped coefficients were fitted on did not move. `tests/test_lag_ladder.py` is the shape.
+  Arm 2 refits, so there the requirement is on the *design* and on a seeded spot-check rather
+  than on the artifact.
+- **Downstream, reported not gated.** The `lag_recovered` season-total MAE in
+  `make season-total-rookie`, which is 543.3167 today against 64.4025 under an oracle on
+  games. A scratch carry-forward of the component ladder's own `gp_lag1` reaches 342.39, so
+  **about 42% of that gap is available to arithmetic** and the rest is what a fitted arm has
+  to find.
+
+### 16g. What would falsify it
+
+- The recovered rows' CRPS interval spans zero against the plug-in on either half. 32
+  validation rows (17 draftable) is a small population and the honest prior is that this
+  round measures a direction and not a size.
+- Arm 2 beats the plug-in but not arm 1 — then the staleness column is not what is doing the
+  work, the rows are, and the cheap form ships.
+- Rung 0 moves. That is not a falsification, it is a defect, and the round stops.
+
+### 16h. The session prompt
+
+Repeated verbatim in `docs/rookie-rates-plan.md` §6, as the interleaved next session
+between that program's 5 and 6. Keep the two in step if either is edited.
+
+> I'm working on the NBA prediction project (CLAUDE.md). Read
+> docs/availability-window-plan.md and execute **§16: the returnee gap** — raise
+> `availability.build_design` to recover a missing `gp_share_lag1` block from the nearest
+> usable season (importing `lag_recovery`'s helpers and `component_rates`' rung vocabulary,
+> not restating them), behind a config key, with `lag_source` / `lag_rung` / `lag_minutes` on
+> every row. Run **both** arms of §16e — imputation-only scored by the shipped posterior
+> first, then the refit with a staleness column at `train_val` and `full` — against §16f's
+> gate on the draftable and `all` populations, with rung 0 as the bar. Tests for the rung
+> boundaries and for rung 0 coming back bit-identical. Record the result here and in the
+> decisions registry, add the quotable figures to `make docs-audit`, and re-run
+> `make season-total-rookie` so §7f of docs/rookie-rates-plan.md gets its number.
+
+---
+
+### 16i. The round, run 2026-08-22 — one rung of three, and **§16e's expectation is reversed**
+
+**`make availability-lag`** (`src/models/availability_lag.py` →
+`outputs/predictions/availability_lag.csv`), plus
+`availability.build_design(..., ladder=...)` behind `stan.availability.lag_ladder` and
+`tests/test_availability_lag.py`. The ladder works and it is worth a great deal; the
+**staleness column §16e favoured is not what makes it work**, and the round says so with
+its own falsifier.
+
+#### What was built
+
+`build_design` gained a `ladder` argument on `component_rates.build_design`'s pattern, and
+the rung vocabulary is `component_rates.LADDER_RUNGS` with `lag_recovery.classify`,
+`recent_lag` and `recent_conversion` imported rather than restated. A ladder-off frame is
+byte-for-byte the frame the seven importers have always received; a ladder-on frame carries
+`lag_source` / `lag_rung` / `lag_minutes` on **every** row, plus `gp`/`team_games` lags and
+`STALENESS_COLS`. The key reaches the design through `stan_availability.availability_design`
+— one choke point, all seven consumers — and it defaults to `[]`.
+
+The census reproduces §16d exactly: **11,272 design rows today → 11,654 with every rung**,
++382, split 189 `returnee_lag2` / 97 `returnee_thin` / 96 `no_usable_lag`. **`thin_prior` is
+structurally empty**, which is the one asymmetry with the component ladder and is not an
+accident: that design's boundary is a 200-minute test and this one's is a presence test, so
+a thin lag-1 has always been inside it. Rung 0 comes back bit-identical, design and
+posterior, on the real frame and on the synthetic one.
+
+**Two things §16d asked for are now columns.** `n_prior_seasons` counts lag slots that hold a
+real season, which on a qualified row is `1 + notna(lag2) + notna(lag3)` **exactly** and on a
+recovered `(0,1,1)` row is 2 rather than the healthy population's 3. And `lag_interior_gaps`
+sees the **130** `(1,0,1)` rows the `lag2 := lag1` backfill has always erased — the count on
+the real design is 130, which is §16d's number arriving from the code rather than from a
+scratch query.
+
+#### The ladder's two constants, and the one that is a finding
+
+Fitted on the fitting half's 134 recovered rows by `fit_recent_conversion`'s own criterion
+(beta-binomial NLL at a dispersion refitted per candidate): **k = 246.4703 pseudo-games**
+toward an anchor of **0.287527**.
+
+**The anchor is not a league mean, and it cannot be.** `lag_recovery.recent_conversion`
+shrinks a conversion percentage toward the league's, because a carried percentage is unbiased
+and only noisy. A carried `gp_share` is neither — it is biased **high by exactly the fact it
+erased**, and the veteran population's own level is higher still, so shrinking toward it moves
+the level the wrong way and no `k` could rescue it. The anchor is therefore the recoverable
+population's own pooled rate. That is §16b's "the level needs a coefficient" delivered as a
+fitted constant, and §16i's `impute_raw` arm is what prices it.
+
+#### §16b's table, re-read on the rows that ship (validation)
+
+| group | population | realized | carried | ratio | corr |
+|---|---|---:|---:|---:|---:|
+| veteran (rung 0) | all | 0.6310 | 0.6397 | 0.9864 | **+0.5726** |
+| returnee_lag2 | all | 0.4454 | 0.6133 | **0.7263** | **+0.6496** |
+| returnee_lag2 | draftable | 0.5714 | 0.6901 | 0.8280 | +0.3998 |
+| returnee_thin | all | 0.1398 | 0.1130 | 1.2374 | −0.3490 |
+| no_usable_lag | all | 0.2576 | 0.2648 | 0.9728 | −0.4726 |
+| recovered | all | 0.3085 | 0.3810 | 0.8098 | +0.5807 |
+
+**§16b holds where it was measured and nowhere else.** Rung 0's own lag-1 correlation comes
+back at **+0.5726** against the scratch reading's +0.573, and `returnee_lag2`'s carried lag-2
+at +0.6496 against +0.691 on a wider frame — so "the ordering is on the row already" is a
+statement about **rung A** and is false on the other two, where the correlation is *negative*.
+That is the first thing the round adds to the scoping: the three rungs are not one population
+and the design brief only ever described one of them.
+
+#### The bar, and it is the same defect §7f found from the other end
+
+`no_design_availability` gives a draftable recovered row **24.7155** games against a realized
+**40.5500**, and a draftable `returnee_lag2` row **24.7376** against **46.8571**. Those are
+`docs/rookie-rates-plan.md` §7f's figures reproduced by a different module at a different
+unit, which is what makes the two rounds one finding rather than two.
+
+#### The gate §16f stated, on the **draftable** rows (CRPS in games, lower is better)
+
+| group | n | arm | CRPS | pred gp | vs `plugin` [95%] |
+|---|---:|---|---:|---:|---|
+| veteran | 772 | `shipped` | 8.8241 | 54.0039 | — (rung 0 is never plugged in) |
+| veteran | 772 | `impute` | 8.8264 | 53.9932 | — |
+| **returnee_lag2** | **14** | `plugin` | **17.6175** | 24.7376 | — |
+| | | `shipped` | **8.3662** | 47.7617 | **−9.2514 [−15.4431, −3.1316]** |
+| | | `impute` | **8.3722** | 47.4586 | **−9.2453 [−15.3833, −3.1724]** |
+| | | `impute_raw` | 9.0145 | 52.6608 | −8.6030 [−16.1417, −1.1853] |
+| | | `staleness` | 9.9376 | 38.1435 | −7.6799 [−11.7033, −4.0255] |
+| returnee_thin | 3 | `plugin` | 5.8340 | 24.6863 | — |
+| | | `impute` | 8.6179 | 33.7142 | **+2.7839 [+1.4553, +3.6516]** |
+| no_usable_lag | 3 | `plugin` | 10.8957 | 24.6415 | — |
+| | | `impute` | 7.5726 | 37.1292 | −3.3232 [−13.3029, +2.9720] |
+| recovered | 20 | `plugin` | 14.8417 | 24.7155 | — |
+| | | `shipped` | **8.2656** | 44.0369 | **−6.5761 [−11.4792, −1.9573]** |
+| | | `impute` | 8.2891 | 43.8476 | −6.5526 [−11.4046, −1.9714] |
+| | | `impute_raw` | 8.7952 | 47.1441 | −6.0465 [−11.6267, −0.5779] |
+| | | `staleness` | 9.0201 | 34.8024 | −5.8216 [−8.9593, −3.0105] |
+
+On the `all` population the same rows read `plugin` 11.7209, `shipped` 8.6650
+(−3.0558 [−6.0181, −0.2716]), `impute` 8.6614, `impute_raw` 9.0263 and `staleness` 7.5482
+(−4.1726 [−6.0637, −2.5211]).
+
+**The rolling-origin harness on the fitting half**, seven origins from 2015, 90 recovered
+rows pooled (32 draftable):
+
+| population | arm | CRPS vs `plugin` [95%] | origins won |
+|---|---|---:|---:|
+| draftable | `impute` | **−5.0374 [−8.7958, −1.6026]** | 5 of 7 |
+| draftable | `impute_raw` | −2.8373 [−7.7797, +1.7064] | 4 of 7 |
+| draftable | `staleness` | −4.8392 [−8.0077, −1.9194] | 6 of 7 |
+| all | `impute` | −1.7340 [−3.4351, −0.0705] | 5 of 7 |
+| all | `impute_raw` | −0.5512 [−2.5754, +1.5315] | 3 of 7 |
+| all | `staleness` | −3.3761 [−4.7856, −2.0321] | 6 of 7 |
+
+`shipped` has no rolling row **by construction** — it is one persisted posterior fitted on
+the whole fitting half, and re-scoring it at each origin would read coefficients that saw the
+origin's own season — so it is confirmed by `impute`, its refit-per-origin twin. The
+substitution is licensed by rung 0: the two read **9.1356** and **9.1390** on the same 883
+validation rows, **0.0033** apart.
+
+#### The verdict, and the arm §16e did not expect
+
+```
+  returnee_lag2   shipped / impute / staleness   ADMITTED     impute_raw  rejected
+  returnee_thin   every arm                      rejected
+  no_usable_lag   shipped / impute / impute_raw  rejected
+```
+
+**1. The ladder ships, and it ships at rung A alone —
+`stan.availability.lag_ladder: [returnee_lag2]`.** The margin is the largest thing on this
+head since the mixture: 17.6175 → 8.3662 CRPS in games on the draftable rows, an interval
+clear of zero at both readings, 5 of 7 origins. The plug-in is not merely worse there, it is
+worse than *doubling* — it says 24.7 games and the player plays 46.9.
+
+**2. §16g's second falsifier fires, so the cheap arm ships.** `staleness` against `impute` is
+**+0.7310 [−1.4152, +2.8585]** on the draftable rows and −1.1132 [−2.5677, +0.3892] on `all`:
+the interval spans zero at both readings and its point estimate is on the wrong side where the
+verdict is read. §16g wrote this case down before the run — *"then the staleness column is not
+what is doing the work, the rows are, and the cheap form ships"* — and that is what the
+numbers say. **This reverses §16e**, which named arm 2 as the favourite.
+
+**3. And the mechanism is the round's sharpest finding: arm 2 reproduces the plug-in's own
+defect one level up.** The staleness block does exactly what it was built to do — it learns
+the discount and applies it, taking the prediction from 47.5 games to 38.1 — but it learns it
+from the **pooled** 134 recovered fitting rows, which are dominated by fringe roster churn,
+and then applies it to the draftable ones. It over-shrinks by 8.7 games on precisely the
+population a board prices. That is `no_design_availability`'s failure repeated by a fitted
+head: not a wrong estimator, an estimator fitted on the wrong population. The evidence that
+this is the mechanism rather than a coincidence is that `staleness` **wins** on the `all`
+population (−4.1726 against `impute`'s −3.0595), where fringe rows dominate — it is better
+exactly where it was fitted and worse exactly where it is used.
+
+**4. The shrink earns its place, and that is what `impute_raw` is for.** The raw carry — the
+whole ladder with one number removed — passes validation and **fails the rolling confirmation**
+(−2.8373 [−7.7797, +1.7064], 4 of 7). It over-predicts by 6.6 games on the draftable recovered
+rows (47.14 against 40.55) where the shrunk arm is off by 3.3, which is §16b's 0.746× level
+gap arriving as a prediction error. So the ladder is **rows plus one constant**, and the round
+can say which half each is worth: the rows are worth −6.05 CRPS and the constant is worth a
+further −0.51.
+
+**5. Rung B fails on the wrong side and rung C cannot resolve.** `returnee_thin`'s draftable
+interval is **+2.7839 [+1.4553, +3.6516]** — the head is *worse* than one flat scalar, and the
+carry table says why: on those rows the carried share correlates **−0.3490** with realized, so
+there is no ordering for the recovered block to supply, and the block's volume columns put a
+returning fringe player in a rotation he is not in (33.7142 predicted games against a realized
+18.3333, where the flat scalar's 24.6863 is nearer). `no_usable_lag` straddles zero at both
+populations, and its carried share correlates −0.4726. Neither is a marginal call being made conservatively; one is a measured loss and
+the other is a measured nothing. The shipped rung set is one of three, which is the same
+arithmetic the component ladder came back with (`docs/rookie-rates-plan.md` §7c) on the same
+vocabulary.
+
+#### Downstream — §7f's open item, measured
+
+`make season-total-rookie-lagladder` runs `docs/rookie-rates-plan.md` §5e's readout with the
+admitted rung on and writes `season_total_rookie_lagladder.csv`; the shipped
+`season_total_rookie.csv` re-runs **bit-identical**, which is the check that the two are the
+same code under two availability treatments.
+
+| `lag_recovered`, draftable (14 rows) | shipped plug-in | §16's ladder |
+|---|---:|---:|
+| predicted games played | 24.7376 | **49.6575** (realized 46.8571) |
+| share served by `no_design_availability` | 1.0000 | **0.0000** |
+| `unserved` — what these rows score today | 1062.4643 | 1062.4643 |
+| floor family, season-total MAE | 543.3167 | **305.7897** |
+| floor family, season-total CRPS | 510.9946 | **249.8303** |
+| head family, season-total MAE | 550.0307 | **316.2041** |
+| floor family at `oracle_gp`, MAE · CRPS | 64.4025 · 47.1678 | 64.4025 · 47.1678 |
+| head family at `oracle_gp`, MAE · CRPS | 63.6246 · 44.9040 | 63.6246 · 44.9040 |
+
+**The ladder closes 49.60% of the gap §7f measured**, against the ≈42% §16f said was
+available to arithmetic — so the fitted head beats the scratch carry-forward, and the
+remaining 241.3871 dk_pts of MAE is what an availability head cannot reach on 14 rows. The
+`oracle_gp` rows are unchanged to the digit on every group, and so are the `veteran` and
+`rookie` columns: the ladder moved exactly the population it was built for and nothing else.
+On the unrestricted 19 rows the same cells read 444.9010 → **276.9327** MAE and 414.0311 →
+**227.6806** CRPS.
+
+### What §16 decides
+
+1. **`stan.availability.lag_ladder: [returnee_lag2]` is the verdict, and the key is still
+   `[]` in `configs/default.yaml`.** Flipping it widens the fitting *and* scoring population
+   of `stan_minutes`, `stan_composition`, `stan_games_played`, `model_cards`, `sim/season`,
+   `season_terms` and `final_evaluation` at once, and because the minutes allocation is
+   zero-sum a recovered player takes minutes from his teammates. §16c said turning it on is a
+   separate decision from measuring it; this section is the measurement.
+2. **Imputation only. No head is refitted, and the recovered rows are scored by a posterior
+   fitted before the ladder existed** — `shipped` is that reading and it is the arm that
+   ships. The escalation §16e held in reserve was run, priced and rejected on its own
+   evidence, **so the propagation it named is not owed**: §16e's `assert_same_specification`
+   at `train_val` and `full` plus a green `src/production_check.py` was the cost of
+   *shipping* arm 2, and arm 2 did not ship. The persisted availability head is the same
+   specification at all three windows it was before this round, `make posteriors` was not
+   re-run, and nothing in `data/features/posteriors/` moved.
+3. **A staleness column is not the missing piece; a population-matched estimate is.** Both
+   the plug-in and the refit fail the same way — an estimate fitted on the pooled uncovered
+   returnee population, applied to the draftable one — and the arm that wins is the one that
+   never pools them, because the head's own covariates separate the two. That is a general
+   statement about this population and it belongs beside §15's finding that a population is a
+   scoring restriction and not a refit.
+4. **`n_prior_seasons` counts real seasons and `lag_interior_gaps` exists.** The 130-row
+   `(1,0,1)` defect §16d named is now visible on every frame the ladder builds, whether or
+   not a rung is admitted, and it cost nothing to fix because it is bit-identical wherever
+   lag-1 is present.
+5. **What is not settled**: whether the recovered rows help the *contest*. This round scores
+   games on 14 draftable validation rows and `docs/rookie-rates-plan.md` §5f is what wires
+   them into the tensor. The season-total gap is 237.5 dk_pts on a 1,062 dk_pts season, which
+   is large enough to be worth a bracket reading and far too thin to be one.
+
+**⚠️ Addendum, 2026-08-22 — the rows went into the tensor at 24.7 games, and §16j is where
+that was fixed.** `docs/rookie-rates-plan.md` §7g turned the *component* ladder on and made
+the simulator's scorable units the union of the two rate families, so the rung-A returnees
+this section is about entered `sim_tensor_*.npz` — 13 units in 2022-23 and 6 in 2023-24 —
+with games played from `no_design_availability` at **24.7** against a realized 46.9. The
+rookie program's runbook interleaved this round ahead of Session 6 precisely so that would
+not happen; §16c's blast-radius argument is why it did anyway, and both were correct. **§16j
+took the decision**: the key is on, every fitting path cuts to `rung_zero`, and the zero-sum
+transfer §16c named is measured at the board rather than assumed.
+
+### 16j. The key is ON — the second edit, and the reading §16i could not take (2026-08-22)
+
+`stan.availability.lag_ladder: [returnee_lag2]`. §16i measured the ladder and stopped short
+of shipping it, because §16c had made turning it on a separate decision: this design reaches
+seven consumers and the minutes allocation is zero-sum. `docs/rookie-rates-plan.md` §7g then
+put the rows it serves **into the tensor** at the plug-in's 24.7 games, which turned that
+open decision into a priced one. This section takes it.
+
+**Two things had to be true, and only one of them was.** §16i had the head's own number. What
+nothing had was a reading that lets the minutes move — and that is the whole of the risk
+§16c named.
+
+#### The second edit: `rung_zero` at every path that fits
+
+`availability.rung_zero` existed after §16i and **nothing in `src/` called it**. So flipping
+the key alone would have widened the fitting population of four heads, not one. The cut is
+now at eight places, and each is the narrowest one that works:
+
+| path | cut | why there |
+|---|---|---|
+| `StanAvailability.fitting_rows` | `rung_zero` then `restrict_window` | the head's own choke point — covers `run`, `fit_and_score`'s two point MLEs, `mixture_port_check`, `posteriors.availability_artifact` and `src/final_evaluation.py` at once |
+| `stan_minutes.build_design` | on the merge source | the marginal minutes head |
+| `stan_composition.head_frame` | on the **merge**, not the split | see below |
+| `stan_games_played.games_played_design` | on the design | the spell process |
+| `season_terms.run` | on the availability sweep | an ablation over fitted arms |
+| `availability_exchangeability.run` | on the design | recorded decomposition and spell shapes are fitted |
+| `availability_no_prior.run` | on the design | see below |
+| `model_cards.availability_frames` | `rung_zero` then `restrict_window` | the only place that restates the head's order, because this head's card frames are the design itself rather than a variant ladder's output |
+
+**The composition is cut at its merge and that is the load-bearing choice.** `variants` fits
+coefficients on `FEATURE_COLS` and derives `design_missing` from `gp_share_lag1.isna()`, so a
+ladder-widened block flips **5,710** player-game rows from missing to present and moves
+`impute`'s train means — a different head, and the one refit in this project measured in
+hours. Cutting at the merge rather than at `run`'s split also covers **scoring**:
+`sim/season` rehydrates the persisted composition and evaluates it on
+`composition_players(head_frame(cfg), …)`, so a widened block would reach coefficients fitted
+without it. §16i licensed a games-played change and nothing else.
+
+**`availability_no_prior` is the one cut worth arguing about.** §8b's level-arm selection was
+taken on the pre-ladder no-design population, and reading the ladder there would silently
+re-derive a selection nobody re-opened. The simulator is unaffected either way —
+`no_design_availability` rebuilds the pooled rate from the design it is handed rather than
+from that artifact — so the live plug-in already serves the smaller pool (2022-23: **106 → 93**
+players, mean rate 0.4058 → 0.4174, range unchanged). Re-opening the arm on the post-ladder
+population is its own round.
+
+**What the cut buys, checked rather than asserted.** The design goes **11,272 → 11,461** rows
+(+189, all `returnee_lag2`), and:
+
+- the availability head's own fitting frame is **5,821 rows either way**, and its design
+  matrix (29 features), its `pi` block (8) and its `gp`/`team_games` are **bit-identical**;
+- `stan_minutes.head_design` (9,804 rows), `stan_composition.head_frame` (736,410) and
+  `games_played_design` (11,272) are bit-identical on every column;
+- `make model-cards` passes its 1e-9 recipe check and its population anchor, with the
+  availability card's `n_fit` unchanged at 4,027 and its **validation half 883 → 902** — the
+  19 recovered rows arriving on the scoring side, which is exactly and only what should move;
+- no posterior is refitted at any window. The `full` manifest's recorded 5,821 availability
+  fitting rows is the rung-0 count to the row, so `make posteriors` reproduces bit-identically.
+
+One column does move and it is named rather than glossed: `pre_log_min_centered`, the
+season-centred twin `availability_preseason` writes. A season mean is a property of the
+frame, so 189 new rows shift it — and it is in no head's feature list, which is why the
+identity above is stated on the **matrix** rather than on the frame. The component ladder
+had the same shape (`docs/rookie-rates-plan.md` §7g).
+
+#### `make ladder-board` — the reading that lets the minutes move
+
+`src/sim/ladder_board.py` → `outputs/predictions/availability_ladder_board.csv`. Both arms,
+both validation seasons, 500 sims at one seed, plus the **same frames re-drawn at seed + 1**
+as the noise floor — scored on every group, not only on the board, because the gate is *the
+untouched units must not degrade* and a delta there is unreadable without the noise it has to
+beat. The groups are read off the simulator's own roster grid: `recovered`, the `teammates`
+who share a team-game with one, and the `untouched` remainder.
+
+Season-total dk_pts against realized (MAE, then CRPS; `Δ` is on minus off):
+
+| 2022-23 | n | MAE off | MAE on | Δ | CRPS Δ | MAE noise Δ |
+|---|---:|---:|---:|---:|---:|---:|
+| **recovered** | 13 | 520.65 | **305.89** | **−214.76** | **−169.49** | −5.14 |
+| teammates | 160 | 377.67 | 381.61 | +3.93 | +3.92 | −4.66 |
+| untouched | 298 | 329.21 | 330.11 | +0.89 | +0.84 | +2.23 |
+| **all** | 471 | 350.96 | **346.93** | **−4.03** | **−2.82** | −0.31 |
+
+| 2023-24 | n | MAE off | MAE on | Δ | CRPS Δ | MAE noise Δ |
+|---|---:|---:|---:|---:|---:|---:|
+| **recovered** | 6 | 474.88 | **392.65** | **−82.23** | **−90.86** | +18.18 |
+| teammates | 95 | 371.94 | 375.82 | +3.88 | +4.37 | +7.20 |
+| untouched | 366 | 358.35 | 357.05 | −1.31 | −0.65 | −0.72 |
+| **all** | 467 | 362.61 | **361.32** | **−1.29** | **−0.79** | +1.13 |
+
+Games played on the recovered rows: **22.17 → 39.71** against a realized 38.00 in 2022-23,
+and **21.39 → 35.88** against 33.33 in 2023-24 — §16i's 24.7 → 49.7 arriving through the
+simulator's own spell layout rather than through a season-collapsed head, which is why the
+levels differ and the direction does not.
+
+**The gate passes on all three conditions and the third is the one that mattered.**
+
+1. **The recovered players are worth −214.76 and −82.23 dk_pts of MAE**, against noise twins
+   of −5.14 and +18.18. In 2022-23 that is forty times the noise.
+2. **The teammate cost is real and it is inside the noise.** +3.93 and +3.88 MAE on 160 and
+   95 players, against seed-noise deltas of −4.66 and +7.20 on the same rows. It is a
+   transfer and it is named as one — the ladder does not create minutes, it moves them off
+   the teammates of a player it has stopped under-rating — but at 500 sims it is not
+   separable from re-drawing.
+3. **The untouched units do not degrade**: +0.89 and −1.31 MAE against noise twins of +2.23
+   and −0.72. This is the condition a ladder that fixed six players by making three hundred
+   worse would fail, and it is the reason the arm was measured at the board rather than
+   shipped on §16i's number.
+4. **League-wide it is a net win at both readings**: **−4.03** and **−1.29** MAE, **−2.82**
+   and **−0.79** CRPS on every scorable unit, against noise twins of −0.31 and +1.13.
+
+**The board moves more than seed noise, and that is the ladder working rather than a
+defect.** Spearman **0.9873** and **0.9957** against a **0.9990** floor, with a largest rank
+move of 191 and 159 places against the floor's 20 and 34 — thirteen and six players who were
+priced at half their games are being re-priced, so a board that did *not* move would mean the
+change had not reached it. Top-16 overlap against the pre-ladder board is 15/16 and 16/16
+where seed noise alone gives 14/16 and 15/16, and top-100 is 99/100 against 98/100 — the
+churn is concentrated exactly where it should be and the rest of the board is quieter than
+noise.
+
+#### What §16j settles, and what it does not
+
+- **Settled**: the ladder ships. Rung A only, imputation only, `rung_zero` at every fitting
+  path, and no head refitted at any window.
+- **Settled**: the zero-sum transfer §16c named is real, is the teammates', and is smaller
+  than the seed noise on the same rows at 500 sims. The reading that can see it now exists
+  as a target.
+- **Settled**: both `season-total-rookie` arms name their rungs explicitly. The suffix was
+  keyed on the config default, which inverts now the default is non-empty — so
+  `make season-total-rookie` passes `--lag-ladder` empty and reproduces §7f's plug-in table,
+  and `make season-total-rookie-lagladder` passes the rung.
+- **Not measured**: the contest. Two validation seasons, nineteen recovered player-seasons
+  between them, and a Round-1 advance probability is a far coarser instrument than a
+  season-total MAE — `docs/rookie-rates-plan.md` §5h is where a bracket reading would go, and
+  it now has two changes to price rather than one.
+- ~~**Not re-run**: `make simulate-season` and everything downstream of it. The tensors on disk
+  predate both this ladder and §7g's rookie union.~~ **Closed 2026-08-22/23**
+  (`docs/rookie-inclusive-tensors-plan.md` §7c-§7d): the four `train`-window tensors were
+  re-drawn with the ladder and the union on, the sweeps re-ran on them, and `make
+  ladder-board` re-run on the re-drawn chain reproduced this section's artifact
+  **byte-for-byte** — every figure above is the live reading.
+- **Not re-opened**: `availability_no_prior`'s level arm, on the 189-row-smaller population
+  it now serves; and `src/final_evaluation.py`'s held-out figures, which measured a workflow
+  with neither ladder on and do not transfer to this one.

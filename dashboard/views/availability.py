@@ -1,32 +1,33 @@
-"""Availability — the season-level head, and the games-played tenure decomposition.
+"""Availability — the two heads a simulated season's absences are drawn from.
 
 Page 3 of `docs/dashboard-plan.md`'s expansion, and the first instantiation of the generic
 model-detail renderer in `dashboard/views/model_page.py`. Everything on it — the seven
-blocks, the head selector, the unit — comes from there; this module names the class and
-nothing else, which is the whole point of building the renderer first.
+blocks, the head selector, the unit — comes from there; this module names the class and its
+one named block, the shared Stan program between blocks 3 and 4.
 
-Five heads sit behind the selector and **the shipped chain takes two of them**, which is
-the thing this page has to say and could not until `model_card_index.csv` carried a chain
-role. `src/sim/season.py::_sim_one` draws the games-played *count* from `availability` and
-lays those misses out with `games_played.layout_tenure` at `gp_duration`'s fitted spell
-shape — the tenure edge blocks at the ends of the schedule and `allocate_spells` on the
-interior remainder, which is the shipped `tenure_merge` arm of `sim.availability.layout`
-(`docs/availability-window-plan.md` §13). `gp_entry`, `gp_exit` and `gp_onset` — the tenure
-decomposition, which models the generating process rather than the count — are never called
-at draw time; `season.py` states why it does not call `HybridProcess.sequences`, and note
-that the layout draws its edge blocks from an empirical resample rather than from those
-heads, for a reason §13a gives. They stay on the page because they are fitted, converged and
-carded, and because what they produce is the games-played pmf Gate A scores the simulated
-seasons against.
+**The page carries the draw path only** (since 2026-08-23): `availability`, which supplies
+the games-played count, and `gp_duration`, which supplies the spell shape the misses are
+laid out in. `src/sim/season.py::_sim_one` draws the count from the first and lays it out
+with `games_played.layout_tenure` at the second's fitted `(mu, kappa)` — the shipped
+`tenure_merge` arm of `sim.availability.layout` (`docs/availability-window-plan.md` §13).
+
+The class's other three heads — `gp_entry`, `gp_exit` and `gp_onset`, the games-played
+tenure decomposition — are fitted, converged and carded, and are **not on this page**,
+because a simulated season never calls them: `season.py` states why it does not call
+`HybridProcess.sequences`, and what they supply instead is the games-played pmf Gate A
+scores the drawn seasons against. `model_cards.heads_of` reads the cut off the artifact's
+own `in_draw_path` column rather than restating it here, so a refactor of the simulator
+moves this page through `make model-cards`.
 
 **Nothing on this page shows the layout itself**, which is a real gap rather than an
 oversight of this docstring: `availability_exchangeability.csv` and
 `availability_clustering.csv` are cited by `dashboard/decisions.py` and by nothing that
 draws, so `make dashboard-audit`'s orphan check is satisfied while the 2x2 that selected the
-shipped arm has no picture anywhere.
+shipped arm has no picture anywhere. The layout's shipped arm is drawn on the *Inputs
+beyond the heads* page.
 
-The heads are **not all at the same unit** — `gp_duration` is fitted per absence spell and
-the other four per player-season — which is why the page reads the unit off
+The two heads are **not at the same unit** — `gp_duration` is fitted per absence spell and
+`availability` per player-season — which is why the page reads the unit off
 `model_card_index.csv` and states it under the head's name rather than once at the top.
 The chain role is read from the same file for the same reason.
 """
@@ -37,4 +38,4 @@ CLASS_KEY = "availability"
 
 
 def render() -> None:
-    model_page.render(CLASS_KEY)
+    model_page.render(CLASS_KEY, extra={3: model_page.stan_block})

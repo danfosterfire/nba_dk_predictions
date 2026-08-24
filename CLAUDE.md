@@ -35,7 +35,11 @@ The docs are:
   the shipped mixture is worth in the contest, how players the head has no row for are 
   treated, and the simulator's **availability layout** — where a player's missed games fall, 
   which the head cannot say. Read it before changing any of those, or before pricing a head 
-  change with `make strategy-sweep`.
+  change with `make strategy-sweep`. **§16 is the returnee gap, run 2026-08-22** — the head's
+  own lag-recovery ladder (`stan.availability.lag_ladder`, `make availability-lag`), which
+  rung it admits, why the refit arm lost to the imputation, and (**§16j**) the second edit
+  that let the key ship — `availability.rung_zero` at every fitting path — plus
+  `make ladder-board`, the reading that prices the zero-sum minute transfer at the board.
   - composition-quadrature-plan.md: Fitting the composition's per-(player, season) 
   effect by marginalizing the latents with per-unit quadrature. **Built and measured, 
   then PARKED** on cost against reach. Read before touching `sigma_u` or 
@@ -110,6 +114,28 @@ The docs are:
   - provenance-plan.md: Plan for keeping documentation, dashboard, and 
   context up-to-date with latest findings and ensuring reproducibility of 
   context.
+  - rookie-inclusive-tensors-plan.md: Shipping the wider unit population — the `train`
+  tensor re-run and its whole downstream chain, and the **production path** for the
+  upcoming season's board (the path ships now; the board is October-gated on the preseason
+  block, §1a). Carries the round's session ladder, the audited-claim inventory that sizes
+  it, and the standing decision that the **held-out tensors are frozen rookie-less**. Read
+  before re-running `make simulate-season` or anything after it, before building or opening
+  a production board, and before touching the simulator's production unlock or
+  `draft_room.load_field`'s cache key.
+  - rookie-rates-plan.md: The rookie rate head program — scoring the structurally-missing
+  population (true rookies, returnees, thin-prior fringe), its floor pricing, the veteran
+  design's **lag-recovery ladder** and the per-rung gate that admitted one rung of four,
+  the per-head gates, simulator and forward-board integration, and the eight-session
+  runbook. **All eight sessions ran 2026-08-22 and the program is closed**: §7g is the
+  simulator integration (the `rookie-components` posterior group,
+  `sim/season.component_units`' two-family union, the ladder turned on) and **§7i is what
+  the two population changes are worth** — `make rookie-recovery`, the floor re-read against
+  a nested ladder of board masks, plus `--tensor-label`, the variant-population suffix.
+  Read before touching the scorable-unit population,
+  `component_rates.MIN_PRIOR_MINUTES`, `stan.components.lag_ladder`,
+  `src/models/rookie_rates.py`, `sim/season.component_units`, or before drawing a tensor
+  over a population the shipped artifacts were not built on. §7f's own open item is closed
+  by `docs/availability-window-plan.md` §16i.
   - shot-attempt-basis-plan.md: Plan for updating one of the box-score statistics
   models (fg3a as a beta-binomial rate over the total fga, rather than fg2a and 
   fg3a as separate poisson counts). Work completed, archival.

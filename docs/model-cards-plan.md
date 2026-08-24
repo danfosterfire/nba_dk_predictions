@@ -13,7 +13,10 @@ flags which pairs earn a joint density, and nothing had binned one. **Step 3 of
 `docs/dashboard-revision-plan.md` added the ninth**, `model_card_quantile.csv` — DHARMa's
 scaled quantile residual — and *replaced* rather than extended: the calibration file's
 `residual_fitted` panel is gone, because a raw residual is not a thing four differently
-distributed heads can be read on and a quantile residual is.
+distributed heads can be read on and a quantile residual is. **The third round added the
+tenth, 2026-08-23**: `model_card_stan.csv`, the verbatim Stan program per head, for the
+model pages' program block — see
+[`model_card_stan.csv`](#model_card_stancsv--the-program-verbatim) below.
 
 ---
 
@@ -104,7 +107,7 @@ its 5% bar, and nineteen of twenty heads are under 1%. Registered as
 
 ## What is on disk
 
-All nine under `outputs/predictions/`, all long-format, all keyed by `head`. The seven CSVs
+All ten under `outputs/predictions/`, all long-format, all keyed by `head`. The CSVs
 are written with six significant digits — the per-feature statistics repeat on every bin row
 deliberately (a page groups by feature and gets the histogram *and* the summary table from
 one read), and full float64 repr tripled the largest file for precision no histogram can
@@ -121,6 +124,7 @@ draw.
 | `model_card_calibration.csv` | head × split × panel × 2-D bin | **11,679** | 968 KB | fitted-against-observed, as density (block 6) |
 | `model_card_quantile.csv` | head × split × panel × row | **8,761** | 725 KB | the QQ-uniform and the residual against rank-transformed predicted (block 6) |
 | `model_card_sample.parquet` | head × split × row | **54,375** | 1.0 MB | the bounded scatter overlaid on both of those densities (block 6) |
+| `model_card_stan.csv` | head | **20** | 184 KB | the head's Stan program, verbatim — the named program block between blocks 3 and 4 |
 
 **7.5 MB in total** (`du`), *below* the 8.7 MB the eight-artifact contract cost: the quantile
 half adds 724 KB and the `residual_fitted` panel it replaced was 1.5 MB. Twenty
@@ -207,9 +211,9 @@ uses it to pick an auxiliary: *"in a simulated season it **draws the games-playe
 against *"it **is** not called at draw time"*. A view that lost the boolean would print the
 second as the first and say the opposite of the truth.
 
-**Sixteen of the twenty heads are in the draw path. The four that are not are `gp_entry`,
-`gp_exit`, `gp_onset` and the marginal `minutes` head**, and both of those groups are worth
-stating:
+**Sixteen of the twenty carded heads are in the draw path. The four that are not are
+`gp_entry`, `gp_exit`, `gp_onset` and the marginal `minutes` head**, and both of those groups
+are worth stating:
 
 - the **tenure decomposition** is not called at draw time. `season.py` states why it does not
   call `HybridProcess.sequences` — that path draws its count from a pmf already marginalized
@@ -221,6 +225,43 @@ stating:
   simulator as `sim.minutes.player_season_sigma` — a constant `make minutes-unification`
   calibrated against that head and `rehydrate_composition` injects into the composition — so
   `src/sim/` reads the composition and scores itself against the marginal head's 302.75.
+
+#### The eleven declared heads with no page — decided 2026-08-22
+
+`docs/rookie-rates-plan.md` §5f put a second rate family in the posterior bundle and left
+its cards to §5h. §5h decided, and it split the two questions the deferral had bundled:
+
+- **Declared, all eleven.** `rookie_*` carry a `HeadSpec` with `chain_role`
+  `box_score_component` and `in_draw_path` true, because that is what the simulator does
+  with them — one rate or conversion probability per player, drawn per game against the
+  minutes the allocation gave him, in the same `DRAW_ORDER` as their veteran twins. The
+  population differs and, for ten of the eleven, the artifact is a deterministic plug-in
+  rather than a posterior; neither of those is a chain role. Leaving them undeclared meant
+  the one column that exists to answer *does this ship?* had no answer for the family whose
+  whole reason for existing is that it ships — on 74 rows of a 2023-24 board and **116** of
+  the 2026-27 production one. **The declared draw path is now 27 heads.**
+- **Not carded, all eleven**, and the reason is what a page would hold. Ten ship §7d's
+  no-fit floor as a plug-in — `beta = 1`, `alpha = 0`, one synthetic feature carrying the
+  floor's own prediction on the head's own link, identical on every draw — so a coefficient
+  panel renders a 1.0 on a column that is the answer rather than a predictor, eleven times
+  over. **The column is the volume-shrunk preseason blend, not the draft bucket**:
+  `w * preseason_per36 + (1 - w) * bucket` at `w = min_pre / (min_pre + k)`, which is
+  `docs/rookie-rates-plan.md` P4(b)'s selected estimator and the reason a card would show a
+  coefficient on an answer. The bucket is the shrinkage *target*, and on its own it is a
+  measured anti-model. What a reader wants is the floors and the gate that admitted one fitted arm of
+  eleven, and that is `rookie_rate_floors.csv` and `rookie_rate_metrics.csv`, both reachable
+  from the decision log: this project's own convention for a family with no tab
+  (`docs/docs-audit.md`, the orphan check). `rookie_reb` is the one head a page would fully
+  describe and it does not get one either, because a lone card in a family of eleven reads
+  as *the* rookie head rather than as the one arm that beat its floor. Revisit if a second
+  arm is ever admitted.
+
+`UNCARDED_PREFIXES` (was `DEFERRED_PREFIXES`) is the rule, and the rename is the decision:
+these heads are not waiting on anything. **The test got stronger rather than weaker.** It
+used to assert set equality between the simulator's keys and the declared path *after
+subtracting* the rookie family, so the eleven keys the simulator really does read were
+exempt from the anchor. It now asserts equality over the whole set, and carries a second,
+separate assertion that the uncarded keys are exactly the component heads' rookie twins.
 
 **The anchor is what makes this a claim rather than a comment.** Interpretation on a page is
 allowed here only when it is tied to something a test can check, the way `pca.orient()` and
@@ -691,6 +732,35 @@ is the measurement that would settle it.
 
 ---
 
+## `model_card_stan.csv` — the program, verbatim
+
+Added 2026-08-23 by the third dashboard revision round, when the model pages gained a named
+**Stan program block** between blocks 3 and 4 (`model_page.stan_block`). One row per carded
+head: `head`, `stan_file`, `n_lines`, and `source` — the whole program as one quoted cell.
+184 KB.
+
+Three decisions inside it:
+
+- **The mapping is read from the fitting modules' own `MODEL` constants**
+  (`model_cards.stan_program`), never retyped: `stan_availability.MODEL` is the string
+  `compile_model` is actually handed, so a head that moves to a different program moves in
+  the artifact without an edit. A head the function does not know raises by name, and
+  `stan_rows` refuses a program `src/stan/` no longer carries.
+- **The source rides in the artifact rather than being read live from `src/stan/`.** The
+  dashboard reads artifacts and never `src/`; beyond the rule, an artifact is a snapshot
+  taken beside the cards it ships with, where a live file could drift ahead of the fit the
+  page describes.
+- **The text repeats across the heads that share a program** — ten heads carry
+  `betabinomial_glm.stan` — which is the same deliberate repetition
+  `model_card_features.csv` makes: a page filters to one head and has everything, and the
+  page's caption derives the sharing (`model_cards.stan_siblings`) instead of a table
+  restating it.
+
+The eleven declared-but-uncarded rookie heads are out of scope for the same reason they
+have no page: ten of the eleven are no-fit plug-ins with no Stan program to show.
+
+---
+
 ## Where this sits in the pipeline
 
 ```
@@ -720,9 +790,11 @@ is the expensive half:
 
 ## Tests
 
-`tests/test_model_cards.py`, plain `assert` with synthetic builders, **99 tests** (34 from
+`tests/test_model_cards.py`, plain `assert` with synthetic builders, **107 tests** (34 from
 session 3a, 31 from 3b, 9 from session 4's density, 6 from the chain role, 15 from the
-quantile residual). The heads are real `PosteriorArtifact`s with their draws **injected**
+quantile residual, 4 from the Stan program — the head→program mapping against `src/stan/`,
+the raise for an unknown head, the per-head source rows, and the shipped artifact covering
+exactly the index's heads with intact text). The heads are real `PosteriorArtifact`s with their draws **injected**
 rather than sampled — the same stance `tests/test_posteriors.py` takes, and for the same
 reason: the emitter refits nothing either. The one exception is the rehydration test, which
 builds a real `StanCount` around injected draws and asserts that `draw_predictive` returns

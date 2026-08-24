@@ -12,15 +12,23 @@ test. Missing artifacts are *skipped*, so a fresh checkout without `make eda` is
 It guards the artifact→prose direction tightly and the prose→artifact direction loosely;
 see the module docstring for exactly what it cannot catch.
 
-**It covers seventeen docs with 5,004 claims and one builder per doc**: `README.md`,
+**It covers twenty docs with 6,148 claims and one builder per doc**: `README.md`,
 `availability-plan`, `availability-window-plan`, `minutes-composition-plan`,
 `minutes-window-plan`, `draw-time-calibration-plan`, `predictions-plan`,
 `games-played-plan`, `shot-attempt-basis-plan`,
-`adp-plan`, `simulations-plan`, `preseason-plan`, and the five files the 2026-08-08
+`adp-plan`, `simulations-plan`, `preseason-plan`, `final-evaluation-plan`,
+`rookie-rates-plan`, `rookie-inclusive-tensors-plan`, and the five files the 2026-08-08
 reorganization split `CLAUDE.md` into — `facts-archive`, `model-development-notes`,
 `data-quirks`, `project-spec` and `train-validate-test-split`.
 `draw-time-calibration-plan` joined on 2026-08-20, when the README condensation (below)
-retargeted `_role_sigma_claims` from the overview to the doc that owns the readout.
+retargeted `_role_sigma_claims` from the overview to the doc that owns the readout;
+`final-evaluation-plan` on 2026-08-21 and `rookie-rates-plan` on 2026-08-22, the latter at
+its first session rather than at the end of its program, for the reason `preseason-plan`
+joined at P0. `rookie-inclusive-tensors-plan` joined the same way on 2026-08-22, at five
+claims — its 2026-27 production census and its head count. Its own inventory figures (how
+many claims a tensor re-run moves) are deliberately unclaimed, because they are properties
+of `src/docs_audit.py` and a registry checking itself checks nothing. **Those counts move every session and the printout is the authority** — the
+two figures above were last refreshed 2026-08-22 and this doc is not itself audited.
 
 **`preseason-plan` joined on 2026-08-12, at P0 rather than at the end of the build.** A
 coverage table is the one kind of section that goes stale invisibly — re-running a backfill
@@ -46,7 +54,7 @@ row `make weekly-scores` added, whose readings nothing else re-derives. The rest
 layer's figures are re-derived by their own targets' build gates, which is the argument
 `docs/model-cards-plan.md` makes for staying out of the audit entirely. **A low coverage
 percentage on a long doc is not a to-do list**; a *claimed* figure that stops agreeing is.
-**1,087 of the claims are superseded values held for the record**, which is the number that
+**1,161 of the claims are superseded values held for the record**, which is the number that
 grows fastest as heads move off the test split: each conversion retires a measurement
 without deleting it. The season-term conversion alone added **161** — the largest single
 jump so far, because that ablation quotes four arms across thirteen heads and five
@@ -146,7 +154,7 @@ ten items in `docs/provenance-plan.md` landed first. The only exception to the r
 `make dashboard-audit` runs four checks — every cited artifact exists (also a `pytest`
 test), no source doc has a git commit newer than an entry's `reviewed` date, no artifact on
 disk goes unreferenced by both tabs and registry, and no pending markers remain. A weekly
-launchd job (`com.nba-deep-learning.dashboard-audit`, Mondays 09:00) appends it to
+launchd job (`com.nba-dk-predictions-stan.dashboard-audit`, Mondays 09:00) appends it to
 `outputs/dashboard_audit.log`. **The orphan check is the one that earns its keep**: nine
 artifact families had accumulated unreachable from the dashboard purely because nothing was
 looking, and removing a tab silently re-creates that — so bring it back to zero deliberately,

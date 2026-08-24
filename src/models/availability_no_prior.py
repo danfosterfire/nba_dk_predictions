@@ -69,7 +69,7 @@ import yaml
 
 from src.eda.season_effects import ROLE_EDGES, ROLE_LABELS
 from src.features.team_context import UNDRAFTED_BUCKET
-from src.models.availability import crps, predictive_pmf
+from src.models.availability import crps, predictive_pmf, rung_zero
 from src.models.held_out import selection_split
 from src.models.stan_availability import availability_design
 from src.models.stan_composition import draft_numbers
@@ -836,7 +836,16 @@ def run(cfg: dict) -> dict[str, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     seasons = list(cfg["data"]["seasons"])
 
-    design = availability_design(cfg)
+    # **Rung 0 only, and this is the one cut worth arguing about.** §8b's level-arm
+    # selection was taken on the pre-ladder no-design population, and with
+    # `stan.availability.lag_ladder` on that population is 189 player-seasons smaller —
+    # so reading the ladder here would silently re-derive a selection nobody re-opened.
+    # The simulator is unaffected either way: `sim/season.no_design_availability` rebuilds
+    # the pooled rate from the design it is handed rather than from this artifact, so the
+    # live plug-in already serves the smaller pool (2022-23: 106 -> 93 players, mean rate
+    # 0.4058 -> 0.4174, range unchanged). Re-opening the arm on the post-ladder population
+    # is its own round — `docs/availability-window-plan.md` §16j.
+    design = rung_zero(availability_design(cfg))
     train, val = selection_split(design)
     allowed = sorted(set(train["season"]) | set(val["season"]))
 

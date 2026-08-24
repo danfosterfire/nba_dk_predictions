@@ -113,4 +113,5 @@ def floor_block(cards: dict, row: pd.Series, th: dict) -> None:
 
 
 def render() -> None:
-    model_page.render(CLASS_KEY, extra={1: floor_block})
+    model_page.render(CLASS_KEY,
+                      extra={1: floor_block, 3: model_page.stan_block})

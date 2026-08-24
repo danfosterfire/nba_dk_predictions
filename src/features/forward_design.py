@@ -337,9 +337,52 @@ def scheduled_team_games(panel: pd.DataFrame, season: str) -> pd.Series:
     return (rows.groupby("team_id")["team_game_index"].max() + 1).astype(int)
 
 
+def forward_targets(cfg: dict, season: str, targets: pd.DataFrame | None = None,
+                    log: pd.DataFrame | None = None) -> tuple[pd.DataFrame, list[str]]:
+    """The component targets with `season`'s unplayed rows stacked on, and the season list.
+
+    Both rate families' forward designs are carved out of exactly this frame — the veteran
+    lag design in `forward_component_design` and the true-rookie design in
+    `forward_rookie_design` — so it is built once. That is not only economy: the two
+    populations are disjoint *because* `lag_recovery.classify` reads one frame, and two
+    separately-synthesized targets frames could disagree about whose first season this is.
+
+    `log` lets a caller supply its own synthesis — `sim/forward_board.py` passes the one
+    built from its membership frame, so a rehearsal that cuts or fixes the population cuts
+    it EVERYWHERE. Production callers pass nothing and the default is the roster file,
+    which is the same membership by construction.
+    """
+    from src.features.targets import COMPONENTS, build_component_targets
+
+    if targets is None:
+        targets = pd.read_parquet(
+            Path(cfg["data"]["features_dir"]) / "component_targets.parquet")
+    if season in set(targets["season"]):
+        raise ValueError(
+            f"{season} already has component targets on disk, so it has been played and "
+            f"needs no forward design — build it the ordinary way.")
+
+    if log is None:
+        log, _ = synthetic_game_log(season, cfg["data"]["raw_dir"])
+    frame = log.rename(columns={"PLAYER_ID": "player_id", "TEAM_ID": "team_id",
+                                "GAME_ID": "game_id", "GAME_DATE": "game_date",
+                                "SEASON_YEAR": "season", "MIN": "min"})
+    for component in COMPONENTS:
+        frame[component] = np.nan
+    frame["season_type"] = "regular"
+
+    forward = build_component_targets(frame, forward_seasons=[season])
+    stacked = pd.concat([targets.assign(is_forward=0), forward], ignore_index=True)
+    seasons = list(cfg["data"]["seasons"])
+    if season not in seasons:
+        seasons = seasons + [season]
+    return stacked, seasons
+
+
 def forward_component_design(cfg: dict, season: str,
                              targets: pd.DataFrame | None = None,
-                             whole_frame: bool = False) -> pd.DataFrame:
+                             whole_frame: bool = False,
+                             log: pd.DataFrame | None = None) -> pd.DataFrame:
     """The eleven rate heads' design for a season that has not been played.
 
     The whole chain in one call, because October is a two-day window and three separate
@@ -353,32 +396,18 @@ def forward_component_design(cfg: dict, season: str,
     They are what the lag columns come from; the forward season contributes rows and no
     values.
     """
-    from src.features.targets import COMPONENTS, build_component_targets
-    from src.models.component_rates import build_design
+    from src.models.component_rates import build_design, lag_ladder
 
-    if targets is None:
-        targets = pd.read_parquet(
-            Path(cfg["data"]["features_dir"]) / "component_targets.parquet")
-    if season in set(targets["season"]):
-        raise ValueError(
-            f"{season} already has component targets on disk, so it has been played and "
-            f"needs no forward design — build it the ordinary way.")
-
-    log, _ = synthetic_game_log(season, cfg["data"]["raw_dir"])
-    frame = log.rename(columns={"PLAYER_ID": "player_id", "TEAM_ID": "team_id",
-                                "GAME_ID": "game_id", "GAME_DATE": "game_date",
-                                "SEASON_YEAR": "season", "MIN": "min"})
-    for component in COMPONENTS:
-        frame[component] = np.nan
-    frame["season_type"] = "regular"
-
-    forward = build_component_targets(frame, forward_seasons=[season])
-    stacked = pd.concat([targets.assign(is_forward=0), forward], ignore_index=True)
-    seasons = list(cfg["data"]["seasons"])
-    if season not in seasons:
-        seasons = seasons + [season]
+    stacked, seasons = forward_targets(cfg, season, targets, log)
+    # **The ladder is passed here and this is the whole of its forward wiring**
+    # (`docs/rookie-rates-plan.md` §5g). A returnee's lag-2 is a prior-season statistic like
+    # any other, so the rung needs no forward-specific tier — but it does need to be *asked
+    # for*, because `build_design`'s default is the pre-ladder design and this is the one
+    # call site that reaches the builder rather than `stan_components.head_design`. Without
+    # it a forward board silently drops every recovered returnee AND hands the rows it does
+    # carry a null `lag_rung`, which is how it was found.
     design = build_design(stacked, seasons, cfg["data"]["raw_dir"],
-                          forward_seasons=[season])
+                          forward_seasons=[season], ladder=lag_ladder(cfg))
     out = design[design["season"] == season].reset_index(drop=True)
     if out.empty:
         raise ValueError(
@@ -392,6 +421,85 @@ def forward_component_design(cfg: dict, season: str,
     # carry lags that can no longer see it; the callers only ever read the target's rows
     # and the labels of the rest, which is why this is not offered as a fitting frame.
     return design.reset_index(drop=True) if whole_frame else out
+
+
+def forward_rookie_design(cfg: dict, season: str,
+                          targets: pd.DataFrame | None = None,
+                          log: pd.DataFrame | None = None) -> pd.DataFrame:
+    """The true-rookie rate design for a season that has not been played — §5g.
+
+    The third design a forward board needs, and the last one that was missing.
+    `docs/rookie-rates-plan.md` §7g put rookies in the *retrospective* tensor and said
+    plainly why it could not put them in the forward one: `rookie_rates.build_design`
+    carves its population out of `component_targets`, so "he played in the NBA this season"
+    was doing the membership work, and that is target-season information a forward context
+    may not read. Here membership comes from the roster snapshot instead — the same source
+    `forward_availability_design` and `forward_composition_players` already take it from —
+    so nothing about the target season is consulted except the schedule.
+
+    ## Every block, and where it comes from before the opener
+
+    - **the population** — `lag_recovery.classify`'s `true_rookie`, over
+      `forward_targets`' stacked frame. A player whose only rows are the synthetic season's
+      has that season as his first, which is what the label means; a player with any played
+      season is somebody else's row, which is what makes the two families disjoint. Both
+      designs are carved from **one** frame for exactly that reason.
+    - **the draft slot** — `forward_draft_slots`, which is `forward_draft_numbers`' own two
+      preseason-legal sources plus the draft year. `rookie_rates.draft_slots` reads
+      `bio_draft_number` off the season matrix, and that file does not exist until games
+      are played. **Note the 25 rights-traded draftees** `forward_draft_numbers` documents:
+      their `HOW_ACQUIRED` carries no slot, so they land in the undrafted bucket — the
+      largest cell in this population and the block's honest zero, but the wrong cell for
+      them until their first bio row corrects it.
+    - **the preseason block** — the target season's own panel **when it exists**. In August
+      it does not, every one of the eleven shrunk levels is exactly 0 by its own volume
+      weight, and the four age-split indicators say who is missing. That is the
+      missing-indicator path working rather than a special case, and it is why
+      `rookie_rows` had to be exempted from the `covered` cut: that cut is an era rule
+      about seasons with no preseason panel *at all*, and a forward season is one whose
+      panel simply has not been fetched yet. After `make preseason` in October the same
+      call picks the block up with no code change.
+    - **age** — `eda.availability.load_ages`' own roster fallback, which exists because the
+      bio file is a season-*statistics* endpoint. A rookie with no age is dropped, here as
+      everywhere.
+
+    Returns `season`'s rows only. Unlike the veteran design, nothing downstream reads this
+    family's other seasons — `component_units` takes the target season and
+    `assert_season_allowed` reads the veteran frame — so the whole-frame knob
+    `forward_component_design` carries would have no consumer.
+    """
+    from src.eda.preseason_value import covered_seasons
+    from src.models.rookie_rates import build_design, draft_slots
+
+    features_dir = Path(cfg["data"]["features_dir"])
+    eda_dir = Path(cfg["evaluation"].get("eda_dir", "outputs/eda"))
+    stacked, seasons = forward_targets(cfg, season, targets, log)
+
+    # The panel is passed WHOLE, target season included, and that is deliberate: preseason
+    # games are played before the opener, so the target season's own block is forward-legal
+    # — it is the one current-season reading this project is allowed. In a rehearsal it is
+    # present; in August 2026 it is not, and the missing indicators carry the row.
+    panel = pd.read_parquet(features_dir / "preseason.parquet")
+    # The draft slot is the opposite case: `draft_slots` reads the season matrix, which is
+    # built from played seasons, so the target season's rows are retrospective and get
+    # replaced by the two preseason-legal sources rather than read.
+    draft = draft_slots(features_dir)
+    draft = pd.concat([draft[draft["season"] != season],
+                       forward_draft_slots(cfg, season)], ignore_index=True)
+
+    design = build_design(stacked, seasons, cfg["data"]["raw_dir"], panel, draft,
+                          covered_seasons(pd.read_csv(eda_dir / "preseason_coverage.csv")),
+                          forward_seasons=[season])
+    out = design[design["season"] == season].reset_index(drop=True)
+    if out.empty:
+        raise ValueError(
+            f"{season}: the forward rookie design is empty, which reproduces exactly the "
+            f"pre-§5g state this builder exists to remove — a board with no true rookies "
+            f"on it. Both population filters have to be cleared by name "
+            f"(`rookie_rows(forward_seasons=...)` clears the target-minutes rule AND the "
+            f"preseason-era cut), and the roster snapshot has to carry somebody whose "
+            f"first season this is.")
+    return out
 
 
 def forward_availability_design(cfg: dict, frame: pd.DataFrame, panel: pd.DataFrame,
@@ -445,10 +553,43 @@ def forward_availability_design(cfg: dict, frame: pd.DataFrame, panel: pd.DataFr
 
 
 #: `HOW_ACQUIRED` on a player still with his drafting team carries the slot itself —
-#: "#27 Pick in 2024 Draft". The year is not captured: the slot is the feature, and a
-#: rights-traded rookie ("Draft Rights Traded from DAL on 07/06/23") carries no slot at
-#: all, so he lands in the undrafted bucket until his first bio row corrects him.
-_DRAFT_PICK = re.compile(r"#(\d+) Pick in \d{4} Draft")
+#: "#27 Pick in 2024 Draft". The **year** is captured too, because the rookie rate design
+#: (`docs/rookie-rates-plan.md` §5g) reads years-since-draft and the matrix column it
+#: normally comes from does not exist before the opener; every other caller reads group 1
+#: alone. A rights-traded rookie ("Draft Rights Traded from DAL on 07/06/23") carries no
+#: slot at all, so he lands in the undrafted bucket until his first bio row corrects him.
+_DRAFT_PICK = re.compile(r"#(\d+) Pick in (\d{4}) Draft")
+
+
+def forward_draft_slots(cfg: dict, season: str) -> pd.DataFrame:
+    """`(player_id, season, draft_number, draft_year)` — the whole slot block, forward.
+
+    `forward_draft_numbers` is this frame with `draft_bucket` in place of the year, and is
+    what the composition's ordering reads; `rookie_rates.attach_draft_slot` needs the year
+    as well, because years-since-draft separates a lottery pick arriving immediately from a
+    2019 second-rounder finally coming over. Both sources carry it: the season matrix has
+    `bio_draft_year` beside `bio_draft_number`, and `HOW_ACQUIRED` names the draft's year in
+    the same string as its slot.
+
+    See `forward_draft_numbers` for the two sources' measured coverage and for the 25
+    rights-traded draftees the text tier puts in the undrafted bucket.
+    """
+    from src.models.rookie_rates import draft_slots
+
+    known = draft_slots(Path(cfg["data"]["features_dir"]))
+    cutoff = _season_start_year(season)
+    prior = known[known["season"].map(_season_start_year) < cutoff].sort_values("season")
+    latest = prior.groupby("player_id")[["draft_number", "draft_year"]].last()
+
+    roster = roster_members(season, cfg["data"]["raw_dir"])
+    hits = roster["HOW_ACQUIRED"].map(
+        lambda t: _DRAFT_PICK.search(t) if isinstance(t, str) else None)
+    out = pd.DataFrame({"player_id": roster["player_id"].to_numpy(), "season": season})
+    for column, group in (("draft_number", 1), ("draft_year", 2)):
+        text = pd.Series(hits.map(lambda m, g=group: float(m.group(g)) if m else np.nan)
+                         .to_numpy(), index=roster.index)
+        out[column] = roster["player_id"].map(latest[column]).fillna(text).to_numpy()
+    return out
 
 
 def forward_draft_numbers(cfg: dict, season: str) -> pd.DataFrame:
@@ -474,22 +615,14 @@ def forward_draft_numbers(cfg: dict, season: str) -> pd.DataFrame:
     players: 99 unsigned-drafted journeymen and undrafted rookies (correct), and 25
     rights-traded draftees whose slot the text does not carry (wrong bucket, priced by
     the Part D rehearsal rather than assumed away).
+
+    Both sources live in `forward_draft_slots`, which carries the draft *year* as well;
+    this is that frame with the bucket in the year's place, which is the shape
+    `stan_composition.season_weights` reads.
     """
-    from src.models.stan_composition import _draft_bucket, draft_numbers
+    from src.models.stan_composition import _draft_bucket
 
-    known = draft_numbers(Path(cfg["data"]["features_dir"]))
-    cutoff = _season_start_year(season)
-    prior = known[known["season"].map(_season_start_year) < cutoff]
-    latest = prior.sort_values("season").groupby("player_id")["draft_number"].last()
-
-    roster = roster_members(season, cfg["data"]["raw_dir"])
-    picks = roster["HOW_ACQUIRED"].map(
-        lambda t: float(_DRAFT_PICK.search(t).group(1))
-        if isinstance(t, str) and _DRAFT_PICK.search(t) else np.nan)
-    out = pd.DataFrame({"player_id": roster["player_id"].to_numpy(),
-                        "season": season,
-                        "draft_number": roster["player_id"].map(latest)
-                        .fillna(picks).to_numpy()})
+    out = forward_draft_slots(cfg, season).drop(columns=["draft_year"])
     out["draft_bucket"] = out["draft_number"].map(_draft_bucket)
     return out
 

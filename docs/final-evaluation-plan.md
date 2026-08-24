@@ -288,14 +288,74 @@ by adding rows rather than by changing a result.
 
 ### 4d. Results
 
-*Pending — the run is in progress.*
+Run 2026-08-21, 20:21 → 20:38 — `assert_same_specification` passed on all 20 heads
+before anything simulated, both test seasons drew 2,000-sim tensors at the `train_val`
+window, and the contest replayed on 2025-26 alone (§4b).
+
+**Gate A — the simulator against what happened, on seasons nothing in it has seen.** The
+bars beside each figure are the validation run's own values, which is what makes this a
+walk-forward reading rather than a self-comparison:
+
+| | 2024-25 | 2025-26 | validation bar |
+|---|---|---|---|
+| scorable units | 386 | 405 | 873 pooled |
+| season-total MAE | **367.3581** | **421.9977** | 400.46 |
+| season-total CRPS | 257.6995 | 299.2200 | 287.26 |
+| season-total R² | 0.6911 | 0.5267 | 0.7073 |
+| season-total bias | −17.4584 | −8.0504 | −3.06 |
+| games-played CRPS | **9.2840** | **10.2700** | the head's own floor, 10.0057 |
+| minutes spread, conditional on gp | 270.89 | 269.63 | 277.23 |
+| bonus per game | 0.1857 vs 0.1700 | 0.1831 vs 0.1410 | — |
+
+The held-out seasons **bracket the validation bar** — one better, one worse, on the
+season total and on games played alike — and the like-for-like minutes spread lands
+within 8 minutes of it on both. The bonus runs hot on 2025-26 (+0.0421) and the
+conditional-on-realized-minutes read is −0.0066, so the excess is minutes-shaped rather
+than conversion-shaped. These rows live in `sim_season_gate_a_final.csv`, never in the
+pooled validation table the audit re-derives (§4c).
+
+**The contest — one season, one world.** The field is the only thing that can be
+resampled, so no interval below is a season interval; `strategy.replay_realized` already
+records that N = 2 cannot separate nearby strategies, and N = 1 is what the ADP capture
+left. The shipped strategy (`lineup_value_blend30`) against its in-world comparators,
+Round-1 lift over the 1/6 null and realized ROI, per captured payout structure:
+
+| structure | shipped lift | shipped ROI | `adp` lift | `model_mean` lift | break-even hurdle |
+|---|---|---|---|---|---|
+| 600k_shootaround | **−0.0725** | −0.8578 | +0.0056 | −0.0593 | +0.1760 |
+| 20k_spin_move | −0.1143 | −0.7537 | +0.1021 | +0.0795 | +0.1232 |
+| 50k_four_pt_play | +0.0349 | −0.6951 | +0.1287 | −0.0593 | +0.1750 |
+| 15k_and_one | +0.0691 | −0.6325 | +0.0358 | −0.0423 | +0.1760 |
+| 88k_alley_oop | +0.0356 | −0.2674 | +0.8138 | +0.8138 | +0.1045 |
+
+(The 88k row is one $450 entry in one world — its comparator column is degenerate and
+quoted only because leaving a hole would look like an omission.)
+
+**The honest reading: the held-out chain does not confirm the drafting edge, and that is
+the result rather than a caveat.** The sweep's simulated worlds put the shipped
+strategy's Round-1 lift at ~0.24 and the validation-season replay at ~0.20 (the values at
+this reading, on the rookie-less chain it measured; the 2026-08-22 tensor round re-read
+them at ~0.26 / ~0.31 on the rookie-inclusive tensors — the held-out figures here stay
+frozen per §7, `docs/rookie-inclusive-tensors-plan.md` §7d); the one
+admissible held-out world puts it **negative on two structures including the 600k
+flagship** and at +0.03 to +0.07 on the other three, with every ROI negative against
+hurdles of +10.45% to +17.60% — and the plain-ADP ranking outperforms the shipped
+strategy on four of five structures in this world. One world cannot separate strategy
+from variance, so this neither refutes the simulated edge nor supports it; what it does
+establish is that the project's realized evidence for the edge ends where it stood after
+the validation replay, and the held-out season bought no confirmation.
+
+One structural note the contest surfaced: the board was restricted to the 361 pool
+players the tensor prices — 95 dropped, 25 of them carrying ADP — which is §6h's
+rookie-and-fringe scope limitation showing up as market names the model cannot rank
+(`docs/potential-to-dos.md` §16).
 
 ---
 
 ## 5. The production fit
 
-`make posteriors-production` — the same twenty heads at the `full` window, fitted on every
-season there is, written to `data/features/posteriors/full/`. It is the artifact
+`make posteriors-production` — the same twenty chain heads at the `full` window, fitted on
+every season there is, written to `data/features/posteriors/full/`. It is the artifact
 `docs/preseason-plan.md`'s October runbook consumes, and the runbook's key structural fact
 is why it can be built in August at all: **the heads fit on historical seasons, so the
 2026-27 preseason enters only as prediction-time design rows, never as fitting data.** Every
@@ -305,7 +365,31 @@ Consumers must treat these artifacts as production-only. `require_window` is wha
 it — a backtest reading `full` heads has read the seasons it is about to be scored on,
 through the coefficients, and no frame-level split guard can see that.
 
-*Figures pending — the run is in progress.*
+Taken 2026-08-21; the last sampler (the composition, the long pole) exited at 23:15.
+
+**All 20 heads are on disk at `full`, and every one matches the `train` window's
+specification on the 8 columns** — `assert_same_specification` passes for `train_val`
+and `full` alike, which is the §2 check doing the job it was built for on the day it
+was built. Across the 20 heads the manifest reads max R-hat **1.00608**, **0**
+divergences, **0** round-trip failures.
+
+**The manifest holds 31 rows since 2026-08-22**, not 20: Session 6 of
+`docs/rookie-rates-plan.md` (§5f) added the `rookie-components` group — eleven true-rookie
+rate heads, ten of them deterministic plug-ins and one fitted — at all three windows, and
+the specification comparison gained `family_population` and `deterministic` so a plug-in
+cannot be deployed under a fitted head's name. It changes nothing above: the group is
+additive, the twenty chain heads are untouched, and `1.00608` is still the worst R-hat
+because the one rookie head that samples reads 1.00418. The composition fitted **553,716** player-rows
+over 2004-05–2025-26 — against **500,759** at `train_val`, the two held-out seasons'
+rows being the difference and the point — at R-hat 1.0026.
+
+`make production-check` after the fit: **the model half is done.** The season half is
+October data by nature — the preseason box scores gate `make preseason` and the final
+crunch — with one exception closed tonight: the 2026-27 schedule is published, so the
+scoring-period grid is already built through the §6g forward knob (1,230 games, DK's
+17/2/2/2 shape asserted, R1 closing on the rules copy's own date), to be rebuilt near
+the opener when dates move. The 2026-27 rows of the availability panel and component
+targets are the runbook's forward-synthesis steps, not missing artifacts.
 
 ---
 
@@ -568,31 +652,102 @@ own population, because the minutes allocation is zero-sum: a missing player is 
 missing row, he is minutes handed to every shared teammate, and only a fixed-population
 arm can separate that from the forward frames themselves.
 
+⚠️ **Re-run twice on 2026-08-22.** The first re-run followed Session 6 of
+`docs/rookie-rates-plan.md` (§5f), which put two more populations on the *retrospective*
+board — the lag-recovery ladder's admitted returnees and the true-rookie rate family — and
+recorded a fixed-population arm missing 80 units it had no builder for. **The second
+follows §5g, which built them**, and the table below is that run. The figures it supersedes
+are named in the paragraphs after it, because what moved and what did not is the reading.
+
 | arm | shared players | Spearman | mean \|Δ season total\| | top-16 | top-48 | top-100 |
 |---|---|---|---|---|---|---|
-| retro vs retro, seed noise | 387 | 0.9990 | 21.03 | 15 | 46 | 99 |
-| **forward, population held fixed** | 369 | **0.9988** | 22.82 | **15** | **46** | **99** |
-| forward, snapshot population | 354 | 0.9831 | 104.90 | 14 | 44 | 89 |
+| retro vs retro, seed noise | 467 | 0.9990 | 21.61 | 16 | 46 | 98 |
+| forward, population held fixed | 467 | 0.9929 | 30.09 | 15 | 46 | 95 |
+| forward, snapshot population | 431 | 0.9804 | 104.00 | 14 | 44 | 87 |
+| retro vs retro, seed noise — **rung 0 only** | 354 | 0.9988 | 22.64 | 16 | 45 | 99 |
+| **forward, population held fixed — rung 0 only** | **354** | **0.9986** | **25.35** | 15 | 45 | 98 |
+| forward, snapshot population — rung 0 only | 354 | 0.9818 | 108.98 | 14 | 44 | 89 |
 
-**With the population held fixed, the forward board is indistinguishable from seed
-noise** — Spearman **0.9988** against a **0.9990** floor, the same top-16/48/100
-overlaps, a mean season-total gap of **22.82** dk_pts against the floor's **21.03**.
-Every input difference the earlier parts classified — the draft-number sourcing, the
-filler games, the schedule-sourced denominator — amounts to nothing the board can see.
+**The acceptance is the bolded row and it is the second half of §4 of
+`docs/rookie-rates-plan.md`: the units neither new family added must not have moved.** On
+the **354** rung-0 veterans all three contexts carry, the fixed-population arm scores
+Spearman **0.9986** against a **0.9988** seed-noise floor on the same units — a gap of
+0.0002, where the 2026-08-21 and first 2026-08-22 runs read 0.9989 and 0.9988 against
+0.9990 on a board that was all rung-0 veterans anyway — at mean season-total gaps of 22.17
+and 23.25 dk_pts against floors of 21.03 and 20.35. The mechanics reading has now survived
+two population changes without moving.
 
-The whole headline gap (**0.9831**, **89**/100) is therefore the population bound Part B
-measured, priced here at the board: **33** players the 2023-24 snapshot no longer lists
-(traded or waived away before it was taken, invisible in the file), **6** of them inside
-the retro top 100, reaching it partly through the redistribution of their minutes onto
-everyone else. Neither contamination exists for a snapshot taken before the opener,
-which is the production case — and **0** spurious players, in both arms, again.
+**The whole-board fixed-population figure did move, from 0.9988 to 0.9929, and that is the
+new rows rather than the old ones.** The arm now carries 33 units the retrospective board
+does not — true rookies the roster snapshot lists and `component_targets` never saw, because
+he has to have played to be in it. They rank against a board they are not on, which is
+exactly the disagreement a Spearman over a union reports, and it is why the rung-0 row
+exists beside it.
 
-One residual is real and permanent rather than a rehearsal artifact: the
-fixed-population arm still misses **18** of the retro board's scorable units, the best
-of them at retro rank **133**. Those are players under the component design's own
-`total_minutes_lag1 >= 200` qualification — the forward design cannot qualify a player
-by minutes he has not yet played, so a production board will not score that fringe. None
-of it reaches the top 100.
+What is **gone** from the population column is the 80. The fixed-population arm shares all
+**467** retro units (`n_ref_only` = 0, where the first re-run read 80): §5g's
+`forward_rookie_design` builds the rookie rows from the roster snapshot instead of from
+`component_targets`, and `forward_component_design` now asks `component_rates.build_design`
+for the ladder it was silently not getting. The snapshot arm's own bound fell with it,
+from **113** missing units to **36** — of which 5 are inside the retro top 100, best at
+rank 17.
+
+⚠️ The first run of this arm reported 18 units it could not share, and the sentence
+written for them — a permanent qualification fringe — was wrong. Profiling the 18 found
+every one absent from the roster snapshot: `forward_component_design` synthesized its
+own log from the roster *file*, so the population override reached three of the four
+frames and not the fourth. The membership frame now flows through the component log
+too, the arm shares all 387, and the wrong diagnosis is recorded here because it
+briefly claimed a production limitation that does not exist.
+
+The whole headline gap (**0.9828**, **89**/100) is therefore the population bound Part B
+measured, priced here at the board: **113** players the forward arm does not carry, **6**
+of them inside the retro top 100, reaching it partly through the redistribution of their
+minutes onto everyone else. **80** of the 113 are the two new populations above and are
+a missing forward *builder*; the remaining 33 are what the 2026-08-21 run measured — the
+players the 2023-24 snapshot no longer lists, traded or waived away before it was taken
+and invisible in the file. Neither contamination exists for a snapshot taken before the
+opener, which is the production case — and **0** spurious players, in both arms, again.
+
+⚠️ **The sentence that used to stand here — "no board this project produces contains a
+true rookie" — was true until 2026-08-22 and is now false in both directions.** The
+retrospective board carries **74** of them in 2023-24 and 72 in 2022-23
+(`docs/rookie-rates-plan.md` §5f), and **the forward board carries 91** on the same season
+— more than the retrospective one, because the roster snapshot lists rookies who will not
+end up playing and `component_targets` only holds those who did.
+
+### 6i. The population census — §4's other acceptance half
+
+`make forward-board` now prints, and writes to `forward_board_population.csv`, one row per
+(arm, population): units, how many of them the market prices, and the best rank each puts
+on the board. Two questions, because "present" and "draftable" are different failures.
+
+| population | retro units | retro priced | forward units | forward priced | forward best rank |
+|---|---:|---:|---:|---:|---:|
+| veteran (rung 0) | 387 | 216 | 354 | 202 | 1 |
+| lag-recovered (`returnee_lag2`) | 6 | 3 | 4 | 3 | 267 |
+| true rookie | 74 | 18 | 91 | 18 | 66 |
+
+**Both recovered populations are present and priced on both boards**, which is the
+acceptance. The forward arm's counts are the roster snapshot's rather than the game log's,
+so a returnee who never actually came back is not in it (4 against 6) and a rookie who
+never played is (91 against 74) — the Part B bound, in the direction it is known to run.
+
+**And the production board, which is the one this was all for**: `make forward-board
+SEASON=2026-27 FRAMES_ONLY=1` builds every forward frame for 2026-27 and censuses it
+without simulating, because a test season cannot be simulated outside
+`make posteriors-production` and §5g is not an unlock. It reports **419** veteran units
+(180 ADP-priced), **6** lag-recovered returnees (4 priced) and **116** true rookies (**13**
+priced) — and the 13 are every never-played player the DK board puts a number on, AJ
+Dybantsa at ADP 41.8 among them. The block that stood in the way was the id map: DK board
+rows for never-played players took a negative surrogate id, so no design row could reach
+them. `adp_draftkings.build_id_map`'s roster-snapshot tier closes it
+(`docs/adp-plan.md`).
+
+The rookie rows carry **no preseason block at all** for 2026-27, and that is the missing-
+indicator path working rather than a gap: the panel arrives with `make preseason` in
+October, and the same call picks it up with no code change. Until then those 116 rows are
+draft slot, years-since-draft and age — which is what a August board can honestly know.
 
 ---
 
@@ -616,6 +771,44 @@ of it reaches the top 100.
   history, so those days do not come back. It does not touch anything measured here — no
   shipped head reads it — but it is the capture program with the least slack and the check
   now surfaces it.
+- **🔴 Every figure above measured the ROOKIE-LESS workflow, and the workflow moved the
+  next day.** This round ran 2026-08-21. On 2026-08-22 `docs/rookie-rates-plan.md` Sessions
+  2-7 and `docs/availability-window-plan.md` §16 turned on
+  `stan.components.lag_ladder = [returnee_lag2]`, `stan.availability.lag_ladder` behind
+  `availability.rung_zero`, and the `rookie-components` posterior group, and
+  `sim/season.build_context` now scores the **union** of two rate families. What that does
+  and does not do to the figures above splits cleanly, and both halves matter:
+  - **The head coefficients are untouched.** Every ladder rung is design-time imputation
+    into the existing lag-1 columns and the rookie family is a disjoint population, so no
+    fitting frame moved and nothing above was refitted. `make production-check` is green on
+    31 of 31 heads at `full`, on a specification comparison widened to ten columns.
+  - **The population every figure describes is narrower than the one that now ships.** §3's
+    held-out CRPS and season-total figures are over rung-0 veterans; the deployed chain also
+    scores lag-recovered returnees and true rookies, whose rates come from heads this round
+    never scored. §4d's chain reading is the sharper case: **−0.0725** on the 600k structure
+    was drafted off a board with no rookie on it, and the 2026-27 production board carries
+    **116** of them, 13 of those ADP-priced. The held-out contest reading therefore does not
+    transfer to the board that will actually be drafted — it is a reading of a workflow that
+    no longer exists, and there is no second unlock to re-take it with.
+  - **What does carry** is §6h's acceptance, because it is a mechanics check rather than a
+    value one: the rung-0 veterans' forward-versus-retrospective ordering was re-measured
+    after both population changes and is still inside seed noise (Spearman **0.9986** against
+    a **0.9988** floor, `docs/rookie-rates-plan.md` §7h).
+  - Where the two changes are priced instead is `docs/rookie-rates-plan.md` §7i, on the
+    validation seasons, at the unit that resolves — and the split's own rule below is why
+    that is the only place they could be priced.
+  - **🔴 THE HELD-OUT TENSORS ARE FROZEN ROOKIE-LESS BY DECISION, NOT BY NEGLECT — taken
+    2026-08-22.** `sim_tensor_2024-25.npz` and `sim_tensor_2025-26.npz` were written by
+    `src/final_evaluation.py` under the one-shot unlock, and
+    `docs/rookie-inclusive-tensors-plan.md` ships the wider population over the `train` and
+    `full` tensors while deliberately leaving these two alone. **Redrawing them would be a
+    second reading of a spent split, and the record is worth more than the consistency.**
+    So the mismatch that results is permanent and chosen: after that round the `train` and
+    `full` tensors carry **two** rate families and this `train_val` pair carries **one**.
+    It is not a staleness to be tidied up on some later pass, and a session that "fixes"
+    it has spent the only thing this document is the record of. Do not unlock the split,
+    do not redraw them, and quote §4d's chain reading only as what it is — a measurement of
+    a workflow that no longer exists.
 - **The split is spent.** Nothing above may be used to change a modelling decision. If a
   figure here motivates a change, the change is un-priced: there is no second held-out
   reading behind it, and the honest thing to record is that the estimate no longer applies

@@ -42,11 +42,14 @@ Usage:
 
 import argparse
 import re
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 import yaml
+
+from src.data.fetch import _slug, nbastats_dir
 
 # DK writes New Orleans as both NO and NOP across boards — one player (Jordan Ford, id
 # 955995) carried NO on the 2026-27 board while every other Pelican carried NOP. It is a
@@ -224,7 +227,36 @@ def _season_start(season: str) -> int:
     return int(str(season)[:4])
 
 
-def build_id_map(boards: pd.DataFrame, roster: pd.DataFrame) -> pd.DataFrame:
+def roster_snapshot_reference(seasons: Sequence[str],
+                              raw_dir: str | Path) -> pd.DataFrame:
+    """`(season, player_id, player_name)` from each season's roster snapshot.
+
+    `team_rosters_<season>.csv` is the one source that carries an `nba_api` `PLAYER_ID`
+    for a player who has never played a game — the 2026 draft class is on the 2026-27
+    file with real ids the day it is published. `src/features/draft_pool.py` rejects the
+    same file as a *membership* source for a played season, and
+    `src/features/forward_design.py` explains why that objection inverts looking forward;
+    this is a narrower use again — a **name → id reference**, never a population.
+
+    Seasons with no snapshot on disk are skipped rather than raised on: the id map is
+    built over every board ever captured, and the 2025-26 board's season has a snapshot
+    only because `make fetch` has run for it.
+    """
+    frames = []
+    for season in dict.fromkeys(str(s) for s in seasons):
+        path = nbastats_dir(raw_dir) / f"team_rosters_{_slug(season)}.csv"
+        if not path.exists():
+            continue
+        roster = pd.read_csv(path, usecols=["PLAYER", "PLAYER_ID"])
+        frames.append(pd.DataFrame({"season": season,
+                                    "player_id": roster["PLAYER_ID"].astype("int64"),
+                                    "player_name": roster["PLAYER"].astype(str)}))
+    return (pd.concat(frames, ignore_index=True) if frames
+            else pd.DataFrame(columns=["season", "player_id", "player_name"]))
+
+
+def build_id_map(boards: pd.DataFrame, roster: pd.DataFrame,
+                 snapshot: pd.DataFrame | None = None) -> pd.DataFrame:
     """Map `dk_player_id` → `nba_api` `player_id`, once, for reuse.
 
     A cascade, widening only after the stricter methods have had their chance, with the
@@ -235,9 +267,25 @@ def build_id_map(boards: pd.DataFrame, roster: pd.DataFrame) -> pd.DataFrame:
     |---|---|---|
     | `name+team` | the common case | — |
     | `name` | a player who changed teams between the board and the roster file | — |
+    | `roster_snapshot` | a player with no NBA history yet, on the board's own season | `AJ Dybantsa` → 1643407 |
     | `reversed` | surname-first romanization | `Hansen Yang` → `Yang Hansen` |
     | `prefix` | long vs short first name, **prefix only, one candidate** | `Alexandre Sarr` → `Alex Sarr` |
     | `alias` | nicknames, which no rule recovers | `Gregory Jackson` → `GG Jackson` |
+
+    ## The snapshot tier, and why it sits above the fuzzy ones
+
+    `roster` is the season matrix, which is built from played seasons, so a player who has
+    never played has no row in it at any price — that is what `no_nba_history` records.
+    `docs/rookie-rates-plan.md` §5g needs those ids for real: the rookie rate heads score
+    a true rookie from his draft slot and his preseason, and a board row carrying
+    `draft_pool.py`'s negative surrogate can never join to the design row that scores him.
+    The roster snapshot is the preseason-legal source that has the id.
+
+    It is an **exact normalized-name match inside the board's own season**, and it is
+    placed above `reversed`/`prefix`/`alias` because that is stronger evidence than any of
+    them: the era guard those three need is free here — the snapshot *is* the era — and a
+    season whose key is ambiguous yields nothing rather than a coin flip. Measured on the
+    two real boards (2026-08-22) it moves 71 rows and changes no existing match.
 
     **`no_nba_history` and `unmatched` are kept apart, and that distinction is the point.**
     A player on a board for a season the roster data does not yet cover may simply never
@@ -245,6 +293,12 @@ def build_id_map(boards: pd.DataFrame, roster: pd.DataFrame) -> pd.DataFrame:
     to find. Collapsing the two would turn "the 2026 draft class exists" into what looks
     like a join failure, exactly as `report_calibration.py` keeps `absent` apart from
     `unmatched` for the same reason. Only `unmatched` is a defect.
+
+    The snapshot tier **shrinks that class without emptying it**, and the residual is not a
+    defect either: 91 of the 162 stay, and they are DK's deep pool below the 577-player
+    snapshot — camp and two-way names carrying no ADP (all 13 ADP-priced rows in the class
+    resolve). No preseason-legal source holds an id for a player nobody has rostered, so
+    `adp.NON_DEFECT_METHODS` is unchanged.
     """
     dk = (boards.sort_values("capture_date")
           .groupby("dk_player_id", as_index=False)
@@ -309,6 +363,28 @@ def build_id_map(boards: pd.DataFrame, roster: pd.DataFrame) -> pd.DataFrame:
         out.loc[hit[take].index, "match_method"] = method
 
     _fill(out["player_id"].isna(), out["key"], by_name, "name")
+
+    # The snapshot tier. Keyed on (season, name) rather than on name alone: the reference
+    # is one file per season and a board row may only read the season it drafts for, so a
+    # 2025-26 board can never pick up a 2026 draftee who did not exist when it was live.
+    by_snapshot: dict[tuple[str, str], int] = {}
+    if snapshot is not None and len(snapshot):
+        snap = snapshot.copy()
+        snap["key"] = snap["player_name"].map(normalize_name).replace(aliases)
+        snap["season"] = snap["season"].astype(str)
+        counts = snap.groupby(["season", "key"])["player_id"].nunique()
+        for (season, key), pid in (snap.drop_duplicates(["season", "key"])
+                                   .set_index(["season", "key"])["player_id"].items()):
+            # An ambiguous key yields nothing, exactly as `_by_prefix` does with two
+            # candidates: two players on one season's rosters sharing a normalized name
+            # cannot be told apart by a name.
+            if counts[(season, key)] == 1:
+                by_snapshot[(season, key)] = int(pid)
+    if by_snapshot:
+        seasoned = pd.Series(list(zip(out["season"].astype(str), out["key"])),
+                             index=out.index)
+        _fill(out["player_id"].isna(), seasoned, by_snapshot.get, "roster_snapshot")
+
     _fill(out["player_id"].isna(), out["key"], _by_reversed, "reversed")
     _fill(out["player_id"].isna(), out["key"], _by_prefix, "prefix")
     _fill(out["player_id"].isna(), out["key"].map(lambda k: aliases.get(k, k)),
@@ -353,7 +429,8 @@ def print_status(in_dir: str | Path) -> None:
 def run(in_dir: str | Path = "data/raw/dk_draft_rankings",
         features_dir: str | Path = "data/features",
         roster_path: str | Path = "data/features/season_matrix_roster_tierA.parquet",
-        cutoff: int = SEASON_MONTH_CUTOFF) -> pd.DataFrame:
+        cutoff: int = SEASON_MONTH_CUTOFF,
+        raw_dir: str | Path = "data/raw") -> pd.DataFrame:
     boards = load_boards(in_dir, cutoff)
     if boards.empty:
         print(f"No DK boards found in {in_dir}. Nothing to do.")
@@ -380,7 +457,8 @@ def run(in_dir: str | Path = "data/raw/dk_draft_rankings",
         roster = pd.read_parquet(
             roster_path,
             columns=["player_id", "player_name", "team_abbreviation", "season"])
-        id_map = build_id_map(boards, roster)
+        snapshot = roster_snapshot_reference(seasons, raw_dir)
+        id_map = build_id_map(boards, roster, snapshot=snapshot)
         map_dest = features_dir / "adp_dk_id_map.parquet"
         id_map.to_parquet(map_dest, index=False)
         counts = id_map.match_method.value_counts()
@@ -393,6 +471,11 @@ def run(in_dir: str | Path = "data/raw/dk_draft_rankings",
               f"{int((id_map.match_method == 'no_nba_history').sum()):,} have no NBA "
               f"history yet → {map_dest}")
         print(f"    methods: {', '.join(f'{k} {v:,}' for k, v in counts.items())}")
+        n_snap = int((id_map.match_method == "roster_snapshot").sum())
+        print(f"    roster-snapshot tier: {n_snap:,} board rows with no played season "
+              f"resolved to a real nba_api id from {len(snapshot):,} snapshot rows "
+              f"(docs/rookie-rates-plan.md §5g — without it a true rookie carries "
+              f"draft_pool's negative surrogate and no design row can reach him)")
     else:
         print(f"  Skipped id map: {roster_path} not found (run `make season-matrix`).")
     return boards
@@ -417,6 +500,7 @@ if __name__ == "__main__":
         print_status(in_dir)
         raise SystemExit(0)
 
-    run(in_dir=in_dir,
+    run(raw_dir=data_cfg.get("raw_dir", "data/raw"),
+        in_dir=in_dir,
         features_dir=data_cfg.get("features_dir", "data/features"),
         cutoff=dk_cfg.get("season_month_cutoff", SEASON_MONTH_CUTOFF))

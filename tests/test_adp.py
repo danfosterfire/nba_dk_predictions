@@ -255,6 +255,69 @@ def test_rookies_are_no_nba_history_not_unmatched():
     assert build_id_map(boards, roster).iloc[0]["match_method"] == "no_nba_history"
 
 
+def _snapshot(rows):
+    """rows: (season, player_id, player_name) — `roster_snapshot_reference`'s shape."""
+    return pd.DataFrame(rows, columns=["season", "player_id", "player_name"])
+
+
+def test_roster_snapshot_tier_gives_a_never_played_rookie_his_real_id():
+    """The AJ-Dybantsa shape — `docs/rookie-rates-plan.md` §5g's id-map blocker.
+
+    Board name -> the board season's roster snapshot -> a real nba_api PLAYER_ID. Without
+    it the row takes `draft_pool`'s negative surrogate and no rookie rate design row, which
+    is keyed on the real id, can ever reach him."""
+    boards = pd.DataFrame({
+        "dk_player_id": [1], "player_name": ["AJ Dybantsa"], "team": ["WAS"],
+        "capture_date": ["2026-07-28"], "season": ["2026-27"]})
+    roster = _roster([(1642905, "Yang Hansen", "2025-26")])
+    snapshot = _snapshot([("2026-27", 1643407, "AJ Dybantsa")])
+    out = build_id_map(boards, roster, snapshot=snapshot).iloc[0]
+    assert out["match_method"] == "roster_snapshot"
+    assert out["player_id"] == 1643407
+
+
+def test_roster_snapshot_tier_cannot_reach_across_seasons():
+    """The tier is keyed on (season, name), so a board can only read the snapshot for the
+    season it drafts for — a 2025-26 board must not pick up a 2026 draftee."""
+    boards = pd.DataFrame({
+        "dk_player_id": [1], "player_name": ["AJ Dybantsa"], "team": ["WAS"],
+        "capture_date": ["2025-10-17"], "season": ["2025-26"]})
+    roster = _roster([(1642905, "Yang Hansen", "2025-26")])
+    snapshot = _snapshot([("2026-27", 1643407, "AJ Dybantsa")])
+    out = build_id_map(boards, roster, snapshot=snapshot).iloc[0]
+    assert pd.isna(out["player_id"])
+    assert out["match_method"] != "roster_snapshot"
+
+
+def test_roster_snapshot_tier_yields_nothing_on_an_ambiguous_name():
+    """Two players on one season's rosters sharing a normalized name cannot be told apart
+    by a name, so the tier declines rather than picking one — `_by_prefix`'s rule."""
+    boards = pd.DataFrame({
+        "dk_player_id": [1], "player_name": ["Cameron Boozer"], "team": ["MEM"],
+        "capture_date": ["2026-07-28"], "season": ["2026-27"]})
+    roster = _roster([(1642905, "Yang Hansen", "2025-26")])
+    snapshot = _snapshot([("2026-27", 1643409, "Cameron Boozer"),
+                          ("2026-27", 1643410, "Cameron Boozer")])
+    assert build_id_map(boards, roster, snapshot=snapshot).iloc[0][
+        "match_method"] == "no_nba_history"
+
+
+def test_roster_snapshot_tier_never_displaces_a_played_players_match():
+    """The tier sits above the fuzzy steps and below the exact ones, so a player with a
+    played season keeps the id his own history gives him."""
+    boards = pd.DataFrame({
+        "dk_player_id": [1, 2], "player_name": ["Victor Wembanyama", "AJ Dybantsa"],
+        "team": ["SAS", "WAS"], "capture_date": ["2026-07-28"] * 2,
+        "season": ["2026-27"] * 2})
+    roster = _roster([(1641705, "Victor Wembanyama", "2025-26")], team="SAS")
+    snapshot = _snapshot([("2026-27", 999999, "Victor Wembanyama"),
+                          ("2026-27", 1643407, "AJ Dybantsa")])
+    out = build_id_map(boards, roster, snapshot=snapshot).set_index("dk_player_id")
+    assert out.loc[1, "match_method"] == "name+team"
+    assert out.loc[1, "player_id"] == 1641705
+    assert out.loc[2, "match_method"] == "roster_snapshot"
+
+
 def test_consensus_cascade_resolves_real_name_variants():
     frame = _adp_frame(["Hansen Yang", "Louis Williams", "Enes Kanter"],
                        [10.0, 20.0, 30.0], season="2021-22")

@@ -353,7 +353,10 @@ re-measured there.
 
 `strategy_shipped.csv`'s two headline numbers both moved — simulated lift at the 600k
 0.230387 → **0.236915**, realized 0.197293 → **0.199380** — and **neither is evidence for the
-grading.**
+grading.** *(Both endpoints are the rookie-less chain's; the 2026-08-22 rookie-inclusive
+tensor re-run moved the same two figures to 0.264533 / 0.311197, with `rho` re-solved per
+arm — 0.358192 → 0.344334 and 0.317198 → 0.282524 — so the caveat below applies to that
+comparison unchanged; `docs/rookie-inclusive-tensors-plan.md` §7d.)*
 
 The **simulated** side is not a comparison across these two runs at all. Gate C's `rho` is
 solved by bisection *per arm* against that arm's own realized skill gap, and it moved

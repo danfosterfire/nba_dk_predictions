@@ -60,9 +60,10 @@ Usage:
     python -m src.models.component_rates
 """
 
+from dataclasses import dataclass
 from pathlib import Path
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -162,13 +163,192 @@ def season_totals(targets: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+# ── The lag-recovery ladder (docs/rookie-rates-plan.md §5b) ───────────────────
+
+# The rungs the ladder can admit, named as `lag_recovery.classify` names them so the
+# design's own `lag_rung` column reconciles with §7b's board census without a mapping
+# table. `veteran` is rung 0 and is not listed: it is the shipped design and is always in.
+LADDER_RUNGS = ("thin_prior", "returnee_lag2", "returnee_thin", "no_usable_lag")
+
+# The provenance a recovered row carries. Present only when the ladder is on, so a
+# ladder-off frame is byte-for-byte the frame every one of the twelve importers has
+# always received.
+LADDER_COLS = ("lag_source", "lag_rung", "lag_minutes")
+
+
+@dataclass(frozen=True)
+class LagLadder:
+    """The admitted rungs plus the constants the imputation needs, all fitted elsewhere.
+
+    Nothing here is estimated at build time and that is deliberate: `build_design` is
+    called by twelve modules on frames that are sometimes a single forward season, so a
+    constant fitted from whatever rows happen to be in front of it would differ between
+    callers. `lag_recovery.ladder_constants` reads them from the artifact that fitted them
+    on the fitting half, which is the `components_preseason_shrinkage.csv` precedent.
+    """
+
+    rungs: tuple[str, ...]
+    shrinkage: Mapping[str, float]                    # per rate column, prior-season minutes
+    means: Mapping[str, float]                        # per rate column, fitting-half per-36
+    conversion: Mapping[str, tuple[float, float]]     # per made column, (pseudo-attempts, league)
+    max_lag: int = 3
+
+
+def lag_ladder(cfg: dict, rungs: Sequence[str] | None = None) -> LagLadder | None:
+    """The configured ladder, or `None` for the shipped pre-ladder design.
+
+    `stan.components.lag_ladder` is a **list of admitted rungs** rather than a boolean,
+    because §4's gate is per rung and came back per rung: an empty list is today's design
+    exactly, and the key is what the gate's verdict is written into. `rungs` overrides it
+    for the gate itself, which has to build the widest design in order to score the rungs
+    it is deciding about.
+    """
+    from src.models.lag_recovery import ladder_constants
+
+    configured = (cfg.get("stan", {}).get("components", {}).get("lag_ladder")
+                  if rungs is None else rungs)
+    admitted = tuple(configured or ())
+    if not admitted:
+        return None
+    unknown = [r for r in admitted if r not in LADDER_RUNGS]
+    if unknown:
+        raise ValueError(f"`stan.components.lag_ladder` names unknown rung(s) {unknown}; "
+                         f"the vocabulary is {list(LADDER_RUNGS)}")
+    path = Path(cfg["evaluation"]["predictions_dir"]) / "lag_recovery.csv"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{path} is missing and the ladder's shrinkage is fitted there — run "
+            f"`make lag-recovery`, or set `stan.components.lag_ladder: []` to build the "
+            f"pre-ladder design exactly.")
+    return LagLadder(rungs=admitted, **ladder_constants(path))
+
+
+def apply_lag_ladder(d: pd.DataFrame, ladder: LagLadder) -> pd.DataFrame:
+    """Fill an unusable lag-1 block from the nearest usable season, in place of it.
+
+    **Imputation only.** The recovered row is written into the *same* `_lag1` columns the
+    shipped heads already fit coefficients on, so those coefficients score it unchanged and
+    no head is refitted — §3 constraint 4, which is the whole reason the ladder takes this
+    form rather than admitting the rows to the fit with a staleness feature.
+
+    Three things are carried, and they are carried differently because they are different
+    kinds of quantity:
+
+    - **rates** (`{c}_p36_lag1`) are shrunk toward the fitting-half population mean by the
+      source season's own reliability weight `m / (m + k)` — `lag_recovery.recent_shrunk_rate`
+      verbatim. §7b is emphatic that the shrink is not optional: raw thin lag-1 scores a
+      pooled R² of −1.1451 and is an anti-model, against +0.8566 shrunk.
+    - **conversion percentages** (`{m}_pct_lag1`) are empirical-Bayes shrunk on their own
+      *attempts*, because that is where a proportion's reliability lives — the form
+      `carry_forward_conversion` already settled.
+    - **volumes and context** (`mpg_lag1`, `total_minutes_lag1`, `gp_lag1`, every
+      `{c}_lag1`) are carried **raw**. They are not estimates of a per-minute quantity;
+      they are what the player's most recent season actually was, and `lag_source` records
+      how stale that is.
+
+    ## The threshold discontinuity is named, not solved
+
+    Qualification is tested on the **pre-imputation** lag-1, so a player at 201 prior
+    minutes keeps a raw rate and one at 199 gets a shrunk one — at the fitted `k` the jump
+    in weight is about 0.2. Removing it means shrinking everyone continuously, which
+    changes the *fitting* population and costs eleven refits at two windows. That is the
+    escalation §3 constraint 4 names; this function is the cheap form it gates first.
+    """
+    from src.models.lag_recovery import classify, recent_conversion, recent_lag, \
+        recent_shrunk_rate
+
+    prior = d["total_minutes_lag1"].to_numpy(dtype=float)
+    # Computed BEFORE anything is written, which is what makes rung 0 bit-identical: the
+    # test is the shipped one, on the column the shipped design read.
+    qualified = np.isfinite(prior) & (prior >= MIN_PRIOR_MINUTES)
+    lag = recent_lag(d, ladder.max_lag)
+    recovered = ~qualified & (lag >= 1)
+
+    # `classify`'s six-way label, with the design's own boundary winning rung 0 — the two
+    # agree on every real row (a qualified lag-1 implies a prior season, so no qualified
+    # row can be a first-season player), and pinning it here means bit-identity does not
+    # depend on that argument staying true.
+    rung = np.where(qualified, "veteran", classify(d).to_numpy())
+
+    # Every shrunk column is computed on the untouched frame first: `recent_lag` reads
+    # `total_minutes_lag1`, so writing the carried block before reading the rates would
+    # make every lag-2 row look like a lag-1 row.
+    shrunk = {c: recent_shrunk_rate(d, c, ladder.shrinkage[c], ladder.means[c])
+              for c in rate_columns()}
+    pct = {m: recent_conversion(d, m, a, *ladder.conversion[m])
+           for m, a in CONVERSION_HEADS}
+
+    carry = list(dict.fromkeys(volume_columns() + ["mpg", "total_minutes", "gp"]))
+    carried = {c: d[f"{c}_lag1"].to_numpy(dtype=float).copy() for c in carry}
+    source_minutes = np.full(len(d), np.nan)
+    for L in range(1, ladder.max_lag + 1):
+        hit = lag == L
+        if not hit.any():
+            continue
+        source_minutes[hit] = d[f"total_minutes_lag{L}"].to_numpy(dtype=float)[hit]
+        for c in carry:
+            carried[c][hit] = d[f"{c}_lag{L}"].to_numpy(dtype=float)[hit]
+
+    out = d.copy()
+    for c in carry:
+        out[f"{c}_lag1"] = np.where(recovered, carried[c],
+                                    d[f"{c}_lag1"].to_numpy(dtype=float))
+    for c in rate_columns():
+        out[f"{c}_p36_lag1"] = np.where(recovered, shrunk[c],
+                                        d[f"{c}_p36_lag1"].to_numpy(dtype=float))
+    for m, _ in CONVERSION_HEADS:
+        out[f"{m}_pct_lag1"] = np.where(recovered, pct[m],
+                                        d[f"{m}_pct_lag1"].to_numpy(dtype=float))
+
+    # Provenance on EVERY row, not only the recovered ones: a board that cannot say a unit
+    # was scored off a two-year-old season cannot be audited, and "the column is absent"
+    # is not the same statement as "the row came from lag 1". The per-head reliability
+    # weight is `lag_minutes / (lag_minutes + k)` at that head's `k` in `lag_recovery.csv`
+    # — one row-level column and nine constants, rather than nine redundant columns.
+    out["lag_source"] = np.where(lag >= 1, np.char.add("lag", lag.astype(str)), "none")
+    out["lag_rung"] = rung
+    out["lag_minutes"] = source_minutes
+    return out
+
+
+def ladder_recovered(design: pd.DataFrame) -> np.ndarray:
+    """Which rows the ladder admitted that the shipped design would have dropped."""
+    if "lag_rung" not in design.columns:
+        return np.zeros(len(design), dtype=bool)
+    return (design["lag_rung"].to_numpy() != "veteran")
+
+
+def fitting_rows(design: pd.DataFrame) -> pd.DataFrame:
+    """Rung 0 only — the fitting population, which the ladder does not widen.
+
+    §3 constraint 4 in one function. The ladder is a **scoring** change: the recovered rows
+    are imputed into columns the existing coefficients already read, and admitting them to
+    the fit as well would be the escalation the constraint holds in reserve. Every caller
+    that fits rather than scores routes its training frame through here.
+    """
+    return design[~ladder_recovered(design)]
+
+
 def build_design(targets: pd.DataFrame, seasons: list[str], raw_dir: str | Path,
-                 forward_seasons: Sequence[str] = ()) -> pd.DataFrame:
+                 forward_seasons: Sequence[str] = (),
+                 ladder: "LagLadder | None" = None) -> pd.DataFrame:
     """One row per (player, target season) with lag-1 prior-season columns.
 
     Rows need a prior season of at least `MIN_PRIOR_MINUTES`, so every own-rate feature is
     measured over enough minutes to be worth something, and a current season with minutes,
     since minutes are the exposure.
+
+    ## `ladder`, and why the default is `None`
+
+    `None` builds the pre-ladder design **exactly** — `max_lag=1`, no provenance columns,
+    the same prior-minutes test — because this builder is how twelve other modules reach
+    their rows and none of them asked for a wider population. `lag_ladder(cfg)` turns
+    `stan.components.lag_ladder` into the object; a caller that wants the ladder passes it
+    by name, and `apply_lag_ladder` states what it does to the block.
+
+    Rung 0 is bit-identical under both settings and `tests/test_component_rates.py` pins
+    it, which is the only claim that lets §3 constraint 4 hold: the recovered rows are
+    scored by coefficients fitted on a population that did not move.
 
     ## `forward_seasons`, and why the second condition cannot apply to one
 
@@ -194,7 +374,7 @@ def build_design(targets: pd.DataFrame, seasons: list[str], raw_dir: str | Path,
                 + volume_columns()
                 + ["mpg", "total_minutes", "gp"])
     lag_cols = list(dict.fromkeys(lag_cols))
-    d = with_lags(s, seasons, lag_cols, max_lag=1)
+    d = with_lags(s, seasons, lag_cols, max_lag=1 if ladder is None else ladder.max_lag)
 
     ages = load_ages(seasons, raw_dir)
     d = (d.merge(ages, on=["season", "player_id"], how="left") if not ages.empty
@@ -202,8 +382,25 @@ def build_design(targets: pd.DataFrame, seasons: list[str], raw_dir: str | Path,
     d["age_sq"] = d["age"] ** 2
     d["career_year"] = d.sort_values("season_index").groupby("player_id").cumcount()
 
+    if ladder is not None:
+        # `classify` needs to know a player's first played season, for the reason it tests
+        # that first: a player whose history falls outside the window has no lag columns
+        # either, and calling him a rookie would hand the rookie head a row it cannot
+        # serve. Merged from `s` — every season on the frame, not just the design's.
+        first = s.groupby("player_id")["season"].min().rename("first_season")
+        d = apply_lag_ladder(d.merge(first, on="player_id", how="left"), ladder)
+
+    # Before the qualification test, and unchanged by the ladder: a recovered row has had
+    # its `mpg_lag1` and `total_minutes_lag1` filled from the source season by now, so it
+    # survives here for the same reason a veteran does.
     d = d.dropna(subset=["age", "mpg_lag1", "total_minutes_lag1"])
-    qualified = d["total_minutes_lag1"] >= MIN_PRIOR_MINUTES
+    if ladder is None:
+        qualified = d["total_minutes_lag1"] >= MIN_PRIOR_MINUTES
+    else:
+        # The single prior-minutes test becomes the rung admission the gate decided.
+        # `veteran` IS that test, computed pre-imputation, so this is a widening and never
+        # a substitution — no row today's design carries can fail it.
+        qualified = d["lag_rung"].isin(("veteran",) + tuple(ladder.rungs))
     if forward_seasons:
         forward = d["season"].isin(set(forward_seasons))
         d = d[qualified & ((d["total_minutes"] > 0) | forward)]

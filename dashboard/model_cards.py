@@ -76,6 +76,10 @@ ECDF_FILE = "model_card_ecdf.csv"
 CALIBRATION_FILE = "model_card_calibration.csv"
 QUANTILE_FILE = "model_card_quantile.csv"
 SAMPLE_FILE = "model_card_sample.parquet"
+#: The head's own Stan program, verbatim — emitted beside the cards rather than read live
+#: from `src/stan/`, so the code a page shows is a snapshot taken with the cards it ships
+#: with and the dashboard still reads artifacts only.
+STAN_FILE = "model_card_stan.csv"
 
 #: `make posteriors` writes this beside the pickles the dashboard may not open. It is a flat
 #: CSV of what each persisted fit cost and what it converged to, which is the half of block 7
@@ -133,6 +137,9 @@ class ModelClass:
     title: str
     icon: str
     url_path: str
+    #: Every carded head of the class, in page order — the full membership, which is what
+    #: `test_every_carded_head_belongs_to_exactly_one_model_page` holds. The page itself
+    #: renders the subset `heads_of` admits: the heads in the simulator's draw path.
     heads: tuple[str, ...]
     intro: str
 
@@ -145,32 +152,35 @@ CLASSES: dict[str, ModelClass] = {
         url_path="availability",
         # The season-level head first, then the tenure decomposition in the order the
         # process runs: a tenure begins, spells start inside it, each spell lasts, the
-        # tenure ends.
+        # tenure ends. Only the draw-path subset renders — see `heads_of`.
         heads=("availability", "gp_entry", "gp_onset", "gp_duration", "gp_exit"),
         intro=(
-            "**Five heads, and the shipped chain takes two of them.** A simulated season "
-            "asks how many of his team's games a player misses and then which ones: "
-            "**`availability`** supplies the count, as a beta-binomial over games played "
-            "out of team games, and **`gp_duration`** supplies the shape the misses are "
-            "laid out in, as a beta-geometric spell length. The other three are the "
-            "**games-played tenure decomposition**, which models the generating process "
-            "instead — `gp_entry` and `gp_exit` bound the stretch of schedule a player is "
-            "with the team and `gp_onset` starts spells inside it. They are fitted and "
-            "carded and are not called when a season is drawn; what they produce is the "
-            "games-played pmf the drawn seasons are scored against. Each head says which "
-            "it is, under its own name."),
+            "**The two heads a simulated season's absences are assembled from.** The "
+            "season draw asks how many of his team's games a player misses and then which "
+            "ones: **`availability`** supplies the count, as a beta-binomial over games "
+            "played out of team games, and **`gp_duration`** supplies the shape the "
+            "misses are laid out in, as a beta-geometric spell length. This page carries "
+            "only the heads `make simulate-season` reads at draw time."),
     ),
     "minutes": ModelClass(
         key="minutes",
         title="Minutes",
         icon=":material/timer:",
         url_path="minutes",
+        # The marginal head is class membership only; `heads_of` keeps it off the selector
+        # because the simulator never reads it — see the module docstring of
+        # `views/minutes.py` for where its season-level spread enters instead.
         heads=("minutes", "composition"),
         intro=(
-            "Two heads over minutes at two different units. The marginal head models "
-            "`min | available` per player-season; the composition allocates each "
-            "team-game's minutes among the players who played, as sequential beta-binomial "
-            "trials ordered by prior-season share."),
+            "**The head every simulated minute comes from.** The composition allocates "
+            "each team-game's `5 × game_length` minutes among the players who played, as "
+            "sequential beta-binomial trials ordered by prior-season share — so the team "
+            "total is exact by construction, and a teammate's absence redistributes "
+            "minutes as a fitted quantity rather than an assumption. The season-level "
+            "spread its iid per-game draws cannot produce is injected at draw time as a "
+            "per-(player, season) effect, calibrated against a marginal season-level "
+            "baseline that appears below only as the reference the composition is scored "
+            "against."),
     ),
     "components": ModelClass(
         key="components",
@@ -206,12 +216,24 @@ def model_class(key: str) -> ModelClass:
 
 
 def heads_of(index: pd.DataFrame, key: str) -> list[str]:
-    """The class's heads in declared order, restricted to those actually on disk.
+    """The class's heads in declared order, restricted to those actually on disk — and,
+    since 2026-08-23, to those in the simulator's **draw path**.
 
     Restricted rather than assumed, so a partially-built `outputs/predictions/` draws the
     heads it has instead of raising on the first one it does not.
+
+    The draw-path restriction is the model pages' charter: a page discusses the heads a
+    simulated season is assembled from, and a head that is fitted, converged and carded but
+    never read at draw time — the games-played tenure decomposition, the marginal minutes
+    head — stays carded and off the page. The filter reads the artifact's own
+    `in_draw_path` rather than a list typed here, so a refactor of `src/sim/season.py`
+    moves the page through `make model-cards` instead of going stale against it. An index
+    built before the column existed degrades to the old behaviour, the same way
+    `chain_role_phrase` loses a caption rather than printing `nan`.
     """
     carded = set(index["head"])
+    if "in_draw_path" in index.columns:
+        carded &= set(index.loc[index["in_draw_path"].astype(bool), "head"])
     return [head for head in model_class(key).heads if head in carded]
 
 
@@ -304,6 +326,40 @@ def chain_role_phrase(row: pd.Series) -> str:
     verb = "it" if bool(row.get("in_draw_path", False)) else "it is"
     note = text(row.get("chain_role_note"), "")
     return f"**In a simulated season {verb} {label}.** {note}".strip()
+
+
+# ── The Stan program, between blocks 3 and 4 ──────────────────────────────────
+
+def stan_row(stan: pd.DataFrame, head: str) -> pd.Series | None:
+    """The head's own Stan program — file name, line count and verbatim source.
+
+    From `model_card_stan.csv`, where the emitter snapshots the program beside the cards:
+    the page shows the code the fit was compiled from rather than describing it, and reads
+    it from an artifact rather than from `src/stan/`, which the dashboard may not open.
+    `None` for a head the artifact does not carry, so an older file loses the block rather
+    than raising.
+    """
+    part = stan[stan["head"] == head]
+    if part.empty:
+        return None
+    return part.iloc[0]
+
+
+def stan_siblings(stan: pd.DataFrame, index: pd.DataFrame, head: str) -> list[str]:
+    """The labels of the other carded heads compiled from the same program.
+
+    Four `.stan` sources serve every carded head, so sharing is the norm rather than the
+    exception, and the page says who else is on the file — data flags select the blocks
+    (`S = 0` disables the year effect exactly, and so on), which is why one program can be
+    ten heads without any of them fitting another's structure.
+    """
+    row = stan_row(stan, head)
+    if row is None:
+        return []
+    shared = stan[(stan["stan_file"] == row["stan_file"]) & (stan["head"] != head)]
+    labels = index.set_index("head")["label"] if "label" in index.columns else None
+    return [str(labels.get(h, h)) if labels is not None else str(h)
+            for h in shared["head"]]
 
 
 # ── Block 2 · the features it was fed ─────────────────────────────────────────

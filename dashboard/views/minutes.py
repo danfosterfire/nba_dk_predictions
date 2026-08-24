@@ -1,36 +1,48 @@
-"""Minutes — two heads over the same quantity, fitted and scored at two different units.
+"""Minutes — the composition, the one head every simulated minute comes from.
 
 Page 4 of `docs/dashboard-plan.md`'s expansion, and the fourth instantiation of the generic
-renderer in `dashboard/views/model_page.py`. Behind the selector: the marginal
-`min | available` head, fitted season-collapsed as successes out of real game length, and
-the team-game composition, which allocates each team-game's `5 x game_length` minutes among
-the players who played as sequential beta-binomial trials ordered by prior-season share.
+renderer in `dashboard/views/model_page.py`. Behind the selector: the team-game
+composition, which allocates each team-game's `5 x game_length` minutes among the players
+who played as sequential beta-binomial trials ordered by prior-season share.
 
-**This page has a job the other three model pages do not**, and it is the reason the build
-order called it bespoke. `minutes_unification.csv` scores *both* heads at the season unit off
-their persisted posteriors, and the result is the cleanest demonstration in this repo that
-**a head is only a model at the unit it was scored at**: the composition clears its own
-per-player-game no-fit floor decisively and fails the season-unit one, on the same posterior
-and the same draws, while the marginal head does the reverse.
+**The selector carries the draw path only** (since 2026-08-23). The class's other head —
+the marginal `min | available` head, fitted season-collapsed as successes out of real game
+length — is fitted, converged and carded, and is **not on this page**, because
+`src/sim/season.py` never reads it: its season-level spread reaches the simulator as
+`sim.minutes.player_season_sigma`, the constant `make minutes-unification` calibrated
+against it and `rehydrate_composition` injects into the composition. That calibration role
+is inventoried on the *Inputs beyond the heads* page, beside the constant itself. On this
+page the marginal head appears only as the **season-level baseline** the composition's
+named blocks are measured against — the same role the no-fit floor plays on the box-score
+page.
 
-Three named blocks carry that, each keyed on the numbered block whose question it extends:
+**This page still has a job the other three model pages do not**, and it is the reason the
+build order called it bespoke. `minutes_unification.csv` scores the composition at the
+season unit off its persisted posterior, against that baseline, and the result is the
+cleanest demonstration in this repo that **a head is only a model at the unit it was
+scored at**: the composition clears its own per-player-game no-fit floor decisively while
+the season unit turns on the *spread*, which the injected effect exists to supply.
+
+Four named blocks, each keyed on the numbered block whose question it extends:
 
 - **under block 1**, the two-unit verdict — because "which unit is this a model at" is the
-  first thing to know about either head, exactly as "what did this head buy over doing
+  first thing to know about the head, exactly as "what did this head buy over doing
   nothing" is on the box-score page. It is followed by the four readings that say *what*
-  fails: the two heads tie on where the predictive sits and separate 4.68x on how wide it is.
-- **under block 5**, the injected per-player-season effect — because what fails at the season
-  unit is calibration, and sigma is what moves the PIT KS. The shipped value is read from the
-  composition's own card rather than typed.
+  the season unit turns on: the composition ties the baseline on where the predictive sits
+  and separates from it on how wide it is.
+- **under block 3**, the shared Stan program (`model_page.stan_block`).
+- **under block 5**, the injected per-player-season effect — because what the season unit
+  exposes is calibration, and sigma is what moves the PIT KS. The shipped value is read
+  from the composition's own card rather than typed.
 - **under block 6**, the zero-sum team constraint — because block 6 is four panels of
   *marginal* residuals and no marginal metric can see whether a head carries it. This is
   also the block that lands on drafting: a same-team stack's minutes are anti-correlated
   rather than independent, and a handcuff is a hedge that exists only if the model has the
   sign. A reader reaches this page before the strategy page.
 
-Every figure here is a comparison **between** the two heads, so unlike pages 5 and 6 nothing
-is highlight-and-gray: each head keeps one palette slot across the whole page
-(`model_cards.MINUTES_SLOTS`) and the tiles say which one the selector has open.
+Every named-block figure draws the composition **against its baseline**, so unlike pages 5
+and 6 nothing is highlight-and-gray: each series keeps one palette slot across the whole
+page (`model_cards.MINUTES_SLOTS`).
 """
 
 import pandas as pd
@@ -62,9 +74,9 @@ def load_ladder() -> pd.DataFrame | None:
 def units_block(cards: dict, row: pd.Series, th: dict) -> None:
     """This page's headline, under block 1: the same posterior at two units.
 
-    Named rather than numbered, like the blocks pages 5 and 6 own. It renders the same on
-    both heads because it *is* a comparison between them — what follows the selector is the
-    tile row, which reads the open head's own side of it in the open head's own direction.
+    Named rather than numbered, like the blocks pages 5 and 6 own. The tiles read the
+    composition's side of the comparison; the marginal head is the baseline series and
+    takes no tile of its own.
     """
     unification = load_unification()
     ladder = load_ladder()
@@ -78,12 +90,14 @@ def units_block(cards: dict, row: pd.Series, th: dict) -> None:
     st.markdown("---")
     st.subheader("Two units, two verdicts")
     st.caption(
-        "Both heads are quoted against a **no-fit floor**, and at two different units: the "
-        "composition's own fitted unit, where its ladder refits the marginal head as its "
+        "The composition is quoted against a **no-fit floor** at two different units: its "
+        "own fitted unit, where its ladder refits a season-level marginal head as its "
         f"control (`{mc.COMPARATOR_ARM}`), and the season total, where "
-        f"`{mc.MAKE_MINUTES_UNIFICATION}` sums the composition's per-game draws and scores "
-        "both heads on the player-seasons they share. Nothing was refitted for either "
-        "reading — both heads are rehydrated around their persisted posteriors and score "
+        f"`{mc.MAKE_MINUTES_UNIFICATION}` sums its per-game draws and scores it beside "
+        "that **marginal baseline** on the player-seasons the two cover together. The "
+        "baseline is a fitted head the simulator never draws from — it is on this page "
+        "only as the reference, the way the floor is. Nothing was refitted for either "
+        "reading — both are rehydrated around their persisted posteriors and score "
         "through their own `predict_samples`.")
 
     tiles = []
@@ -203,8 +217,10 @@ def sigma_block(cards: dict, row: pd.Series, th: dict) -> None:
         "player-season per posterior draw, shared across that player's games and pushed "
         "back through the head's own allocation — is what a fitted random effect's "
         "predictive integrates to, and it needs no refit. **Every number in this block is "
-        "the composition's**, whichever head the selector has open: the marginal head "
-        "appears only as the baseline the gap is measured against, and takes no effect.")
+        "the composition's**: the marginal baseline appears only as the reference the gap "
+        "is measured against, and takes no effect. It is also what the shipped σ was "
+        "calibrated **against**, which is the one draw-time role that head has — see "
+        "*Inputs beyond the heads*.")
 
     by_role = mc.shipped_sigma_by_role(cards["index"])
     if by_role is not None:
@@ -361,4 +377,5 @@ def constraint_block(cards: dict, row: pd.Series, th: dict) -> None:
 
 def render() -> None:
     model_page.render(CLASS_KEY,
-                      extra={1: units_block, 5: sigma_block, 6: constraint_block})
+                      extra={1: units_block, 3: model_page.stan_block,
+                             5: sigma_block, 6: constraint_block})

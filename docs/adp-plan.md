@@ -577,9 +577,9 @@ lines, plain-`assert` tests with synthetic builders.
 | Stage | Module | Make target | Notes |
 |---|---|---|---|
 | **A0** | — (manual) | — | ✅ **Standing routine, owned by the user**: pull the DK pre-draft rankings CSV from the lobby through the 2026-27 preseason. Drop files in `data/raw/dk_draft_rankings/` as `DkPreDraftRankings_<Mon><D>_<YYYY>.csv`. Two boards captured so far. |
-| **A** | `src/data/adp_draftkings.py` | `adp-draftkings` | ✅ **done** — ingest, team aliases, censoring flag, `id_stability` check, and the one-time DK `ID` → `player_id` map (**0 unmatched of 811 matchable**). |
+| **A** | `src/data/adp_draftkings.py` | `adp-draftkings` | ✅ **done** — ingest, team aliases, censoring flag, `id_stability` check, and the one-time DK `ID` → `player_id` map (**0 unmatched of 882 matchable**). |
 | **A** | `src/data/adp_fantasypros.py` | `adp-fantasypros` | ✅ **done** — Wayback backfill + live capture + offline `--reparse`, gzip sniffing, per-snapshot source detection, the freeze rule, and `--status`. |
-| **B** | `src/features/adp.py` | `adp-panel` | ✅ **done** — `adp_panel.parquet`, the match cascade (**0.50% unmatched**), `attach_dating` / `training_rows` / `assert_point_in_time`. |
+| **B** | `src/features/adp.py` | `adp-panel` | ✅ **done** — `adp_panel.parquet`, the match cascade (**0.49% unmatched**), `attach_dating` / `training_rows` / `assert_point_in_time`. |
 | **C** | `src/eda/adp_profile.py` | `adp-profile` | ✅ **done** — `adp_transfer.parquet` + `outputs/eda/adp_profile.csv`, carrying `n_anchors` and a loud warning while it is 1. |
 | **D** | — | — | Wire the recalibrated ADP into the draft simulator's opponent model (`docs/simulations-plan.md`). Blocked on the simulator, not on data. |
 | **E** | — | — | The thin-data ADP-prior ablation (above). Blocked on the Bayesian rate head. |
@@ -619,12 +619,18 @@ running the code against the real archive:
   be a genuine *prefix* of the other (≥3 chars), and the candidate must have played within
   `RECENT_SEASONS` of the board. Both are load-bearing; prefix alone still matched
   `Mikel Brown Jr.` → **Mike Brown** (last seen 1996-97).
-- **Rookies and join bugs must be counted separately.** 162 DK pool entries have no
+- **Rookies and join bugs must be counted separately.** 162 DK pool entries had no
   `player_id` because they have never played an NBA game — the entire 2026 draft class among
   them. Reported as `no_nba_history`, not `unmatched`, for the same reason
-  `report_calibration.py` keeps `absent` apart from `unmatched`. The residual genuine
-  unmatched is **0.50%**: four players (Wang Zhelin, Rade Zagorac, Marcus Zegarowski,
-  Patric Young) who appear on fantasy boards and never played in the NBA.
+  `report_calibration.py` keeps `absent` apart from `unmatched`.
+  **`docs/rookie-rates-plan.md` §5g cut that class to 91** with a roster-snapshot reference
+  tier: `team_rosters_<season>.csv` carries a real `PLAYER_ID` for a player who has never
+  played, so 71 of the 162 — including every one of the 13 that carries an ADP, AJ Dybantsa
+  at 41.8 among them — now resolve by exact name inside the board's own season. The
+  remainder is DK's deep pool below the 577-player snapshot and stays a non-defect, because
+  no preseason-legal source holds an id for a player nobody has rostered. The residual
+  genuine unmatched is **0.49%**: four players (Wang Zhelin, Rade Zagorac, Marcus
+  Zegarowski, Patric Young) who appear on fantasy boards and never played in the NBA.
 - **The injury-status token is an open vocabulary and cannot be enumerated.** The observed
   set across 12 years is `DTD`, `OUT`, `FA`, `O`, `G-League`, `NWT`, `RET`, `TWO-WAY`,
   `ACT`, `IR`, `D-LEAGUE`, `SUS` — hyphenated, mixed-case, and single-letter. An
