@@ -154,7 +154,7 @@ ten items in `docs/provenance-plan.md` landed first. The only exception to the r
 `make dashboard-audit` runs four checks — every cited artifact exists (also a `pytest`
 test), no source doc has a git commit newer than an entry's `reviewed` date, no artifact on
 disk goes unreferenced by both tabs and registry, and no pending markers remain. A weekly
-launchd job (`com.nba-deep-learning.dashboard-audit`, Mondays 09:00) appends it to
+launchd job (`com.nba-dk-predictions-stan.dashboard-audit`, Mondays 09:00) appends it to
 `outputs/dashboard_audit.log`. **The orphan check is the one that earns its keep**: nine
 artifact families had accumulated unreachable from the dashboard purely because nothing was
 looking, and removing a tab silently re-creates that — so bring it back to zero deliberately,

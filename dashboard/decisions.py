@@ -1461,6 +1461,51 @@ REGISTRY: tuple[Decision, ...] = (
         date="2026-07-28",
         tags=("sources",),
     ),
+    Decision(
+        id="espn-403s-spoofed-user-agent",
+        topic="data",
+        claim="Request the ESPN feed as `python-requests`, never as a browser. Its edge "
+              "began 403-ing the spoofed Chrome User-Agent on 2026-08-04 while still "
+              "serving honest tool agents.",
+        because="The same URL returns 403 with a Chrome string and 200 with all 28 team "
+                "blocks sending no User-Agent override at all; `curl/8.7.1` also works, "
+                "and a custom project string does not. So this is Akamai bot management "
+                "keyed on impersonation, not rate-limiting and not a block on us — and "
+                "the mitigation is to stop impersonating. `_HEADERS` in "
+                "`src/data/injuries.py` is deliberately empty for this reason, with "
+                "`src/data/espn_fantasy.py` matching. Cost 4 snapshot days before a "
+                "second, unrelated fault took the whole job down.",
+        # `incident`: a dated diagnosis of a third party's edge policy. Re-deriving it
+        # would mean re-probing ESPN with a header we have decided never to send again.
+        status="incident",
+        source="docs/availability-plan.md",
+        reviewed="2026-08-23",
+        date="2026-08-04",
+        tags=("sources", "failure-mode"),
+    ),
+    Decision(
+        id="renaming-the-repo-stops-daily-capture",
+        topic="data",
+        claim="Renaming the repo silently stops `daily-capture`, because both launchd "
+              "agents hard-code the path. It cost 15 runs and 19 permanently-lost ESPN "
+              "snapshot days in Aug 2026.",
+        because="launchd creates the parent directories of `StandardOutPath`, so after "
+                "the rename it made an empty stub at the old path, the `cd` SUCCEEDED "
+                "into it, and make failed with `No rule to make target` into a log "
+                "inside the stub — while the live repo's log sat at its last pre-rename "
+                "entry and `make capture-status` saw nothing wrong. The agents are now "
+                "`com.nba-dk-predictions-stan.*` and each carries a `test -f Makefile` "
+                "guard that exits 78 with an explicit 'repo moved or renamed' message. "
+                "The guard reports the fault; it does not fix it — A FUTURE RENAME STILL "
+                "REQUIRES RE-POINTING THE PLIST. The NBA PDF side lost nothing over the "
+                "same 15 days, because its window is ~7 months and the ESPN feed's is "
+                "zero.",
+        status="incident",
+        source="docs/availability-plan.md",
+        reviewed="2026-08-23",
+        date="2026-08-23",
+        tags=("sources", "failure-mode"),
+    ),
 
     # ══ Exploratory data analysis ════════════════════════════════════════════
     Decision(

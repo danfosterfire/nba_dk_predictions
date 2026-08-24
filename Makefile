@@ -77,13 +77,19 @@ rosters:
 # ── Daily capture ─────────────────────────────────────────────────────────────
 # Both sources are current-status only and CANNOT be backfilled: the NBA report PDFs
 # age out of the CDN after ~7 months, and the ESPN feed has no history at all. Every
-# day `daily-capture` does not run is a day permanently lost. Schedule it:
+# day `daily-capture` does not run is a day permanently lost. It is scheduled as a launchd
+# agent rather than a crontab line, because macOS cron silently skips a run whose time
+# passed while the machine was asleep and launchd catches it up on wake:
 #
-#   crontab -e
-#   30 18 * * *  cd /path/to/nba_deep_learning && make daily-capture >> data/raw/daily_capture.log 2>&1
+#   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.nba-dk-predictions-stan.daily-capture.plist
+#   launchctl kickstart -p gui/$(id -u)/com.nba-dk-predictions-stan.daily-capture   # run now
 #
 # 6:30 PM local is after the 5:00 PM ET report is published. Re-running the same day is
 # a no-op, so a missed day self-heals on the next run for anything still retained.
+#
+# THE PLIST HARD-CODES THE REPO PATH, so renaming the repo silently stops the capture —
+# it did, for 15 days in Aug 2026 (docs/availability-plan.md, "the rename outage"). After
+# any rename, re-point the plist and `launchctl kickstart` it.
 injury-reports:
 	$(PYTHON) -m src.data.injury_reports
 
@@ -1122,8 +1128,8 @@ dashboard-config:
 #
 # Runs weekly under launchd, appending to outputs/dashboard_audit.log:
 #
-#   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.nba-deep-learning.dashboard-audit.plist
-#   launchctl kickstart -p gui/$(id -u)/com.nba-deep-learning.dashboard-audit   # run now
+#   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.nba-dk-predictions-stan.dashboard-audit.plist
+#   launchctl kickstart -p gui/$(id -u)/com.nba-dk-predictions-stan.dashboard-audit   # run now
 #
 # Weekly rather than daily because nothing here has a deadline — unlike daily-capture,
 # whose sources cannot be backfilled. Reviewing the log is a two-minute job, which is
